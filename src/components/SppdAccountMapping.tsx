@@ -30,6 +30,7 @@ import {
   saveSppdRecordsToFirestore
 } from '../firebase';
 import { SPPDRecord } from './SppdManager';
+import { consolidateSppdCostItems } from './PrintSppdDocument';
 
 interface SppdAccountMappingProps {
   submissions?: Submission[];
