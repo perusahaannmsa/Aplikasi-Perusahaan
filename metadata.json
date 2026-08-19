@@ -1,0 +1,11 @@
+{
+  "name": "APK Voucher NMSA",
+  "description": "Aplikasi untuk input data Formulir Pengajuan HO, Bukti Pengeluaran Kas/Bank, SPPD (Surat Perintah Perjalanan Dinas), dan Absensi Harian NMSA dengan format cetak resmi.",
+  "requestFramePermissions": [
+    "geolocation",
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
