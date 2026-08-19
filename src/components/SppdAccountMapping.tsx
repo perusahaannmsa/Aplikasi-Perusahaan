@@ -8,7 +8,9 @@ import {
   ChevronDown, ChevronUp, Layers, Check, ExternalLink,
   DollarSign, ShieldCheck, Tag, Info, UserCheck, Sparkles,
   Upload, Trash2, Edit2, Plus, Settings, Copy, Eye, ArrowRight,
-  FolderOpen, Calendar, MapPin, CheckSquare, X
+  FolderOpen, Calendar, MapPin, CheckSquare, X,
+  MoreVertical, SlidersHorizontal, PlusCircle, ArrowUp, ArrowDown,
+  ListOrdered
 } from 'lucide-react';
 import { Submission, SubmissionItem } from '../types';
 import { 
@@ -104,6 +106,29 @@ export function SppdAccountMapping({
   // Manual Transaction Editing Modal
   const [editingTransaction, setEditingTransaction] = useState<SppdMappedTransaction | null>(null);
   const [isEditTxModalOpen, setIsEditTxModalOpen] = useState<boolean>(false);
+
+  // Add Manual Transaction Modal
+  const [isAddTxModalOpen, setIsAddTxModalOpen] = useState<boolean>(false);
+  const [newManualTx, setNewManualTx] = useState<Partial<SppdMappedTransaction>>({
+    date: new Date().toISOString().substring(0, 10),
+    description: '',
+    amount: 0,
+    recipient: '',
+    positionKey: 'staf',
+    guidelineId: 'g1',
+    category: 'Uang Makan / Hari',
+    sppdAccountCode: '610101',
+    sppdAccountName: 'Biaya Uang Makan Dinas',
+    notes: ''
+  });
+
+  // Action Menu Dropdown State
+  const [activeActionMenuId, setActiveActionMenuId] = useState<string | null>(null);
+
+  // Move Position Modal
+  const [isMoveModalOpen, setIsMoveModalOpen] = useState<boolean>(false);
+  const [movePositionTxId, setMovePositionTxId] = useState<string | null>(null);
+  const [moveTargetIndexStr, setMoveTargetIndexStr] = useState<string>('1');
 
   // Filter & Search inside mapped transactions
   const [txSearchQuery, setTxSearchQuery] = useState<string>('');
@@ -782,6 +807,142 @@ export function SppdAccountMapping({
     doc.save(`Laporan_Pemetaan_SPPD_${reportTitle.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`);
   };
 
+  // Action Handlers for Mapped Transactions Table
+  const handleDeleteTransaction = (id: string) => {
+    setTransactions(prev => prev.filter(item => item.id !== id));
+    setActiveActionMenuId(null);
+    setSuccessMessage('Baris transaksi berhasil dihapus.');
+    setTimeout(() => setSuccessMessage(''), 3000);
+  };
+
+  const handleDuplicateTransaction = (id: string) => {
+    setTransactions(prev => {
+      const idx = prev.findIndex(t => t.id === id);
+      if (idx === -1) return prev;
+      const itemToCopy = prev[idx];
+      const duplicated: SppdMappedTransaction = {
+        ...itemToCopy,
+        id: `dup-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        description: `${itemToCopy.description} (Salinan)`
+      };
+      const next = [...prev];
+      next.splice(idx + 1, 0, duplicated);
+      return next;
+    });
+    setActiveActionMenuId(null);
+    setSuccessMessage('Baris transaksi berhasil disalin & ditambahkan ke urutan.');
+    setTimeout(() => setSuccessMessage(''), 3000);
+  };
+
+  const handleMoveTransaction = (id: string, direction: 'up' | 'down') => {
+    setTransactions(prev => {
+      const idx = prev.findIndex(t => t.id === id);
+      if (idx === -1) return prev;
+      const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+      if (targetIdx < 0 || targetIdx >= prev.length) return prev;
+      const next = [...prev];
+      const [removed] = next.splice(idx, 1);
+      next.splice(targetIdx, 0, removed);
+      return next;
+    });
+    setActiveActionMenuId(null);
+  };
+
+  const handleOpenMoveModal = (id: string) => {
+    const idx = transactions.findIndex(t => t.id === id);
+    setMovePositionTxId(id);
+    setMoveTargetIndexStr(String(idx + 1));
+    setIsMoveModalOpen(true);
+    setActiveActionMenuId(null);
+  };
+
+  const handleConfirmMovePosition = () => {
+    const targetIdx = parseInt(moveTargetIndexStr, 10) - 1;
+    if (isNaN(targetIdx) || targetIdx < 0 || targetIdx >= transactions.length || !movePositionTxId) {
+      setIsMoveModalOpen(false);
+      return;
+    }
+    setTransactions(prev => {
+      const currentIdx = prev.findIndex(t => t.id === movePositionTxId);
+      if (currentIdx === -1) return prev;
+      const next = [...prev];
+      const [removed] = next.splice(currentIdx, 1);
+      next.splice(targetIdx, 0, removed);
+      return next;
+    });
+    setIsMoveModalOpen(false);
+    setSuccessMessage(`Berhasil memindahkan baris transaksi ke urutan nomor ${targetIdx + 1}.`);
+    setTimeout(() => setSuccessMessage(''), 3000);
+  };
+
+  const handleOpenEditModal = (tx: SppdMappedTransaction) => {
+    setEditingTransaction({ ...tx });
+    setIsEditTxModalOpen(true);
+    setActiveActionMenuId(null);
+  };
+
+  const handleSaveEditedTransaction = (tx: SppdMappedTransaction) => {
+    setTransactions(prev => prev.map(item => item.id === tx.id ? tx : item));
+    setIsEditTxModalOpen(false);
+    setEditingTransaction(null);
+    setSuccessMessage('Perubahan data transaksi berhasil disimpan!');
+    setTimeout(() => setSuccessMessage(''), 3000);
+  };
+
+  const handleOpenAddModal = () => {
+    const defaultDate = transactions.length > 0 ? transactions[transactions.length - 1].date : new Date().toISOString().substring(0, 10);
+    const defaultGuide = guidelines[0] || SPPD_RATE_GUIDELINES[0];
+    setNewManualTx({
+      date: defaultDate,
+      description: '',
+      amount: 0,
+      recipient: employeeName || 'Karyawan',
+      positionKey: employeePosition || 'staf',
+      guidelineId: defaultGuide.id,
+      category: defaultGuide.item,
+      sppdAccountCode: defaultGuide.defaultCoaCode,
+      sppdAccountName: defaultGuide.defaultCoaName,
+      notes: ''
+    });
+    setIsAddTxModalOpen(true);
+  };
+
+  const handleSaveNewManualTransaction = (andAddAnother: boolean = false) => {
+    if (!newManualTx.description?.trim()) {
+      alert('Mohon isi Rincian Pengeluaran SPPD');
+      return;
+    }
+    const g = guidelines.find(guide => guide.id === newManualTx.guidelineId) || guidelines[0] || SPPD_RATE_GUIDELINES[0];
+    const newTx: SppdMappedTransaction = {
+      id: `manual-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      date: newManualTx.date || new Date().toISOString().substring(0, 10),
+      description: newManualTx.description.trim(),
+      amount: Number(newManualTx.amount) || 0,
+      recipient: newManualTx.recipient || employeeName || 'Karyawan',
+      positionKey: (newManualTx.positionKey as SppdPositionKey) || employeePosition || 'staf',
+      sppdAccountCode: g.defaultCoaCode,
+      sppdAccountName: g.defaultCoaName,
+      guidelineId: g.id,
+      category: g.item,
+      confidence: 'manual',
+      notes: newManualTx.notes || ''
+    };
+    setTransactions(prev => [...prev, newTx]);
+    setSuccessMessage(`Berhasil menambahkan data transaksi manual: "${newTx.description}"!`);
+    setTimeout(() => setSuccessMessage(''), 3000);
+
+    if (andAddAnother) {
+      setNewManualTx(prev => ({
+        ...prev,
+        description: '',
+        amount: 0,
+        notes: ''
+      }));
+    } else {
+      setIsAddTxModalOpen(false);
+    }
+  };
+
   // Filtered transactions for display
   const filteredTransactions = useMemo(() => {
     return transactions.filter(t => {
@@ -1076,6 +1237,17 @@ export function SppdAccountMapping({
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
+                id="btn-add-manual-sppd-top"
+                onClick={handleOpenAddModal}
+                className="px-3.5 py-2 bg-amber-700 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                title="Tambah Baris Transaksi Baru Secara Manual"
+              >
+                <PlusCircle size={15} />
+                <span>+ Tambah Manual</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={handlePostToSppdForm}
                 disabled={isProcessing}
                 className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
@@ -1151,7 +1323,7 @@ export function SppdAccountMapping({
               <Search size={14} className="text-stone-400" />
               <input
                 type="text"
-                placeholder="Cari rincian pengeluaran, kode COA, atau kategori..."
+                placeholder="Cari rincian pengeluaran, penerima, kode COA, atau kategori..."
                 value={txSearchQuery}
                 onChange={(e) => setTxSearchQuery(e.target.value)}
                 className="w-full bg-transparent border-none focus:outline-none text-xs font-sans text-stone-800"
@@ -1184,18 +1356,18 @@ export function SppdAccountMapping({
           </div>
 
           {/* Transactions Detailed Table */}
-          <div className="bg-white border border-stone-200 rounded-3xl overflow-hidden shadow-xs">
-            <div className="overflow-x-auto">
+          <div className="bg-white border border-stone-200 rounded-3xl overflow-visible shadow-xs">
+            <div className="overflow-x-auto rounded-t-3xl">
               <table className="w-full text-left text-xs border-collapse">
                 <thead className="bg-stone-900 text-white font-mono text-[11px] uppercase tracking-wider">
                   <tr>
                     <th className="py-3 px-3 w-12 text-center">No</th>
                     <th className="py-3 px-3 w-28">Tanggal</th>
                     <th className="py-3 px-4">Rincian Pengeluaran SPPD</th>
-                    <th className="py-3 px-3 w-36">Kategori COA SPPD</th>
+                    <th className="py-3 px-3 w-40">Kategori COA SPPD</th>
                     <th className="py-3 px-3 w-32 text-right">Nominal (Rp)</th>
-                    <th className="py-3 px-3 w-40 text-center">Status Plafon</th>
-                    <th className="py-3 px-2 w-20 text-center">Aksi</th>
+                    <th className="py-3 px-3 w-36 text-center">Status Plafon</th>
+                    <th className="py-3 px-3 w-28 text-center">Opsi Aksi</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-stone-200 font-sans">
@@ -1208,14 +1380,24 @@ export function SppdAccountMapping({
                   ) : (
                     filteredTransactions.map((t, idx) => {
                       const comp = getComplianceStatus(t);
+                      const isMenuOpen = activeActionMenuId === t.id;
+
                       return (
                         <tr key={t.id} className="hover:bg-amber-50/30 transition">
                           <td className="py-3 px-3 text-center font-mono text-stone-400">{idx + 1}</td>
                           <td className="py-3 px-3 font-mono text-stone-600">{t.date}</td>
                           <td className="py-3 px-4 font-semibold text-stone-900">
-                            <div>{t.description}</div>
+                            <div className="flex items-center gap-2">
+                              <span>{t.description}</span>
+                              {t.confidence === 'manual' && (
+                                <span className="text-[9px] font-mono px-1.5 py-0.2 bg-purple-100 text-purple-800 rounded font-bold">
+                                  Manual
+                                </span>
+                              )}
+                            </div>
                             <div className="text-[10px] text-stone-400 font-mono">
-                              Penerima: {t.recipient} ({SPPD_POSITIONS.find(p => p.key === t.positionKey)?.shortLabel || 'Staf'})
+                              Penerima: {t.recipient || employeeName || 'Karyawan'} ({SPPD_POSITIONS.find(p => p.key === t.positionKey)?.shortLabel || 'Staf'})
+                              {t.notes && <span className="ml-2 text-stone-500 italic">({t.notes})</span>}
                             </div>
                           </td>
                           <td className="py-3 px-3">
@@ -1265,17 +1447,121 @@ export function SppdAccountMapping({
                               </span>
                             )}
                           </td>
-                          <td className="py-3 px-2 text-center">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setTransactions(prev => prev.filter(item => item.id !== t.id));
-                              }}
-                              className="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
-                              title="Hapus Baris"
-                            >
-                              <Trash2 size={14} />
-                            </button>
+                          <td className="py-3 px-3 text-center">
+                            {/* ACTION BUTTON WITH POPUP DROPDOWN */}
+                            <div className="relative inline-block text-left">
+                              <button
+                                id={`btn-action-menu-${t.id}`}
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActiveActionMenuId(isMenuOpen ? null : t.id);
+                                }}
+                                className="px-2.5 py-1.5 bg-stone-100 hover:bg-amber-100 text-stone-700 hover:text-amber-900 border border-stone-200 hover:border-amber-300 rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer shadow-3xs"
+                                title="Pilihan Opsi Transaksi"
+                              >
+                                <SlidersHorizontal size={13} />
+                                <span>Opsi</span>
+                                <ChevronDown size={12} className={`transition-transform duration-150 ${isMenuOpen ? 'rotate-180' : ''}`} />
+                              </button>
+
+                              {isMenuOpen && (
+                                <>
+                                  <div 
+                                    className="fixed inset-0 z-30" 
+                                    onClick={() => setActiveActionMenuId(null)}
+                                  />
+                                  <div className="absolute right-0 mt-1.5 w-52 bg-white rounded-2xl shadow-2xl border border-stone-200 py-1.5 z-40 font-sans text-left animate-in fade-in zoom-in-95 duration-100">
+                                    <div className="px-3 py-1.5 text-[10px] font-mono font-bold text-stone-400 uppercase tracking-wider border-b border-stone-100 flex items-center justify-between">
+                                      <span>Baris #{idx + 1}</span>
+                                      <span className="text-amber-700 font-bold">SPPD</span>
+                                    </div>
+
+                                    {/* 1. Edit Data */}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenEditModal(t)}
+                                      className="w-full text-left px-3 py-2 text-xs text-stone-700 hover:bg-amber-50 hover:text-amber-900 flex items-center gap-2.5 transition cursor-pointer font-medium"
+                                    >
+                                      <Edit2 size={14} className="text-amber-600" />
+                                      <div>
+                                        <div className="font-bold">Edit Data</div>
+                                        <div className="text-[10px] text-stone-400 font-mono">Ubah rincian, nominal, atau COA</div>
+                                      </div>
+                                    </button>
+
+                                    {/* 2. Salin / Duplicate */}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDuplicateTransaction(t.id)}
+                                      className="w-full text-left px-3 py-2 text-xs text-stone-700 hover:bg-emerald-50 hover:text-emerald-900 flex items-center gap-2.5 transition cursor-pointer font-medium"
+                                    >
+                                      <Copy size={14} className="text-emerald-600" />
+                                      <div>
+                                        <div className="font-bold">Salin / Duplikasi</div>
+                                        <div className="text-[10px] text-stone-400 font-mono">Gandakan baris ini</div>
+                                      </div>
+                                    </button>
+
+                                    <div className="my-1 border-t border-stone-100" />
+
+                                    {/* 3. Pindah Urutan ke Atas */}
+                                    <button
+                                      type="button"
+                                      disabled={idx === 0}
+                                      onClick={() => handleMoveTransaction(t.id, 'up')}
+                                      className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2.5 transition font-medium ${
+                                        idx === 0 ? 'text-stone-300 cursor-not-allowed' : 'text-stone-700 hover:bg-sky-50 hover:text-sky-900 cursor-pointer'
+                                      }`}
+                                    >
+                                      <ArrowUp size={14} className={idx === 0 ? 'text-stone-300' : 'text-sky-600'} />
+                                      <span>Pindah ke Atas</span>
+                                    </button>
+
+                                    {/* 4. Pindah Urutan ke Bawah */}
+                                    <button
+                                      type="button"
+                                      disabled={idx === filteredTransactions.length - 1}
+                                      onClick={() => handleMoveTransaction(t.id, 'down')}
+                                      className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2.5 transition font-medium ${
+                                        idx === filteredTransactions.length - 1 ? 'text-stone-300 cursor-not-allowed' : 'text-stone-700 hover:bg-sky-50 hover:text-sky-900 cursor-pointer'
+                                      }`}
+                                    >
+                                      <ArrowDown size={14} className={idx === filteredTransactions.length - 1 ? 'text-stone-300' : 'text-sky-600'} />
+                                      <span>Pindah ke Bawah</span>
+                                    </button>
+
+                                    {/* 5. Pindah ke Posisi / Nomor Urut Tertentu */}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenMoveModal(t.id)}
+                                      className="w-full text-left px-3 py-2 text-xs text-stone-700 hover:bg-purple-50 hover:text-purple-900 flex items-center gap-2.5 transition cursor-pointer font-medium"
+                                    >
+                                      <ListOrdered size={14} className="text-purple-600" />
+                                      <div>
+                                        <div className="font-bold">Pindahkan Urutan...</div>
+                                        <div className="text-[10px] text-stone-400 font-mono">Ubah ke nomor baris spesifik</div>
+                                      </div>
+                                    </button>
+
+                                    <div className="my-1 border-t border-stone-100" />
+
+                                    {/* 6. Hapus */}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteTransaction(t.id)}
+                                      className="w-full text-left px-3 py-2 text-xs text-rose-600 hover:bg-rose-50 hover:text-rose-800 flex items-center gap-2.5 transition cursor-pointer font-medium"
+                                    >
+                                      <Trash2 size={14} className="text-rose-600" />
+                                      <div>
+                                        <div className="font-bold">Hapus Baris</div>
+                                        <div className="text-[10px] text-rose-400 font-mono">Hapus dari rekap</div>
+                                      </div>
+                                    </button>
+                                  </div>
+                                </>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );
@@ -1283,6 +1569,33 @@ export function SppdAccountMapping({
                   )}
                 </tbody>
               </table>
+            </div>
+
+            {/* Bottom Card: Total Summary and "Tambahkan Data Secara Manual" button */}
+            <div className="p-4 bg-stone-50 border-t border-stone-200 rounded-b-3xl flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-amber-100 text-amber-900 rounded-xl">
+                  <DollarSign size={18} />
+                </div>
+                <div>
+                  <div className="text-[11px] font-mono text-stone-500">
+                    Total Biaya Terdeteksi:
+                  </div>
+                  <div className="text-base font-black text-stone-900 font-mono">
+                    Rp {totalExpense.toLocaleString('id-ID')} <span className="text-xs font-normal text-stone-500 font-sans">({transactions.length} baris transaksi)</span>
+                  </div>
+                </div>
+              </div>
+
+              <button
+                id="btn-add-manual-sppd-bottom"
+                type="button"
+                onClick={handleOpenAddModal}
+                className="w-full sm:w-auto px-5 py-2.5 bg-amber-600 hover:bg-amber-500 active:scale-98 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-md hover:shadow-lg"
+              >
+                <PlusCircle size={16} />
+                <span>+ Tambahkan Data Secara Manual</span>
+              </button>
             </div>
           </div>
         </div>
@@ -1441,6 +1754,403 @@ export function SppdAccountMapping({
                 className="px-5 py-2 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-bold transition cursor-pointer"
               >
                 Tutup Pengaturan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5. MODAL: EDIT TRANSAKSI SPPD */}
+      {isEditTxModalOpen && editingTransaction && (
+        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className="bg-white rounded-3xl shadow-2xl border border-stone-200 max-w-lg w-full overflow-hidden font-sans">
+            <div className="p-5 border-b border-stone-200 flex items-center justify-between bg-stone-50">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-amber-600 text-white rounded-2xl shadow-xs">
+                  <Edit2 size={18} />
+                </div>
+                <div>
+                  <h3 className="font-sans font-black text-stone-900 text-base">
+                    Edit Data Transaksi SPPD
+                  </h3>
+                  <p className="text-stone-500 text-xs font-mono">
+                    Perbarui rincian pengeluaran, akun COA, atau nominal
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsEditTxModalOpen(false)}
+                className="p-2 text-stone-400 hover:text-stone-700 hover:bg-stone-200 rounded-xl transition cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 max-h-[75vh] overflow-y-auto text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-mono font-bold text-stone-700 uppercase mb-1">
+                    Tanggal Transaksi
+                  </label>
+                  <input
+                    type="date"
+                    value={editingTransaction.date}
+                    onChange={(e) => setEditingTransaction({ ...editingTransaction, date: e.target.value })}
+                    className="w-full font-mono p-2.5 border border-stone-300 rounded-xl focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-mono font-bold text-stone-700 uppercase mb-1">
+                    Nominal Biaya (Rp)
+                  </label>
+                  <input
+                    type="number"
+                    value={editingTransaction.amount}
+                    onChange={(e) => setEditingTransaction({ ...editingTransaction, amount: parseFloat(e.target.value) || 0 })}
+                    className="w-full font-mono font-bold text-stone-900 p-2.5 border border-stone-300 rounded-xl focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-mono font-bold text-stone-700 uppercase mb-1">
+                  Rincian Pengeluaran SPPD
+                </label>
+                <textarea
+                  rows={2}
+                  value={editingTransaction.description}
+                  onChange={(e) => setEditingTransaction({ ...editingTransaction, description: e.target.value })}
+                  placeholder="Contoh: Tiket Pesawat Citilink Jakarta - Kendari PP"
+                  className="w-full p-2.5 border border-stone-300 rounded-xl focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-mono font-bold text-stone-700 uppercase mb-1">
+                  Kategori Akun COA Pedoman
+                </label>
+                <select
+                  value={editingTransaction.guidelineId}
+                  onChange={(e) => {
+                    const g = guidelines.find(guide => guide.id === e.target.value);
+                    if (!g) return;
+                    setEditingTransaction({
+                      ...editingTransaction,
+                      guidelineId: g.id,
+                      category: g.item,
+                      sppdAccountCode: g.defaultCoaCode,
+                      sppdAccountName: g.defaultCoaName,
+                      confidence: 'manual'
+                    });
+                  }}
+                  className="w-full font-mono font-bold p-2.5 border border-stone-300 rounded-xl focus:outline-none focus:border-amber-500 bg-amber-50/50"
+                >
+                  {guidelines.map(g => (
+                    <option key={g.id} value={g.id}>
+                      [{g.defaultCoaCode}] {g.item}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-mono font-bold text-stone-700 uppercase mb-1">
+                    Nama Karyawan / Penerima
+                  </label>
+                  <input
+                    type="text"
+                    value={editingTransaction.recipient}
+                    onChange={(e) => setEditingTransaction({ ...editingTransaction, recipient: e.target.value })}
+                    className="w-full p-2.5 border border-stone-300 rounded-xl focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-mono font-bold text-stone-700 uppercase mb-1">
+                    Jabatan (Plafon)
+                  </label>
+                  <select
+                    value={editingTransaction.positionKey}
+                    onChange={(e) => setEditingTransaction({ ...editingTransaction, positionKey: e.target.value as SppdPositionKey })}
+                    className="w-full p-2.5 border border-stone-300 rounded-xl focus:outline-none focus:border-amber-500"
+                  >
+                    {SPPD_POSITIONS.map(pos => (
+                      <option key={pos.key} value={pos.key}>
+                        {pos.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-mono font-bold text-stone-700 uppercase mb-1">
+                  Catatan Tambahan (Opsional)
+                </label>
+                <input
+                  type="text"
+                  value={editingTransaction.notes || ''}
+                  onChange={(e) => setEditingTransaction({ ...editingTransaction, notes: e.target.value })}
+                  placeholder="Contoh: Lampiran kwitansi hotel asli ada di amplop"
+                  className="w-full p-2.5 border border-stone-300 rounded-xl focus:outline-none focus:border-amber-500"
+                />
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-stone-200 bg-stone-50 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsEditTxModalOpen(false)}
+                className="px-4 py-2 bg-stone-200 hover:bg-stone-300 text-stone-700 rounded-xl text-xs font-bold transition cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSaveEditedTransaction(editingTransaction)}
+                className="px-5 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-bold transition cursor-pointer shadow-xs"
+              >
+                Simpan Perubahan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 6. MODAL: TAMBAH TRANSAKSI SECARA MANUAL */}
+      {isAddTxModalOpen && (
+        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className="bg-white rounded-3xl shadow-2xl border border-stone-200 max-w-lg w-full overflow-hidden font-sans">
+            <div className="p-5 border-b border-stone-200 flex items-center justify-between bg-stone-50">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-amber-600 text-white rounded-2xl shadow-xs">
+                  <PlusCircle size={20} />
+                </div>
+                <div>
+                  <h3 className="font-sans font-black text-stone-900 text-base">
+                    Tambah Data Transaksi SPPD Manual
+                  </h3>
+                  <p className="text-stone-500 text-xs font-mono">
+                    Input rincian transaksi baru yang belum terdeteksi dokumen
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAddTxModalOpen(false)}
+                className="p-2 text-stone-400 hover:text-stone-700 hover:bg-stone-200 rounded-xl transition cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 max-h-[75vh] overflow-y-auto text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-mono font-bold text-stone-700 uppercase mb-1">
+                    Tanggal Transaksi <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="date"
+                    value={newManualTx.date}
+                    onChange={(e) => setNewManualTx({ ...newManualTx, date: e.target.value })}
+                    className="w-full font-mono p-2.5 border border-stone-300 rounded-xl focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-mono font-bold text-stone-700 uppercase mb-1">
+                    Nominal Biaya (Rp) <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    value={newManualTx.amount || ''}
+                    placeholder="0"
+                    onChange={(e) => setNewManualTx({ ...newManualTx, amount: parseFloat(e.target.value) || 0 })}
+                    className="w-full font-mono font-bold text-stone-900 p-2.5 border border-stone-300 rounded-xl focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-mono font-bold text-stone-700 uppercase mb-1">
+                  Rincian Pengeluaran SPPD <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  rows={2}
+                  value={newManualTx.description}
+                  onChange={(e) => setNewManualTx({ ...newManualTx, description: e.target.value })}
+                  placeholder="Contoh: Biaya Makan Siang & Malam Tim Proyek di Site 2 Hari"
+                  className="w-full p-2.5 border border-stone-300 rounded-xl focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-mono font-bold text-stone-700 uppercase mb-1">
+                  Kategori Akun COA Pedoman <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  value={newManualTx.guidelineId}
+                  onChange={(e) => {
+                    const g = guidelines.find(guide => guide.id === e.target.value);
+                    if (!g) return;
+                    setNewManualTx({
+                      ...newManualTx,
+                      guidelineId: g.id,
+                      category: g.item,
+                      sppdAccountCode: g.defaultCoaCode,
+                      sppdAccountName: g.defaultCoaName
+                    });
+                  }}
+                  className="w-full font-mono font-bold p-2.5 border border-stone-300 rounded-xl focus:outline-none focus:border-amber-500 bg-amber-50/50"
+                >
+                  {guidelines.map(g => (
+                    <option key={g.id} value={g.id}>
+                      [{g.defaultCoaCode}] {g.item}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-mono font-bold text-stone-700 uppercase mb-1">
+                    Nama Karyawan
+                  </label>
+                  <input
+                    type="text"
+                    value={newManualTx.recipient}
+                    onChange={(e) => setNewManualTx({ ...newManualTx, recipient: e.target.value })}
+                    placeholder="Nama penerima..."
+                    className="w-full p-2.5 border border-stone-300 rounded-xl focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-mono font-bold text-stone-700 uppercase mb-1">
+                    Jabatan (Plafon)
+                  </label>
+                  <select
+                    value={newManualTx.positionKey}
+                    onChange={(e) => setNewManualTx({ ...newManualTx, positionKey: e.target.value as SppdPositionKey })}
+                    className="w-full p-2.5 border border-stone-300 rounded-xl focus:outline-none focus:border-amber-500"
+                  >
+                    {SPPD_POSITIONS.map(pos => (
+                      <option key={pos.key} value={pos.key}>
+                        {pos.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-mono font-bold text-stone-700 uppercase mb-1">
+                  Catatan / Keterangan Tambahan
+                </label>
+                <input
+                  type="text"
+                  value={newManualTx.notes || ''}
+                  onChange={(e) => setNewManualTx({ ...newManualTx, notes: e.target.value })}
+                  placeholder="Opsional, keterangan pendukung"
+                  className="w-full p-2.5 border border-stone-300 rounded-xl focus:outline-none focus:border-amber-500"
+                />
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-stone-200 bg-stone-50 flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => setIsAddTxModalOpen(false)}
+                className="px-4 py-2 bg-stone-200 hover:bg-stone-300 text-stone-700 rounded-xl text-xs font-bold transition cursor-pointer"
+              >
+                Batal
+              </button>
+              
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleSaveNewManualTransaction(true)}
+                  className="px-4 py-2 bg-stone-100 hover:bg-stone-200 text-stone-800 border border-stone-300 rounded-xl text-xs font-bold transition cursor-pointer"
+                >
+                  Simpan & Tambah Lagi
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSaveNewManualTransaction(false)}
+                  className="px-5 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-bold transition cursor-pointer shadow-xs"
+                >
+                  Simpan Transaksi
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 7. MODAL: PINDAHKAN URUTAN BARIS */}
+      {isMoveModalOpen && movePositionTxId && (
+        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className="bg-white rounded-3xl shadow-2xl border border-stone-200 max-w-sm w-full overflow-hidden font-sans">
+            <div className="p-5 border-b border-stone-200 flex items-center justify-between bg-stone-50">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-purple-600 text-white rounded-2xl shadow-xs">
+                  <ListOrdered size={18} />
+                </div>
+                <div>
+                  <h3 className="font-sans font-black text-stone-900 text-base">
+                    Pindahkan Urutan Baris
+                  </h3>
+                  <p className="text-stone-500 text-xs font-mono">
+                    Total {transactions.length} baris transaksi
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsMoveModalOpen(false)}
+                className="p-2 text-stone-400 hover:text-stone-700 hover:bg-stone-200 rounded-xl transition cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 text-xs">
+              <div>
+                <label className="block text-[11px] font-mono font-bold text-stone-700 uppercase mb-1">
+                  Pindahkan ke Nomor Urut (1 s/d {transactions.length})
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max={transactions.length}
+                  value={moveTargetIndexStr}
+                  onChange={(e) => setMoveTargetIndexStr(e.target.value)}
+                  className="w-full font-mono font-black text-lg p-2.5 border border-stone-300 rounded-xl text-center focus:outline-none focus:border-purple-500"
+                />
+              </div>
+              <p className="text-[11px] text-stone-500 font-sans text-center">
+                Baris transaksi yang dipilih akan digeser ke posisi urutan baru tersebut.
+              </p>
+            </div>
+
+            <div className="p-4 border-t border-stone-200 bg-stone-50 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsMoveModalOpen(false)}
+                className="px-4 py-2 bg-stone-200 hover:bg-stone-300 text-stone-700 rounded-xl text-xs font-bold transition cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmMovePosition}
+                className="px-5 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-bold transition cursor-pointer shadow-xs"
+              >
+                Terapkan Posisi
               </button>
             </div>
           </div>

@@ -216,8 +216,14 @@ app.post("/api/gemini/parse-sppd", async (req, res) => {
 - Kode 610108: Sewa Mobil/Hari (Standar Avanza/Innova) + Sopir + BBM
 - Kode 610109: Sewa Mobil/Hari (Double Cabin / Hilux / Triton) + Sopir + BBM`;
 
-    const promptText = `Anda adalah Auditor Keuangan & Verifikator SPPD (Surat Perintah Perjalanan Dinas) PT Nusantara Mineral Sukses Abadi.
-Tugas Anda adalah membaca, menganalisis, dan mengekstrak SELURUH bukti pengeluaran SPPD (Tiket Pesawat/Kereta, Hotel/Penginapan, Bukti Taksi/Grab/Gojek, Tol, Sewa Kendaraan, Klaim Uang Makan & Uang Saku) ini dengan TINGKAT AKURASI TERTINGGI.
+    const promptText = `Anda adalah Auditor Keuangan Senior & Verifikator Akuntansi SPPD (Surat Perintah Perjalanan Dinas) PT Nusantara Mineral Sukses Abadi.
+Tugas Anda adalah membaca, memindai, dan mengekstrak SETIAP dan SELURUH bukti pengeluaran SPPD (Tiket Pesawat/Kereta, Hotel/Penginapan, Bukti Taksi/Grab/Gojek, Tol, Sewa Kendaraan, Uang Makan Harian, Klaim Uang Saku, BBM, Parkir, Airport Tax) dari SEMUA halaman dokumen ini tanpa ada satu baris pun yang terlewatkan.
+
+PENTING - AKURASI PERHITUNGAN & KELENGKAPAN DATA:
+- Pastikan tidak ada transaksi yang terlewat atau tertinggal, baik di halaman awal, tengah, maupun akhir.
+- Jika ada perkalian volume x tarif (misal: "Uang Saku @ Rp 250.000 x 22 Hari = Rp 5.500.000" atau "Hotel 3 Malam @ Rp 750.000 = Rp 2.250.000"), masukkan total nominal baris tersebut ke 'amount' (contoh: 5500000 atau 2250000) dan tuliskan rincian volume di 'description'.
+- Jangan masukkan baris "Sub Total" atau "Total Keseluruhan" sebagai baris transaksi terpisah, tetapi pastikan 'totalExpense' sama persis dengan total penjumlahan dari seluruh 'transactions[].amount'.
+- Pastikan angka 'amount' bersih tanpa desimal/koma/titik desimal yang keliru, dan sesuai dengan mata uang Rupiah penuh.
 
 ${employeeName ? `Nama Karyawan / Penerima yang bertugas: ${employeeName}\n` : ''}
 ${position ? `Jabatan Karyawan: ${position}\n` : ''}
@@ -226,15 +232,15 @@ ${rawText ? `\nBerikut teks mentah dokumen SPPD:\n${rawText}\n` : ''}
 Daftar 9 Akun COA SPPD Resmi berdasarkan Pedoman Harga Acuan:
 ${coaPromptList}
 
-PANDUAN EKSTRAKSI DATA SPPD:
+PANDUAN PEMETAAN AKUN SPPD:
 1. DETEKSI INFORMASI KUNCI:
    - Nama Pegawai / Penumpang (Passenger Name)
-   - Rute Perjalanan (Kota Asal - Kota Tujuan, misal Jakarta - Makassar)
+   - Rute Perjalanan (Kota Asal - Kota Tujuan, misal Jakarta - Makassar / Pomalaa / Kendari)
    - Tanggal Perjalanan / Keberangkatan (Format YYYY-MM-DD)
    - Volume / Durasi (misal: "2 Malam", "3 Hari", "1 Tiket PP")
 2. DETEKSI VOLUME VS HARGA SATUAN:
-   - Jika hotel 3 malam @ Rp 750.000, sertakan di 'description': "Hotel Santika Makassar (3 Malam @ Rp 750.000)" dan 'amount': 2250000.
-   - 'amount' harus selalu berupa angka integer Rupiah total pengeluaran pos tersebut.
+   - 'description': Sertakan rincian lengkap seperti nama maskapai, rute, nama hotel, jumlah hari/malam, harga satuan jika ada.
+   - 'amount': Harus selalu berupa angka integer Rupiah total pengeluaran pos tersebut.
 3. KATEGORISASI KE 9 AKUN RESMI:
    - Petakan secara tepat ke salah satu dari 9 Kode Akun SPPD (610101 s/d 610109) berdasarkan jenis pengeluarannya.
 
@@ -244,7 +250,7 @@ KEMBALIKAN HANYA FORMAT JSON VALID:
   "employeeName": "${employeeName || ''}",
   "destination": "Kota Tujuan / Lokasi Dinas",
   "period": "YYYY-MM",
-  "totalExpense": 12345000,
+  "totalExpense": 28403800,
   "transactions": [
     {
       "date": "YYYY-MM-DD",
