@@ -770,29 +770,60 @@ export async function mergeFilesToSinglePdf(files: File[]): Promise<{ bytes: Uin
 
 /**
  * Unified helper to check if a submission is Petty Cash across ALL menus & views.
- * Ensures 100% synchronization between Voucher HO, Accurate Mapping, Workspace Reports, and Dashboard.
+ * Strictly checks that the submission contains "Petty Cash" or "Kas Kecil" in:
+ * - jenisPengajuan (e.g. "Petty Cash", "Pengisian Petty Cash Lapangan", "Kas Kecil")
+ * - items description (item name / keterangan)
+ * - notes / deskripsi pengeluaran
+ * - transaction code (kode) specifically for Petty Cash
  */
 export function isPettyCashSubmission(sub: any): boolean {
   if (!sub) return false;
-  if (sub.isPettyCash === true) return true;
+
+  // 1. Check Jenis Pengajuan
   const jenis = (sub.jenisPengajuan || sub.jenis || '').toLowerCase();
-  if (jenis.includes('petty cash') || jenis.includes('kas kecil') || jenis.includes('pettycash')) return true;
-  const notes = (sub.notes || '').toLowerCase();
-  if (notes.includes('petty cash') || notes.includes('kas kecil') || notes.includes('pettycash')) return true;
-  if (sub.pettyCashCustodian && typeof sub.pettyCashCustodian === 'string' && sub.pettyCashCustodian.trim().length > 0) return true;
-  if (sub.pettyCashFile?.url) return true;
-  const kode = (sub.kode || '').toLowerCase();
-  if (kode.includes('/pc/') || kode.includes('-pc-') || kode.endsWith('/pc') || kode.startsWith('pc-') || kode.includes('bkk-pc')) return true;
-  // Also check items description / keterangan
+  if (jenis.includes('petty cash') || jenis.includes('kas kecil') || jenis.includes('pettycash')) {
+    return true;
+  }
+
+  // 2. Check general notes / deskripsi pengeluaran
+  const notes = (sub.notes || sub.deskripsi || sub.keterangan || '').toLowerCase();
+  if (notes.includes('petty cash') || notes.includes('kas kecil') || notes.includes('pettycash')) {
+    return true;
+  }
+
+  // 3. Check items description / keterangan (isi deskripsi pengeluaran per item)
   if (sub.items && Array.isArray(sub.items)) {
     const hasPcItem = sub.items.some((i: any) => {
-      const itemDesc = (i.item || '').toLowerCase();
+      const itemDesc = (i.item || i.namaItem || i.uraian || '').toLowerCase();
       const itemKet = (i.keterangan || '').toLowerCase();
       return itemDesc.includes('petty cash') || itemDesc.includes('kas kecil') || itemDesc.includes('pettycash') ||
              itemKet.includes('petty cash') || itemKet.includes('kas kecil') || itemKet.includes('pettycash');
     });
     if (hasPcItem) return true;
   }
+
+  // 4. Check specific Petty Cash voucher codes
+  const kode = (sub.kode || '').toLowerCase();
+  if (
+    kode.includes('/pc/') || 
+    kode.includes('-pc-') || 
+    kode.endsWith('/pc') || 
+    kode.startsWith('pc-') || 
+    kode.includes('bkk-pc') ||
+    kode.includes('petty-cash') ||
+    kode.includes('pettycash')
+  ) {
+    return true;
+  }
+
+  // 5. Check if dedicated Petty Cash file is attached with explicit petty cash naming
+  if (sub.pettyCashFile?.name) {
+    const fileName = sub.pettyCashFile.name.toLowerCase();
+    if (fileName.includes('petty') || fileName.includes('kas kecil')) {
+      return true;
+    }
+  }
+
   return false;
 }
 
@@ -802,23 +833,26 @@ export function isPettyCashSubmission(sub: any): boolean {
  */
 export function isSppdSubmission(sub: any): boolean {
   if (!sub) return false;
-  if (sub.isSppd === true) return true;
+  
   const jenis = (sub.jenisPengajuan || sub.jenis || '').toLowerCase();
-  if (jenis.includes('sppd') || jenis.includes('perjalanan dinas') || jenis.includes('biaya dinas') || jenis.includes('dinas')) return true;
-  const notes = (sub.notes || '').toLowerCase();
-  if (notes.includes('sppd') || notes.includes('perjalanan dinas') || notes.includes('surat perintah tugas') || notes.includes('dinas')) return true;
+  if (jenis.includes('sppd') || jenis.includes('perjalanan dinas') || jenis.includes('biaya dinas') || jenis.includes('dinas luar') || jenis.includes('tugas dinas')) return true;
+  
+  const notes = (sub.notes || sub.deskripsi || sub.keterangan || '').toLowerCase();
+  if (notes.includes('sppd') || notes.includes('perjalanan dinas') || notes.includes('surat perintah tugas') || notes.includes('dinas luar') || notes.includes('biaya dinas')) return true;
+  
   const kode = (sub.kode || '').toLowerCase();
-  if (kode.includes('/sppd') || kode.includes('-sppd') || kode.includes('sppd-') || kode.includes('bkk-sppd')) return true;
+  if (kode.includes('/sppd') || kode.includes('-sppd') || kode.includes('sppd-') || kode.includes('bkk-sppd') || kode.includes('perjalanan-dinas')) return true;
+  
   if (sub.sppdNumber || sub.noSppd || sub.sppdData) return true;
+  
   // Also check items description / keterangan
   if (sub.items && Array.isArray(sub.items)) {
     const hasSppdItem = sub.items.some((i: any) => {
-      const itemDesc = (i.item || '').toLowerCase();
+      const itemDesc = (i.item || i.namaItem || i.uraian || '').toLowerCase();
       const itemKet = (i.keterangan || '').toLowerCase();
-      return itemDesc.includes('sppd') || itemDesc.includes('perjalanan dinas') || itemDesc.includes('uang makan') || 
-             itemDesc.includes('uang saku') || itemDesc.includes('tiket pesawat') || itemDesc.includes('tiket kereta') || 
-             itemDesc.includes('hotel') || itemDesc.includes('sewa mobil') || itemDesc.includes('dinas') ||
-             itemKet.includes('sppd') || itemKet.includes('perjalanan dinas') || itemKet.includes('dinas');
+      return itemDesc.includes('sppd') || itemDesc.includes('perjalanan dinas') || itemDesc.includes('uang makan dinas') || 
+             itemDesc.includes('uang saku dinas') || itemDesc.includes('tiket dinas') || 
+             itemKet.includes('sppd') || itemKet.includes('perjalanan dinas') || itemKet.includes('biaya dinas');
     });
     if (hasSppdItem) return true;
   }
