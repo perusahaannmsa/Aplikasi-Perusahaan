@@ -1005,19 +1005,8 @@ export const ensureValidDriveToken = async (): Promise<string | null> => {
     if (token) return token;
   } catch (e) {}
 
-  // If we reach here, it means tokens are expired or missing. Try to auto-refresh the last active account.
-  const lastEmail = localStorage.getItem('NUSANTARA_LAST_ACTIVE_EMAIL');
-  if (lastEmail) {
-    try {
-      console.log('🔄 Auto-refreshing Google Drive token in the background for:', lastEmail);
-      const result = await googleDriveLogin(lastEmail, false);
-      return result.accessToken;
-    } catch (err) {
-      console.warn('⚠️ Background auto-refresh attempt notice:', err);
-    }
-  }
-  
-  // Return whatever fallback token exists if any
+  // If we reach here, it means tokens are expired or missing. Return null or existing fallback token.
+  // Note: We do NOT trigger signInWithPopup automatically in the background because browsers block popups without direct user gesture.
   return googleDriveTokenMemory || localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
 };
 
@@ -1238,6 +1227,10 @@ export const googleDriveLogin = async (
 
     return { user: result.user, accessToken: credential.accessToken, driveDetails };
   } catch (error: any) {
+    if (error?.code === 'auth/popup-blocked' || String(error?.message).includes('popup-blocked')) {
+      console.warn('Google Auth popup was blocked by browser. User interaction required.');
+      throw new Error('Jendela pop-up login Google diblokir oleh browser. Silakan izinkan pop-up (Pop-ups Allowed) di pengaturan browser Anda lalu klik Hubungkan Akun kembali.');
+    }
     console.error('Error Google Drive connection:', error);
     throw error;
   }

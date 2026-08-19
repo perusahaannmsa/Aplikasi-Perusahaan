@@ -1011,8 +1011,11 @@ export function AbsensiHarianNmsa({
     let active = true;
     const checkWaStatus = async () => {
       try {
-        const res = await fetch("/api/wa/status");
-        if (res.ok && active) {
+        const res = await fetch("/api/wa/status", {
+          headers: { Accept: "application/json" }
+        });
+        const contentType = res.headers.get("content-type");
+        if (res.ok && active && contentType && contentType.includes("application/json")) {
           const data = await res.json();
           setWaBotStatus(data.status);
           setWaBotQr(data.qr);
@@ -1033,7 +1036,7 @@ export function AbsensiHarianNmsa({
           }
         }
       } catch (err) {
-        console.error("Error fetching WhatsApp status:", err);
+        // Silently capture network/parsing transitions
       }
     };
     
