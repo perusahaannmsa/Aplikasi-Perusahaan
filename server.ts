@@ -82,41 +82,53 @@ app.post("/api/gemini/parse-petty-cash", async (req, res) => {
     }
 
     const coaPromptList = accounts && Array.isArray(accounts)
-      ? accounts.map((a: any) => `- Kode ${a.code}: ${a.name} (Kategori: ${a.category || 'Biaya'})`).join('\n')
+      ? accounts.map((a: any) => `- Kode ${a.code}: ${a.name} (Kategori: ${a.category || 'Biaya'}${a.keywords ? `, Kata kunci: ${a.keywords.join(', ')}` : ''})`).join('\n')
       : `
-- Kode 5-1100: Biaya Bahan Bakar Minyak (BBM, Solar, Pertamax)
-- Kode 5-1200: Biaya Perjalanan Dinas & SPPD (Hotel, Tiket, Makan Dinas)
-- Kode 5-1300: Biaya Konsumsi, Dapur & Entertainment
-- Kode 5-1400: Biaya Alat Tulis Kantor (ATK) & Fotocopy
-- Kode 5-1500: Biaya Pemeliharaan & Service Kendaraan / Peralatan
-- Kode 5-1600: Biaya Parkir, Tol, Retribusi & Kurir
-- Kode 5-1700: Biaya Listrik, Air, Telepon & Internet
-- Kode 5-1800: Biaya Keamanan & Kebersihan Site
-- Kode 5-1900: Biaya Operasional Lain-lain
+- Kode 5-1100: Biaya Bahan Bakar Minyak (BBM, Solar, Pertamax, Pertalite, Dex)
+- Kode 5-1200: Biaya Perjalanan Dinas & SPPD (Hotel, Tiket, Makan Dinas, Transport)
+- Kode 5-1300: Biaya Konsumsi, Dapur & Entertainment (Makan pekerja, air minum galon, snack, konsumsi rapat, sembako)
+- Kode 5-1400: Biaya Alat Tulis Kantor (ATK) & Fotocopy (Kertas, pulpen, cetak spanduk, fotokopi nota, materai)
+- Kode 5-1500: Biaya Pemeliharaan & Service Kendaraan / Peralatan (Oli, sparepart, tambal ban, cuci mobil, perbaikan genset/alat)
+- Kode 5-1600: Biaya Parkir, Tol, Retribusi & Kurir (Tiket parkir, tol jalan, pos/ongkir JNE, biaya admin pelabuhan)
+- Kode 5-1700: Biaya Listrik, Air, Telepon & Internet (Pulsa, token PLN, paket data site, iuran PDAM)
+- Kode 5-1800: Biaya Keamanan & Kebersihan Site (Iuran lingkungan, ronda, alat kebersihan, sabun/karbol)
+- Kode 5-1900: Biaya Operasional Lain-lain (Pembelian material kecil, perlengkapan darurat lapangan)
 - Kode 1-1102: Kas Kecil / Petty Cash`;
 
-    const promptText = `Anda adalah ahli Accounting & Sistem Accurate ERP.
-Tugas Anda adalah membaca dokumen/teks Berkas Laporan Pertanggungjawaban (LPJ) Petty Cash Lapangan ini dengan SANGAT PRESISI dan AKURAT tanpa ada transaksi yang terlewat.
-${rawText ? `\nBerikut teks dokumen:\n${rawText}\n` : ''}
+    const promptText = `Anda adalah seorang Senior Auditor Keuangan & Akuntan Ahli Sistem Accurate ERP PT Nusantara Mineral Sukses Abadi.
+Tugas Anda adalah membaca, melakukan OCR, menganalisis, dan mengekstrak SELURUH data rincian transaksi pengeluaran dari berkas Laporan Pertanggungjawaban (LPJ) Petty Cash Lapangan / Kwitansi / Nota Bon / Bukti Belanja ini dengan TINGKAT AKURASI TERTINGGI (100% presisi tanpa ada yang terlewat atau tertukar).
+${rawText ? `\nBerikut teks mentah dokumen:\n${rawText}\n` : ''}
 
-Daftar Kode Akun Accurate yang tersedia:
+Daftar Kode Akun Accurate Resmi yang tersedia:
 ${coaPromptList}
 
-Petunjuk Ekstraksi:
-1. Ekstrak setiap baris rincian pengeluaran / transaksi petty cash lapangan (nota, kwitansi, belanja material, konsumsi, bbm, dll).
-2. Tentukan Tanggal (format YYYY-MM-DD atau DD/MM/YYYY), Keterangan/Deskripsi Rincian, Nominal Jumlah (dalam Rupiah angka saja), Penerima/Worker jika ada.
-3. Petakan (map) setiap transaksi ke salah satu Kode Akun Accurate terbaik yang paling relevan dari daftar di atas.
-4. Kembalikan JSON valid dengan struktur:
+PANDUAN EKSTRAKSI DATA:
+1. DETEKSI VOLUME VS HARGA:
+   - Jika suatu baris memiliki Qty/Volume (misal 5 Liter, 3 Pcs, 2 Hari) dan Harga Satuan (misal @ Rp 15.000), pastikan:
+     * 'description': mencantumkan rincian barang serta volume dan harga satuan secara jelas (misal: "BBM Solar 20 Liter @ Rp 15.000").
+     * 'amount': adalah TOTAL NOMINAL AKHIR (Rp 300.000), bukan harga satuan per unit.
+   - Bersihkan seluruh simbol mata uang (Rp, titik pemisah ribuan) menjadi nilai numerik murni.
+2. TANGGAL & PENERIMA:
+   - Ekstrak tanggal transaksi dalam format standar YYYY-MM-DD. Jika tanggal hanya tertera DD/MM/YYYY atau bulan teks (misal: "15 Agustus 2026"), konversikan ke "2026-08-15".
+   - Ekstrak nama toko, penjual, atau penerima dana (Recipient/Worker/Vendor) jika tertera pada nota/kwitansi/tabel.
+3. KATEGORISASI COA ACCURATE:
+   - Petakan setiap transaksi ke Kode Akun Accurate yang PALING COCOK dari daftar di atas berdasarkan nama barang/jasa dan kata kuncinya.
+   - Sertakan nama akun dan kode akun secara tepat.
+4. ABAIKAN BARIS BUKAN PENGELUARAN:
+   - Jangan masukkan baris header, baris saldo awal (pemasukan/kas masuk), baris subtotal, atau baris total akhir sebagai item transaksi tersendiri.
+
+KEMBALIKAN HANYA FORMAT JSON VALID DENGAN SKEMA:
 {
-  "reportTitle": "Judul Laporan / Pemegang Petty Cash",
-  "period": "Bulan/Tahun Periode",
+  "reportTitle": "Judul Laporan / Pemegang Petty Cash / Lokasi",
+  "period": "YYYY-MM",
   "totalExpense": 12345000,
+  "custodianName": "Nama Pemegang Kas / Penanggung Jawab",
   "transactions": [
     {
-      "date": "2026-08-10",
-      "description": "Pembelian Pertamax Dex Mobil Operasional",
+      "date": "YYYY-MM-DD",
+      "description": "Rincian pengeluaran lengkap (termasuk qty/satuan)",
       "amount": 350000,
-      "recipient": "Suryo",
+      "recipient": "Nama Toko / Penerima",
       "accurateAccountCode": "5-1100",
       "accurateAccountName": "Biaya Bahan Bakar Minyak",
       "confidence": "high"
@@ -127,10 +139,10 @@ Petunjuk Ekstraksi:
     contents.push({ text: promptText });
 
     const modelsToTry = [
+      "gemini-2.5-pro",
       "gemini-2.5-flash",
-      "gemini-flash-latest",
       "gemini-3.1-flash-lite",
-      "gemini-3.5-flash"
+      "gemini-flash-latest"
     ];
 
     let response: any = null;
@@ -192,34 +204,41 @@ app.post("/api/gemini/parse-sppd", async (req, res) => {
     }
 
     const coaPromptList = accounts && Array.isArray(accounts)
-      ? accounts.map((a: any) => `- Kode ${a.defaultCoaCode || a.code}: ${a.item || a.name} (Keywords: ${(a.keywords || []).join(', ')})`).join('\n')
+      ? accounts.map((a: any) => `- Kode ${a.defaultCoaCode || a.code}: ${a.item || a.name} (Kata kunci: ${(a.keywords || []).join(', ')})`).join('\n')
       : `
-- Kode 610101: Uang Makan / Hari (Makan, konsumsi dinas, meal)
-- Kode 610102: Uang Saku (Saku, lumpsum, uang harian)
-- Kode 610103: Transport Jkt - Bandara/Stasiun (1x) (Taksi bandara, grab bandara, tol)
-- Kode 610104: Transport Bandara - Hotel (Antar jemput bandara hotel)
-- Kode 610105: Tiket Pesawat (Garuda, Lion, Batik, Citilink, Flight)
-- Kode 610106: Tiket Kereta Api (KAI, Argo, Whoosh, Kereta Cepat)
-- Kode 610107: Hotel / Hari (Penginapan, hotel kamar, lodging)
-- Kode 610108: Sewa Mobil/Hari (Standar Avanza) + Sopir + BBM (Rental Avanza/Innova)
-- Kode 610109: Sewa Mobil/Hari (Double Cabin) + Sopir + BBM (Rental Double Cabin / Hilux / Triton)`;
+- Kode 610101: Uang Makan / Hari (Makan, konsumsi dinas, sarapan/siang/malam dinas)
+- Kode 610102: Uang Saku (Uang saku harian, lumpsum saku dinas)
+- Kode 610103: Transport Jkt - Bandara/Stasiun (1x) (Taksi ke bandara, travel Soetta/Halim, tol bandara)
+- Kode 610104: Transport Bandara - Hotel (Antar jemput bandara lokal ke hotel/site dinas)
+- Kode 610105: Tiket Pesawat (E-ticket Garuda, Batik, Lion, Citilink, Super Air Jet, AirAsia)
+- Kode 610106: Tiket Kereta Api (KAI, Argo, Whoosh Kereta Cepat)
+- Kode 610107: Hotel / Hari (Kamar penginapan, hotel folio, billing statement)
+- Kode 610108: Sewa Mobil/Hari (Standar Avanza/Innova) + Sopir + BBM
+- Kode 610109: Sewa Mobil/Hari (Double Cabin / Hilux / Triton) + Sopir + BBM`;
 
-    const promptText = `Anda adalah ahli Accounting dan Verifikator Dokumen SPPD (Surat Perintah Perjalanan Dinas) PT Nusantara Mineral Sukses Abadi.
-Tugas Anda adalah membaca dokumen bukti pengeluaran / LPJ / tiket / faktur perjalanan dinas SPPD ini secara SANGAT TELITI dan PRESISI.
-HANYA ekstrak pos-pos transaksi pengeluaran yang terkait perjalanan dinas / SPPD.
+    const promptText = `Anda adalah Auditor Keuangan & Verifikator SPPD (Surat Perintah Perjalanan Dinas) PT Nusantara Mineral Sukses Abadi.
+Tugas Anda adalah membaca, menganalisis, dan mengekstrak SELURUH bukti pengeluaran SPPD (Tiket Pesawat/Kereta, Hotel/Penginapan, Bukti Taksi/Grab/Gojek, Tol, Sewa Kendaraan, Klaim Uang Makan & Uang Saku) ini dengan TINGKAT AKURASI TERTINGGI.
 
-${employeeName ? `Nama Karyawan / Penerima: ${employeeName}\n` : ''}
+${employeeName ? `Nama Karyawan / Penerima yang bertugas: ${employeeName}\n` : ''}
 ${position ? `Jabatan Karyawan: ${position}\n` : ''}
-${rawText ? `\nBerikut teks dokumen:\n${rawText}\n` : ''}
+${rawText ? `\nBerikut teks mentah dokumen SPPD:\n${rawText}\n` : ''}
 
 Daftar 9 Akun COA SPPD Resmi berdasarkan Pedoman Harga Acuan:
 ${coaPromptList}
 
-Petunjuk Ekstraksi:
-1. Ekstrak setiap baris rincian bukti transaksi pengeluaran SPPD (Tiket, Hotel, Uang Makan, Uang Saku, Transport Bandara/Stasiun, Sewa Mobil).
-2. Tentukan Tanggal (YYYY-MM-DD), Keterangan/Deskripsi Rincian Pengeluaran, Nominal (Rupiah angka saja), Penerima / Nama Karyawan jika tertera.
-3. Petakan (map) setiap transaksi ke salah satu dari 9 Akun COA SPPD resmi di atas yang paling tepat berdasarkan kata kunci / jenis pengeluarannya.
-4. Kembalikan format JSON valid:
+PANDUAN EKSTRAKSI DATA SPPD:
+1. DETEKSI INFORMASI KUNCI:
+   - Nama Pegawai / Penumpang (Passenger Name)
+   - Rute Perjalanan (Kota Asal - Kota Tujuan, misal Jakarta - Makassar)
+   - Tanggal Perjalanan / Keberangkatan (Format YYYY-MM-DD)
+   - Volume / Durasi (misal: "2 Malam", "3 Hari", "1 Tiket PP")
+2. DETEKSI VOLUME VS HARGA SATUAN:
+   - Jika hotel 3 malam @ Rp 750.000, sertakan di 'description': "Hotel Santika Makassar (3 Malam @ Rp 750.000)" dan 'amount': 2250000.
+   - 'amount' harus selalu berupa angka integer Rupiah total pengeluaran pos tersebut.
+3. KATEGORISASI KE 9 AKUN RESMI:
+   - Petakan secara tepat ke salah satu dari 9 Kode Akun SPPD (610101 s/d 610109) berdasarkan jenis pengeluarannya.
+
+KEMBALIKAN HANYA FORMAT JSON VALID:
 {
   "reportTitle": "Laporan SPPD: ${employeeName || 'Karyawan'} - Perjalanan Dinas",
   "employeeName": "${employeeName || ''}",
@@ -228,10 +247,10 @@ Petunjuk Ekstraksi:
   "totalExpense": 12345000,
   "transactions": [
     {
-      "date": "2026-08-10",
-      "description": "Tiket Pesawat PP Jakarta - Makassar",
+      "date": "YYYY-MM-DD",
+      "description": "Rincian pos biaya SPPD (misal Tiket Pesawat CGK-UPG PP)",
       "amount": 2500000,
-      "recipient": "${employeeName || 'Karyawan'}",
+      "recipient": "${employeeName || 'Nama Karyawan'}",
       "sppdAccountCode": "610105",
       "sppdAccountName": "Biaya Perjalanan Dinas - Tiket Pesawat",
       "category": "Tiket Pesawat",
@@ -243,10 +262,10 @@ Petunjuk Ekstraksi:
     contents.push({ text: promptText });
 
     const modelsToTry = [
+      "gemini-2.5-pro",
       "gemini-2.5-flash",
-      "gemini-flash-latest",
       "gemini-3.1-flash-lite",
-      "gemini-3.5-flash"
+      "gemini-flash-latest"
     ];
 
     let response: any = null;
@@ -288,7 +307,7 @@ Petunjuk Ekstraksi:
     return res.json({ success: true, result: parsedData });
   } catch (error: any) {
     console.error("Error in parse-sppd:", error);
-    return res.status(500).json({ error: "Gagal membaca & memetakan dokumen SPPD.", details: error.message });
+    return res.status(500).json({ error: "Gagal membaca & memetakan SPPD.", details: error.message });
   }
 });
 

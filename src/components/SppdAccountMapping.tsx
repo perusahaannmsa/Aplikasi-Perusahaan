@@ -823,32 +823,11 @@ export function SppdAccountMapping({
 
           <div className="pt-2 flex flex-wrap items-center gap-3 text-xs font-mono">
             {/* Unified Google Drive Connection Status */}
-            {driveAccount?.email ? (
-              <div className="bg-amber-950/90 border border-amber-400/40 text-amber-300 font-bold px-3.5 py-2 rounded-xl flex items-center gap-2 shadow-xs">
-                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
-                <span>Google Drive Master:</span>
-                <span className="text-white font-mono">{driveAccount.email}</span>
-                <button
-                  type="button"
-                  onClick={handleConnectGoogleDrive}
-                  disabled={isDriveConnecting}
-                  title="Sinkronkan Ulang Akun Google Drive"
-                  className="hover:text-amber-100 ml-1 underline cursor-pointer text-[11px]"
-                >
-                  {isDriveConnecting ? 'Sinkronisasi...' : 'Sinkronkan'}
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={handleConnectGoogleDrive}
-                disabled={isDriveConnecting}
-                className="bg-amber-600 hover:bg-amber-500 text-white font-bold px-3.5 py-2 rounded-xl transition flex items-center gap-2 cursor-pointer shadow-xs animate-pulse"
-              >
-                <RefreshCw size={14} className={isDriveConnecting ? "animate-spin" : ""} />
-                <span>Hubungkan Google Drive Master</span>
-              </button>
-            )}
+            <div className="bg-amber-950/90 border border-amber-400/40 text-amber-300 font-bold px-3.5 py-2 rounded-xl flex items-center gap-2 shadow-xs">
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+              <span>Google Drive Master:</span>
+              <span className="text-white font-mono">{driveAccount?.email || 'Master Terhubung'}</span>
+            </div>
 
             <button
               onClick={() => setIsCoaModalOpen(true)}

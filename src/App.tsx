@@ -14,6 +14,7 @@ import { PublicSppdInput } from './components/PublicSppdInput';
 import { AuthGate } from './components/AuthGate';
 import { InputBuktiTransfer } from './components/InputBuktiTransfer';
 import { UserProfileModal } from './components/UserProfileModal';
+import { GoogleDriveSettingsModal } from './components/GoogleDriveSettingsModal';
 import { AbsensiHarianNmsa } from './components/AbsensiHarianNmsa';
 import { PettyCashHoldersModal } from './components/PettyCashHoldersModal';
 import { NpwpManager } from './components/NpwpManager';
@@ -40,7 +41,9 @@ import {
   deleteSppdRecordFromFirestore,
   loadConnectedDrivesFromFirestore,
   startGoogleDriveTokenAutoRefresh,
-  ensureValidDriveToken
+  ensureValidDriveToken,
+  getMasterDriveEmail,
+  getActiveGoogleDriveAccount
 } from './firebase';
 import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers } from 'lucide-react';
 
@@ -459,6 +462,18 @@ export default function App() {
   const [isDashboardNavOpen, setIsDashboardNavOpen] = useState(false);
   const [isVoucherSubmenuOpen, setIsVoucherSubmenuOpen] = useState(true);
   const [isCloudModalOpen, setIsCloudModalOpen] = useState(false);
+  const [isGoogleDriveSettingsOpen, setIsGoogleDriveSettingsOpen] = useState(false);
+  const [masterDriveEmail, setMasterDriveEmailState] = useState<string>(() => getMasterDriveEmail());
+
+  useEffect(() => {
+    const handleDriveUpdated = () => {
+      setMasterDriveEmailState(getMasterDriveEmail());
+    };
+    window.addEventListener('nusantara-drive-updated', handleDriveUpdated);
+    return () => {
+      window.removeEventListener('nusantara-drive-updated', handleDriveUpdated);
+    };
+  }, []);
   
   const [layoutMode, setLayoutMode] = useState<'standard' | 'spreadsheet' | 'audit_logs' | 'invoice_recap' | 'unpaid_outstanding' | 'petty_cash_recap'>(() => {
     try { return (sessionStorage.getItem('sublist_layoutMode') as any) || 'standard'; } catch (e) { return 'standard'; }
@@ -1415,61 +1430,95 @@ export default function App() {
                 </div>
               </div>
 
-              {/* User Dropdown Menu (Contains Theme, Profile, & Logout) */}
-              <div className="relative" ref={userMenuRef}>
+              <div className="flex items-center gap-2.5">
+                {/* Master Google Drive 24/7 Status Header Badge */}
                 <button
-                  onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-                  className="flex items-center gap-2 py-1.5 px-3 rounded-2xl hover:bg-stone-100 border border-stone-200 transition cursor-pointer select-none bg-stone-50"
-                  title="Klik untuk menu profil, ganti tema, & logout"
+                  type="button"
+                  onClick={() => setIsGoogleDriveSettingsOpen(true)}
+                  className="hidden sm:flex items-center gap-2 py-1.5 px-3 rounded-2xl bg-amber-50/90 hover:bg-amber-100 border border-amber-300/80 text-amber-950 transition cursor-pointer shadow-3xs font-mono text-xs"
+                  title="Master Google Drive 24/7 Terhubung ke Semua Menu. Klik untuk Kelola Akun & Whitelist."
                 >
-                  <div className="w-7 h-7 rounded-full bg-emerald-100 border border-emerald-300 flex items-center justify-center text-emerald-800 font-bold text-xs">
-                    {(userProfile?.fullName || 'Nur Wahyudi').substring(0, 2).toUpperCase()}
-                  </div>
-                  <div className="flex flex-col items-start text-left">
-                    <div className="flex items-center gap-1 text-xs font-sans font-black text-stone-900 leading-tight">
-                      <span className="truncate max-w-[120px] sm:max-w-[160px]">
-                        {userProfile?.fullName || 'Nur Wahyudi'}
-                      </span>
-                      <ChevronDown size={13} className={`text-stone-400 transition-transform duration-200 ${isUserMenuOpen ? 'rotate-180' : ''}`} />
-                    </div>
-                    <span className="text-[10px] text-stone-400 font-mono leading-tight">
-                      {userProfile?.role || 'Divisi Keuangan'}
-                    </span>
-                  </div>
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
+                  <Cloud size={14} className="text-amber-600 shrink-0" />
+                  <span className="font-bold truncate max-w-[140px] md:max-w-[200px]">
+                    {masterDriveEmail}
+                  </span>
                 </button>
 
-                {/* User Dropdown Popover */}
-                {isUserMenuOpen && (
-                  <div className="absolute right-0 top-full mt-2 w-72 bg-white rounded-2xl shadow-xl border border-stone-200 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150 font-sans">
-                    <div className="p-3.5 bg-stone-50 border-b border-stone-200">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center text-sm shadow-xs shrink-0">
-                          {(userProfile?.fullName || 'Nur Wahyudi').substring(0, 2).toUpperCase()}
+                {/* User Dropdown Menu (Contains Theme, Profile, & Logout) */}
+                <div className="relative" ref={userMenuRef}>
+                  <button
+                    onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
+                    className="flex items-center gap-2 py-1.5 px-3 rounded-2xl hover:bg-stone-100 border border-stone-200 transition cursor-pointer select-none bg-stone-50"
+                    title="Klik untuk menu profil, ganti tema, & logout"
+                  >
+                    <div className="w-7 h-7 rounded-full bg-emerald-100 border border-emerald-300 flex items-center justify-center text-emerald-800 font-bold text-xs">
+                      {(userProfile?.fullName || 'Nur Wahyudi').substring(0, 2).toUpperCase()}
+                    </div>
+                    <div className="flex flex-col items-start text-left">
+                      <div className="flex items-center gap-1 text-xs font-sans font-black text-stone-900 leading-tight">
+                        <span className="truncate max-w-[120px] sm:max-w-[160px]">
+                          {userProfile?.fullName || 'Nur Wahyudi'}
+                        </span>
+                        <ChevronDown size={13} className={`text-stone-400 transition-transform duration-200 ${isUserMenuOpen ? 'rotate-180' : ''}`} />
+                      </div>
+                      <span className="text-[10px] text-stone-400 font-mono leading-tight">
+                        {userProfile?.role || 'Divisi Keuangan'}
+                      </span>
+                    </div>
+                  </button>
+
+                  {/* User Dropdown Popover */}
+                  {isUserMenuOpen && (
+                    <div className="absolute right-0 top-full mt-2 w-72 bg-white rounded-2xl shadow-xl border border-stone-200 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150 font-sans">
+                      <div className="p-3.5 bg-stone-50 border-b border-stone-200">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center text-sm shadow-xs shrink-0">
+                            {(userProfile?.fullName || 'Nur Wahyudi').substring(0, 2).toUpperCase()}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <h4 className="text-xs font-black text-stone-900 truncate">
+                              {userProfile?.fullName || 'Nur Wahyudi'}
+                            </h4>
+                            <p className="text-[10px] text-stone-500 font-mono truncate">
+                              {authUser?.email || 'keuangan@nmsa.co.id'}
+                            </p>
+                            <span className="inline-block mt-0.5 text-[9px] font-mono font-bold bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded">
+                              {userProfile?.role || 'Divisi Keuangan HO'}
+                            </span>
+                          </div>
                         </div>
-                        <div className="min-w-0 flex-1">
-                          <h4 className="text-xs font-black text-stone-900 truncate">
-                            {userProfile?.fullName || 'Nur Wahyudi'}
-                          </h4>
-                          <p className="text-[10px] text-stone-500 font-mono truncate">
-                            {authUser?.email || 'keuangan@nmsa.co.id'}
-                          </p>
-                          <span className="inline-block mt-0.5 text-[9px] font-mono font-bold bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded">
-                            {userProfile?.role || 'Divisi Keuangan HO'}
-                          </span>
+
+                        <div className="mt-3 space-y-1.5">
+                          {/* Master Drive Quick Access */}
+                          <button
+                            onClick={() => {
+                              setIsUserMenuOpen(false);
+                              setIsGoogleDriveSettingsOpen(true);
+                            }}
+                            className="w-full bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold px-3 py-2 rounded-xl text-xs transition cursor-pointer flex items-center justify-between font-sans shadow-3xs"
+                          >
+                            <div className="flex items-center gap-2 truncate">
+                              <Cloud size={15} className="text-amber-600 shrink-0" />
+                              <span className="truncate">Pengaturan Master Drive</span>
+                            </div>
+                            <span className="text-[9px] font-mono bg-amber-200 text-amber-900 px-1.5 py-0.5 rounded font-bold shrink-0">
+                              24/7
+                            </span>
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              setIsUserMenuOpen(false);
+                              setIsProfileOpen(true);
+                            }}
+                            className="w-full bg-white hover:bg-stone-100 border border-stone-250 text-stone-700 font-bold px-3 py-1.5 rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 font-mono shadow-3xs"
+                          >
+                            <Settings size={13} className="text-stone-500" />
+                            <span>Pengaturan Profil & Storage</span>
+                          </button>
                         </div>
                       </div>
-
-                      <button
-                        onClick={() => {
-                          setIsUserMenuOpen(false);
-                          setIsProfileOpen(true);
-                        }}
-                        className="mt-3 w-full bg-white hover:bg-stone-100 border border-stone-250 text-stone-700 font-bold px-3 py-1.5 rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 font-mono shadow-3xs"
-                      >
-                        <Settings size={13} className="text-stone-500" />
-                        <span>Pengaturan Profil & Storage</span>
-                      </button>
-                    </div>
 
                     <div className="p-3 border-b border-stone-200 space-y-2">
                       <span className="text-[10px] font-mono font-bold text-stone-400 uppercase tracking-wider block">
@@ -1535,7 +1584,8 @@ export default function App() {
               </div>
             </div>
           </div>
-        </header>
+        </div>
+      </header>
 
         <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <InputBuktiTransfer 
@@ -1844,80 +1894,112 @@ export default function App() {
               </div>
             </div>
 
-            {/* User Profile Dropdown Menu (Contains Theme, Profile, Cloud Center & Logout) */}
-            <div className="relative" ref={userMenuRef}>
+            <div className="flex items-center gap-2.5">
+              {/* Master Google Drive 24/7 Status Header Badge */}
               <button
-                onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-                className="flex items-center gap-2 py-1.5 px-3 rounded-2xl hover:bg-stone-100 border border-stone-200 transition cursor-pointer select-none bg-stone-50"
-                title="Klik untuk menu profil, ganti tema, & logout"
+                type="button"
+                onClick={() => setIsGoogleDriveSettingsOpen(true)}
+                className="hidden sm:flex items-center gap-2 py-1.5 px-3 rounded-2xl bg-amber-50/90 hover:bg-amber-100 border border-amber-300/80 text-amber-950 transition cursor-pointer shadow-3xs font-mono text-xs"
+                title="Master Google Drive 24/7 Terhubung ke Semua Menu. Klik untuk Kelola Akun & Whitelist."
               >
-                <div className="w-7 h-7 rounded-full bg-emerald-100 border border-emerald-300 flex items-center justify-center text-emerald-800 font-bold text-xs">
-                  {(userProfile?.fullName || 'Nur Wahyudi').substring(0, 2).toUpperCase()}
-                </div>
-                <div className="flex flex-col items-start text-left">
-                  <div className="flex items-center gap-1 text-xs font-sans font-black text-stone-900 leading-tight">
-                    <span className="truncate max-w-[120px] sm:max-w-[160px]">
-                      {userProfile?.fullName || 'Nur Wahyudi'}
-                    </span>
-                    <ChevronDown size={13} className={`text-stone-400 transition-transform duration-200 ${isUserMenuOpen ? 'rotate-180' : ''}`} />
-                  </div>
-                  <span className="text-[10px] text-stone-400 font-mono leading-tight">
-                    {userProfile?.role || 'Divisi Keuangan'}
-                  </span>
-                </div>
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
+                <Cloud size={14} className="text-amber-600 shrink-0" />
+                <span className="font-bold truncate max-w-[140px] md:max-w-[200px]">
+                  {masterDriveEmail}
+                </span>
               </button>
 
-              {/* User Dropdown Popover */}
-              {isUserMenuOpen && (
-                <div className="absolute right-0 top-full mt-2 w-72 bg-white rounded-2xl shadow-xl border border-stone-200 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150 font-sans">
-                  <div className="p-3.5 bg-stone-50 border-b border-stone-200">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center text-sm shadow-xs shrink-0">
-                        {(userProfile?.fullName || 'Nur Wahyudi').substring(0, 2).toUpperCase()}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <h4 className="text-xs font-black text-stone-900 truncate">
-                          {userProfile?.fullName || 'Nur Wahyudi'}
-                        </h4>
-                        <p className="text-[10px] text-stone-500 font-mono truncate">
-                          {authUser?.email || 'keuangan@nmsa.co.id'}
-                        </p>
-                        <span className="inline-block mt-0.5 text-[9px] font-mono font-bold bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded">
-                          {userProfile?.role || 'Divisi Keuangan HO'}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="mt-3 space-y-1.5">
-                      {/* PUSAT LAYANAN AWAN & INTEGRASI (Unified into Nur Wahyudi dropdown!) */}
-                      <button
-                        onClick={() => {
-                          setIsUserMenuOpen(false);
-                          setIsCloudModalOpen(true);
-                        }}
-                        className="w-full bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200/80 font-bold px-3 py-2 rounded-xl text-xs transition cursor-pointer flex items-center justify-between font-sans shadow-3xs"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Cloud size={15} className="text-amber-600 animate-pulse" />
-                          <span>Pusat Layanan Awan & Integrasi</span>
-                        </div>
-                        <span className="text-[9px] font-mono bg-amber-200 text-amber-900 px-1.5 py-0.5 rounded font-bold">
-                          Ready
-                        </span>
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          setIsUserMenuOpen(false);
-                          setIsProfileOpen(true);
-                        }}
-                        className="w-full bg-white hover:bg-stone-100 border border-stone-250 text-stone-700 font-bold px-3 py-1.5 rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 font-mono shadow-3xs"
-                      >
-                        <Settings size={13} className="text-stone-500" />
-                        <span>Pengaturan Profil & Storage</span>
-                      </button>
-                    </div>
+              {/* User Profile Dropdown Menu (Contains Theme, Profile, Cloud Center & Logout) */}
+              <div className="relative" ref={userMenuRef}>
+                <button
+                  onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
+                  className="flex items-center gap-2 py-1.5 px-3 rounded-2xl hover:bg-stone-100 border border-stone-200 transition cursor-pointer select-none bg-stone-50"
+                  title="Klik untuk menu profil, ganti tema, & logout"
+                >
+                  <div className="w-7 h-7 rounded-full bg-emerald-100 border border-emerald-300 flex items-center justify-center text-emerald-800 font-bold text-xs">
+                    {(userProfile?.fullName || 'Nur Wahyudi').substring(0, 2).toUpperCase()}
                   </div>
+                  <div className="flex flex-col items-start text-left">
+                    <div className="flex items-center gap-1 text-xs font-sans font-black text-stone-900 leading-tight">
+                      <span className="truncate max-w-[120px] sm:max-w-[160px]">
+                        {userProfile?.fullName || 'Nur Wahyudi'}
+                      </span>
+                      <ChevronDown size={13} className={`text-stone-400 transition-transform duration-200 ${isUserMenuOpen ? 'rotate-180' : ''}`} />
+                    </div>
+                    <span className="text-[10px] text-stone-400 font-mono leading-tight">
+                      {userProfile?.role || 'Divisi Keuangan'}
+                    </span>
+                  </div>
+                </button>
+
+                {/* User Dropdown Popover */}
+                {isUserMenuOpen && (
+                  <div className="absolute right-0 top-full mt-2 w-72 bg-white rounded-2xl shadow-xl border border-stone-200 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150 font-sans">
+                    <div className="p-3.5 bg-stone-50 border-b border-stone-200">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center text-sm shadow-xs shrink-0">
+                          {(userProfile?.fullName || 'Nur Wahyudi').substring(0, 2).toUpperCase()}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <h4 className="text-xs font-black text-stone-900 truncate">
+                            {userProfile?.fullName || 'Nur Wahyudi'}
+                          </h4>
+                          <p className="text-[10px] text-stone-500 font-mono truncate">
+                            {authUser?.email || 'keuangan@nmsa.co.id'}
+                          </p>
+                          <span className="inline-block mt-0.5 text-[9px] font-mono font-bold bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded">
+                            {userProfile?.role || 'Divisi Keuangan HO'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 space-y-1.5">
+                        {/* Master Drive Quick Access */}
+                        <button
+                          onClick={() => {
+                            setIsUserMenuOpen(false);
+                            setIsGoogleDriveSettingsOpen(true);
+                          }}
+                          className="w-full bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold px-3 py-2 rounded-xl text-xs transition cursor-pointer flex items-center justify-between font-sans shadow-3xs"
+                        >
+                          <div className="flex items-center gap-2 truncate">
+                            <Cloud size={15} className="text-amber-600 shrink-0" />
+                            <span className="truncate">Pengaturan Master Drive</span>
+                          </div>
+                          <span className="text-[9px] font-mono bg-amber-200 text-amber-900 px-1.5 py-0.5 rounded font-bold shrink-0">
+                            24/7
+                          </span>
+                        </button>
+
+                        {/* PUSAT LAYANAN AWAN & INTEGRASI (Unified into Nur Wahyudi dropdown!) */}
+                        <button
+                          onClick={() => {
+                            setIsUserMenuOpen(false);
+                            setIsCloudModalOpen(true);
+                          }}
+                          className="w-full bg-stone-100 hover:bg-stone-200 text-stone-800 border border-stone-250 font-bold px-3 py-2 rounded-xl text-xs transition cursor-pointer flex items-center justify-between font-sans shadow-3xs"
+                        >
+                          <div className="flex items-center gap-2">
+                            <Cloud size={15} className="text-stone-600" />
+                            <span>Pusat Layanan Awan & Integrasi</span>
+                          </div>
+                          <span className="text-[9px] font-mono bg-stone-300 text-stone-900 px-1.5 py-0.5 rounded font-bold">
+                            Ready
+                          </span>
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            setIsUserMenuOpen(false);
+                            setIsProfileOpen(true);
+                          }}
+                          className="w-full bg-white hover:bg-stone-100 border border-stone-250 text-stone-700 font-bold px-3 py-1.5 rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 font-mono shadow-3xs"
+                        >
+                          <Settings size={13} className="text-stone-500" />
+                          <span>Pengaturan Profil & Storage</span>
+                        </button>
+                      </div>
+                    </div>
 
                   <div className="p-3 border-b border-stone-200 space-y-2">
                     <span className="text-[10px] font-mono font-bold text-stone-400 uppercase tracking-wider block">
@@ -1983,7 +2065,8 @@ export default function App() {
             </div>
           </div>
         </div>
-      </header>
+      </div>
+    </header>
 
 
 
@@ -2203,6 +2286,12 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Pengaturan Master Google Drive & Whitelist Modal */}
+      <GoogleDriveSettingsModal
+        isOpen={isGoogleDriveSettingsOpen}
+        onClose={() => setIsGoogleDriveSettingsOpen(false)}
+      />
 
     </div>
   );

@@ -4,9 +4,13 @@ import {
   getConnectedDrives, 
   saveConnectedDrives, 
   googleDriveLogin, 
-  refreshAllDrivesQuota 
+  refreshAllDrivesQuota,
+  getMasterDriveEmail,
+  setMasterDriveEmail,
+  getAuthorizedDriveEmails
 } from '../firebase';
-import { Cloud, Plus, Trash2, ShieldCheck, RefreshCw, AlertTriangle, HardDrive } from 'lucide-react';
+import { Cloud, Plus, Trash2, ShieldCheck, RefreshCw, AlertTriangle, HardDrive, Star, Settings } from 'lucide-react';
+import { GoogleDriveSettingsModal } from './GoogleDriveSettingsModal';
 
 interface DriveAccountsManagerProps {
   onConnectionChange?: (isConnected: boolean) => void;
@@ -14,13 +18,16 @@ interface DriveAccountsManagerProps {
 
 export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({ onConnectionChange }) => {
   const [drives, setDrives] = useState<ConnectedDrive[]>([]);
+  const [masterEmail, setMasterEmail] = useState<string>('penyimpanandrivenmsa1@gmail.com');
   const [isConnecting, setIsConnecting] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [errorText, setErrorText] = useState('');
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
 
   const loadDrives = () => {
     const list = getConnectedDrives();
     setDrives(list);
+    setMasterEmail(getMasterDriveEmail());
     if (onConnectionChange) {
       onConnectionChange(list.length > 0);
     }
@@ -28,6 +35,13 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({ onCo
 
   useEffect(() => {
     loadDrives();
+    const onDriveUpdated = () => {
+      loadDrives();
+    };
+    window.addEventListener('nusantara-drive-updated', onDriveUpdated);
+    return () => {
+      window.removeEventListener('nusantara-drive-updated', onDriveUpdated);
+    };
   }, []);
 
   const handleConnectNewDrive = async () => {
@@ -96,13 +110,23 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({ onCo
 
   return (
     <div className="bg-white border border-stone-200 rounded-2xl p-5 space-y-4 shadow-xs" id="drive-accounts-section">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2">
           <HardDrive className="text-[#917118]" size={18} />
           <h4 className="text-xs font-bold uppercase tracking-wider text-stone-800">
             Multi-Google Drive Storage (Auto-Chain)
           </h4>
         </div>
+
+        <button
+          type="button"
+          onClick={() => setIsSettingsModalOpen(true)}
+          className="inline-flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100/80 border border-amber-300 text-amber-900 text-xs font-bold px-3 py-1.5 rounded-xl transition cursor-pointer shadow-3xs"
+          title="Buka Pengaturan Master Google Drive & Whitelist"
+        >
+          <Settings size={13} className="text-amber-700" />
+          <span>Pengaturan Master & Whitelist</span>
+        </button>
       </div>
 
       <p className="text-[11px] text-stone-500 leading-relaxed">
@@ -272,6 +296,12 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({ onCo
           </div>
         </div>
       )}
+
+      {/* Dedicated Master Drive & Whitelist Settings Modal */}
+      <GoogleDriveSettingsModal 
+        isOpen={isSettingsModalOpen} 
+        onClose={() => setIsSettingsModalOpen(false)} 
+      />
     </div>
   );
 };

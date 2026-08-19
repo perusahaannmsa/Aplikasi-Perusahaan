@@ -639,6 +639,87 @@ export const setGoogleDriveToken = (token: string | null) => {
   }
 };
 
+export const DEFAULT_AUTHORIZED_DRIVE_EMAILS: string[] = [
+  'penyimpanandrivenmsa1@gmail.com',
+  'yudiakungaming@gmail.com'
+];
+
+export const getAuthorizedDriveEmails = (): string[] => {
+  try {
+    const stored = localStorage.getItem('NUSANTARA_AUTHORIZED_DRIVES');
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.error('Failed to parse authorized drive emails:', e);
+  }
+  return DEFAULT_AUTHORIZED_DRIVE_EMAILS;
+};
+
+export const saveAuthorizedDriveEmails = async (emails: string[]): Promise<void> => {
+  try {
+    const cleanList = Array.from(new Set(emails.map(e => e.trim().toLowerCase()).filter(Boolean)));
+    localStorage.setItem('NUSANTARA_AUTHORIZED_DRIVES', JSON.stringify(cleanList));
+
+    const compId = activeCompanyId || 'nmsa';
+    if (firestoreDb && compId) {
+      const companyRef = doc(firestoreDb, 'companies', compId);
+      await setDoc(companyRef, {
+        authorizedDriveEmails: cleanList,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+    }
+  } catch (e) {
+    console.error('Failed to save authorized drive emails:', e);
+  }
+};
+
+export const isDriveEmailAuthorized = (email?: string | null): boolean => {
+  if (!email) return false;
+  const authorized = getAuthorizedDriveEmails();
+  return authorized.some(auth => auth.toLowerCase() === email.trim().toLowerCase());
+};
+
+export const getMasterDriveEmail = (): string => {
+  const customMaster = localStorage.getItem('NUSANTARA_MASTER_DRIVE_EMAIL');
+  if (customMaster) return customMaster;
+  const active = getActiveGoogleDriveAccount();
+  if (active?.email) return active.email;
+  const authorized = getAuthorizedDriveEmails();
+  return authorized[0] || 'penyimpanandrivenmsa1@gmail.com';
+};
+
+export const setMasterDriveEmail = async (email: string): Promise<void> => {
+  try {
+    const clean = email.trim().toLowerCase();
+    localStorage.setItem('NUSANTARA_MASTER_DRIVE_EMAIL', clean);
+    localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', clean);
+
+    const compId = activeCompanyId || 'nmsa';
+    if (firestoreDb && compId) {
+      const companyRef = doc(firestoreDb, 'companies', compId);
+      await setDoc(companyRef, {
+        masterDriveEmail: clean,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+    }
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('nusantara-drive-updated', {
+        detail: {
+          activeAccount: getActiveGoogleDriveAccount(),
+          masterEmail: clean
+        }
+      }));
+    }
+  } catch (e) {
+    console.error('Failed to set master drive email:', e);
+  }
+};
+
 export const getConnectedDrives = (): ConnectedDrive[] => {
   try {
     const raw = localStorage.getItem('NUSANTARA_CONNECTED_DRIVES');
@@ -653,9 +734,9 @@ export const getConnectedDrives = (): ConnectedDrive[] => {
   const legacyToken = localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
   if (legacyToken) {
     const initialDrive: ConnectedDrive = {
-      email: 'yudiakungaming@gmail.com', // fallback as requested by user
+      email: 'penyimpanandrivenmsa1@gmail.com', // master account
       accessToken: legacyToken,
-      displayName: 'yudiakungaming@gmail.com',
+      displayName: 'Master Drive NMSA',
       quotaUsed: 0,
       quotaLimit: 15 * 1024 * 1024 * 1024, // 15 GB
       lastChecked: new Date().toISOString()
@@ -725,12 +806,16 @@ export const saveConnectedDrives = async (drives: ConnectedDrive[]) => {
     // Persist to Firestore under company document to share with all users and all menus of this company!
     const targetCompId = activeCompanyId || 'nmsa';
     if (firestoreDb && targetCompId) {
-      const companyRef = doc(firestoreDb, 'companies', targetCompId);
-      await setDoc(companyRef, {
-        googleDrives: cleanUndefined(drives),
-        updatedAt: new Date().toISOString()
-      }, { merge: true });
-      console.log(`☁️ Synced Google Drive credentials to Firestore for company: ${targetCompId}`);
+      try {
+        const companyRef = doc(firestoreDb, 'companies', targetCompId);
+        await setDoc(companyRef, {
+          googleDrives: cleanUndefined(drives),
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+        console.log(`☁️ Synced Google Drive credentials to Firestore for company: ${targetCompId}`);
+      } catch (fsErr) {
+        console.warn('Firestore Google Drive credentials sync notice:', fsErr);
+      }
     }
 
     // Notify all active application components about the updated Drive account
@@ -1075,12 +1160,24 @@ export const googleDriveLogin = async (
     } catch (apiErr) {
       console.warn('Failed to fetch Drive metadata, using fallback details', apiErr);
       driveDetails = {
-        email: result.user.email || 'yudiakungaming@gmail.com',
-        displayName: result.user.displayName || 'Google Drive',
+        email: result.user.email || 'penyimpanandrivenmsa1@gmail.com',
+        displayName: result.user.displayName || 'Google Drive NMSA',
         photoURL: result.user.photoURL || '',
         quotaUsed: 0,
         quotaLimit: 15 * 1024 * 1024 * 1024
       };
+    }
+
+    // Whitelist Verification - Strictly enforce authorized accounts
+    const userEmail = (driveDetails.email || result.user.email || '').trim().toLowerCase();
+    const authorizedList = getAuthorizedDriveEmails();
+    if (authorizedList.length > 0 && !isDriveEmailAuthorized(userEmail)) {
+      try {
+        await secondaryAuth.signOut();
+      } catch (e) {}
+      throw new Error(
+        `Akses Ditolak: Akun Google "${userEmail}" tidak terdaftar dalam daftar akun Google Drive resmi yang diizinkan untuk aplikasi PT Nusantara Mineral Sukses Abadi. Akun yang diizinkan: ${authorizedList.join(', ')}`
+      );
     }
 
     // Check if storage is full (quotaUsed is at least 98% of limit or less than 15MB remaining)
