@@ -176,6 +176,122 @@ Petunjuk Ekstraksi:
   }
 });
 
+app.post("/api/gemini/parse-sppd", async (req, res) => {
+  try {
+    const { fileBase64, mimeType, rawText, accounts, employeeName, position } = req.body;
+    if (!process.env.GEMINI_API_KEY) {
+      return res.status(500).json({ error: "GEMINI_API_KEY tidak dikonfigurasi di server." });
+    }
+
+    const ai = getGeminiClient();
+    const contents: any[] = [];
+
+    if (fileBase64 && mimeType) {
+      const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, "");
+      contents.push({ inlineData: { mimeType, data: cleanBase64 } });
+    }
+
+    const coaPromptList = accounts && Array.isArray(accounts)
+      ? accounts.map((a: any) => `- Kode ${a.defaultCoaCode || a.code}: ${a.item || a.name} (Keywords: ${(a.keywords || []).join(', ')})`).join('\n')
+      : `
+- Kode 610101: Uang Makan / Hari (Makan, konsumsi dinas, meal)
+- Kode 610102: Uang Saku (Saku, lumpsum, uang harian)
+- Kode 610103: Transport Jkt - Bandara/Stasiun (1x) (Taksi bandara, grab bandara, tol)
+- Kode 610104: Transport Bandara - Hotel (Antar jemput bandara hotel)
+- Kode 610105: Tiket Pesawat (Garuda, Lion, Batik, Citilink, Flight)
+- Kode 610106: Tiket Kereta Api (KAI, Argo, Whoosh, Kereta Cepat)
+- Kode 610107: Hotel / Hari (Penginapan, hotel kamar, lodging)
+- Kode 610108: Sewa Mobil/Hari (Standar Avanza) + Sopir + BBM (Rental Avanza/Innova)
+- Kode 610109: Sewa Mobil/Hari (Double Cabin) + Sopir + BBM (Rental Double Cabin / Hilux / Triton)`;
+
+    const promptText = `Anda adalah ahli Accounting dan Verifikator Dokumen SPPD (Surat Perintah Perjalanan Dinas) PT Nusantara Mineral Sukses Abadi.
+Tugas Anda adalah membaca dokumen bukti pengeluaran / LPJ / tiket / faktur perjalanan dinas SPPD ini secara SANGAT TELITI dan PRESISI.
+HANYA ekstrak pos-pos transaksi pengeluaran yang terkait perjalanan dinas / SPPD.
+
+${employeeName ? `Nama Karyawan / Penerima: ${employeeName}\n` : ''}
+${position ? `Jabatan Karyawan: ${position}\n` : ''}
+${rawText ? `\nBerikut teks dokumen:\n${rawText}\n` : ''}
+
+Daftar 9 Akun COA SPPD Resmi berdasarkan Pedoman Harga Acuan:
+${coaPromptList}
+
+Petunjuk Ekstraksi:
+1. Ekstrak setiap baris rincian bukti transaksi pengeluaran SPPD (Tiket, Hotel, Uang Makan, Uang Saku, Transport Bandara/Stasiun, Sewa Mobil).
+2. Tentukan Tanggal (YYYY-MM-DD), Keterangan/Deskripsi Rincian Pengeluaran, Nominal (Rupiah angka saja), Penerima / Nama Karyawan jika tertera.
+3. Petakan (map) setiap transaksi ke salah satu dari 9 Akun COA SPPD resmi di atas yang paling tepat berdasarkan kata kunci / jenis pengeluarannya.
+4. Kembalikan format JSON valid:
+{
+  "reportTitle": "Laporan SPPD: ${employeeName || 'Karyawan'} - Perjalanan Dinas",
+  "employeeName": "${employeeName || ''}",
+  "destination": "Kota Tujuan / Lokasi Dinas",
+  "period": "YYYY-MM",
+  "totalExpense": 12345000,
+  "transactions": [
+    {
+      "date": "2026-08-10",
+      "description": "Tiket Pesawat PP Jakarta - Makassar",
+      "amount": 2500000,
+      "recipient": "${employeeName || 'Karyawan'}",
+      "sppdAccountCode": "610105",
+      "sppdAccountName": "Biaya Perjalanan Dinas - Tiket Pesawat",
+      "category": "Tiket Pesawat",
+      "confidence": "high"
+    }
+  ]
+}`;
+
+    contents.push({ text: promptText });
+
+    const modelsToTry = [
+      "gemini-2.5-flash",
+      "gemini-flash-latest",
+      "gemini-3.1-flash-lite",
+      "gemini-3.5-flash"
+    ];
+
+    let response: any = null;
+    let lastError: any = null;
+
+    for (const modelName of modelsToTry) {
+      try {
+        console.log(`Attempting SPPD document analysis with model: ${modelName}`);
+        response = await ai.models.generateContent({
+          model: modelName,
+          contents,
+          config: {
+            responseMimeType: "application/json",
+            temperature: 0.1,
+          },
+        });
+        if (response && response.text) {
+          console.log(`Successfully parsed SPPD with model: ${modelName}`);
+          break;
+        }
+      } catch (err: any) {
+        lastError = err;
+        console.warn(`Model ${modelName} error in SPPD parse:`, err?.message || err);
+      }
+    }
+
+    if (!response || !response.text) {
+      throw lastError || new Error("Semua model AI gagal menganalisis dokumen SPPD.");
+    }
+
+    let textClean = response.text.trim();
+    if (textClean.startsWith("```json")) {
+      textClean = textClean.replace(/^```json\s*/, "").replace(/\s*```$/, "");
+    } else if (textClean.startsWith("```")) {
+      textClean = textClean.replace(/^```\s*/, "").replace(/\s*```$/, "");
+    }
+
+    const parsedData = JSON.parse(textClean || "{}");
+    return res.json({ success: true, result: parsedData });
+  } catch (error: any) {
+    console.error("Error in parse-sppd:", error);
+    return res.status(500).json({ error: "Gagal membaca & memetakan dokumen SPPD.", details: error.message });
+  }
+});
+
 app.get("/api/drive-token", async (req, res) => {
   try {
     let clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
@@ -210,6 +326,35 @@ app.get("/api/drive-token", async (req, res) => {
 app.get("/api/drive-proxy", async (req, res) => {
   const fileId = req.query.id as string;
   if (!fileId) return res.status(400).json({ error: "Missing id parameter." });
+
+  // 1. Check if token is provided via Authorization header or query param
+  const authHeader = req.headers.authorization;
+  const queryToken = req.query.token as string;
+  const userToken = (authHeader && authHeader.startsWith("Bearer ")) 
+    ? authHeader.substring(7) 
+    : queryToken;
+
+  if (userToken) {
+    try {
+      const driveRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+        headers: {
+          Authorization: `Bearer ${userToken}`,
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+      });
+      if (driveRes.ok) {
+        const contentType = driveRes.headers.get("content-type") || "application/pdf";
+        res.setHeader("Content-Type", contentType);
+        res.setHeader("Cache-Control", "public, max-age=86400");
+        const arrayBuffer = await driveRes.arrayBuffer();
+        return res.send(Buffer.from(arrayBuffer));
+      }
+    } catch (errUserToken) {
+      console.warn("User token download failed, trying service account or public fallbacks...", errUserToken);
+    }
+  }
+
+  // 2. Check if Service Account credentials exist
   try {
     let clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
     let privateKey = process.env.GOOGLE_PRIVATE_KEY;
@@ -238,24 +383,48 @@ app.get("/api/drive-proxy", async (req, res) => {
         res.setHeader("Cache-Control", "public, max-age=86400");
         return res.send(Buffer.from(driveRes.data as ArrayBuffer));
       } catch (errDrive) {
-        console.warn("Drive API download failed, trying public uc link...", errDrive);
+        console.warn("Drive Service Account download failed, trying public URLs...", errDrive);
       }
     }
-
-    const driveUrl = `https://docs.google.com/uc?export=download&id=${fileId}`;
-    const response = await fetch(driveUrl, {
-      headers: { "User-Agent": "Mozilla/5.0" }
-    });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const contentType = response.headers.get("content-type") || "application/octet-stream";
-    res.setHeader("Content-Type", contentType);
-    res.setHeader("Cache-Control", "public, max-age=86400");
-    const arrayBuffer = await response.arrayBuffer();
-    return res.send(Buffer.from(arrayBuffer));
-  } catch (error: any) {
-    console.error("Gagal proxy drive:", error);
-    return res.status(500).json({ error: "Gagal proxy drive", details: error.message });
+  } catch (saErr) {
+    console.warn("Service account initialization error:", saErr);
   }
+
+  // 3. Fallback to resilient public Google Drive URLs
+  const candidateUrls = [
+    `https://drive.usercontent.google.com/download?id=${fileId}&export=download&authuser=0&confirm=t`,
+    `https://lh3.googleusercontent.com/d/${fileId}`,
+    `https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`,
+    `https://docs.google.com/uc?export=download&id=${fileId}&confirm=t`
+  ];
+
+  for (const candidateUrl of candidateUrls) {
+    try {
+      const response = await fetch(candidateUrl, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
+        }
+      });
+      if (response.ok) {
+        const contentType = response.headers.get("content-type") || "application/octet-stream";
+        // Check if returned content is an HTML error page rather than actual file content
+        const arrayBuffer = await response.arrayBuffer();
+        if (arrayBuffer.byteLength > 0) {
+          res.setHeader("Content-Type", contentType);
+          res.setHeader("Cache-Control", "public, max-age=86400");
+          return res.send(Buffer.from(arrayBuffer));
+        }
+      }
+    } catch (urlErr) {
+      console.warn(`Failed candidate URL ${candidateUrl}:`, urlErr);
+    }
+  }
+
+  return res.status(404).json({ 
+    error: "Dokumen Google Drive tidak dapat diunduh langsung tanpa izin akses. Silakan hubungkan akun Google Drive di menu.", 
+    fileId 
+  });
 });
 
 const DATA_FILE = path.join(process.cwd(), "data-store.json");

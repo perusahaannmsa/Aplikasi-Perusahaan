@@ -823,7 +823,10 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
 
               // If token failed, absent, or we don't have one, use the server-side CORS proxy
               if (!fileBlob) {
-                const proxyRes = await fetch(`/api/drive-proxy?id=${fileId}`);
+                const proxyUrl = `/api/drive-proxy?id=${fileId}${token ? `&token=${encodeURIComponent(token)}` : ''}`;
+                const proxyRes = await fetch(proxyUrl, {
+                  headers: token ? { Authorization: `Bearer ${token}` } : {}
+                });
                 if (proxyRes.ok) {
                   fileBlob = await proxyRes.blob();
                 } else {

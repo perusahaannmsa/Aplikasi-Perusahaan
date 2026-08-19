@@ -783,7 +783,59 @@ export function isPettyCashSubmission(sub: any): boolean {
   if (sub.pettyCashFile?.url) return true;
   const kode = (sub.kode || '').toLowerCase();
   if (kode.includes('/pc/') || kode.includes('-pc-') || kode.endsWith('/pc') || kode.startsWith('pc-') || kode.includes('bkk-pc')) return true;
+  // Also check items description / keterangan
+  if (sub.items && Array.isArray(sub.items)) {
+    const hasPcItem = sub.items.some((i: any) => {
+      const itemDesc = (i.item || '').toLowerCase();
+      const itemKet = (i.keterangan || '').toLowerCase();
+      return itemDesc.includes('petty cash') || itemDesc.includes('kas kecil') || itemDesc.includes('pettycash') ||
+             itemKet.includes('petty cash') || itemKet.includes('kas kecil') || itemKet.includes('pettycash');
+    });
+    if (hasPcItem) return true;
+  }
   return false;
+}
+
+/**
+ * Unified helper to check if a submission is an SPPD (Perjalanan Dinas) transaction across ALL views.
+ * Detects based on jenisPengajuan, notes, kode, or item descriptions containing SPPD / Perjalanan Dinas.
+ */
+export function isSppdSubmission(sub: any): boolean {
+  if (!sub) return false;
+  if (sub.isSppd === true) return true;
+  const jenis = (sub.jenisPengajuan || sub.jenis || '').toLowerCase();
+  if (jenis.includes('sppd') || jenis.includes('perjalanan dinas') || jenis.includes('biaya dinas') || jenis.includes('dinas')) return true;
+  const notes = (sub.notes || '').toLowerCase();
+  if (notes.includes('sppd') || notes.includes('perjalanan dinas') || notes.includes('surat perintah tugas') || notes.includes('dinas')) return true;
+  const kode = (sub.kode || '').toLowerCase();
+  if (kode.includes('/sppd') || kode.includes('-sppd') || kode.includes('sppd-') || kode.includes('bkk-sppd')) return true;
+  if (sub.sppdNumber || sub.noSppd || sub.sppdData) return true;
+  // Also check items description / keterangan
+  if (sub.items && Array.isArray(sub.items)) {
+    const hasSppdItem = sub.items.some((i: any) => {
+      const itemDesc = (i.item || '').toLowerCase();
+      const itemKet = (i.keterangan || '').toLowerCase();
+      return itemDesc.includes('sppd') || itemDesc.includes('perjalanan dinas') || itemDesc.includes('uang makan') || 
+             itemDesc.includes('uang saku') || itemDesc.includes('tiket pesawat') || itemDesc.includes('tiket kereta') || 
+             itemDesc.includes('hotel') || itemDesc.includes('sewa mobil') || itemDesc.includes('dinas') ||
+             itemKet.includes('sppd') || itemKet.includes('perjalanan dinas') || itemKet.includes('dinas');
+    });
+    if (hasSppdItem) return true;
+  }
+  return false;
+}
+
+/**
+ * Retrieve SPPD employee / traveler name safely
+ */
+export function getSppdEmployeeName(sub: any): string {
+  if (!sub) return '';
+  if (sub.sppdData?.namaPegawai) return sub.sppdData.namaPegawai;
+  if (sub.sppdData?.namaPekerja) return sub.sppdData.namaPekerja;
+  if (sub.dibayarkanKepada && typeof sub.dibayarkanKepada === 'string' && sub.dibayarkanKepada.trim()) {
+    return sub.dibayarkanKepada.trim();
+  }
+  return '';
 }
 
 /**

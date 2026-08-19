@@ -1104,7 +1104,10 @@ export function AccuratePettyCashMapping({
       // If direct fetch didn't succeed, use server-side drive proxy
       if (!blob) {
         try {
-          const proxyRes = await fetch(`/api/drive-proxy?id=${fileId}`);
+          const proxyUrl = `/api/drive-proxy?id=${fileId}${token ? `&token=${encodeURIComponent(token)}` : ''}`;
+          const proxyRes = await fetch(proxyUrl, {
+            headers: token ? { Authorization: `Bearer ${token}` } : {}
+          });
           if (proxyRes.ok) {
             blob = await proxyRes.blob();
             const ct = proxyRes.headers.get('content-type');

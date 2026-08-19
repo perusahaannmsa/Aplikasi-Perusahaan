@@ -18,6 +18,7 @@ import { AbsensiHarianNmsa } from './components/AbsensiHarianNmsa';
 import { PettyCashHoldersModal } from './components/PettyCashHoldersModal';
 import { NpwpManager } from './components/NpwpManager';
 import { AccuratePettyCashMapping } from './components/AccuratePettyCashMapping';
+import { AccountMappingContainer } from './components/AccountMappingContainer';
 import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission } from './utils';
 import { 
   isFirebaseConfigured, 
@@ -41,7 +42,7 @@ import {
   startGoogleDriveTokenAutoRefresh,
   ensureValidDriveToken
 } from './firebase';
-import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase } from 'lucide-react';
+import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers } from 'lucide-react';
 
 export default function App() {
   const [theme, setTheme] = useState<'classic' | 'gold-dark' | 'emerald' | 'slate'>(() => {
@@ -1601,7 +1602,7 @@ export default function App() {
                       )}
                       {view === 'absen' && 'Absen Harian NMSA'}
                       {view === 'npwp' && 'Master NPWP & Vendor'}
-                      {view === 'accurate' && 'Pemetaan Akun Accurate'}
+                      {view === 'accurate' && 'Pemetaan Akun'}
                       {view === 'form' && 'Form Pengajuan Payment'}
                       {view === 'print' && 'Cetak Dokumen F1/F2'}
                       {view === 'sppd' && 'Data SPPD & Perjalanan'}
@@ -1797,18 +1798,18 @@ export default function App() {
                       </div>
                     </button>
 
-                    {/* 4. ACCURATE MAPPING */}
+                    {/* 4. PEMETAAN AKUN (ACCURATE & SPPD) */}
                     <button
                       onClick={() => { setView('accurate'); setIsDashboardNavOpen(false); }}
                       className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer text-left mb-1 ${
                         view === 'accurate' ? 'bg-emerald-900 text-white font-black' : 'text-stone-700 hover:bg-stone-100'
                       }`}
                     >
-                      <FileSpreadsheet size={15} className={view === 'accurate' ? 'text-emerald-300' : 'text-emerald-700'} />
+                      <Layers size={15} className={view === 'accurate' ? 'text-amber-400' : 'text-emerald-700'} />
                       <div className="flex flex-col">
-                        <span>Pemetaan Akun Accurate</span>
+                        <span>Pemetaan Akun</span>
                         <span className={`text-[10px] font-normal ${view === 'accurate' ? 'text-emerald-200' : 'text-stone-400'}`}>
-                          Klasifikasi & COA Accurate
+                          Accurate (Petty Cash) & SPPD Dinas
                         </span>
                       </div>
                     </button>
@@ -2115,15 +2116,23 @@ export default function App() {
           />
         )}
 
-        {/* VIEW 7: Modul Rekap & Pemetaan Akun Accurate Petty Cash */}
+        {/* VIEW 7: Modul Pemetaan Akun (Accurate Petty Cash & SPPD Perjalanan Dinas) */}
         {view === 'accurate' && (
-          <AccuratePettyCashMapping
+          <AccountMappingContainer
             pettyCashReports={pettyCashReports}
             submissions={submissions}
             userProfile={userProfile}
             pettyCashHolders={pettyCashHolders}
             onUpdatePettyCashHolders={handleSavePettyCashHolders}
             onSaveSubmission={handleSaveSubmission}
+            onSelectSubmissionForView={(sub) => {
+              setActiveSubmission(sub);
+              setPrintInitialTab('both');
+              setView('print');
+            }}
+            onOpenSppdForm={() => {
+              setView('sppd');
+            }}
             onBack={() => setView('list')}
           />
         )}
