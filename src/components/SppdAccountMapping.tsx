@@ -592,21 +592,53 @@ export function SppdAccountMapping({
   };
 
   // Calculate compliance for a line item
-  const getComplianceStatus = (t: SppdMappedTransaction): { status: 'sesuai' | 'melebihi' | 'tiket_keuangan'; label: string; maxAllowed: number; spec?: string } => {
+  // Helper to get benchmark rate for a transaction
+  const getBenchmarkRate = (t: SppdMappedTransaction): { nominal: number; label: string; isSpecial: boolean } => {
+    const guide = guidelines.find(g => g.id === t.guidelineId || g.defaultCoaCode === t.sppdAccountCode);
+    if (!guide) return { nominal: 0, label: 'Sesuai Bukti', isSpecial: true };
+    const posKey = t.positionKey || employeePosition || 'staf';
+    const posRate = guide.rates[posKey];
+    if (!posRate) return { nominal: 0, label: 'Sesuai Bukti', isSpecial: true };
+    if (posRate.nominal === 0) return { nominal: 0, label: posRate.spec || 'Sesuai Keuangan', isSpecial: true };
+    return { nominal: posRate.nominal, label: `Rp ${posRate.nominal.toLocaleString('id-ID')}`, isSpecial: false };
+  };
+
+  // Helper to get approved / rounded capped amount for a transaction
+  const getApprovedAmount = (t: SppdMappedTransaction): { amount: number; isCapped: boolean; excess: number } => {
+    const b = getBenchmarkRate(t);
+    if (b.isSpecial || b.nominal === 0) {
+      return { amount: t.amount, isCapped: false, excess: 0 };
+    }
+    if (t.amount > b.nominal) {
+      return { amount: b.nominal, isCapped: true, excess: t.amount - b.nominal };
+    }
+    return { amount: t.amount, isCapped: false, excess: 0 };
+  };
+
+  // Calculate compliance for a line item (Status Acuan)
+  const getComplianceStatus = (t: SppdMappedTransaction): { 
+    status: 'sesuai' | 'melebihi' | 'tiket_keuangan'; 
+    label: string; 
+    shortLabel: string;
+    maxAllowed: number; 
+    spec?: string 
+  } => {
     const guide = guidelines.find(g => g.id === t.guidelineId || g.defaultCoaCode === t.sppdAccountCode);
     if (!guide) {
-      return { status: 'sesuai', label: 'Standar Acuan', maxAllowed: 0 };
+      return { status: 'sesuai', label: 'Standar Acuan', shortLabel: 'Sesuai Acuan', maxAllowed: 0 };
     }
 
-    const posRate = guide.rates[t.positionKey || 'staf'];
+    const posKey = t.positionKey || employeePosition || 'staf';
+    const posRate = guide.rates[posKey];
     if (!posRate) {
-      return { status: 'sesuai', label: 'Standar', maxAllowed: 0 };
+      return { status: 'sesuai', label: 'Standar', shortLabel: 'Sesuai Acuan', maxAllowed: 0 };
     }
 
     if (posRate.nominal === 0) {
       return { 
         status: 'tiket_keuangan', 
-        label: `Tiket Keuangan (${posRate.spec || 'Sesuai Bagian Keuangan'})`, 
+        label: `Sesuai Keuangan (${posRate.spec || 'Sesuai Bagian Keuangan'})`, 
+        shortLabel: 'Sesuai Keuangan',
         maxAllowed: 0,
         spec: posRate.spec 
       };
@@ -615,14 +647,16 @@ export function SppdAccountMapping({
     if (t.amount > posRate.nominal) {
       return { 
         status: 'melebihi', 
-        label: `Melebihi Plafon (Maks Rp ${posRate.nominal.toLocaleString('id-ID')})`, 
+        label: `Melebihi Acuan (Maks Rp ${posRate.nominal.toLocaleString('id-ID')})`, 
+        shortLabel: 'Melebihi Acuan',
         maxAllowed: posRate.nominal 
       };
     }
 
     return { 
       status: 'sesuai', 
-      label: `Sesuai Plafon (Maks Rp ${posRate.nominal.toLocaleString('id-ID')})`, 
+      label: `Sesuai Acuan (Maks Rp ${posRate.nominal.toLocaleString('id-ID')})`, 
+      shortLabel: 'Sesuai Acuan',
       maxAllowed: posRate.nominal 
     };
   };
@@ -657,7 +691,7 @@ export function SppdAccountMapping({
         }
       }
 
-      // Consolidate into standard official categories with zero duplicates & meal capping
+      // Consolidate into standard official categories with zero duplicates & meal/pocket capping
       const rawCostInputs = transactions.map(t => ({
         id: t.id,
         kategori: t.category,
@@ -686,7 +720,7 @@ export function SppdAccountMapping({
         tanggalMulai: allDates[0] || transactions[0]?.date || now.toISOString().substring(0, 10),
         tanggalSelesai: allDates[allDates.length - 1] || transactions[transactions.length - 1]?.date || now.toISOString().substring(0, 10),
         tujuanPerjalanan: reportTitle,
-        keteranganSppd: `Diposting dari Pemetaan Akun SPPD (${transactions.length} sub-transaksi)`,
+        keteranganSppd: `Diposting dari Pemetaan Akun SPPD (${transactions.length} sub-transaksi). Kelebihan biaya di atas plafon acuan resmi telah diakumulasikan dan dihapuskan sesuai pedoman.`,
         costItems: consolidatedList.map(c => ({
           id: `cost-${Math.random().toString(36).substring(2, 7)}`,
           kategori: c.kategori,
@@ -711,7 +745,7 @@ export function SppdAccountMapping({
         console.warn('Could not sync SPPD directly to cloud, saved locally:', cloudErr);
       }
 
-      setSuccessMessage(`Berhasil memposting SPPD [${newSppdRecord.noSppd}] ke Formulir SPPD Dinas & Database! Total: Rp ${totalAmount.toLocaleString('id-ID')}`);
+      setSuccessMessage(`Berhasil memposting SPPD [${newSppdRecord.noSppd}] ke Formulir SPPD Dinas & Database! Total Disetujui: Rp ${consolidatedList.reduce((s, c) => s + c.jumlah, 0).toLocaleString('id-ID')}`);
     } catch (err: any) {
       setErrorMessage('Gagal memposting ke Formulir SPPD: ' + (err.message || String(err)));
     } finally {
@@ -719,8 +753,8 @@ export function SppdAccountMapping({
     }
   };
 
-  // Detailed Meal Capping & Spillover Analysis
-  const mealCappingAnalysis = useMemo(() => {
+  // Comprehensive SPPD Audit, Capping, Spillover & Elimination Engine
+  const sppdAuditEngine = useMemo(() => {
     // Determine trip duration in days
     let tripDays = 4;
     const allDates: string[] = Array.from(new Set(transactions.map(t => t.date).filter(Boolean))).sort() as string[];
@@ -735,11 +769,18 @@ export function SppdAccountMapping({
       }
     }
 
-    // Daily benchmark rate for position
+    // Daily benchmark rates based on position
     const guideMakan = guidelines.find(g => g.id === 'sppd_1' || g.defaultCoaCode === '610101');
-    const posRate = guideMakan?.rates[employeePosition]?.nominal || 100000;
-    const dailyMealRate = posRate > 0 ? posRate : 100000;
+    const guideSaku = guidelines.find(g => g.id === 'sppd_2' || g.defaultCoaCode === '610102');
+
+    const posMealRate = guideMakan?.rates[employeePosition]?.nominal;
+    const dailyMealRate = (posMealRate && posMealRate > 0) ? posMealRate : (employeePosition === 'direktur' ? 300000 : 100000);
+
+    const posPocketRate = guideSaku?.rates[employeePosition]?.nominal;
+    const dailyPocketRate = (posPocketRate && posPocketRate > 0) ? posPocketRate : (employeePosition === 'direktur' ? 250000 : 100000);
+
     const maxTripMealAllowed = tripDays * dailyMealRate;
+    const maxTripPocketAllowed = tripDays * dailyPocketRate;
 
     // Filter meal transactions
     const mealTxs = transactions.filter(t => 
@@ -783,28 +824,64 @@ export function SppdAccountMapping({
       }
     }
 
-    // Filter pocket money transactions
+    // Filter pocket money & other uncategorized/snack transactions
     const pocketTxs = transactions.filter(t => 
       t.sppdAccountCode === '610102' || 
       t.guidelineId === 'sppd_2' ||
       t.category.toLowerCase().includes('saku')
     );
     const rawPocketTotal = pocketTxs.reduce((sum, t) => sum + t.amount, 0);
-    const finalPocketTotal = rawPocketTotal + excessMealToPocket;
+    const accumulatedPocketTotal = rawPocketTotal + excessMealToPocket;
+
+    // Pocket Capping & Elimination
+    let finalPocketApproved = accumulatedPocketTotal;
+    let eliminatedPocketExcess = 0;
+
+    if (accumulatedPocketTotal > maxTripPocketAllowed) {
+      finalPocketApproved = maxTripPocketAllowed;
+      eliminatedPocketExcess = accumulatedPocketTotal - maxTripPocketAllowed;
+    }
+
+    // Other categories (transport, hotel, tickets)
+    const otherTxs = transactions.filter(t => 
+      t.sppdAccountCode !== '610101' && 
+      t.guidelineId !== 'sppd_1' && 
+      !t.category.toLowerCase().includes('makan') &&
+      t.sppdAccountCode !== '610102' && 
+      t.guidelineId !== 'sppd_2' && 
+      !t.category.toLowerCase().includes('saku')
+    );
+    const otherTotal = otherTxs.reduce((sum, t) => sum + t.amount, 0);
+
+    const totalExpenseRiil = transactions.reduce((sum, t) => sum + t.amount, 0);
+    const totalExpenseApproved = cappedMealTotal + finalPocketApproved + otherTotal;
+    const totalEliminatedExcess = Math.max(0, totalExpenseRiil - totalExpenseApproved);
 
     return {
       tripDays,
       dailyMealRate,
+      dailyPocketRate,
       maxTripMealAllowed,
+      maxTripPocketAllowed,
       rawMealTotal,
       cappedMealTotal,
       excessMealToPocket,
       mealByDate,
       rawPocketTotal,
-      finalPocketTotal,
-      hasMealExcess: excessMealToPocket > 0
+      accumulatedPocketTotal,
+      finalPocketApproved,
+      eliminatedPocketExcess,
+      otherTotal,
+      totalExpenseRiil,
+      totalExpenseApproved,
+      totalEliminatedExcess,
+      hasMealExcess: excessMealToPocket > 0,
+      hasPocketElimination: eliminatedPocketExcess > 0
     };
   }, [transactions, guidelines, employeePosition]);
+
+  // Backward compatibility alias
+  const mealCappingAnalysis = sppdAuditEngine;
 
   // Grouped Summary by 9 Categories
   const groupedSummary = useMemo(() => {
@@ -830,6 +907,9 @@ export function SppdAccountMapping({
 
     const excelData = transactions.map((t, idx) => {
       const comp = getComplianceStatus(t);
+      const bench = getBenchmarkRate(t);
+      const appr = getApprovedAmount(t);
+
       return {
         'No.': idx + 1,
         'Tanggal': t.date,
@@ -838,8 +918,10 @@ export function SppdAccountMapping({
         'Rincian Pengeluaran SPPD': t.description,
         'Kode Akun COA': t.sppdAccountCode,
         'Nama Akun COA SPPD': t.sppdAccountName,
-        'Nominal (Rp)': t.amount,
-        'Status Plafon': comp.label,
+        'Nominal Acuan (Rp)': bench.isSpecial ? bench.label : bench.nominal,
+        'Nominal Riil (Rp)': t.amount,
+        'Nominal Pembulatan / Disetujui (Rp)': appr.amount,
+        'Status Acuan': comp.shortLabel,
         'Tingkat Keyakinan': t.confidence.toUpperCase()
       };
     });
@@ -852,7 +934,7 @@ export function SppdAccountMapping({
     XLSX.writeFile(workbook, fileName);
   };
 
-  // Export PDF
+  // Export PDF (clean format with 1 nominal column matching Gambar 2 + footer audit notes)
   const handleExportPDF = () => {
     if (transactions.length === 0) return;
 
@@ -870,10 +952,10 @@ export function SppdAccountMapping({
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
     doc.text(`Judul / Sumber: ${reportTitle}`, 14, 28);
-    doc.text(`Karyawan: ${employeeName || '-'} | Jabatan: ${SPPD_POSITIONS.find(p => p.key === employeePosition)?.label || 'Staf'}`, 14, 33);
-    doc.text(`Tanggal Cetak: ${new Date().toLocaleDateString('id-ID')} | Total Biaya: Rp ${totalExpense.toLocaleString('id-ID')}`, 14, 38);
+    doc.text(`Karyawan: ${employeeName || '-'} | Jabatan: ${SPPD_POSITIONS.find(p => p.key === employeePosition)?.label || 'Staf'} | Durasi: ${sppdAuditEngine.tripDays} Hari`, 14, 33);
+    doc.text(`Tanggal Cetak: ${new Date().toLocaleDateString('id-ID')} | Total Riil: Rp ${sppdAuditEngine.totalExpenseRiil.toLocaleString('id-ID')} | Total Disetujui: Rp ${sppdAuditEngine.totalExpenseApproved.toLocaleString('id-ID')}`, 14, 38);
 
-    // Grouped Summary Table
+    // Grouped Summary Table (Matching Gambar 2 Table 1)
     const summaryRows = groupedSummary.filter(g => g.totalAmount > 0).map((g, i) => [
       i + 1,
       g.guideline.defaultCoaCode,
@@ -899,31 +981,85 @@ export function SppdAccountMapping({
       styles: { fontSize: 8.5, cellPadding: 2 }
     });
 
-    // Detailed Item Table
+    // Detailed Item Table (Matching Gambar 2 Table 2: 1 Single Nominal column, Status Acuan)
     const finalY = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY + 8 : 100;
     
     doc.setFontSize(10);
     doc.setFont('helvetica', 'bold');
     doc.text('RINCIAN TRANSAKSI SPPD PER BARIS', 14, finalY);
 
-    const detailRows = transactions.map((t, i) => [
-      i + 1,
-      t.date,
-      t.description,
-      t.sppdAccountCode,
-      t.category,
-      `Rp ${t.amount.toLocaleString('id-ID')}`,
-      getComplianceStatus(t).status.toUpperCase()
-    ]);
+    const detailRows = transactions.map((t, i) => {
+      const comp = getComplianceStatus(t);
+      return [
+        i + 1,
+        t.date,
+        t.description,
+        t.sppdAccountCode,
+        t.category,
+        `Rp ${t.amount.toLocaleString('id-ID')}`,
+        comp.status === 'sesuai' ? 'SESUAI' : comp.status === 'melebihi' ? 'MELEBIHI' : 'SESUAI KEUANGAN'
+      ];
+    });
 
     autoTable(doc, {
       startY: finalY + 3,
-      head: [['No', 'Tanggal', 'Rincian Pengeluaran', 'Kode COA', 'Kategori', 'Nominal', 'Status Plafon']],
+      head: [['No', 'Tanggal', 'Rincian Pengeluaran', 'Kode COA', 'Kategori', 'Nominal', 'Status Acuan']],
       body: detailRows,
       theme: 'striped',
       headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold' },
-      styles: { fontSize: 7.5, cellPadding: 1.5 }
+      styles: { fontSize: 7.5, cellPadding: 1.5 },
+      columnStyles: {
+        5: { fontStyle: 'bold', halign: 'right' },
+        6: { halign: 'center', fontStyle: 'bold' }
+      }
     });
+
+    // Audit & Elimination Disclosure Box at Bottom of PDF
+    const noteStartY = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY + 6 : 220;
+    
+    // Check if new page is needed for the audit disclosure box
+    let currentY = noteStartY;
+    if (currentY > 240) {
+      doc.addPage();
+      currentY = 15;
+    }
+
+    doc.setFillColor(248, 250, 252);
+    doc.setDrawColor(203, 213, 225);
+    doc.rect(14, currentY, 182, sppdAuditEngine.hasPocketElimination || sppdAuditEngine.hasMealExcess ? 42 : 32, 'FD');
+
+    doc.setFontSize(8.5);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(30, 41, 59);
+    doc.text('CATATAN AUDIT PLAFON ACUAN & PENGHAPUSAN KELEBIHAN SPPD:', 17, currentY + 5);
+
+    doc.setFontSize(7.5);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(51, 65, 85);
+    doc.text(`1. Total Pengeluaran Riil SPPD: Rp ${sppdAuditEngine.totalExpenseRiil.toLocaleString('id-ID')} (${transactions.length} baris transaksi, Durasi: ${sppdAuditEngine.tripDays} Hari).`, 17, currentY + 10);
+    
+    doc.text(`2. Kategori Uang Makan: Riil Rp ${sppdAuditEngine.rawMealTotal.toLocaleString('id-ID')} | Plafon Acuan: ${sppdAuditEngine.tripDays} Hari x Rp ${sppdAuditEngine.dailyMealRate.toLocaleString('id-ID')} = Rp ${sppdAuditEngine.maxTripMealAllowed.toLocaleString('id-ID')} | Disetujui: Rp ${sppdAuditEngine.cappedMealTotal.toLocaleString('id-ID')}${sppdAuditEngine.hasMealExcess ? ` (Kelebihan Rp ${sppdAuditEngine.excessMealToPocket.toLocaleString('id-ID')} dialihkan ke Uang Saku)` : ''}.`, 17, currentY + 15);
+    
+    doc.text(`3. Kategori Uang Saku: Riil Rp ${sppdAuditEngine.rawPocketTotal.toLocaleString('id-ID')}${sppdAuditEngine.hasMealExcess ? ` + Pelimpahan Makan Rp ${sppdAuditEngine.excessMealToPocket.toLocaleString('id-ID')} = Akumulasi Rp ${sppdAuditEngine.accumulatedPocketTotal.toLocaleString('id-ID')}` : ''} | Batas Plafon Acuan: ${sppdAuditEngine.tripDays} Hari x Rp ${sppdAuditEngine.dailyPocketRate.toLocaleString('id-ID')} = Rp ${sppdAuditEngine.maxTripPocketAllowed.toLocaleString('id-ID')}.`, 17, currentY + 20);
+
+    if (sppdAuditEngine.eliminatedPocketExcess > 0) {
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(185, 28, 28);
+      doc.text(`4. JUMLAH NOMINAL YANG DIHAPUSKAN: Rp ${sppdAuditEngine.eliminatedPocketExcess.toLocaleString('id-ID')} (Kelebihan di atas plafon acuan Uang Saku resmi dihapuskan/tidak diganti).`, 17, currentY + 26);
+      
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(5, 150, 105);
+      doc.text(`5. TOTAL BIAYA SPPD YANG DISETUJUI & DIBAYARKAN PERUSAHAAN: Rp ${sppdAuditEngine.totalExpenseApproved.toLocaleString('id-ID')}.`, 17, currentY + 31);
+
+      doc.setFontSize(7);
+      doc.setFont('helvetica', 'italic');
+      doc.setTextColor(100, 116, 139);
+      doc.text('* Ketentuan: Berdasarkan Pedoman Plafon SPPD PT NMSA, kelebihan biaya yang melampaui batas acuan tidak dibebankan ke kas perusahaan.', 17, currentY + 37);
+    } else {
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(5, 150, 105);
+      doc.text(`4. TOTAL BIAYA SPPD YANG DISETUJUI & DIBAYARKAN PERUSAHAAN: Rp ${sppdAuditEngine.totalExpenseApproved.toLocaleString('id-ID')} (Seluruh pengeluaran sesuai batas acuan plafon).`, 17, currentY + 26);
+    }
 
     doc.save(`Laporan_Pemetaan_SPPD_${reportTitle.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`);
   };
@@ -1453,37 +1589,57 @@ export function SppdAccountMapping({
             })}
           </div>
 
-          {/* Meal Capping & Rollover Breakdown Banner */}
-          {mealCappingAnalysis.hasMealExcess && (
-            <div className="p-4 bg-amber-500/10 border-2 border-amber-300 rounded-3xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 font-sans">
+          {/* Meal Capping, Pocket Spillover & Elimination Breakdown Banner */}
+          {(sppdAuditEngine.hasMealExcess || sppdAuditEngine.hasPocketElimination) && (
+            <div className="p-4 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-rose-500/10 border-2 border-amber-300 rounded-3xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 font-sans shadow-xs">
               <div className="flex items-start gap-3">
-                <div className="p-2 bg-amber-600 text-white rounded-2xl shrink-0 mt-0.5">
+                <div className="p-2 bg-amber-600 text-white rounded-2xl shrink-0 mt-0.5 shadow-3xs">
                   <AlertCircle size={20} />
                 </div>
                 <div>
                   <div className="flex items-center gap-2 flex-wrap">
                     <h4 className="font-bold text-amber-950 text-sm">
-                      Kalkulasi Acuan Uang Makan & Pelimpahan ke Uang Saku
+                      Kalkulasi Acuan Plafon, Pelimpahan & Penghapusan Kelebihan Biaya
                     </h4>
                     <span className="text-[10px] font-mono bg-amber-200/80 text-amber-900 px-2 py-0.5 rounded-full font-bold">
-                      {mealCappingAnalysis.tripDays} Hari Perjalanan
+                      {sppdAuditEngine.tripDays} Hari Perjalanan ({SPPD_POSITIONS.find(p => p.key === employeePosition)?.label || 'Staf'})
                     </span>
                   </div>
                   <p className="text-xs text-amber-900/90 mt-1 leading-relaxed">
-                    Total pengeluaran makan riil sebesar <strong className="font-mono">Rp {mealCappingAnalysis.rawMealTotal.toLocaleString('id-ID')}</strong> melebihi batas acuan harian (<strong className="font-mono">Rp {mealCappingAnalysis.dailyMealRate.toLocaleString('id-ID')}/hari x {mealCappingAnalysis.tripDays} Hari = Rp {mealCappingAnalysis.maxTripMealAllowed.toLocaleString('id-ID')}</strong>). 
-                    Kategori Uang Makan dibulatkan ke <strong className="font-mono">Rp {mealCappingAnalysis.cappedMealTotal.toLocaleString('id-ID')}</strong>, dan kelebihan sebesar <strong className="font-mono text-amber-950 bg-amber-200/70 px-1 py-0.5 rounded">Rp {mealCappingAnalysis.excessMealToPocket.toLocaleString('id-ID')}</strong> otomatis dialihkan ke kategori <strong>Uang Saku</strong>.
+                    {sppdAuditEngine.hasMealExcess && (
+                      <span>
+                        • <strong>Uang Makan:</strong> Riil <strong className="font-mono">Rp {sppdAuditEngine.rawMealTotal.toLocaleString('id-ID')}</strong> melebihi acuan (<strong className="font-mono">Rp {sppdAuditEngine.dailyMealRate.toLocaleString('id-ID')}/hari x {sppdAuditEngine.tripDays} Hari = Rp {sppdAuditEngine.maxTripMealAllowed.toLocaleString('id-ID')}</strong>). Dibulatkan ke <strong className="font-mono">Rp {sppdAuditEngine.cappedMealTotal.toLocaleString('id-ID')}</strong>, kelebihan <strong className="font-mono bg-amber-200/80 px-1 py-0.5 rounded">Rp {sppdAuditEngine.excessMealToPocket.toLocaleString('id-ID')}</strong> dialihkan ke Uang Saku.
+                      </span>
+                    )}
+                    {sppdAuditEngine.hasPocketElimination ? (
+                      <span className="block mt-1 text-rose-900">
+                        • <strong>Uang Saku:</strong> Akumulasi (<strong className="font-mono">Rp {sppdAuditEngine.accumulatedPocketTotal.toLocaleString('id-ID')}</strong>) melampaui batas acuan uang saku ({sppdAuditEngine.tripDays} Hari x Rp {sppdAuditEngine.dailyPocketRate.toLocaleString('id-ID')} = <strong className="font-mono">Rp {sppdAuditEngine.maxTripPocketAllowed.toLocaleString('id-ID')}</strong>). Kelebihan sebesar <strong className="font-mono bg-rose-200/90 text-rose-950 px-1.5 py-0.5 rounded font-black">Rp {sppdAuditEngine.eliminatedPocketExcess.toLocaleString('id-ID')}</strong> <u>resmi dihapuskan</u> dan tidak diganti.
+                      </span>
+                    ) : (
+                      sppdAuditEngine.hasMealExcess && (
+                        <span className="block mt-1 text-emerald-900">
+                          • <strong>Uang Saku:</strong> Akumulasi Uang Saku (<strong className="font-mono">Rp {sppdAuditEngine.accumulatedPocketTotal.toLocaleString('id-ID')}</strong>) masih dalam batas acuan aman ({sppdAuditEngine.tripDays} Hari x Rp {sppdAuditEngine.dailyPocketRate.toLocaleString('id-ID')} = <strong className="font-mono">Rp {sppdAuditEngine.maxTripPocketAllowed.toLocaleString('id-ID')}</strong>).
+                        </span>
+                      )
+                    )}
                   </p>
                 </div>
               </div>
 
-              <div className="bg-white/80 border border-amber-200 rounded-2xl p-3 shrink-0 text-right font-mono text-xs shadow-xs min-w-[200px]">
-                <div className="text-[10px] text-stone-500">Kelebihan Uang Makan:</div>
-                <div className="font-black text-amber-900 text-sm">
-                  + Rp {mealCappingAnalysis.excessMealToPocket.toLocaleString('id-ID')}
+              <div className="bg-white/90 border border-amber-200 rounded-2xl p-3 shrink-0 text-right font-mono text-xs shadow-xs min-w-[220px]">
+                <div className="text-[10px] text-stone-500">Total SPPD Disetujui:</div>
+                <div className="font-black text-emerald-800 text-sm">
+                  Rp {sppdAuditEngine.totalExpenseApproved.toLocaleString('id-ID')}
                 </div>
-                <div className="text-[9px] text-emerald-700 font-sans font-semibold mt-0.5">
-                  Masuk ke Uang Saku
-                </div>
+                {sppdAuditEngine.eliminatedPocketExcess > 0 ? (
+                  <div className="text-[9px] text-rose-700 font-sans font-semibold mt-0.5">
+                    Dihapuskan: -Rp {sppdAuditEngine.eliminatedPocketExcess.toLocaleString('id-ID')}
+                  </div>
+                ) : (
+                  <div className="text-[9px] text-emerald-700 font-sans font-semibold mt-0.5">
+                    Sesuai Batas Acuan Plafon
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1514,7 +1670,7 @@ export function SppdAccountMapping({
                 }`}
               >
                 <ListOrdered size={14} />
-                <span>Tabel Semua Baris</span>
+                <span>Tabel Semua Baris (3 Kolom Nominal)</span>
               </button>
             </div>
 
@@ -1548,10 +1704,10 @@ export function SppdAccountMapping({
                 onChange={(e) => setTxComplianceFilter(e.target.value)}
                 className="px-2.5 py-1.5 bg-stone-50 border border-stone-200 rounded-xl text-xs font-sans font-bold"
               >
-                <option value="all">Semua Status Plafon</option>
-                <option value="sesuai">Sesuai Plafon</option>
-                <option value="melebihi">Melebihi Plafon</option>
-                <option value="tiket_keuangan">Tiket Keuangan</option>
+                <option value="all">Semua Status Acuan</option>
+                <option value="sesuai">Sesuai Acuan</option>
+                <option value="melebihi">Melebihi Acuan</option>
+                <option value="tiket_keuangan">Sesuai Keuangan</option>
               </select>
             </div>
           </div>
@@ -1600,12 +1756,12 @@ export function SppdAccountMapping({
                                 {guideline.item}
                               </h4>
                               <span className="text-[11px] font-mono px-2 py-0.5 bg-amber-100 text-amber-900 rounded-full font-bold">
-                                {count} Sub-Akun / Kwitansi
+                                {count} Sub-Akun / Transaksi
                               </span>
                             </div>
 
                             <p className="text-[11px] text-stone-500 font-mono mt-0.5">
-                              Plafon {SPPD_POSITIONS.find(p => p.key === employeePosition)?.shortLabel}: {
+                              Harga Acuan ({SPPD_POSITIONS.find(p => p.key === employeePosition)?.shortLabel}): {
                                 guideline.rates[employeePosition]?.nominal > 0 
                                   ? `Rp ${guideline.rates[employeePosition].nominal.toLocaleString('id-ID')}` 
                                   : (guideline.rates[employeePosition]?.spec || 'Sesuai Bukti')
@@ -1616,7 +1772,7 @@ export function SppdAccountMapping({
 
                         <div className="flex items-center gap-3">
                           <div className="text-right">
-                            <div className="text-[10px] text-stone-400 font-mono uppercase tracking-wider">Total Kategori</div>
+                            <div className="text-[10px] text-stone-400 font-mono uppercase tracking-wider">Total Riil Kategori</div>
                             <div className="text-sm font-black text-amber-900 font-mono">
                               Rp {totalAmount.toLocaleString('id-ID')}
                             </div>
@@ -1655,33 +1811,39 @@ export function SppdAccountMapping({
                           <div className="flex items-center gap-2">
                             <Info size={15} className="text-amber-700 shrink-0" />
                             <span className="text-amber-900">
-                              Acuan Harian: <strong>Rp {mealCappingAnalysis.dailyMealRate.toLocaleString('id-ID')}/hari</strong> ({mealCappingAnalysis.tripDays} Hari = Plafon Rp {mealCappingAnalysis.maxTripMealAllowed.toLocaleString('id-ID')})
+                              Acuan Harian: <strong>Rp {sppdAuditEngine.dailyMealRate.toLocaleString('id-ID')}/hari</strong> ({sppdAuditEngine.tripDays} Hari = Plafon Rp {sppdAuditEngine.maxTripMealAllowed.toLocaleString('id-ID')})
                             </span>
                           </div>
-                          {mealCappingAnalysis.hasMealExcess && (
+                          {sppdAuditEngine.hasMealExcess && (
                             <span className="text-[11px] font-mono font-bold bg-amber-200/80 text-amber-950 px-2.5 py-1 rounded-lg">
-                              ⚠️ Kelebihan Rp {mealCappingAnalysis.excessMealToPocket.toLocaleString('id-ID')} dialihkan ke Uang Saku
+                              ⚠️ Kelebihan Rp {sppdAuditEngine.excessMealToPocket.toLocaleString('id-ID')} dialihkan ke Uang Saku
                             </span>
                           )}
                         </div>
                       )}
 
                       {/* Special info box for Pocket Money within the category */}
-                      {isPocketCategory && isExpanded && mealCappingAnalysis.hasMealExcess && (
+                      {isPocketCategory && isExpanded && (
                         <div className="px-5 py-3 bg-emerald-50 border-b border-emerald-200 text-xs font-sans flex items-center justify-between gap-4 flex-wrap">
                           <div className="flex items-center gap-2">
                             <CheckCircle2 size={15} className="text-emerald-700 shrink-0" />
                             <span className="text-emerald-900">
-                              Kategori Uang Saku mencakup uang saku/jajanan murni (<strong>Rp {mealCappingAnalysis.rawPocketTotal.toLocaleString('id-ID')}</strong>) + pelimpahan kelebihan uang makan (<strong>Rp {mealCappingAnalysis.excessMealToPocket.toLocaleString('id-ID')}</strong>).
+                              Acuan Uang Saku: <strong>Rp {sppdAuditEngine.dailyPocketRate.toLocaleString('id-ID')}/hari</strong> ({sppdAuditEngine.tripDays} Hari = Plafon Rp {sppdAuditEngine.maxTripPocketAllowed.toLocaleString('id-ID')}). Uang saku riil (<strong>Rp {sppdAuditEngine.rawPocketTotal.toLocaleString('id-ID')}</strong>){sppdAuditEngine.hasMealExcess ? ` + pelimpahan makan (Rp ${sppdAuditEngine.excessMealToPocket.toLocaleString('id-ID')})` : ''}.
                             </span>
                           </div>
-                          <span className="text-[11px] font-mono font-bold bg-emerald-200/80 text-emerald-950 px-2.5 py-1 rounded-lg">
-                            Total Rekap: Rp {mealCappingAnalysis.finalPocketTotal.toLocaleString('id-ID')}
-                          </span>
+                          {sppdAuditEngine.eliminatedPocketExcess > 0 ? (
+                            <span className="text-[11px] font-mono font-bold bg-rose-200/80 text-rose-950 px-2.5 py-1 rounded-lg">
+                              🚫 Kelebihan Rp {sppdAuditEngine.eliminatedPocketExcess.toLocaleString('id-ID')} Dihapuskan
+                            </span>
+                          ) : (
+                            <span className="text-[11px] font-mono font-bold bg-emerald-200/80 text-emerald-950 px-2.5 py-1 rounded-lg">
+                              Disetujui: Rp {sppdAuditEngine.finalPocketApproved.toLocaleString('id-ID')}
+                            </span>
+                          )}
                         </div>
                       )}
 
-                      {/* Sub-Transactions Table for This Category */}
+                      {/* Sub-Transactions Table for This Category with 3 Nominal Columns */}
                       {isExpanded && (
                         <div className="p-0 overflow-x-auto">
                           {items.length === 0 ? (
@@ -1690,19 +1852,24 @@ export function SppdAccountMapping({
                             </div>
                           ) : (
                             <table className="w-full text-left text-xs border-collapse font-sans">
-                              <thead className="bg-stone-100/70 text-stone-600 font-mono text-[10px] uppercase tracking-wider border-b border-stone-200">
+                              <thead className="bg-stone-100/80 text-stone-700 font-mono text-[10.5px] uppercase tracking-wider border-b border-stone-200">
                                 <tr>
-                                  <th className="py-2 px-3 w-10 text-center">#</th>
-                                  <th className="py-2 px-3 w-28">Tanggal</th>
-                                  <th className="py-2 px-4">Rincian Pengeluaran Sub-Akun</th>
-                                  <th className="py-2 px-3 w-32 text-right">Nominal (Rp)</th>
-                                  <th className="py-2 px-3 w-32 text-center">Status Plafon</th>
-                                  <th className="py-2 px-3 w-24 text-center">Aksi</th>
+                                  <th className="py-2.5 px-3 w-10 text-center">#</th>
+                                  <th className="py-2.5 px-3 w-28">Tanggal</th>
+                                  <th className="py-2.5 px-4">Rincian Pengeluaran Sub-Akun</th>
+                                  <th className="py-2.5 px-3 w-32 text-right bg-stone-100/60">Kolom 1: Acuan (Rp)</th>
+                                  <th className="py-2.5 px-3 w-32 text-right">Kolom 2: Riil (Rp)</th>
+                                  <th className="py-2.5 px-3 w-32 text-right bg-emerald-50/60">Kolom 3: Pembulatan (Rp)</th>
+                                  <th className="py-2.5 px-3 w-32 text-center">Status Acuan</th>
+                                  <th className="py-2.5 px-3 w-20 text-center">Aksi</th>
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-stone-100">
                                 {items.map((t, subIdx) => {
                                   const comp = getComplianceStatus(t);
+                                  const bench = getBenchmarkRate(t);
+                                  const appr = getApprovedAmount(t);
+                                  const isExceeding = !bench.isSpecial && bench.nominal > 0 && t.amount > bench.nominal;
                                   const isMenuOpen = activeActionMenuId === t.id;
 
                                   return (
@@ -1723,9 +1890,39 @@ export function SppdAccountMapping({
                                           {t.notes && <span className="ml-2 text-stone-500 italic">({t.notes})</span>}
                                         </div>
                                       </td>
-                                      <td className="py-2.5 px-3 text-right font-mono font-black text-stone-900">
-                                        Rp {t.amount.toLocaleString('id-ID')}
+
+                                      {/* Kolom 1: Acuan */}
+                                      <td className="py-2.5 px-3 text-right font-mono bg-stone-50/50 text-stone-600 font-semibold">
+                                        {bench.isSpecial ? (
+                                          <span className="text-[10px] font-mono font-bold text-sky-700 bg-sky-50 px-1.5 py-0.5 rounded border border-sky-200">
+                                            {bench.label}
+                                          </span>
+                                        ) : (
+                                          `Rp ${bench.nominal.toLocaleString('id-ID')}`
+                                        )}
                                       </td>
+
+                                      {/* Kolom 2: Riil (Merah jika melebihi acuan) */}
+                                      <td className="py-2.5 px-3 text-right font-mono">
+                                        {isExceeding ? (
+                                          <span className="font-black text-rose-600 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-lg inline-block shadow-3xs" title={`Melebihi batas acuan Rp ${bench.nominal.toLocaleString('id-ID')}`}>
+                                            Rp {t.amount.toLocaleString('id-ID')}
+                                          </span>
+                                        ) : (
+                                          <span className="font-bold text-stone-900">
+                                            Rp {t.amount.toLocaleString('id-ID')}
+                                          </span>
+                                        )}
+                                      </td>
+
+                                      {/* Kolom 3: Pembulatan / Nilai Batas Acuan */}
+                                      <td className="py-2.5 px-3 text-right font-mono bg-emerald-50/30">
+                                        <span className="font-bold text-emerald-800">
+                                          Rp {appr.amount.toLocaleString('id-ID')}
+                                        </span>
+                                      </td>
+
+                                      {/* Status Acuan */}
                                       <td className="py-2.5 px-3 text-center">
                                         {comp.status === 'sesuai' && (
                                           <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-md border border-emerald-200">
@@ -1742,10 +1939,12 @@ export function SppdAccountMapping({
                                         {comp.status === 'tiket_keuangan' && (
                                           <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 bg-sky-100 text-sky-800 rounded-md border border-sky-200" title={comp.label}>
                                             <Info size={11} />
-                                            <span>Tiket</span>
+                                            <span>Keuangan</span>
                                           </span>
                                         )}
                                       </td>
+
+                                      {/* Aksi */}
                                       <td className="py-2.5 px-3 text-center">
                                         <div className="relative inline-block text-left">
                                           <button
@@ -1816,32 +2015,37 @@ export function SppdAccountMapping({
             </div>
           )}
 
-          {/* VIEW MODE 2: FULL FLAT TABLE */}
+          {/* VIEW MODE 2: FULL FLAT TABLE WITH 3 NOMINAL COLUMNS */}
           {mappingViewMode === 'flat_table' && (
             <div className="bg-white border border-stone-200 rounded-3xl overflow-visible shadow-xs">
               <div className="overflow-x-auto rounded-t-3xl">
-                <table className="w-full text-left text-xs border-collapse">
+                <table className="w-full text-left text-xs border-collapse font-sans">
                   <thead className="bg-stone-900 text-white font-mono text-[11px] uppercase tracking-wider">
                     <tr>
-                      <th className="py-3 px-3 w-12 text-center">No</th>
+                      <th className="py-3 px-3 w-10 text-center">No</th>
                       <th className="py-3 px-3 w-28">Tanggal</th>
                       <th className="py-3 px-4">Rincian Pengeluaran SPPD</th>
                       <th className="py-3 px-3 w-40">Kategori COA SPPD</th>
-                      <th className="py-3 px-3 w-32 text-right">Nominal (Rp)</th>
-                      <th className="py-3 px-3 w-36 text-center">Status Plafon</th>
-                      <th className="py-3 px-3 w-28 text-center">Opsi Aksi</th>
+                      <th className="py-3 px-3 w-32 text-right bg-stone-800 text-amber-200">Kolom 1: Acuan (Rp)</th>
+                      <th className="py-3 px-3 w-32 text-right text-stone-100">Kolom 2: Riil (Rp)</th>
+                      <th className="py-3 px-3 w-32 text-right bg-stone-800 text-emerald-300">Kolom 3: Pembulatan (Rp)</th>
+                      <th className="py-3 px-3 w-32 text-center">Status Acuan</th>
+                      <th className="py-3 px-3 w-24 text-center">Opsi Aksi</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-stone-200 font-sans">
                     {filteredTransactions.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="py-8 text-center text-stone-400 font-mono">
+                        <td colSpan={9} className="py-8 text-center text-stone-400 font-mono">
                           Tidak ada transaksi yang cocok dengan filter.
                         </td>
                       </tr>
                     ) : (
                       filteredTransactions.map((t, idx) => {
                         const comp = getComplianceStatus(t);
+                        const bench = getBenchmarkRate(t);
+                        const appr = getApprovedAmount(t);
+                        const isExceeding = !bench.isSpecial && bench.nominal > 0 && t.amount > bench.nominal;
                         const isMenuOpen = activeActionMenuId === t.id;
 
                         return (
@@ -1886,29 +2090,61 @@ export function SppdAccountMapping({
                                 ))}
                               </select>
                             </td>
-                            <td className="py-3 px-3 text-right font-mono font-black text-stone-900">
-                              Rp {t.amount.toLocaleString('id-ID')}
+
+                            {/* Kolom 1: Acuan */}
+                            <td className="py-3 px-3 text-right font-mono bg-stone-50 text-stone-700 font-bold">
+                              {bench.isSpecial ? (
+                                <span className="text-[10px] font-mono font-bold text-sky-700 bg-sky-50 px-2 py-0.5 rounded border border-sky-200 inline-block">
+                                  {bench.label}
+                                </span>
+                              ) : (
+                                `Rp ${bench.nominal.toLocaleString('id-ID')}`
+                              )}
                             </td>
+
+                            {/* Kolom 2: Riil (Merah jika melebihi acuan) */}
+                            <td className="py-3 px-3 text-right font-mono">
+                              {isExceeding ? (
+                                <span className="font-black text-rose-600 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-lg inline-block shadow-3xs" title={`Melebihi batas acuan Rp ${bench.nominal.toLocaleString('id-ID')}`}>
+                                  Rp {t.amount.toLocaleString('id-ID')}
+                                </span>
+                              ) : (
+                                <span className="font-black text-stone-900">
+                                  Rp {t.amount.toLocaleString('id-ID')}
+                                </span>
+                              )}
+                            </td>
+
+                            {/* Kolom 3: Pembulatan / Batas Acuan Maksimal */}
+                            <td className="py-3 px-3 text-right font-mono bg-emerald-50/40">
+                              <span className="font-black text-emerald-800 bg-emerald-100/60 border border-emerald-200 px-2 py-0.5 rounded-lg inline-block">
+                                Rp {appr.amount.toLocaleString('id-ID')}
+                              </span>
+                            </td>
+
+                            {/* Status Acuan */}
                             <td className="py-3 px-3 text-center">
                               {comp.status === 'sesuai' && (
                                 <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-md border border-emerald-200">
                                   <CheckCircle2 size={11} />
-                                  <span>Sesuai Plafon</span>
+                                  <span>Sesuai Acuan</span>
                                 </span>
                               )}
                               {comp.status === 'melebihi' && (
                                 <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 bg-rose-100 text-rose-800 rounded-md border border-rose-200" title={comp.label}>
                                   <AlertCircle size={11} />
-                                  <span>Melebihi Plafon</span>
+                                  <span>Melebihi Acuan</span>
                                 </span>
                               )}
                               {comp.status === 'tiket_keuangan' && (
                                 <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 bg-sky-100 text-sky-800 rounded-md border border-sky-200" title={comp.label}>
                                   <Info size={11} />
-                                  <span>Tiket Keuangan</span>
+                                  <span>Sesuai Keuangan</span>
                                 </span>
                               )}
                             </td>
+
+                            {/* Opsi Aksi */}
                             <td className="py-3 px-3 text-center">
                               <div className="relative inline-block text-left">
                                 <button
@@ -2034,31 +2270,59 @@ export function SppdAccountMapping({
             </div>
           )}
 
-          {/* Bottom Card: Total Summary and "Tambahkan Data Secara Manual" button */}
-          <div className="p-4 bg-stone-50 border border-stone-200 rounded-3xl flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-amber-100 text-amber-900 rounded-xl">
-                <DollarSign size={18} />
+          {/* Bottom Card: Comprehensive Settlement, Elimination & Action Card */}
+          <div className="space-y-4">
+            <div className="p-5 bg-stone-900 text-white rounded-3xl border border-stone-800 shadow-lg flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-6 font-sans">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 flex-1">
+                <div className="p-3.5 bg-stone-800/80 rounded-2xl border border-stone-700/60">
+                  <div className="text-[11px] font-mono text-stone-400">Total Pengeluaran Riil (SPPD):</div>
+                  <div className="text-lg font-black text-white font-mono mt-0.5">
+                    Rp {sppdAuditEngine.totalExpenseRiil.toLocaleString('id-ID')}
+                  </div>
+                  <div className="text-[10px] text-stone-400 mt-0.5">{transactions.length} baris sub-transaksi</div>
+                </div>
+
+                <div className="p-3.5 bg-stone-800/80 rounded-2xl border border-stone-700/60">
+                  <div className="text-[11px] font-mono text-rose-300">Nominal Dihapuskan (Kelebihan Plafon):</div>
+                  <div className={`text-lg font-black font-mono mt-0.5 ${sppdAuditEngine.eliminatedPocketExcess > 0 ? 'text-rose-400' : 'text-stone-400'}`}>
+                    - Rp {sppdAuditEngine.eliminatedPocketExcess.toLocaleString('id-ID')}
+                  </div>
+                  <div className="text-[10px] text-rose-300/80 mt-0.5">
+                    {sppdAuditEngine.eliminatedPocketExcess > 0 ? 'Kelebihan Uang Saku tidak diganti' : 'Tidak ada potongan'}
+                  </div>
+                </div>
+
+                <div className="p-3.5 bg-emerald-950/80 rounded-2xl border border-emerald-800/60">
+                  <div className="text-[11px] font-mono text-emerald-300">Total SPPD Yang Disetujui:</div>
+                  <div className="text-lg font-black text-emerald-400 font-mono mt-0.5">
+                    Rp {sppdAuditEngine.totalExpenseApproved.toLocaleString('id-ID')}
+                  </div>
+                  <div className="text-[10px] text-emerald-300/80 mt-0.5">Batas acuan resmi perusahaan</div>
+                </div>
               </div>
-              <div>
-                <div className="text-[11px] font-mono text-stone-500">
-                  Total Biaya Terdeteksi:
-                </div>
-                <div className="text-base font-black text-stone-900 font-mono">
-                  Rp {totalExpense.toLocaleString('id-ID')} <span className="text-xs font-normal text-stone-500 font-sans">({transactions.length} baris transaksi)</span>
-                </div>
+
+              <div className="flex flex-col sm:flex-row items-center gap-3 shrink-0">
+                <button
+                  id="btn-add-manual-sppd-bottom"
+                  type="button"
+                  onClick={handleOpenAddModal}
+                  className="w-full sm:w-auto px-5 py-3 bg-amber-600 hover:bg-amber-500 active:scale-98 text-white rounded-2xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-md hover:shadow-lg"
+                >
+                  <PlusCircle size={16} />
+                  <span>+ Tambahkan Data Secara Manual</span>
+                </button>
               </div>
             </div>
 
-            <button
-              id="btn-add-manual-sppd-bottom"
-              type="button"
-              onClick={handleOpenAddModal}
-              className="w-full sm:w-auto px-5 py-2.5 bg-amber-600 hover:bg-amber-500 active:scale-98 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-md hover:shadow-lg"
-            >
-              <PlusCircle size={16} />
-              <span>+ Tambahkan Data Secara Manual</span>
-            </button>
+            {/* Policy Settlement Footnote */}
+            {sppdAuditEngine.eliminatedPocketExcess > 0 && (
+              <div className="px-5 py-3 bg-rose-50 border border-rose-200 rounded-2xl text-xs text-rose-900 flex items-center gap-2.5">
+                <AlertCircle size={16} className="text-rose-600 shrink-0" />
+                <span>
+                  <strong>Ketentuan Kebijakan Plafon SPPD PT NMSA:</strong> Seluruh kelebihan biaya di atas batas acuan akumulasi Uang Saku (sebesar <strong>Rp {sppdAuditEngine.eliminatedPocketExcess.toLocaleString('id-ID')}</strong>) telah otomatis <strong>dihapuskan</strong> dan tidak dapat ditagihkan/di-reimburse dari kas operasional perusahaan.
+                </span>
+              </div>
+            )}
           </div>
         </div>
       )}

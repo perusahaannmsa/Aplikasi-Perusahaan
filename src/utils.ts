@@ -447,31 +447,61 @@ export function formatRupiah(value: number | string): string {
   }).format(num);
 }
 
-/**
- * Intelligent detector for "Jumlah / Volume" input:
- * - Detects units/counts (e.g. 2, 5, 10 pcs, 2 box) -> Type: 'qty' (Qty/Quantity)
- * - Detects nominal/currency (e.g. 2.640.000, Rp 500.000, 100000) -> Type: 'price' (Satuan Harga / Tarif)
- * - Detects custom units (e.g. 1 Bulan, 5 Hari, 1 Lot, 1 Paket) -> Type: 'custom'
- */
-export function analyzeVolumeInput(val: string | null | undefined): {
-  type: 'qty' | 'price' | 'custom' | 'empty';
+export interface VolumeAnalysisResult {
+  type: 'qty' | 'price' | 'volume' | 'custom' | 'empty';
   badgeLabel: string;
   formattedText: string;
   rawValue: string;
-} {
+}
+
+/**
+ * Intelligent detector for "Jumlah / Volume" input:
+ * - 2 digits or < 100 / explicit piece units -> Type: 'qty' (Pcs / Quantity)
+ * - Thousands (>= 1000, dots, Rp) -> Type: 'price' (Satuan Harga / Tarif)
+ * - Volume / liquid keywords (liter, ltr, ml, m3, galon, drum, etc.) -> Type: 'volume'
+ * - Custom units (1 Bulan, 1 Paket, 1 Lot, etc.) -> Type: 'custom'
+ */
+export function analyzeVolumeInput(val: string | null | undefined): VolumeAnalysisResult {
   if (!val || !val.trim()) {
     return { type: 'empty', badgeLabel: 'Jumlah / Vol', formattedText: '-', rawValue: '' };
   }
   const clean = val.trim();
 
-  // Check if currency / nominal in thousands or has Rp
+  // 1. Check Volume / Liquid / Mass keywords (Liter, Ltr, ML, M3, Kubik, Galon, Drum, Kl, etc.)
+  const isVolumeUnit = /(?:^|\s|\d)(?:liter|ltr|lt\b|l\b|ml\b|mili(?:liter)?|cc\b|m3\b|m³\b|kubik|cbm|galon|gallon|drum|tangki|jerigen|jeriken|kl\b|kiloliter|ton\b|kg\b|kilo(?:gram)?|gram|gr\b)(?:$|\s|\b)/i.test(clean);
+  if (isVolumeUnit) {
+    return {
+      type: 'volume',
+      badgeLabel: 'Volume',
+      formattedText: clean,
+      rawValue: clean
+    };
+  }
+
+  // 2. Check if Currency / Nominal in thousands, has Rp/IDR, or large number >= 1000
   const hasCurrencySymbol = /^(rp\.?|idr)\s*/i.test(clean);
   const hasThousandDots = /^\d{1,3}(\.\d{3})+(\,\d+)?$/.test(clean);
-  const isLargeNumber = /^\d+$/.test(clean) && Number(clean) >= 10000;
+  const hasThousandCommas = /^\d{1,3}(\,\d{3})+(\.\d+)?$/.test(clean);
+  const hasKOrRbSuffix = /^\d+(\.\d+)?\s*(k|rb|ribu|jt|juta)$/i.test(clean);
+  const isPureNumber = /^\d+$/.test(clean);
+  const numericVal = isPureNumber ? Number(clean) : NaN;
+  const isThousandsOrHigher = !isNaN(numericVal) && numericVal >= 1000;
 
-  if (hasCurrencySymbol || hasThousandDots || isLargeNumber) {
-    const numericOnly = clean.replace(/[^0-9]/g, '');
-    const num = Number(numericOnly);
+  if (hasCurrencySymbol || hasThousandDots || hasThousandCommas || hasKOrRbSuffix || isThousandsOrHigher) {
+    let num = NaN;
+    if (hasKOrRbSuffix) {
+      const match = clean.match(/^(\d+(?:\.\d+)?)\s*(k|rb|ribu|jt|juta)$/i);
+      if (match) {
+        const base = parseFloat(match[1]);
+        const unit = match[2].toLowerCase();
+        if (unit === 'k' || unit === 'rb' || unit === 'ribu') num = base * 1000;
+        else if (unit === 'jt' || unit === 'juta') num = base * 1000000;
+      }
+    } else {
+      const digitsOnly = clean.replace(/[^0-9]/g, '');
+      num = Number(digitsOnly);
+    }
+
     const formatted = !isNaN(num) && num > 0 ? `Rp ${num.toLocaleString('id-ID')}` : clean;
     return {
       type: 'price',
@@ -481,29 +511,28 @@ export function analyzeVolumeInput(val: string | null | undefined): {
     };
   }
 
-  // Pure integer quantity (< 10000) or explicit Qty unit
-  const isPureInt = /^\d+$/.test(clean) && Number(clean) < 10000;
-  const isExplicitQty = /^\d+\s*(pcs|bh|biji|buah|unit|box|set|roll|lembar|btg|btl|pack|zak|dus|bt|sak|qty|quantity)$/i.test(clean);
-
-  if (isPureInt) {
-    return {
-      type: 'qty',
-      badgeLabel: 'Qty / Quantity',
-      formattedText: `${clean} Qty`,
-      rawValue: clean
-    };
-  }
-
+  // 3. Explicit quantity unit suffix (pcs, box, unit, lembar, buah, etc.)
+  const isExplicitQty = /^\d+\s*(pcs|pc|bh|biji|buah|unit|box|set|roll|lembar|lbr|btg|btl|botol|pack|pak|zak|dus|bt|sak|qty|quantity|pax|org|orang)$/i.test(clean);
   if (isExplicitQty) {
     return {
       type: 'qty',
-      badgeLabel: 'Qty / Quantity',
+      badgeLabel: 'Pcs / Qty',
       formattedText: clean,
       rawValue: clean
     };
   }
 
-  // Custom text / unit
+  // 4. Pure integer number < 100 (1 or 2 digits) or < 1000 -> Auto-format as Pcs
+  if (isPureNumber) {
+    return {
+      type: 'qty',
+      badgeLabel: 'Pcs / Qty',
+      formattedText: `${clean} Pcs`,
+      rawValue: clean
+    };
+  }
+
+  // 5. Custom text / unit (e.g. 1 Bulan, 1 Paket, 1 Lot, 1 Ls, etc.)
   return {
     type: 'custom',
     badgeLabel: clean,

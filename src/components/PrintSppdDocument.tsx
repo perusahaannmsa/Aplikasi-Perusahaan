@@ -52,6 +52,8 @@ export interface ConsolidatedCostItem {
   rincian: string;
   hargaAcuan: string | number;
   jumlah: number;
+  rawJumlah?: number;
+  eliminatedAmount?: number;
 }
 
 // Consolidate raw/itemized transactions into official non-duplicate SPPD categories
@@ -79,17 +81,28 @@ export function consolidateSppdCostItems(
     }
   }
 
-  // 2. Determine daily meal benchmark based on position
+  // 2. Determine daily meal and pocket benchmarks based on position
   let dailyMealRate = 100000;
+  let dailyPocketRate = 100000;
   const jabLower = (jabatanStr || '').toLowerCase();
-  if (jabLower.includes('direktur utama') || jabLower.includes('direktur')) {
+  if (jabLower.includes('direktur utama') || (jabLower.includes('direktur') && !jabLower.includes('wakil'))) {
     dailyMealRate = 300000;
-  } else if (jabLower.includes('wakil') || jabLower.includes('gm') || jabLower.includes('pimpro') || jabLower.includes('general manager')) {
+    dailyPocketRate = 250000;
+  } else if (jabLower.includes('wakil') && jabLower.includes('direktur')) {
     dailyMealRate = 250000;
+    dailyPocketRate = 200000;
+  } else if (jabLower.includes('gm') || jabLower.includes('pimpro') || jabLower.includes('general manager') || jabLower.includes('pimpinan proyek')) {
+    dailyMealRate = 250000;
+    dailyPocketRate = 150000;
   } else if (jabLower.includes('manager') || jabLower.includes('manajer') || jabLower.includes('kabag')) {
     dailyMealRate = 200000;
+    dailyPocketRate = 125000;
+  } else if (jabLower.includes('supervisor') || jabLower.includes('spv')) {
+    dailyMealRate = 100000;
+    dailyPocketRate = 100000;
   } else {
-    dailyMealRate = 100000; // Staf / Supervisor standard rate
+    dailyMealRate = 100000; // Staf standard rate
+    dailyPocketRate = 100000;
   }
 
   // 3. Buckets for 9 official categories
@@ -116,7 +129,7 @@ export function consolidateSppdCostItems(
     saku: {
       kategori: 'Uang Saku',
       order: 3,
-      defaultAcuan: 100000,
+      defaultAcuan: dailyPocketRate,
       items: []
     },
     transport_hotel: {
@@ -358,9 +371,17 @@ export function consolidateSppdCostItems(
   // 3. Uang Saku (Includes base pocket allowance, snacks/jajanan, plus any excess meal over benchmark)
   const rawPocketItems = buckets.saku.items;
   const rawPocketTotal = rawPocketItems.reduce((sum, i) => sum + i.jumlah, 0);
-  const finalPocketAmount = rawPocketTotal + excessMealToPocket;
+  const accumulatedPocketAmount = rawPocketTotal + excessMealToPocket;
+  const maxPocketAllowed = durationDays * dailyPocketRate;
 
-  if (finalPocketAmount > 0) {
+  let finalPocketAmount = accumulatedPocketAmount;
+  let eliminatedPocketExcess = 0;
+  if (accumulatedPocketAmount > maxPocketAllowed) {
+    finalPocketAmount = maxPocketAllowed;
+    eliminatedPocketExcess = accumulatedPocketAmount - maxPocketAllowed;
+  }
+
+  if (finalPocketAmount > 0 || accumulatedPocketAmount > 0) {
     const pocketDetails: string[] = [];
     const uniquePocketRincians = Array.from(new Set(rawPocketItems.map(i => i.rincian).filter(Boolean)));
     
@@ -369,20 +390,26 @@ export function consolidateSppdCostItems(
     }
     
     if (excessMealToPocket > 0) {
-      pocketDetails.push(`Termasuk kelebihan Uang Makan di atas plafon acuan (Rp ${excessMealToPocket.toLocaleString('id-ID')})`);
+      pocketDetails.push(`Pelimpahan kelebihan Uang Makan: Rp ${excessMealToPocket.toLocaleString('id-ID')}`);
+    }
+
+    if (eliminatedPocketExcess > 0) {
+      pocketDetails.push(`Plafon ${durationDays} Hari: Rp ${maxPocketAllowed.toLocaleString('id-ID')} (Kelebihan Rp ${eliminatedPocketExcess.toLocaleString('id-ID')} dihapuskan)`);
     }
 
     let pocketDesc = pocketDetails.join('; ');
     if (pocketDetails.length === 0) {
-      pocketDesc = `${durationDays} Hari Uang Saku Operasional`;
+      pocketDesc = `${durationDays} Hari @ Rp ${dailyPocketRate.toLocaleString('id-ID')} (Uang Saku Operasional)`;
     }
 
     consolidatedList.push({
       no: 0,
       kategori: 'Uang Saku',
       rincian: pocketDesc,
-      hargaAcuan: buckets.saku.defaultAcuan,
-      jumlah: finalPocketAmount
+      hargaAcuan: dailyPocketRate,
+      jumlah: finalPocketAmount,
+      rawJumlah: accumulatedPocketAmount,
+      eliminatedAmount: eliminatedPocketExcess
     });
   }
 

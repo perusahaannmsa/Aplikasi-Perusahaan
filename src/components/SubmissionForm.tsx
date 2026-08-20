@@ -386,7 +386,11 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
     setIsSppd(isS);
 
     if (isPC && !pettyCashCustodian) {
-      setPettyCashCustodian(effectiveHolders[0] || 'Suryo Pranoto');
+      const defHolder = effectiveHolders[0] || 'Suryo Pranoto';
+      setPettyCashCustodian(defHolder);
+      if (!dibayarkanKepada) {
+        setDibayarkanKepada(defHolder.toUpperCase());
+      }
     }
 
     const isInv = jenisLower.includes('invoice') || jenisLower.includes('tagihan') || kodeLower.includes('inv');
@@ -2021,9 +2025,6 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
               onChange={(e) => {
                 const val = isPettyCash ? e.target.value.toUpperCase() : e.target.value;
                 setDibayarkanKepada(val);
-                if (isPettyCash) {
-                  setPettyCashCustodian(val);
-                }
               }}
             />
             <datalist id="preset-penerima">
@@ -2221,7 +2222,11 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                       <select
                         className="flex-1 bg-white border border-stone-200 rounded-lg py-2 px-3 text-xs md:text-sm focus:outline-none focus:ring-1 focus:ring-amber-500 font-semibold text-stone-800 cursor-pointer"
                         value={pettyCashCustodian || (effectiveHolders.length > 0 ? effectiveHolders[0] : '')}
-                        onChange={(e) => setPettyCashCustodian(e.target.value)}
+                        onChange={(e) => {
+                          const selected = e.target.value;
+                          setPettyCashCustodian(selected);
+                          setDibayarkanKepada(selected.toUpperCase());
+                        }}
                       >
                         {/* Preserve older/legacy custodian names if not present in master list */}
                         {pettyCashCustodian && !effectiveHolders.includes(pettyCashCustodian) && (
@@ -2244,6 +2249,30 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                           <span className="hidden sm:inline">Kelola List</span>
                         </button>
                       )}
+                    </div>
+
+                    {/* Quick-select chips for Petty Cash Custodians: Clicking automatically updates both custodian and recipient */}
+                    <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                      <span className="text-[10px] text-stone-500 font-mono font-semibold">Klik Cepat Nama:</span>
+                      {effectiveHolders.map((holder, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => {
+                            setPettyCashCustodian(holder);
+                            setDibayarkanKepada(holder.toUpperCase());
+                          }}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1 ${
+                            pettyCashCustodian === holder
+                              ? 'bg-amber-600 text-white shadow-3xs'
+                              : 'bg-stone-100 hover:bg-amber-100 text-stone-700 hover:text-amber-900 border border-stone-200'
+                          }`}
+                          title={`Pilih ${holder} dan otomatis masukkan ke kolom Dibayarkan Kepada`}
+                        >
+                          <span>👤</span>
+                          <span>{holder}</span>
+                        </button>
+                      ))}
                     </div>
                   </div>
                 </div>
@@ -3139,12 +3168,17 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                             <div className="flex items-center gap-1">
                               {volAnalysis.type === 'qty' && (
                                 <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
-                                  <span>📦 Qty / Quantity ({item.jumlahVolume})</span>
+                                  <span>📦 {volAnalysis.formattedText.toLowerCase().includes('pcs') ? volAnalysis.formattedText : `Pcs / Qty (${volAnalysis.formattedText})`}</span>
                                 </span>
                               )}
                               {volAnalysis.type === 'price' && (
                                 <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-900 border border-amber-200">
                                   <span>🏷️ Satuan Harga ({volAnalysis.formattedText})</span>
+                                </span>
+                              )}
+                              {volAnalysis.type === 'volume' && (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded bg-sky-50 text-sky-800 border border-sky-200">
+                                  <span>💧 Volume ({volAnalysis.formattedText})</span>
                                 </span>
                               )}
                               {volAnalysis.type === 'custom' && (
