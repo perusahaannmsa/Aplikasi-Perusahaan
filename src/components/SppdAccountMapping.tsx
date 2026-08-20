@@ -136,6 +136,20 @@ export function SppdAccountMapping({
   const [txCategoryFilter, setTxCategoryFilter] = useState<string>('all');
   const [txComplianceFilter, setTxComplianceFilter] = useState<string>('all');
 
+  // Interactive View Modes: 'category_hierarchy' (Default) | 'flat_table'
+  const [mappingViewMode, setMappingViewMode] = useState<'category_hierarchy' | 'flat_table'>('category_hierarchy');
+  const [expandedCategories, setExpandedCategories] = useState<{ [catId: string]: boolean }>({
+    'sppd_1': true,
+    'sppd_2': true,
+    'sppd_3': true,
+    'sppd_4': true,
+    'sppd_5': true,
+    'sppd_6': true,
+    'sppd_7': true,
+    'sppd_8': true,
+    'sppd_9': true,
+  });
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Initialize Drive status from unified token
@@ -629,18 +643,31 @@ export function SppdAccountMapping({
       const sppdRecordId = `SPPD-${Date.now()}`;
       const totalAmount = transactions.reduce((sum, t) => sum + t.amount, 0);
 
-      // Map line items into standard SPPD cost items format
-      const costItems = transactions.map(t => {
-        const comp = getComplianceStatus(t);
-        return {
-          id: t.id,
-          kategori: t.category,
-          rincian: t.description,
-          hargaAcuan: comp.maxAllowed || t.amount,
-          jumlah: t.amount
-        };
-      });
+      // Estimate trip duration in days
+      let tripDays = 4;
+      const allDates: string[] = Array.from(new Set(transactions.map(t => t.date).filter(Boolean))).sort() as string[];
+      if (allDates.length > 0) {
+        const dFirst = new Date(allDates[0]).getTime();
+        const dLast = new Date(allDates[allDates.length - 1]).getTime();
+        const diff = Math.ceil((dLast - dFirst) / (1000 * 60 * 60 * 24)) + 1;
+        if (diff > 0 && diff <= 60) {
+          tripDays = diff;
+        } else {
+          tripDays = Math.max(1, allDates.length);
+        }
+      }
 
+      // Consolidate into standard official categories with zero duplicates & meal capping
+      const rawCostInputs = transactions.map(t => ({
+        id: t.id,
+        kategori: t.category,
+        rincian: t.description,
+        hargaAcuan: t.amount,
+        jumlah: t.amount,
+        date: t.date
+      }));
+
+      const consolidatedList = consolidateSppdCostItems(rawCostInputs, `${tripDays} Hari`, employeePosition);
       const jabatanLabel = (SPPD_POSITIONS.find(p => p.key === employeePosition)?.label || 'Staf') as any;
 
       const newSppdRecord: SPPDRecord = {
@@ -655,12 +682,18 @@ export function SppdAccountMapping({
         kotaAsal: 'Jakarta (HO)',
         kotaTujuan: destination || 'Site / Proyek Tambang',
         transportasi: 'Pesawat / Operasional',
-        lamaPerjalanan: `${Math.max(1, transactions.length)} Hari`,
-        tanggalMulai: transactions[0]?.date || now.toISOString().substring(0, 10),
-        tanggalSelesai: transactions[transactions.length - 1]?.date || now.toISOString().substring(0, 10),
+        lamaPerjalanan: `${tripDays} Hari`,
+        tanggalMulai: allDates[0] || transactions[0]?.date || now.toISOString().substring(0, 10),
+        tanggalSelesai: allDates[allDates.length - 1] || transactions[transactions.length - 1]?.date || now.toISOString().substring(0, 10),
         tujuanPerjalanan: reportTitle,
-        keteranganSppd: `Diposting dari Pemetaan Akun SPPD pada ${now.toLocaleString('id-ID')}`,
-        costItems: costItems,
+        keteranganSppd: `Diposting dari Pemetaan Akun SPPD (${transactions.length} sub-transaksi)`,
+        costItems: consolidatedList.map(c => ({
+          id: `cost-${Math.random().toString(36).substring(2, 7)}`,
+          kategori: c.kategori,
+          rincian: c.rincian,
+          hargaAcuan: typeof c.hargaAcuan === 'number' ? c.hargaAcuan : 0,
+          jumlah: c.jumlah
+        })),
         status: 'Disetujui',
         createdAt: now.toISOString()
       };
@@ -685,6 +718,93 @@ export function SppdAccountMapping({
       setIsProcessing(false);
     }
   };
+
+  // Detailed Meal Capping & Spillover Analysis
+  const mealCappingAnalysis = useMemo(() => {
+    // Determine trip duration in days
+    let tripDays = 4;
+    const allDates: string[] = Array.from(new Set(transactions.map(t => t.date).filter(Boolean))).sort() as string[];
+    if (allDates.length > 0) {
+      const dFirst = new Date(allDates[0]).getTime();
+      const dLast = new Date(allDates[allDates.length - 1]).getTime();
+      const diff = Math.ceil((dLast - dFirst) / (1000 * 60 * 60 * 24)) + 1;
+      if (diff > 0 && diff <= 60) {
+        tripDays = diff;
+      } else {
+        tripDays = Math.max(1, allDates.length);
+      }
+    }
+
+    // Daily benchmark rate for position
+    const guideMakan = guidelines.find(g => g.id === 'sppd_1' || g.defaultCoaCode === '610101');
+    const posRate = guideMakan?.rates[employeePosition]?.nominal || 100000;
+    const dailyMealRate = posRate > 0 ? posRate : 100000;
+    const maxTripMealAllowed = tripDays * dailyMealRate;
+
+    // Filter meal transactions
+    const mealTxs = transactions.filter(t => 
+      t.sppdAccountCode === '610101' || 
+      t.guidelineId === 'sppd_1' ||
+      t.category.toLowerCase().includes('makan')
+    );
+    const rawMealTotal = mealTxs.reduce((sum, t) => sum + t.amount, 0);
+
+    // Group meal transactions by date
+    const mealByDate: { [dateStr: string]: { total: number; count: number; items: SppdMappedTransaction[] } } = {};
+    mealTxs.forEach(t => {
+      const d = t.date || 'Lainnya';
+      if (!mealByDate[d]) mealByDate[d] = { total: 0, count: 0, items: [] };
+      mealByDate[d].total += t.amount;
+      mealByDate[d].count += 1;
+      mealByDate[d].items.push(t);
+    });
+
+    let cappedMealTotal = 0;
+    let excessMealToPocket = 0;
+
+    const dateKeys = Object.keys(mealByDate);
+    if (dateKeys.length > 0 && dateKeys.some(k => k !== 'Lainnya')) {
+      dateKeys.forEach(k => {
+        const dayTotal = mealByDate[k].total;
+        if (dayTotal > dailyMealRate) {
+          cappedMealTotal += dailyMealRate;
+          excessMealToPocket += (dayTotal - dailyMealRate);
+        } else {
+          cappedMealTotal += dayTotal;
+        }
+      });
+    } else {
+      if (rawMealTotal > maxTripMealAllowed) {
+        cappedMealTotal = maxTripMealAllowed;
+        excessMealToPocket = rawMealTotal - maxTripMealAllowed;
+      } else {
+        cappedMealTotal = rawMealTotal;
+        excessMealToPocket = 0;
+      }
+    }
+
+    // Filter pocket money transactions
+    const pocketTxs = transactions.filter(t => 
+      t.sppdAccountCode === '610102' || 
+      t.guidelineId === 'sppd_2' ||
+      t.category.toLowerCase().includes('saku')
+    );
+    const rawPocketTotal = pocketTxs.reduce((sum, t) => sum + t.amount, 0);
+    const finalPocketTotal = rawPocketTotal + excessMealToPocket;
+
+    return {
+      tripDays,
+      dailyMealRate,
+      maxTripMealAllowed,
+      rawMealTotal,
+      cappedMealTotal,
+      excessMealToPocket,
+      mealByDate,
+      rawPocketTotal,
+      finalPocketTotal,
+      hasMealExcess: excessMealToPocket > 0
+    };
+  }, [transactions, guidelines, employeePosition]);
 
   // Grouped Summary by 9 Categories
   const groupedSummary = useMemo(() => {
@@ -1280,57 +1400,137 @@ export function SppdAccountMapping({
 
           {/* Grouped Category Recap (9 Official Categories) */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {groupedSummary.map(({ guideline, totalAmount, count }) => (
-              <div 
-                key={guideline.id} 
-                className={`p-4 rounded-2xl border transition flex flex-col justify-between ${
-                  totalAmount > 0 
-                    ? 'bg-amber-50/40 border-amber-200' 
-                    : 'bg-white border-stone-200 opacity-60'
-                }`}
-              >
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-[10px] font-mono">
-                    <span className="px-1.5 py-0.5 bg-stone-200/80 text-stone-700 rounded font-bold">
-                      {guideline.defaultCoaCode}
-                    </span>
-                    <span className="text-stone-400 font-bold">{count} Transaksi</span>
-                  </div>
-                  <h5 className="text-xs font-bold text-stone-900 line-clamp-1">
-                    {guideline.item}
-                  </h5>
-                  <p className="text-[10px] text-stone-500 font-mono">
-                    Plafon {SPPD_POSITIONS.find(p => p.key === employeePosition)?.shortLabel}: {
-                      guideline.rates[employeePosition]?.nominal > 0 
-                        ? `Rp ${guideline.rates[employeePosition].nominal.toLocaleString('id-ID')}` 
-                        : (guideline.rates[employeePosition]?.spec || 'Sesuai Keuangan')
-                    }
-                  </p>
-                </div>
+            {groupedSummary.map(({ guideline, totalAmount, count }) => {
+              const isSelectedCategory = txCategoryFilter === guideline.item;
+              const isExpanded = expandedCategories[guideline.id] !== false;
 
-                <div className="pt-2 border-t border-stone-200/60 mt-2 flex items-center justify-between text-xs font-mono">
-                  <span className="text-[10px] text-stone-400">Total:</span>
-                  <span className="font-black text-amber-900">
-                    Rp {totalAmount.toLocaleString('id-ID')}
-                  </span>
+              return (
+                <div 
+                  key={guideline.id} 
+                  onClick={() => {
+                    setExpandedCategories(prev => ({
+                      ...prev,
+                      [guideline.id]: !isExpanded
+                    }));
+                  }}
+                  className={`p-4 rounded-2xl border transition-all flex flex-col justify-between cursor-pointer hover:shadow-xs ${
+                    isSelectedCategory
+                      ? 'bg-amber-100/60 border-amber-400 ring-2 ring-amber-300'
+                      : totalAmount > 0 
+                        ? 'bg-amber-50/40 border-amber-200 hover:border-amber-300' 
+                        : 'bg-white border-stone-200 opacity-60 hover:opacity-100'
+                  }`}
+                >
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-[10px] font-mono">
+                      <span className="px-1.5 py-0.5 bg-stone-200/80 text-stone-700 rounded font-bold">
+                        {guideline.defaultCoaCode}
+                      </span>
+                      <span className={`font-bold ${count > 0 ? 'text-amber-800' : 'text-stone-400'}`}>
+                        {count} Sub-Akun
+                      </span>
+                    </div>
+                    <h5 className="text-xs font-bold text-stone-900 line-clamp-1">
+                      {guideline.item}
+                    </h5>
+                    <p className="text-[10px] text-stone-500 font-mono">
+                      Plafon {SPPD_POSITIONS.find(p => p.key === employeePosition)?.shortLabel}: {
+                        guideline.rates[employeePosition]?.nominal > 0 
+                          ? `Rp ${guideline.rates[employeePosition].nominal.toLocaleString('id-ID')}` 
+                          : (guideline.rates[employeePosition]?.spec || 'Sesuai Keuangan')
+                      }
+                    </p>
+                  </div>
+
+                  <div className="pt-2 border-t border-stone-200/60 mt-2 flex items-center justify-between text-xs font-mono">
+                    <span className="text-[10px] text-stone-400">Total Kategori:</span>
+                    <span className="font-black text-amber-900">
+                      Rp {totalAmount.toLocaleString('id-ID')}
+                    </span>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
-          {/* Filter Bar */}
+          {/* Meal Capping & Rollover Breakdown Banner */}
+          {mealCappingAnalysis.hasMealExcess && (
+            <div className="p-4 bg-amber-500/10 border-2 border-amber-300 rounded-3xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 font-sans">
+              <div className="flex items-start gap-3">
+                <div className="p-2 bg-amber-600 text-white rounded-2xl shrink-0 mt-0.5">
+                  <AlertCircle size={20} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h4 className="font-bold text-amber-950 text-sm">
+                      Kalkulasi Acuan Uang Makan & Pelimpahan ke Uang Saku
+                    </h4>
+                    <span className="text-[10px] font-mono bg-amber-200/80 text-amber-900 px-2 py-0.5 rounded-full font-bold">
+                      {mealCappingAnalysis.tripDays} Hari Perjalanan
+                    </span>
+                  </div>
+                  <p className="text-xs text-amber-900/90 mt-1 leading-relaxed">
+                    Total pengeluaran makan riil sebesar <strong className="font-mono">Rp {mealCappingAnalysis.rawMealTotal.toLocaleString('id-ID')}</strong> melebihi batas acuan harian (<strong className="font-mono">Rp {mealCappingAnalysis.dailyMealRate.toLocaleString('id-ID')}/hari x {mealCappingAnalysis.tripDays} Hari = Rp {mealCappingAnalysis.maxTripMealAllowed.toLocaleString('id-ID')}</strong>). 
+                    Kategori Uang Makan dibulatkan ke <strong className="font-mono">Rp {mealCappingAnalysis.cappedMealTotal.toLocaleString('id-ID')}</strong>, dan kelebihan sebesar <strong className="font-mono text-amber-950 bg-amber-200/70 px-1 py-0.5 rounded">Rp {mealCappingAnalysis.excessMealToPocket.toLocaleString('id-ID')}</strong> otomatis dialihkan ke kategori <strong>Uang Saku</strong>.
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-white/80 border border-amber-200 rounded-2xl p-3 shrink-0 text-right font-mono text-xs shadow-xs min-w-[200px]">
+                <div className="text-[10px] text-stone-500">Kelebihan Uang Makan:</div>
+                <div className="font-black text-amber-900 text-sm">
+                  + Rp {mealCappingAnalysis.excessMealToPocket.toLocaleString('id-ID')}
+                </div>
+                <div className="text-[9px] text-emerald-700 font-sans font-semibold mt-0.5">
+                  Masuk ke Uang Saku
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* View Mode Toggle & Filter Bar */}
           <div className="bg-white border border-stone-200 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
-            <div className="flex items-center gap-2 flex-1 min-w-[240px]">
+            {/* View Mode Switcher */}
+            <div className="flex items-center bg-stone-100 p-1 rounded-xl gap-1">
+              <button
+                type="button"
+                onClick={() => setMappingViewMode('category_hierarchy')}
+                className={`px-3 py-1.5 rounded-lg font-sans text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                  mappingViewMode === 'category_hierarchy'
+                    ? 'bg-amber-600 text-white shadow-xs'
+                    : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200/60'
+                }`}
+              >
+                <Layers size={14} />
+                <span>Hierarki Kategori & Sub-Akun</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setMappingViewMode('flat_table')}
+                className={`px-3 py-1.5 rounded-lg font-sans text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                  mappingViewMode === 'flat_table'
+                    ? 'bg-amber-600 text-white shadow-xs'
+                    : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200/60'
+                }`}
+              >
+                <ListOrdered size={14} />
+                <span>Tabel Semua Baris</span>
+              </button>
+            </div>
+
+            {/* Search Input */}
+            <div className="flex items-center gap-2 flex-1 min-w-[220px]">
               <Search size={14} className="text-stone-400" />
               <input
                 type="text"
-                placeholder="Cari rincian pengeluaran, penerima, kode COA, atau kategori..."
+                placeholder="Cari rincian pengeluaran, penerima, atau COA..."
                 value={txSearchQuery}
                 onChange={(e) => setTxSearchQuery(e.target.value)}
                 className="w-full bg-transparent border-none focus:outline-none text-xs font-sans text-stone-800"
               />
             </div>
 
+            {/* Category & Status Selectors */}
             <div className="flex items-center gap-2">
               <select
                 value={txCategoryFilter}
@@ -1356,248 +1556,509 @@ export function SppdAccountMapping({
             </div>
           </div>
 
-          {/* Transactions Detailed Table */}
-          <div className="bg-white border border-stone-200 rounded-3xl overflow-visible shadow-xs">
-            <div className="overflow-x-auto rounded-t-3xl">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead className="bg-stone-900 text-white font-mono text-[11px] uppercase tracking-wider">
-                  <tr>
-                    <th className="py-3 px-3 w-12 text-center">No</th>
-                    <th className="py-3 px-3 w-28">Tanggal</th>
-                    <th className="py-3 px-4">Rincian Pengeluaran SPPD</th>
-                    <th className="py-3 px-3 w-40">Kategori COA SPPD</th>
-                    <th className="py-3 px-3 w-32 text-right">Nominal (Rp)</th>
-                    <th className="py-3 px-3 w-36 text-center">Status Plafon</th>
-                    <th className="py-3 px-3 w-28 text-center">Opsi Aksi</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-stone-200 font-sans">
-                  {filteredTransactions.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="py-8 text-center text-stone-400 font-mono">
-                        Tidak ada transaksi yang cocok dengan filter.
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredTransactions.map((t, idx) => {
-                      const comp = getComplianceStatus(t);
-                      const isMenuOpen = activeActionMenuId === t.id;
+          {/* VIEW MODE 1: INTERACTIVE CATEGORY HIERARCHY & SUB-ACCOUNTS ACCORDION */}
+          {mappingViewMode === 'category_hierarchy' && (
+            <div className="space-y-4">
+              {groupedSummary
+                .filter(({ guideline }) => txCategoryFilter === 'all' || txCategoryFilter === guideline.item)
+                .map(({ guideline, items, totalAmount, count }) => {
+                  const isExpanded = expandedCategories[guideline.id] !== false;
+                  const isMealCategory = guideline.id === 'sppd_1' || guideline.defaultCoaCode === '610101';
+                  const isPocketCategory = guideline.id === 'sppd_2' || guideline.defaultCoaCode === '610102';
 
-                      return (
-                        <tr key={t.id} className="hover:bg-amber-50/30 transition">
-                          <td className="py-3 px-3 text-center font-mono text-stone-400">{idx + 1}</td>
-                          <td className="py-3 px-3 font-mono text-stone-600">{t.date}</td>
-                          <td className="py-3 px-4 font-semibold text-stone-900">
-                            <div className="flex items-center gap-2">
-                              <span>{t.description}</span>
-                              {t.confidence === 'manual' && (
-                                <span className="text-[9px] font-mono px-1.5 py-0.2 bg-purple-100 text-purple-800 rounded font-bold">
-                                  Manual
+                  return (
+                    <div 
+                      key={guideline.id} 
+                      className={`bg-white border rounded-3xl overflow-hidden transition-all shadow-xs ${
+                        totalAmount > 0 ? 'border-stone-300' : 'border-stone-200 opacity-80'
+                      }`}
+                    >
+                      {/* Category Header Bar */}
+                      <div 
+                        onClick={() => {
+                          setExpandedCategories(prev => ({
+                            ...prev,
+                            [guideline.id]: !isExpanded
+                          }));
+                        }}
+                        className="p-4 bg-stone-50 hover:bg-amber-50/40 border-b border-stone-200 flex flex-wrap items-center justify-between gap-3 cursor-pointer select-none transition"
+                      >
+                        <div className="flex items-center gap-3">
+                          <button 
+                            type="button"
+                            className="p-1.5 bg-white border border-stone-200 rounded-xl text-stone-600 hover:text-stone-900 transition"
+                          >
+                            <ChevronDown size={16} className={`transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+                          </button>
+
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="px-2 py-0.5 bg-stone-900 text-white rounded-lg text-xs font-mono font-bold">
+                                [{guideline.defaultCoaCode}]
+                              </span>
+                              <h4 className="font-bold text-stone-900 text-sm">
+                                {guideline.item}
+                              </h4>
+                              <span className="text-[11px] font-mono px-2 py-0.5 bg-amber-100 text-amber-900 rounded-full font-bold">
+                                {count} Sub-Akun / Kwitansi
+                              </span>
+                            </div>
+
+                            <p className="text-[11px] text-stone-500 font-mono mt-0.5">
+                              Plafon {SPPD_POSITIONS.find(p => p.key === employeePosition)?.shortLabel}: {
+                                guideline.rates[employeePosition]?.nominal > 0 
+                                  ? `Rp ${guideline.rates[employeePosition].nominal.toLocaleString('id-ID')}` 
+                                  : (guideline.rates[employeePosition]?.spec || 'Sesuai Bukti')
+                              }
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                          <div className="text-right">
+                            <div className="text-[10px] text-stone-400 font-mono uppercase tracking-wider">Total Kategori</div>
+                            <div className="text-sm font-black text-amber-900 font-mono">
+                              Rp {totalAmount.toLocaleString('id-ID')}
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setNewManualTx({
+                                date: new Date().toISOString().substring(0, 10),
+                                description: '',
+                                amount: 0,
+                                recipient: employeeName || '',
+                                positionKey: employeePosition,
+                                guidelineId: guideline.id,
+                                category: guideline.item,
+                                sppdAccountCode: guideline.defaultCoaCode,
+                                sppdAccountName: guideline.defaultCoaName,
+                                notes: ''
+                              });
+                              setIsAddTxModalOpen(true);
+                            }}
+                            className="px-3 py-1.5 bg-amber-700 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer shadow-3xs"
+                            title={`Tambah sub-akun baru ke kategori ${guideline.item}`}
+                          >
+                            <PlusCircle size={14} />
+                            <span>+ Sub-Akun</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Special info box for Meal Capping within the category */}
+                      {isMealCategory && isExpanded && (
+                        <div className="px-5 py-3 bg-amber-50 border-b border-amber-200 text-xs font-sans flex items-center justify-between gap-4 flex-wrap">
+                          <div className="flex items-center gap-2">
+                            <Info size={15} className="text-amber-700 shrink-0" />
+                            <span className="text-amber-900">
+                              Acuan Harian: <strong>Rp {mealCappingAnalysis.dailyMealRate.toLocaleString('id-ID')}/hari</strong> ({mealCappingAnalysis.tripDays} Hari = Plafon Rp {mealCappingAnalysis.maxTripMealAllowed.toLocaleString('id-ID')})
+                            </span>
+                          </div>
+                          {mealCappingAnalysis.hasMealExcess && (
+                            <span className="text-[11px] font-mono font-bold bg-amber-200/80 text-amber-950 px-2.5 py-1 rounded-lg">
+                              ⚠️ Kelebihan Rp {mealCappingAnalysis.excessMealToPocket.toLocaleString('id-ID')} dialihkan ke Uang Saku
+                            </span>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Special info box for Pocket Money within the category */}
+                      {isPocketCategory && isExpanded && mealCappingAnalysis.hasMealExcess && (
+                        <div className="px-5 py-3 bg-emerald-50 border-b border-emerald-200 text-xs font-sans flex items-center justify-between gap-4 flex-wrap">
+                          <div className="flex items-center gap-2">
+                            <CheckCircle2 size={15} className="text-emerald-700 shrink-0" />
+                            <span className="text-emerald-900">
+                              Kategori Uang Saku mencakup uang saku/jajanan murni (<strong>Rp {mealCappingAnalysis.rawPocketTotal.toLocaleString('id-ID')}</strong>) + pelimpahan kelebihan uang makan (<strong>Rp {mealCappingAnalysis.excessMealToPocket.toLocaleString('id-ID')}</strong>).
+                            </span>
+                          </div>
+                          <span className="text-[11px] font-mono font-bold bg-emerald-200/80 text-emerald-950 px-2.5 py-1 rounded-lg">
+                            Total Rekap: Rp {mealCappingAnalysis.finalPocketTotal.toLocaleString('id-ID')}
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Sub-Transactions Table for This Category */}
+                      {isExpanded && (
+                        <div className="p-0 overflow-x-auto">
+                          {items.length === 0 ? (
+                            <div className="py-6 px-4 text-center text-stone-400 text-xs font-mono">
+                              Belum ada sub-akun transaksi pada kategori ini.
+                            </div>
+                          ) : (
+                            <table className="w-full text-left text-xs border-collapse font-sans">
+                              <thead className="bg-stone-100/70 text-stone-600 font-mono text-[10px] uppercase tracking-wider border-b border-stone-200">
+                                <tr>
+                                  <th className="py-2 px-3 w-10 text-center">#</th>
+                                  <th className="py-2 px-3 w-28">Tanggal</th>
+                                  <th className="py-2 px-4">Rincian Pengeluaran Sub-Akun</th>
+                                  <th className="py-2 px-3 w-32 text-right">Nominal (Rp)</th>
+                                  <th className="py-2 px-3 w-32 text-center">Status Plafon</th>
+                                  <th className="py-2 px-3 w-24 text-center">Aksi</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-stone-100">
+                                {items.map((t, subIdx) => {
+                                  const comp = getComplianceStatus(t);
+                                  const isMenuOpen = activeActionMenuId === t.id;
+
+                                  return (
+                                    <tr key={t.id} className="hover:bg-amber-50/30 transition">
+                                      <td className="py-2.5 px-3 text-center font-mono text-stone-400">{subIdx + 1}</td>
+                                      <td className="py-2.5 px-3 font-mono text-stone-600">{t.date}</td>
+                                      <td className="py-2.5 px-4 font-semibold text-stone-900">
+                                        <div className="flex items-center gap-2">
+                                          <span>{t.description}</span>
+                                          {t.confidence === 'manual' && (
+                                            <span className="text-[9px] font-mono px-1.5 py-0.2 bg-purple-100 text-purple-800 rounded font-bold">
+                                              Manual
+                                            </span>
+                                          )}
+                                        </div>
+                                        <div className="text-[10px] text-stone-400 font-mono font-normal">
+                                          Penerima: {t.recipient || employeeName || 'Karyawan'}
+                                          {t.notes && <span className="ml-2 text-stone-500 italic">({t.notes})</span>}
+                                        </div>
+                                      </td>
+                                      <td className="py-2.5 px-3 text-right font-mono font-black text-stone-900">
+                                        Rp {t.amount.toLocaleString('id-ID')}
+                                      </td>
+                                      <td className="py-2.5 px-3 text-center">
+                                        {comp.status === 'sesuai' && (
+                                          <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-md border border-emerald-200">
+                                            <CheckCircle2 size={11} />
+                                            <span>Sesuai</span>
+                                          </span>
+                                        )}
+                                        {comp.status === 'melebihi' && (
+                                          <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 bg-rose-100 text-rose-800 rounded-md border border-rose-200" title={comp.label}>
+                                            <AlertCircle size={11} />
+                                            <span>Melebihi</span>
+                                          </span>
+                                        )}
+                                        {comp.status === 'tiket_keuangan' && (
+                                          <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 bg-sky-100 text-sky-800 rounded-md border border-sky-200" title={comp.label}>
+                                            <Info size={11} />
+                                            <span>Tiket</span>
+                                          </span>
+                                        )}
+                                      </td>
+                                      <td className="py-2.5 px-3 text-center">
+                                        <div className="relative inline-block text-left">
+                                          <button
+                                            id={`btn-sub-menu-${t.id}`}
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setActiveActionMenuId(isMenuOpen ? null : t.id);
+                                            }}
+                                            className="px-2 py-1 bg-stone-100 hover:bg-amber-100 text-stone-700 hover:text-amber-900 border border-stone-200 rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                                          >
+                                            <SlidersHorizontal size={12} />
+                                            <span>Opsi</span>
+                                            <ChevronDown size={11} className={`transition-transform duration-150 ${isMenuOpen ? 'rotate-180' : ''}`} />
+                                          </button>
+
+                                          {isMenuOpen && (
+                                            <>
+                                              <div 
+                                                className="fixed inset-0 z-30" 
+                                                onClick={() => setActiveActionMenuId(null)}
+                                              />
+                                              <div className="absolute right-0 mt-1.5 w-48 bg-white rounded-2xl shadow-2xl border border-stone-200 py-1.5 z-40 font-sans text-left animate-in fade-in zoom-in-95 duration-100">
+                                                <button
+                                                  type="button"
+                                                  onClick={() => handleOpenEditModal(t)}
+                                                  className="w-full text-left px-3 py-2 text-xs text-stone-700 hover:bg-amber-50 hover:text-amber-900 flex items-center gap-2 transition cursor-pointer font-medium"
+                                                >
+                                                  <Edit2 size={13} className="text-amber-600" />
+                                                  <span>Edit Sub-Akun</span>
+                                                </button>
+
+                                                <button
+                                                  type="button"
+                                                  onClick={() => handleDuplicateTransaction(t.id)}
+                                                  className="w-full text-left px-3 py-2 text-xs text-stone-700 hover:bg-emerald-50 hover:text-emerald-900 flex items-center gap-2 transition cursor-pointer font-medium"
+                                                >
+                                                  <Copy size={13} className="text-emerald-600" />
+                                                  <span>Duplikasi Baris</span>
+                                                </button>
+
+                                                <div className="my-1 border-t border-stone-100" />
+
+                                                <button
+                                                  type="button"
+                                                  onClick={() => handleDeleteTransaction(t.id)}
+                                                  className="w-full text-left px-3 py-2 text-xs text-rose-600 hover:bg-rose-50 hover:text-rose-800 flex items-center gap-2 transition cursor-pointer font-medium"
+                                                >
+                                                  <Trash2 size={13} className="text-rose-600" />
+                                                  <span>Hapus Sub-Akun</span>
+                                                </button>
+                                              </div>
+                                            </>
+                                          )}
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+            </div>
+          )}
+
+          {/* VIEW MODE 2: FULL FLAT TABLE */}
+          {mappingViewMode === 'flat_table' && (
+            <div className="bg-white border border-stone-200 rounded-3xl overflow-visible shadow-xs">
+              <div className="overflow-x-auto rounded-t-3xl">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead className="bg-stone-900 text-white font-mono text-[11px] uppercase tracking-wider">
+                    <tr>
+                      <th className="py-3 px-3 w-12 text-center">No</th>
+                      <th className="py-3 px-3 w-28">Tanggal</th>
+                      <th className="py-3 px-4">Rincian Pengeluaran SPPD</th>
+                      <th className="py-3 px-3 w-40">Kategori COA SPPD</th>
+                      <th className="py-3 px-3 w-32 text-right">Nominal (Rp)</th>
+                      <th className="py-3 px-3 w-36 text-center">Status Plafon</th>
+                      <th className="py-3 px-3 w-28 text-center">Opsi Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-stone-200 font-sans">
+                    {filteredTransactions.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-8 text-center text-stone-400 font-mono">
+                          Tidak ada transaksi yang cocok dengan filter.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredTransactions.map((t, idx) => {
+                        const comp = getComplianceStatus(t);
+                        const isMenuOpen = activeActionMenuId === t.id;
+
+                        return (
+                          <tr key={t.id} className="hover:bg-amber-50/30 transition">
+                            <td className="py-3 px-3 text-center font-mono text-stone-400">{idx + 1}</td>
+                            <td className="py-3 px-3 font-mono text-stone-600">{t.date}</td>
+                            <td className="py-3 px-4 font-semibold text-stone-900">
+                              <div className="flex items-center gap-2">
+                                <span>{t.description}</span>
+                                {t.confidence === 'manual' && (
+                                  <span className="text-[9px] font-mono px-1.5 py-0.2 bg-purple-100 text-purple-800 rounded font-bold">
+                                    Manual
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[10px] text-stone-400 font-mono">
+                                Penerima: {t.recipient || employeeName || 'Karyawan'} ({SPPD_POSITIONS.find(p => p.key === t.positionKey)?.shortLabel || 'Staf'})
+                                {t.notes && <span className="ml-2 text-stone-500 italic">({t.notes})</span>}
+                              </div>
+                            </td>
+                            <td className="py-3 px-3">
+                              <select
+                                value={t.guidelineId}
+                                onChange={(e) => {
+                                  const g = guidelines.find(guide => guide.id === e.target.value);
+                                  if (!g) return;
+                                  setTransactions(prev => prev.map(item => item.id === t.id ? {
+                                    ...item,
+                                    guidelineId: g.id,
+                                    category: g.item,
+                                    sppdAccountCode: g.defaultCoaCode,
+                                    sppdAccountName: g.defaultCoaName,
+                                    confidence: 'manual'
+                                  } : item));
+                                }}
+                                className="text-xs font-mono font-bold text-amber-900 bg-amber-50/80 border border-amber-200 rounded-lg p-1 w-full cursor-pointer focus:outline-none"
+                              >
+                                {guidelines.map(g => (
+                                  <option key={g.id} value={g.id}>
+                                    [{g.defaultCoaCode}] {g.item}
+                                  </option>
+                                ))}
+                              </select>
+                            </td>
+                            <td className="py-3 px-3 text-right font-mono font-black text-stone-900">
+                              Rp {t.amount.toLocaleString('id-ID')}
+                            </td>
+                            <td className="py-3 px-3 text-center">
+                              {comp.status === 'sesuai' && (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-md border border-emerald-200">
+                                  <CheckCircle2 size={11} />
+                                  <span>Sesuai Plafon</span>
                                 </span>
                               )}
-                            </div>
-                            <div className="text-[10px] text-stone-400 font-mono">
-                              Penerima: {t.recipient || employeeName || 'Karyawan'} ({SPPD_POSITIONS.find(p => p.key === t.positionKey)?.shortLabel || 'Staf'})
-                              {t.notes && <span className="ml-2 text-stone-500 italic">({t.notes})</span>}
-                            </div>
-                          </td>
-                          <td className="py-3 px-3">
-                            <select
-                              value={t.guidelineId}
-                              onChange={(e) => {
-                                const g = guidelines.find(guide => guide.id === e.target.value);
-                                if (!g) return;
-                                setTransactions(prev => prev.map(item => item.id === t.id ? {
-                                  ...item,
-                                  guidelineId: g.id,
-                                  category: g.item,
-                                  sppdAccountCode: g.defaultCoaCode,
-                                  sppdAccountName: g.defaultCoaName,
-                                  confidence: 'manual'
-                                } : item));
-                              }}
-                              className="text-xs font-mono font-bold text-amber-900 bg-amber-50/80 border border-amber-200 rounded-lg p-1 w-full cursor-pointer focus:outline-none"
-                            >
-                              {guidelines.map(g => (
-                                <option key={g.id} value={g.id}>
-                                  [{g.defaultCoaCode}] {g.item}
-                                </option>
-                              ))}
-                            </select>
-                          </td>
-                          <td className="py-3 px-3 text-right font-mono font-black text-stone-900">
-                            Rp {t.amount.toLocaleString('id-ID')}
-                          </td>
-                          <td className="py-3 px-3 text-center">
-                            {comp.status === 'sesuai' && (
-                              <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-md border border-emerald-200">
-                                <CheckCircle2 size={11} />
-                                <span>Sesuai Plafon</span>
-                              </span>
-                            )}
-                            {comp.status === 'melebihi' && (
-                              <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 bg-rose-100 text-rose-800 rounded-md border border-rose-200" title={comp.label}>
-                                <AlertCircle size={11} />
-                                <span>Melebihi Plafon</span>
-                              </span>
-                            )}
-                            {comp.status === 'tiket_keuangan' && (
-                              <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 bg-sky-100 text-sky-800 rounded-md border border-sky-200" title={comp.label}>
-                                <Info size={11} />
-                                <span>Tiket Keuangan</span>
-                              </span>
-                            )}
-                          </td>
-                          <td className="py-3 px-3 text-center">
-                            {/* ACTION BUTTON WITH POPUP DROPDOWN */}
-                            <div className="relative inline-block text-left">
-                              <button
-                                id={`btn-action-menu-${t.id}`}
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setActiveActionMenuId(isMenuOpen ? null : t.id);
-                                }}
-                                className="px-2.5 py-1.5 bg-stone-100 hover:bg-amber-100 text-stone-700 hover:text-amber-900 border border-stone-200 hover:border-amber-300 rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer shadow-3xs"
-                                title="Pilihan Opsi Transaksi"
-                              >
-                                <SlidersHorizontal size={13} />
-                                <span>Opsi</span>
-                                <ChevronDown size={12} className={`transition-transform duration-150 ${isMenuOpen ? 'rotate-180' : ''}`} />
-                              </button>
-
-                              {isMenuOpen && (
-                                <>
-                                  <div 
-                                    className="fixed inset-0 z-30" 
-                                    onClick={() => setActiveActionMenuId(null)}
-                                  />
-                                  <div className="absolute right-0 mt-1.5 w-52 bg-white rounded-2xl shadow-2xl border border-stone-200 py-1.5 z-40 font-sans text-left animate-in fade-in zoom-in-95 duration-100">
-                                    <div className="px-3 py-1.5 text-[10px] font-mono font-bold text-stone-400 uppercase tracking-wider border-b border-stone-100 flex items-center justify-between">
-                                      <span>Baris #{idx + 1}</span>
-                                      <span className="text-amber-700 font-bold">SPPD</span>
-                                    </div>
-
-                                    {/* 1. Edit Data */}
-                                    <button
-                                      type="button"
-                                      onClick={() => handleOpenEditModal(t)}
-                                      className="w-full text-left px-3 py-2 text-xs text-stone-700 hover:bg-amber-50 hover:text-amber-900 flex items-center gap-2.5 transition cursor-pointer font-medium"
-                                    >
-                                      <Edit2 size={14} className="text-amber-600" />
-                                      <div>
-                                        <div className="font-bold">Edit Data</div>
-                                        <div className="text-[10px] text-stone-400 font-mono">Ubah rincian, nominal, atau COA</div>
-                                      </div>
-                                    </button>
-
-                                    {/* 2. Salin / Duplicate */}
-                                    <button
-                                      type="button"
-                                      onClick={() => handleDuplicateTransaction(t.id)}
-                                      className="w-full text-left px-3 py-2 text-xs text-stone-700 hover:bg-emerald-50 hover:text-emerald-900 flex items-center gap-2.5 transition cursor-pointer font-medium"
-                                    >
-                                      <Copy size={14} className="text-emerald-600" />
-                                      <div>
-                                        <div className="font-bold">Salin / Duplikasi</div>
-                                        <div className="text-[10px] text-stone-400 font-mono">Gandakan baris ini</div>
-                                      </div>
-                                    </button>
-
-                                    <div className="my-1 border-t border-stone-100" />
-
-                                    {/* 3. Pindah Urutan ke Atas */}
-                                    <button
-                                      type="button"
-                                      disabled={idx === 0}
-                                      onClick={() => handleMoveTransaction(t.id, 'up')}
-                                      className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2.5 transition font-medium ${
-                                        idx === 0 ? 'text-stone-300 cursor-not-allowed' : 'text-stone-700 hover:bg-sky-50 hover:text-sky-900 cursor-pointer'
-                                      }`}
-                                    >
-                                      <ArrowUp size={14} className={idx === 0 ? 'text-stone-300' : 'text-sky-600'} />
-                                      <span>Pindah ke Atas</span>
-                                    </button>
-
-                                    {/* 4. Pindah Urutan ke Bawah */}
-                                    <button
-                                      type="button"
-                                      disabled={idx === filteredTransactions.length - 1}
-                                      onClick={() => handleMoveTransaction(t.id, 'down')}
-                                      className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2.5 transition font-medium ${
-                                        idx === filteredTransactions.length - 1 ? 'text-stone-300 cursor-not-allowed' : 'text-stone-700 hover:bg-sky-50 hover:text-sky-900 cursor-pointer'
-                                      }`}
-                                    >
-                                      <ArrowDown size={14} className={idx === filteredTransactions.length - 1 ? 'text-stone-300' : 'text-sky-600'} />
-                                      <span>Pindah ke Bawah</span>
-                                    </button>
-
-                                    {/* 5. Pindah ke Posisi / Nomor Urut Tertentu */}
-                                    <button
-                                      type="button"
-                                      onClick={() => handleOpenMoveModal(t.id)}
-                                      className="w-full text-left px-3 py-2 text-xs text-stone-700 hover:bg-purple-50 hover:text-purple-900 flex items-center gap-2.5 transition cursor-pointer font-medium"
-                                    >
-                                      <ListOrdered size={14} className="text-purple-600" />
-                                      <div>
-                                        <div className="font-bold">Pindahkan Urutan...</div>
-                                        <div className="text-[10px] text-stone-400 font-mono">Ubah ke nomor baris spesifik</div>
-                                      </div>
-                                    </button>
-
-                                    <div className="my-1 border-t border-stone-100" />
-
-                                    {/* 6. Hapus */}
-                                    <button
-                                      type="button"
-                                      onClick={() => handleDeleteTransaction(t.id)}
-                                      className="w-full text-left px-3 py-2 text-xs text-rose-600 hover:bg-rose-50 hover:text-rose-800 flex items-center gap-2.5 transition cursor-pointer font-medium"
-                                    >
-                                      <Trash2 size={14} className="text-rose-600" />
-                                      <div>
-                                        <div className="font-bold">Hapus Baris</div>
-                                        <div className="text-[10px] text-rose-400 font-mono">Hapus dari rekap</div>
-                                      </div>
-                                    </button>
-                                  </div>
-                                </>
+                              {comp.status === 'melebihi' && (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 bg-rose-100 text-rose-800 rounded-md border border-rose-200" title={comp.label}>
+                                  <AlertCircle size={11} />
+                                  <span>Melebihi Plafon</span>
+                                </span>
                               )}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
+                              {comp.status === 'tiket_keuangan' && (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 bg-sky-100 text-sky-800 rounded-md border border-sky-200" title={comp.label}>
+                                  <Info size={11} />
+                                  <span>Tiket Keuangan</span>
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-3 px-3 text-center">
+                              <div className="relative inline-block text-left">
+                                <button
+                                  id={`btn-action-menu-${t.id}`}
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setActiveActionMenuId(isMenuOpen ? null : t.id);
+                                  }}
+                                  className="px-2.5 py-1.5 bg-stone-100 hover:bg-amber-100 text-stone-700 hover:text-amber-900 border border-stone-200 hover:border-amber-300 rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer shadow-3xs"
+                                  title="Pilihan Opsi Transaksi"
+                                >
+                                  <SlidersHorizontal size={13} />
+                                  <span>Opsi</span>
+                                  <ChevronDown size={12} className={`transition-transform duration-150 ${isMenuOpen ? 'rotate-180' : ''}`} />
+                                </button>
 
-            {/* Bottom Card: Total Summary and "Tambahkan Data Secara Manual" button */}
-            <div className="p-4 bg-stone-50 border-t border-stone-200 rounded-b-3xl flex flex-col sm:flex-row items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-amber-100 text-amber-900 rounded-xl">
-                  <DollarSign size={18} />
+                                {isMenuOpen && (
+                                  <>
+                                    <div 
+                                      className="fixed inset-0 z-30" 
+                                      onClick={() => setActiveActionMenuId(null)}
+                                    />
+                                    <div className="absolute right-0 mt-1.5 w-52 bg-white rounded-2xl shadow-2xl border border-stone-200 py-1.5 z-40 font-sans text-left animate-in fade-in zoom-in-95 duration-100">
+                                      <div className="px-3 py-1.5 text-[10px] font-mono font-bold text-stone-400 uppercase tracking-wider border-b border-stone-100 flex items-center justify-between">
+                                        <span>Baris #{idx + 1}</span>
+                                        <span className="text-amber-700 font-bold">SPPD</span>
+                                      </div>
+
+                                      {/* 1. Edit Data */}
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenEditModal(t)}
+                                        className="w-full text-left px-3 py-2 text-xs text-stone-700 hover:bg-amber-50 hover:text-amber-900 flex items-center gap-2.5 transition cursor-pointer font-medium"
+                                      >
+                                        <Edit2 size={14} className="text-amber-600" />
+                                        <div>
+                                          <div className="font-bold">Edit Data</div>
+                                          <div className="text-[10px] text-stone-400 font-mono">Ubah rincian, nominal, atau COA</div>
+                                        </div>
+                                      </button>
+
+                                      {/* 2. Salin / Duplicate */}
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDuplicateTransaction(t.id)}
+                                        className="w-full text-left px-3 py-2 text-xs text-stone-700 hover:bg-emerald-50 hover:text-emerald-900 flex items-center gap-2.5 transition cursor-pointer font-medium"
+                                      >
+                                        <Copy size={14} className="text-emerald-600" />
+                                        <div>
+                                          <div className="font-bold">Salin / Duplikasi</div>
+                                          <div className="text-[10px] text-stone-400 font-mono">Gandakan baris ini</div>
+                                        </div>
+                                      </button>
+
+                                      <div className="my-1 border-t border-stone-100" />
+
+                                      {/* 3. Pindah Urutan ke Atas */}
+                                      <button
+                                        type="button"
+                                        disabled={idx === 0}
+                                        onClick={() => handleMoveTransaction(t.id, 'up')}
+                                        className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2.5 transition font-medium ${
+                                          idx === 0 ? 'text-stone-300 cursor-not-allowed' : 'text-stone-700 hover:bg-sky-50 hover:text-sky-900 cursor-pointer'
+                                        }`}
+                                      >
+                                        <ArrowUp size={14} className={idx === 0 ? 'text-stone-300' : 'text-sky-600'} />
+                                        <span>Pindah ke Atas</span>
+                                      </button>
+
+                                      {/* 4. Pindah Urutan ke Bawah */}
+                                      <button
+                                        type="button"
+                                        disabled={idx === filteredTransactions.length - 1}
+                                        onClick={() => handleMoveTransaction(t.id, 'down')}
+                                        className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2.5 transition font-medium ${
+                                          idx === filteredTransactions.length - 1 ? 'text-stone-300 cursor-not-allowed' : 'text-stone-700 hover:bg-sky-50 hover:text-sky-900 cursor-pointer'
+                                        }`}
+                                      >
+                                        <ArrowDown size={14} className={idx === filteredTransactions.length - 1 ? 'text-stone-300' : 'text-sky-600'} />
+                                        <span>Pindah ke Bawah</span>
+                                      </button>
+
+                                      {/* 5. Pindah ke Posisi / Nomor Urut Tertentu */}
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenMoveModal(t.id)}
+                                        className="w-full text-left px-3 py-2 text-xs text-stone-700 hover:bg-purple-50 hover:text-purple-900 flex items-center gap-2.5 transition cursor-pointer font-medium"
+                                      >
+                                        <ListOrdered size={14} className="text-purple-600" />
+                                        <div>
+                                          <div className="font-bold">Pindahkan Urutan...</div>
+                                          <div className="text-[10px] text-stone-400 font-mono">Ubah ke nomor baris spesifik</div>
+                                        </div>
+                                      </button>
+
+                                      <div className="my-1 border-t border-stone-100" />
+
+                                      {/* 6. Hapus */}
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteTransaction(t.id)}
+                                        className="w-full text-left px-3 py-2 text-xs text-rose-600 hover:bg-rose-50 hover:text-rose-800 flex items-center gap-2.5 transition cursor-pointer font-medium"
+                                      >
+                                        <Trash2 size={14} className="text-rose-600" />
+                                        <div>
+                                          <div className="font-bold">Hapus Baris</div>
+                                          <div className="text-[10px] text-rose-400 font-mono">Hapus dari rekap</div>
+                                        </div>
+                                      </button>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Bottom Card: Total Summary and "Tambahkan Data Secara Manual" button */}
+          <div className="p-4 bg-stone-50 border border-stone-200 rounded-3xl flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-amber-100 text-amber-900 rounded-xl">
+                <DollarSign size={18} />
+              </div>
+              <div>
+                <div className="text-[11px] font-mono text-stone-500">
+                  Total Biaya Terdeteksi:
                 </div>
-                <div>
-                  <div className="text-[11px] font-mono text-stone-500">
-                    Total Biaya Terdeteksi:
-                  </div>
-                  <div className="text-base font-black text-stone-900 font-mono">
-                    Rp {totalExpense.toLocaleString('id-ID')} <span className="text-xs font-normal text-stone-500 font-sans">({transactions.length} baris transaksi)</span>
-                  </div>
+                <div className="text-base font-black text-stone-900 font-mono">
+                  Rp {totalExpense.toLocaleString('id-ID')} <span className="text-xs font-normal text-stone-500 font-sans">({transactions.length} baris transaksi)</span>
                 </div>
               </div>
-
-              <button
-                id="btn-add-manual-sppd-bottom"
-                type="button"
-                onClick={handleOpenAddModal}
-                className="w-full sm:w-auto px-5 py-2.5 bg-amber-600 hover:bg-amber-500 active:scale-98 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-md hover:shadow-lg"
-              >
-                <PlusCircle size={16} />
-                <span>+ Tambahkan Data Secara Manual</span>
-              </button>
             </div>
+
+            <button
+              id="btn-add-manual-sppd-bottom"
+              type="button"
+              onClick={handleOpenAddModal}
+              className="w-full sm:w-auto px-5 py-2.5 bg-amber-600 hover:bg-amber-500 active:scale-98 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-md hover:shadow-lg"
+            >
+              <PlusCircle size={16} />
+              <span>+ Tambahkan Data Secara Manual</span>
+            </button>
           </div>
         </div>
       )}

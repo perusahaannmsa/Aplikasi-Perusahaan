@@ -60,10 +60,12 @@ export function consolidateSppdCostItems(
     id?: string;
     kategori?: string;
     rincian?: string;
-    hargaAcuan?: number;
+    hargaAcuan?: number | string;
     jumlah?: number;
+    date?: string;
   }> = [],
-  lamaPerjalananStr: string = '4 Hari'
+  lamaPerjalananStr: string = '4 Hari',
+  jabatanStr?: string
 ): ConsolidatedCostItem[] {
   if (!costItems || costItems.length === 0) return [];
 
@@ -77,31 +79,44 @@ export function consolidateSppdCostItems(
     }
   }
 
-  // 2. Buckets for 9 official categories
+  // 2. Determine daily meal benchmark based on position
+  let dailyMealRate = 100000;
+  const jabLower = (jabatanStr || '').toLowerCase();
+  if (jabLower.includes('direktur utama') || jabLower.includes('direktur')) {
+    dailyMealRate = 300000;
+  } else if (jabLower.includes('wakil') || jabLower.includes('gm') || jabLower.includes('pimpro') || jabLower.includes('general manager')) {
+    dailyMealRate = 250000;
+  } else if (jabLower.includes('manager') || jabLower.includes('manajer') || jabLower.includes('kabag')) {
+    dailyMealRate = 200000;
+  } else {
+    dailyMealRate = 100000; // Staf / Supervisor standard rate
+  }
+
+  // 3. Buckets for 9 official categories
   const buckets: {
     [key: string]: {
       kategori: string;
       order: number;
       defaultAcuan: string | number;
-      items: Array<{ rincian: string; jumlah: number; hargaAcuan?: number }>;
+      items: Array<{ rincian: string; jumlah: number; hargaAcuan?: number; date?: string }>;
     };
   } = {
+    transport_jkt: {
+      kategori: 'Transport Jkt - Bandara/Stasiun (1x)',
+      order: 1,
+      defaultAcuan: 200000,
+      items: []
+    },
     makan: {
       kategori: 'Uang Makan / Hari',
-      order: 1,
-      defaultAcuan: 100000,
+      order: 2,
+      defaultAcuan: dailyMealRate,
       items: []
     },
     saku: {
       kategori: 'Uang Saku',
-      order: 2,
-      defaultAcuan: 100000,
-      items: []
-    },
-    transport_jkt: {
-      kategori: 'Transport Jkt - Bandara/Stasiun (1x)',
       order: 3,
-      defaultAcuan: 200000,
+      defaultAcuan: 100000,
       items: []
     },
     transport_hotel: {
@@ -142,13 +157,14 @@ export function consolidateSppdCostItems(
     }
   };
 
-  // 3. Classify each incoming item into the correct official bucket
+  // 4. Classify each incoming item into the correct official bucket
   costItems.forEach(item => {
-    const rawKat = (item.kategori || '').toLowerCase();
-    const rawRincian = (item.rincian || '').toLowerCase();
+    const rawKat = (item.kategori || '').toLowerCase().trim();
+    const rawRincian = (item.rincian || '').toLowerCase().trim();
     const combined = `${rawKat} ${rawRincian}`;
     const amount = Number(item.jumlah) || 0;
-    const acuan = Number(item.hargaAcuan) || undefined;
+    const acuan = typeof item.hargaAcuan === 'number' ? item.hargaAcuan : undefined;
+    const itemDate = item.date || '';
 
     if (
       combined.includes('jkt - bandara') ||
@@ -156,9 +172,10 @@ export function consolidateSppdCostItems(
       combined.includes('bandara - rumah') ||
       combined.includes('transport jkt') ||
       combined.includes('transport lokal jakarta') ||
-      combined.includes('stasiun')
+      combined.includes('stasiun') ||
+      (rawKat.includes('transport') && (rawKat.includes('jkt') || rawKat.includes('stasiun') || rawRincian.includes('rumah')))
     ) {
-      buckets.transport_jkt.items.push({ rincian: item.rincian || 'Transport Bandara / Stasiun', jumlah: amount, hargaAcuan: acuan });
+      buckets.transport_jkt.items.push({ rincian: item.rincian || 'Transport Bandara / Stasiun', jumlah: amount, hargaAcuan: acuan, date: itemDate });
     } else if (
       combined.includes('bandara - hotel') ||
       combined.includes('hotel - bandara') ||
@@ -166,9 +183,10 @@ export function consolidateSppdCostItems(
       combined.includes('taksi') ||
       combined.includes('taxi') ||
       combined.includes('antar pak') ||
-      combined.includes('antar jemput')
+      combined.includes('antar jemput') ||
+      (rawKat.includes('transport') && (rawKat.includes('hotel') || rawKat.includes('bandara')))
     ) {
-      buckets.transport_hotel.items.push({ rincian: item.rincian || 'Transport Bandara - Hotel', jumlah: amount, hargaAcuan: acuan });
+      buckets.transport_hotel.items.push({ rincian: item.rincian || 'Transport Bandara - Hotel', jumlah: amount, hargaAcuan: acuan, date: itemDate });
     } else if (
       combined.includes('pesawat') ||
       combined.includes('tiket pesawat') ||
@@ -179,13 +197,14 @@ export function consolidateSppdCostItems(
       combined.includes('citilink') ||
       combined.includes('batik')
     ) {
-      buckets.tiket_pesawat.items.push({ rincian: item.rincian || 'Tiket Pesawat PP', jumlah: amount, hargaAcuan: acuan });
+      buckets.tiket_pesawat.items.push({ rincian: item.rincian || 'Tiket Pesawat PP', jumlah: amount, hargaAcuan: acuan, date: itemDate });
     } else if (
       combined.includes('kereta') ||
       combined.includes('kai') ||
-      combined.includes('whoosh')
+      combined.includes('whoosh') ||
+      combined.includes('argo')
     ) {
-      buckets.tiket_kereta.items.push({ rincian: item.rincian || 'Tiket Kereta Api', jumlah: amount, hargaAcuan: acuan });
+      buckets.tiket_kereta.items.push({ rincian: item.rincian || 'Tiket Kereta Api', jumlah: amount, hargaAcuan: acuan, date: itemDate });
     } else if (
       combined.includes('double cabin') ||
       combined.includes('dcabin') ||
@@ -194,21 +213,25 @@ export function consolidateSppdCostItems(
       combined.includes('4x4') ||
       combined.includes('tambang')
     ) {
-      buckets.mobil_dcabin.items.push({ rincian: item.rincian || 'Sewa Mobil Double Cabin', jumlah: amount, hargaAcuan: acuan });
+      buckets.mobil_dcabin.items.push({ rincian: item.rincian || 'Sewa Mobil Double Cabin', jumlah: amount, hargaAcuan: acuan, date: itemDate });
     } else if (
       combined.includes('sewa mobil') ||
       combined.includes('avanza') ||
       combined.includes('innova') ||
+      combined.includes('xenia') ||
       combined.includes('rental mobil')
     ) {
-      buckets.mobil_standar.items.push({ rincian: item.rincian || 'Sewa Mobil Standar', jumlah: amount, hargaAcuan: acuan });
+      buckets.mobil_standar.items.push({ rincian: item.rincian || 'Sewa Mobil Standar', jumlah: amount, hargaAcuan: acuan, date: itemDate });
     } else if (
       combined.includes('hotel') ||
       combined.includes('penginapan') ||
       combined.includes('lodging') ||
-      combined.includes('kamar')
+      combined.includes('kamar') ||
+      combined.includes('santika') ||
+      combined.includes('clarion') ||
+      combined.includes('aston')
     ) {
-      buckets.hotel.items.push({ rincian: item.rincian || 'Penginapan / Hotel', jumlah: amount, hargaAcuan: acuan });
+      buckets.hotel.items.push({ rincian: item.rincian || 'Penginapan / Hotel', jumlah: amount, hargaAcuan: acuan, date: itemDate });
     } else if (
       combined.includes('makan') ||
       combined.includes('konsumsi') ||
@@ -217,9 +240,12 @@ export function consolidateSppdCostItems(
       combined.includes('sarapan') ||
       combined.includes('coto') ||
       combined.includes('sop saudara') ||
-      combined.includes('kfc')
+      combined.includes('kfc') ||
+      combined.includes('marannu') ||
+      combined.includes('warung') ||
+      rawKat.includes('makan')
     ) {
-      buckets.makan.items.push({ rincian: item.rincian || 'Uang Makan', jumlah: amount, hargaAcuan: acuan });
+      buckets.makan.items.push({ rincian: item.rincian || 'Uang Makan', jumlah: amount, hargaAcuan: acuan, date: itemDate });
     } else if (
       combined.includes('saku') ||
       combined.includes('allowance') ||
@@ -227,52 +253,97 @@ export function consolidateSppdCostItems(
       combined.includes('snack') ||
       combined.includes('korean grill') ||
       combined.includes('grill') ||
-      combined.includes('pocket')
+      combined.includes('pocket') ||
+      combined.includes('kopi') ||
+      combined.includes('cemilan') ||
+      rawKat.includes('saku')
     ) {
-      buckets.saku.items.push({ rincian: item.rincian || 'Uang Saku / Jajanan', jumlah: amount, hargaAcuan: acuan });
+      buckets.saku.items.push({ rincian: item.rincian || 'Uang Saku / Jajanan', jumlah: amount, hargaAcuan: acuan, date: itemDate });
     } else {
-      // Default fallback based on category name if already matches
-      if (rawKat.includes('makan')) {
-        buckets.makan.items.push({ rincian: item.rincian || 'Uang Makan', jumlah: amount, hargaAcuan: acuan });
-      } else if (rawKat.includes('saku')) {
-        buckets.saku.items.push({ rincian: item.rincian || 'Uang Saku', jumlah: amount, hargaAcuan: acuan });
-      } else if (rawKat.includes('transport') && (rawKat.includes('jkt') || rawKat.includes('stasiun'))) {
-        buckets.transport_jkt.items.push({ rincian: item.rincian || 'Transport Stasiun/Bandara', jumlah: amount, hargaAcuan: acuan });
-      } else if (rawKat.includes('hotel') || rawKat.includes('bandara')) {
-        buckets.transport_hotel.items.push({ rincian: item.rincian || 'Transport Lokal', jumlah: amount, hargaAcuan: acuan });
-      } else {
-        // Fallback to saku/operasional
-        buckets.saku.items.push({ rincian: item.rincian || item.kategori || 'Pengeluaran Lainnya', jumlah: amount, hargaAcuan: acuan });
-      }
+      // Default fallback
+      buckets.saku.items.push({ rincian: item.rincian || item.kategori || 'Pengeluaran Lainnya', jumlah: amount, hargaAcuan: acuan, date: itemDate });
     }
   });
 
-  // 4. Calculate Uang Makan with Daily Cap and Spillover to Uang Saku
-  const rawMealTotal = buckets.makan.items.reduce((sum, i) => sum + i.jumlah, 0);
-  const dailyMealRate = 100000;
+  // 5. Intelligent Calculation of Uang Makan: Daily Cap & Spillover to Uang Saku
+  const rawMealItems = buckets.makan.items;
   const maxMealAllowed = durationDays * dailyMealRate;
 
-  let finalMealAmount = rawMealTotal;
+  // Check if we have date-specific meal entries
+  const mealByDate: { [dateKey: string]: number } = {};
+  let itemsWithDateCount = 0;
+  rawMealItems.forEach(mi => {
+    if (mi.date && mi.date.trim()) {
+      itemsWithDateCount++;
+      mealByDate[mi.date] = (mealByDate[mi.date] || 0) + mi.jumlah;
+    }
+  });
+
+  let finalMealAmount = 0;
   let excessMealToPocket = 0;
 
-  if (rawMealTotal > maxMealAllowed) {
-    finalMealAmount = maxMealAllowed;
-    excessMealToPocket = rawMealTotal - maxMealAllowed;
+  if (itemsWithDateCount > 0 && Object.keys(mealByDate).length > 0) {
+    // Calculate per-day capping
+    Object.keys(mealByDate).forEach(d => {
+      const dayTotal = mealByDate[d];
+      if (dayTotal > dailyMealRate) {
+        finalMealAmount += dailyMealRate; // capped to 1 full day acuan
+        excessMealToPocket += (dayTotal - dailyMealRate);
+      } else {
+        finalMealAmount += dayTotal;
+      }
+    });
+
+    // Handle any meal items without dates
+    const undatedMealTotal = rawMealItems.filter(mi => !mi.date || !mi.date.trim()).reduce((s, mi) => s + mi.jumlah, 0);
+    if (undatedMealTotal > 0) {
+      const remainingAllowed = Math.max(0, maxMealAllowed - finalMealAmount);
+      if (undatedMealTotal > remainingAllowed) {
+        finalMealAmount += remainingAllowed;
+        excessMealToPocket += (undatedMealTotal - remainingAllowed);
+      } else {
+        finalMealAmount += undatedMealTotal;
+      }
+    }
+  } else {
+    // Fallback to trip duration calculation: durationDays * dailyMealRate
+    const rawMealTotal = rawMealItems.reduce((sum, i) => sum + i.jumlah, 0);
+    if (rawMealTotal > maxMealAllowed) {
+      finalMealAmount = maxMealAllowed;
+      excessMealToPocket = rawMealTotal - maxMealAllowed;
+    } else {
+      finalMealAmount = rawMealTotal;
+      excessMealToPocket = 0;
+    }
   }
 
-  // 5. Build Consolidated List
+  // 6. Build strictly deduplicated official list (max 7-9 official categories, only non-zero items)
   const consolidatedList: ConsolidatedCostItem[] = [];
 
-  // Process Category 1: Uang Makan / Hari
+  // 1. Transport Jkt - Bandara/Stasiun
+  const jktItems = buckets.transport_jkt.items;
+  const jktTotal = jktItems.reduce((sum, i) => sum + i.jumlah, 0);
+  if (jktTotal > 0) {
+    const uniqueRincians = Array.from(new Set(jktItems.map(i => i.rincian).filter(Boolean)));
+    const desc = uniqueRincians.length > 1
+      ? uniqueRincians.join(' & ')
+      : (uniqueRincians[0] || 'Transport Rumah - Bandara / Stasiun PP');
+    consolidatedList.push({
+      no: 0,
+      kategori: 'Transport Jkt - Bandara/Stasiun (1x)',
+      rincian: desc,
+      hargaAcuan: buckets.transport_jkt.defaultAcuan,
+      jumlah: jktTotal
+    });
+  }
+
+  // 2. Uang Makan / Hari
   if (finalMealAmount > 0) {
-    const mealNames = buckets.makan.items.map(i => i.rincian).filter(Boolean);
+    const mealNames = Array.from(new Set(rawMealItems.map(i => i.rincian).filter(Boolean)));
     let mealDesc = `${durationDays} Hari @ Rp ${dailyMealRate.toLocaleString('id-ID')}`;
     if (mealNames.length > 0) {
       const summaryList = mealNames.slice(0, 3).join(', ') + (mealNames.length > 3 ? ` + ${mealNames.length - 3} lainnya` : '');
       mealDesc += ` (${summaryList})`;
-    }
-    if (excessMealToPocket > 0) {
-      mealDesc += ` - Plafon Rp ${maxMealAllowed.toLocaleString('id-ID')} (kelebihan Rp ${excessMealToPocket.toLocaleString('id-ID')} dialihkan ke Uang Saku)`;
     }
 
     consolidatedList.push({
@@ -284,23 +355,26 @@ export function consolidateSppdCostItems(
     });
   }
 
-  // Process Category 2: Uang Saku
+  // 3. Uang Saku (Includes base pocket allowance, snacks/jajanan, plus any excess meal over benchmark)
   const rawPocketItems = buckets.saku.items;
   const rawPocketTotal = rawPocketItems.reduce((sum, i) => sum + i.jumlah, 0);
   const finalPocketAmount = rawPocketTotal + excessMealToPocket;
 
   if (finalPocketAmount > 0) {
     const pocketDetails: string[] = [];
-    rawPocketItems.forEach(i => {
-      pocketDetails.push(`${i.rincian} (Rp ${i.jumlah.toLocaleString('id-ID')})`);
-    });
+    const uniquePocketRincians = Array.from(new Set(rawPocketItems.map(i => i.rincian).filter(Boolean)));
+    
+    if (uniquePocketRincians.length > 0) {
+      pocketDetails.push(uniquePocketRincians.join(', '));
+    }
+    
     if (excessMealToPocket > 0) {
-      pocketDetails.push(`Kelebihan Uang Makan di atas plafon acuan (Rp ${excessMealToPocket.toLocaleString('id-ID')})`);
+      pocketDetails.push(`Termasuk kelebihan Uang Makan di atas plafon acuan (Rp ${excessMealToPocket.toLocaleString('id-ID')})`);
     }
 
     let pocketDesc = pocketDetails.join('; ');
-    if (rawPocketItems.length === 0 && excessMealToPocket > 0) {
-      pocketDesc = `Kelebihan biaya uang makan di atas plafon acuan ${durationDays} hari (Rp ${excessMealToPocket.toLocaleString('id-ID')})`;
+    if (pocketDetails.length === 0) {
+      pocketDesc = `${durationDays} Hari Uang Saku Operasional`;
     }
 
     consolidatedList.push({
@@ -312,101 +386,93 @@ export function consolidateSppdCostItems(
     });
   }
 
-  // Process Category 3: Transport Jkt - Bandara/Stasiun (1x)
-  const jktItems = buckets.transport_jkt.items;
-  const jktTotal = jktItems.reduce((sum, i) => sum + i.jumlah, 0);
-  if (jktTotal > 0) {
-    const desc = jktItems.map(i => i.rincian).join(' & ');
-    consolidatedList.push({
-      no: 0,
-      kategori: 'Transport Jkt - Bandara/Stasiun (1x)',
-      rincian: desc || 'Transport Bandara / Stasiun PP',
-      hargaAcuan: buckets.transport_jkt.defaultAcuan,
-      jumlah: jktTotal
-    });
-  }
-
-  // Process Category 4: Transport Bandara - Hotel
+  // 4. Transport Bandara - Hotel
   const hotelTransItems = buckets.transport_hotel.items;
   const hotelTransTotal = hotelTransItems.reduce((sum, i) => sum + i.jumlah, 0);
   if (hotelTransTotal > 0) {
+    const uniqueHotelTrans = Array.from(new Set(hotelTransItems.map(i => i.rincian).filter(Boolean)));
     const desc = hotelTransItems.length > 1
-      ? `${hotelTransItems.length}x Perjalanan: ` + hotelTransItems.map(i => i.rincian).join(', ')
-      : hotelTransItems[0].rincian;
+      ? `${hotelTransItems.length}x Perjalanan: ` + uniqueHotelTrans.slice(0, 2).join(', ') + (uniqueHotelTrans.length > 2 ? ' dll' : '')
+      : (uniqueHotelTrans[0] || 'Transportasi Bandara - Hotel PP');
     consolidatedList.push({
       no: 0,
       kategori: 'Transport Bandara - Hotel',
-      rincian: desc || 'Taksi / Transport Bandara - Hotel PP',
+      rincian: desc,
       hargaAcuan: buckets.transport_hotel.defaultAcuan,
       jumlah: hotelTransTotal
     });
   }
 
-  // Process Category 5: Tiket Pesawat
+  // 5. Tiket Pesawat
   const pesawatItems = buckets.tiket_pesawat.items;
   const pesawatTotal = pesawatItems.reduce((sum, i) => sum + i.jumlah, 0);
   if (pesawatTotal > 0) {
-    const desc = pesawatItems.map(i => i.rincian).join(', ');
+    const uniquePesawat = Array.from(new Set(pesawatItems.map(i => i.rincian).filter(Boolean)));
+    const desc = uniquePesawat.join(', ') || 'Tiket Pesawat PP';
     consolidatedList.push({
       no: 0,
       kategori: 'Tiket Pesawat',
-      rincian: desc || 'Tiket Pesawat PP',
+      rincian: desc,
       hargaAcuan: 'Sesuai Keuangan',
       jumlah: pesawatTotal
     });
   }
 
-  // Process Category 6: Tiket Kereta Api
+  // 6. Tiket Kereta Api
   const keretaItems = buckets.tiket_kereta.items;
   const keretaTotal = keretaItems.reduce((sum, i) => sum + i.jumlah, 0);
   if (keretaTotal > 0) {
-    const desc = keretaItems.map(i => i.rincian).join(', ');
+    const uniqueKereta = Array.from(new Set(keretaItems.map(i => i.rincian).filter(Boolean)));
+    const desc = uniqueKereta.join(', ') || 'Tiket Kereta Api';
     consolidatedList.push({
       no: 0,
       kategori: 'Tiket Kereta Api',
-      rincian: desc || 'Tiket Kereta Api',
+      rincian: desc,
       hargaAcuan: 'Sesuai Keuangan',
       jumlah: keretaTotal
     });
   }
 
-  // Process Category 7: Hotel / Hari
+  // 7. Hotel / Hari
   const lodgingItems = buckets.hotel.items;
   const lodgingTotal = lodgingItems.reduce((sum, i) => sum + i.jumlah, 0);
   if (lodgingTotal > 0) {
-    const desc = lodgingItems.map(i => i.rincian).join(', ');
+    const uniqueHotels = Array.from(new Set(lodgingItems.map(i => i.rincian).filter(Boolean)));
+    const desc = uniqueHotels.join(', ') || 'Biaya Penginapan / Hotel';
     consolidatedList.push({
       no: 0,
       kategori: 'Hotel / Hari',
-      rincian: desc || 'Biaya Penginapan / Hotel',
+      rincian: desc,
       hargaAcuan: buckets.hotel.defaultAcuan,
       jumlah: lodgingTotal
     });
   }
 
-  // Process Category 8: Sewa Mobil Standar
+  // 8. Sewa Mobil Standar
   const mobilStandarItems = buckets.mobil_standar.items;
   const mobilStandarTotal = mobilStandarItems.reduce((sum, i) => sum + i.jumlah, 0);
   if (mobilStandarTotal > 0) {
-    const desc = mobilStandarItems.map(i => i.rincian).join(', ');
+    const uniqueMobil = Array.from(new Set(mobilStandarItems.map(i => i.rincian).filter(Boolean)));
+    const desc = uniqueMobil.join(', ') || 'Sewa Mobil Standar Operasional';
     consolidatedList.push({
       no: 0,
       kategori: 'Sewa Mobil/Hari (Standar Avanza) + Sopir + BBM',
-      rincian: desc || 'Sewa Mobil Standar Operasional',
+      rincian: desc,
       hargaAcuan: buckets.mobil_standar.defaultAcuan,
       jumlah: mobilStandarTotal
     });
   }
 
-  // Process Category 9: Sewa Mobil Double Cabin
+  // 9. Sewa Mobil Double Cabin
   const dcabinItems = buckets.mobil_dcabin.items;
   const dcabinTotal = dcabinItems.reduce((sum, i) => sum + i.jumlah, 0);
   if (dcabinTotal > 0) {
-    const desc = dcabinItems.map(i => i.rincian).join(', ');
+    const uniqueDcabin = Array.from(new Set(dcabinItems.map(i => i.rincian).filter(Boolean)));
+    const desc = uniqueDcabin.join(', ') || 'Sewa Mobil Double Cabin Tambang';
     consolidatedList.push({
       no: 0,
       kategori: 'Sewa Mobil/Hari (Double Cabin) + Sopir + BBM',
-      rincian: desc || 'Sewa Mobil Double Cabin Tambang',
+      rincian: desc,
       hargaAcuan: buckets.mobil_dcabin.defaultAcuan,
       jumlah: dcabinTotal
     });
@@ -431,8 +497,8 @@ export const PrintSppdDocument: React.FC<PrintSppdDocumentProps> = ({
 
   // Intelligently consolidate cost items to eliminate duplicate categories
   const consolidatedItems = React.useMemo(() => {
-    return consolidateSppdCostItems(sppd.costItems || [], sppd.lamaPerjalanan || '4 Hari');
-  }, [sppd.costItems, sppd.lamaPerjalanan]);
+    return consolidateSppdCostItems(sppd.costItems || [], sppd.lamaPerjalanan || '4 Hari', sppd.jabatan);
+  }, [sppd.costItems, sppd.lamaPerjalanan, sppd.jabatan]);
 
   const totalBiaya = consolidatedItems.reduce((acc, curr) => acc + (curr.jumlah || 0), 0);
 
