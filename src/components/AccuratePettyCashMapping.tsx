@@ -94,6 +94,7 @@ export function AccuratePettyCashMapping({
   const [uploadModalSuccess, setUploadModalSuccess] = useState<string>('');
   const [driveAccount, setDriveAccount] = useState<{ email: string; displayName?: string } | null>(() => getActiveGoogleDriveAccount());
   const [isDriveConnecting, setIsDriveConnecting] = useState<boolean>(false);
+  const [showPrintModal, setShowPrintModal] = useState<boolean>(false);
 
   useEffect(() => {
     setDriveAccount(getActiveGoogleDriveAccount());
@@ -1346,8 +1347,14 @@ export function AccuratePettyCashMapping({
     XLSX.writeFile(workbook, fileName);
   };
 
-  // 2. Export PDF Mapping Summary
+  // 2. Export PDF Mapping Summary Options
   const handleExportPDF = () => {
+    if (transactions.length === 0) return;
+    setShowPrintModal(true);
+  };
+
+  // Option 1: Standard Flat List PDF
+  const handleExportPDFStandard = () => {
     if (transactions.length === 0) return;
 
     const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
@@ -1365,7 +1372,7 @@ export function AccuratePettyCashMapping({
     doc.setFont('helvetica', 'normal');
     doc.text(`Judul / Sumber: ${reportTitle}`, 14, 28);
     doc.text(`Tanggal Cetak: ${new Date().toLocaleDateString('id-ID')} | Periode: ${period}`, 14, 33);
-    doc.text(`Akun Kas / Kredit: [${kasAccount.code}] ${kasAccount.name}`, 14, 38);
+    doc.text(`Akun Kas / Kredit: [${kasAccount.code}] ${kasAccount.name} | Total: Rp ${totalExpense.toLocaleString('id-ID')}`, 14, 38);
 
     // Grouped Summary Table
     const summaryRows = groupedSummary.map((g, i) => [
@@ -1420,7 +1427,164 @@ export function AccuratePettyCashMapping({
       styles: { fontSize: 7.5, cellPadding: 1.5 }
     });
 
-    doc.save(`Laporan_Pemetaan_Accurate_${reportTitle.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`);
+    doc.save(`Laporan_Pemetaan_Accurate_Standar_${reportTitle.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`);
+    setShowPrintModal(false);
+  };
+
+  // Option 2: Grouped by Category & Sorted by Time/Date Chronologically
+  const handleExportPDFGroupedByCategory = () => {
+    if (transactions.length === 0) return;
+
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+    // Header
+    doc.setFontSize(15);
+    doc.setFont('helvetica', 'bold');
+    doc.text('PT NUSANTARA MINERAL SUKSES ABADI', 14, 15);
+    
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text('REKAP & PEMETAAN AKUN ACCURATE - PER KATEGORI', 14, 22);
+
+    doc.setFontSize(8.5);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Judul / Sumber: ${reportTitle}`, 14, 28);
+    doc.text(`Tanggal Cetak: ${new Date().toLocaleDateString('id-ID')} | Periode: ${period}`, 14, 33);
+    doc.text(`Akun Kas (Kredit): [${kasAccount.code}] ${kasAccount.name} | Total Beban: Rp ${totalExpense.toLocaleString('id-ID')}`, 14, 38);
+
+    // 1. Global Summary Table
+    const summaryRows = groupedSummary.map((g, i) => [
+      i + 1,
+      g.accountCode,
+      g.accountName,
+      g.items.length,
+      `Rp ${g.totalAmount.toLocaleString('id-ID')}`
+    ]);
+
+    summaryRows.push([
+      '',
+      'TOTAL',
+      'KESELURUHAN BEBAN',
+      transactions.length,
+      `Rp ${totalExpense.toLocaleString('id-ID')}`
+    ]);
+
+    autoTable(doc, {
+      startY: 42,
+      head: [['No', 'Kode Akun', 'Nama Akun Accurate', 'Jumlah Item', 'Total Nominal (Rp)']],
+      body: summaryRows,
+      theme: 'grid',
+      headStyles: { fillColor: [16, 185, 129], textColor: 255, fontStyle: 'bold' },
+      footStyles: { fillColor: [243, 244, 246], fontStyle: 'bold' },
+      styles: { fontSize: 8, cellPadding: 2 }
+    });
+
+    let currentY = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY + 8 : 95;
+
+    // 2. Iterate through each Category in groupedSummary
+    groupedSummary.forEach((group, groupIdx) => {
+      // Sort items chronologically by Date / Time (Oldest to Newest)
+      const sortedGroupItems = [...group.items].sort((a, b) => {
+        const dateA = a.date || '';
+        const dateB = b.date || '';
+        const dateDiff = dateA.localeCompare(dateB);
+        if (dateDiff !== 0) return dateDiff;
+        return a.id.localeCompare(b.id);
+      });
+
+      // Check if page overflow will occur (leave at least 40mm)
+      if (currentY > 250) {
+        doc.addPage();
+        currentY = 15;
+      }
+
+      // Category Header
+      doc.setFontSize(9.5);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(30, 41, 59);
+      doc.text(
+        `${groupIdx + 1}. [${group.accountCode}] ${group.accountName}  —  Subtotal: Rp ${group.totalAmount.toLocaleString('id-ID')} (${sortedGroupItems.length} Transaksi)`,
+        14,
+        currentY
+      );
+      doc.setTextColor(0, 0, 0);
+
+      // Build rows for this category
+      const catRows = sortedGroupItems.map((t, idx) => [
+        idx + 1,
+        t.date || '-',
+        t.description,
+        t.recipient || '-',
+        `Rp ${t.amount.toLocaleString('id-ID')}`
+      ]);
+
+      // Subtotal row
+      catRows.push([
+        '',
+        '',
+        `Subtotal [${group.accountCode}]`,
+        `${sortedGroupItems.length} Item`,
+        `Rp ${group.totalAmount.toLocaleString('id-ID')}`
+      ]);
+
+      autoTable(doc, {
+        startY: currentY + 3,
+        head: [['No', 'Tanggal Transaksi', 'Keterangan / Uraian Belanja', 'Penerima / Toko', 'Nominal (Rp)']],
+        body: catRows,
+        theme: 'striped',
+        headStyles: { fillColor: [44, 62, 80], textColor: 255, fontStyle: 'bold' },
+        styles: { fontSize: 7.5, cellPadding: 1.8 },
+        columnStyles: {
+          0: { cellWidth: 10, halign: 'center' },
+          1: { cellWidth: 26 },
+          2: { cellWidth: 'auto' },
+          3: { cellWidth: 38 },
+          4: { cellWidth: 32, halign: 'right' }
+        },
+        didParseCell: (data) => {
+          if (data.row.index === catRows.length - 1) {
+            data.cell.styles.fontStyle = 'bold';
+            data.cell.styles.fillColor = [240, 245, 245];
+          }
+        }
+      });
+
+      currentY = (doc as any).lastAutoTable.finalY + 8;
+    });
+
+    // 3. Signature Block
+    if (currentY > 235) {
+      doc.addPage();
+      currentY = 20;
+    } else {
+      currentY += 4;
+    }
+
+    doc.setFontSize(8.5);
+    doc.setFont('helvetica', 'bold');
+    const col1X = 14;
+    const col2X = 80;
+    const col3X = 146;
+
+    doc.text('Dibuat Oleh:', col1X, currentY);
+    doc.text('Diverifikasi Oleh:', col2X, currentY);
+    doc.text('Disetujui Oleh:', col3X, currentY);
+
+    doc.setFont('helvetica', 'normal');
+    doc.text('Kasir / Pemegang Petty Cash', col1X, currentY + 4);
+    doc.text('Accounting / Verifikator', col2X, currentY + 4);
+    doc.text('Direktur Keuangan / PM', col3X, currentY + 4);
+
+    doc.line(col1X, currentY + 22, col1X + 45, currentY + 22);
+    doc.line(col2X, currentY + 22, col2X + 45, currentY + 22);
+    doc.line(col3X, currentY + 22, col3X + 45, currentY + 22);
+
+    doc.text(`( ${activeCustodianName || '.....................'} )`, col1X, currentY + 26);
+    doc.text('( ..................... )', col2X, currentY + 26);
+    doc.text('( ..................... )', col3X, currentY + 26);
+
+    doc.save(`Laporan_Pemetaan_Kategori_Accurate_${reportTitle.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`);
+    setShowPrintModal(false);
   };
 
   // 3. Copy Summary to Clipboard
@@ -3051,6 +3215,92 @@ export function AccuratePettyCashMapping({
               );
             })()}
 
+          </div>
+        </div>
+      )}
+
+      {/* PDF Print Options Modal */}
+      {showPrintModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl border border-stone-200 shadow-2xl max-w-lg w-full overflow-hidden">
+            <div className="px-6 py-5 bg-gradient-to-r from-emerald-800 to-stone-900 text-white flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-white/10 rounded-2xl">
+                  <FileText size={22} className="text-emerald-400" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black tracking-wide">Pilih Opsi Cetak PDF Rekap</h3>
+                  <p className="text-xs text-stone-300">Pilih format laporan pemetaan Accurate sesuai kebutuhan Anda</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPrintModal(false)}
+                className="p-1.5 hover:bg-white/10 text-stone-300 hover:text-white rounded-xl transition cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {/* Option 1: PDF Standar (Flat List) */}
+              <button
+                type="button"
+                onClick={handleExportPDFStandard}
+                className="w-full text-left p-4 rounded-2xl border-2 border-stone-200 hover:border-emerald-500 bg-stone-50/50 hover:bg-emerald-50/40 transition group cursor-pointer flex items-start gap-3.5 shadow-xs"
+              >
+                <div className="p-3 bg-stone-200 group-hover:bg-emerald-600 text-stone-700 group-hover:text-white rounded-xl transition shrink-0 mt-0.5">
+                  <FileText size={20} />
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center justify-between">
+                    <span className="font-extrabold text-sm text-stone-900 group-hover:text-emerald-950">
+                      Opsi 1: PDF Format Standar
+                    </span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 bg-stone-200 group-hover:bg-emerald-200 text-stone-800 group-hover:text-emerald-900 rounded-md">
+                      Format Utama
+                    </span>
+                  </div>
+                  <p className="text-xs text-stone-600 mt-1 leading-relaxed">
+                    Mencetak tabel ringkasan global akun di atas, diikuti oleh tabel seluruh rincian transaksi berurutan dalam satu daftar datar.
+                  </p>
+                </div>
+              </button>
+
+              {/* Option 2: PDF Berdasarkan Kategori & Disortir Waktu */}
+              <button
+                type="button"
+                onClick={handleExportPDFGroupedByCategory}
+                className="w-full text-left p-4 rounded-2xl border-2 border-emerald-300 hover:border-emerald-600 bg-emerald-50/60 hover:bg-emerald-100/50 transition group cursor-pointer flex items-start gap-3.5 shadow-xs"
+              >
+                <div className="p-3 bg-emerald-600 group-hover:bg-emerald-700 text-white rounded-xl transition shrink-0 mt-0.5 shadow-sm">
+                  <Layers size={20} />
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center justify-between">
+                    <span className="font-extrabold text-sm text-emerald-950">
+                      Opsi 2: PDF Berdasarkan Kategori (Urut Waktu)
+                    </span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 bg-emerald-200 text-emerald-900 rounded-md">
+                      Rekomendasi Akuntansi
+                    </span>
+                  </div>
+                  <p className="text-xs text-emerald-900/80 mt-1 leading-relaxed">
+                    Mencetak transaksi yang <strong>dikelompokkan rapi per Kategori Akun Accurate</strong>, dengan rincian yang <strong>disortir kronologis berdasarkan waktu/tanggal</strong>, subtotal tiap kategori, serta tanda tangan resmi.
+                  </p>
+                </div>
+              </button>
+            </div>
+
+            <div className="px-6 py-4 bg-stone-50 border-t border-stone-200 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowPrintModal(false)}
+                className="px-4 py-2 bg-stone-200 hover:bg-stone-300 text-stone-800 rounded-xl text-xs font-bold transition cursor-pointer"
+              >
+                Batal
+              </button>
+            </div>
           </div>
         </div>
       )}

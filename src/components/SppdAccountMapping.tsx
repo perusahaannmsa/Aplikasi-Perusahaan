@@ -90,6 +90,7 @@ export function SppdAccountMapping({
 
   // Processing & UI States
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const [processMessage, setProcessMessage] = useState<string>('Menganalisis Dokumen SPPD...');
   const [successMessage, setSuccessMessage] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string>('');
 
@@ -315,6 +316,7 @@ export function SppdAccountMapping({
   // 1. SELECT EXISTING SPPD SUBMISSION TO PARSE
   const handleSelectSubmissionToParse = async (sub: Submission) => {
     setIsProcessing(true);
+    setProcessMessage('Menyiapkan parameter voucher SPPD...');
     setErrorMessage('');
     setSuccessMessage('');
 
@@ -335,7 +337,10 @@ export function SppdAccountMapping({
 
       if (docUrl) {
         try {
+          setProcessMessage(`Mengunduh berkas lampiran SPPD (${docName}) dari server / Google Drive...`);
           const { base64Data, mimeType } = await extractBase64FromUrl(docUrl);
+          
+          setProcessMessage(`Menganalisis tiket pesawat, hotel, & pos biaya SPPD ${emp} menggunakan Gemini AI...`);
           const aiRes = await fetch('/api/gemini/parse-sppd', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -349,6 +354,7 @@ export function SppdAccountMapping({
           });
 
           if (aiRes.ok) {
+            setProcessMessage('Memetakan hasil analisis AI ke 9 Kategori COA Resmi SPPD NMSA...');
             const aiData = await aiRes.json();
             if (aiData.success && aiData.result?.transactions?.length > 0) {
               const mappedFromAi: SppdMappedTransaction[] = aiData.result.transactions.map((t: any, idx: number) => {
@@ -381,6 +387,7 @@ export function SppdAccountMapping({
       }
 
       // 2. Direct line items extraction from submission items
+      setProcessMessage(`Mengekstrak ${(sub.items || []).length} rincian biaya dari data voucher...`);
       const mappedTxs: SppdMappedTransaction[] = (sub.items || []).map((item, idx) => {
         const desc = item.keterangan || item.item || 'Pengeluaran SPPD';
         const { guideline, confidence } = autoMapSppdLine(desc, posKey);
@@ -414,6 +421,7 @@ export function SppdAccountMapping({
     if (!file) return;
 
     setIsProcessing(true);
+    setProcessMessage(`Membaca berkas ${file.name}...`);
     setErrorMessage('');
     setSuccessMessage('');
     setActiveDocumentName(file.name);
@@ -423,6 +431,7 @@ export function SppdAccountMapping({
 
       if (isExcel) {
         // Read Excel File directly
+        setProcessMessage(`Mengekstrak baris tabel Excel ${file.name}...`);
         const buffer = await file.arrayBuffer();
         const workbook = XLSX.read(buffer, { type: 'array' });
         const sheetName = workbook.SheetNames[0];
@@ -477,12 +486,14 @@ export function SppdAccountMapping({
         }
       } else {
         // PDF / Image via AI Parser
+        setProcessMessage(`Membaca dan mengonversi berkas ${file.name}...`);
         const reader = new FileReader();
         reader.onloadend = async () => {
           try {
             const base64Data = reader.result as string;
             const mimeType = file.type || 'application/pdf';
 
+            setProcessMessage(`Menganalisis tiket/nota/dokumen SPPD ${file.name} menggunakan Gemini AI...`);
             const res = await fetch('/api/gemini/parse-sppd', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -495,6 +506,7 @@ export function SppdAccountMapping({
               })
             });
 
+            setProcessMessage('Memetakan rincian transaksi hasil analisis AI ke Akun COA SPPD...');
             const data = await res.json();
             if (data.success && data.result?.transactions?.length > 0) {
               const mappedTxs: SppdMappedTransaction[] = data.result.transactions.map((t: any, idx: number) => {
@@ -544,6 +556,7 @@ export function SppdAccountMapping({
     }
 
     setIsProcessing(true);
+    setProcessMessage('Menganalisis teks rincian pengeluaran dinas dengan Gemini AI...');
     setErrorMessage('');
     setSuccessMessage('');
 
@@ -559,6 +572,7 @@ export function SppdAccountMapping({
         })
       });
 
+      setProcessMessage('Memetakan pos biaya ke standar COA SPPD...');
       const data = await res.json();
       if (data.success && data.result?.transactions?.length > 0) {
         const mappedTxs: SppdMappedTransaction[] = data.result.transactions.map((t: any, idx: number) => {
@@ -579,10 +593,10 @@ export function SppdAccountMapping({
         });
 
         setTransactions(mappedTxs);
-        setReportTitle(data.result.reportTitle || `SPPD: ${employeeName || 'Teks Transaksi'}`);
-        setSuccessMessage(`Berhasil mengekstrak ${mappedTxs.length} pos transaksi dari teks SPPD!`);
+        setReportTitle(data.result.reportTitle || `SPPD: ${employeeName || 'Karyawan'} (Input Teks)`);
+        setSuccessMessage(`Berhasil menganalisis dan memetakan ${mappedTxs.length} pos transaksi dari teks SPPD!`);
       } else {
-        throw new Error(data.error || 'AI tidak dapat mendeteksi pos transaksi dari teks.');
+        throw new Error(data.error || 'Gagal mengekstrak rincian transaksi dari teks yang ditempel.');
       }
     } catch (err: any) {
       setErrorMessage('Gagal memproses teks: ' + (err.message || String(err)));
@@ -1468,6 +1482,20 @@ export function SppdAccountMapping({
               <Sparkles size={15} />
               <span>{isProcessing ? 'Memproses AI Parser...' : 'Analisis & Petakan Teks dengan AI'}</span>
             </button>
+          </div>
+        )}
+
+        {/* Processing / Analyzing Banner Indicator */}
+        {isProcessing && (
+          <div className="bg-amber-50/90 border border-amber-300 rounded-2xl p-4 flex items-center gap-3 text-xs text-amber-950 shadow-sm animate-pulse">
+            <RefreshCw size={19} className="animate-spin text-amber-600 shrink-0" />
+            <div className="flex flex-col gap-0.5">
+              <span className="font-extrabold text-amber-900 text-[13px] flex items-center gap-1.5">
+                <Sparkles size={14} className="text-amber-600" />
+                <span>Menganalisis Dokumen SPPD Dinas...</span>
+              </span>
+              <span className="font-medium text-amber-800 font-mono text-[11px]">{processMessage}</span>
+            </div>
           </div>
         )}
       </div>

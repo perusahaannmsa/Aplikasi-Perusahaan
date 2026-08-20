@@ -976,7 +976,7 @@ export const getStoredGoogleDriveToken = (): string | null => {
 };
 
 // Helper function to silently auto-refresh token if it's expired or about to expire
-export const ensureValidDriveToken = async (): Promise<string | null> => {
+export const ensureValidDriveToken = async (forceRefresh = false): Promise<string | null> => {
   // OPSI B: Coba ambil token dari Service Account (Backend) terlebih dahulu
   try {
     const res = await fetch('/api/drive-token');
@@ -992,21 +992,27 @@ export const ensureValidDriveToken = async (): Promise<string | null> => {
     // Service Account token tidak tersedia, menggunakan User Login
   }
 
+  // If force refresh is requested, sync latest cloud drives from Firestore first
+  if (forceRefresh) {
+    try {
+      await loadConnectedDrivesFromFirestore();
+    } catch (e) {}
+  }
+
   // Check if current stored token is valid
   let token = getStoredGoogleDriveToken();
-  if (token) {
+  if (token && !forceRefresh) {
     return token; // Still valid
   }
 
   // Check if token exists in Firestore company document (e.g. from another tab or previous login)
   try {
-    const cloudDrives = await loadConnectedDrivesFromFirestore();
+    await loadConnectedDrivesFromFirestore();
     token = getStoredGoogleDriveToken();
     if (token) return token;
   } catch (e) {}
 
-  // If we reach here, it means tokens are expired or missing. Return null or existing fallback token.
-  // Note: We do NOT trigger signInWithPopup automatically in the background because browsers block popups without direct user gesture.
+  // Return fallback token in memory or localStorage
   return googleDriveTokenMemory || localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
 };
 

@@ -1236,8 +1236,8 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
       let finalPettyCashFile: { url: string; name: string } | undefined = undefined;
       let targetFolderId: string | undefined = undefined;
 
-      // Ensure we have a valid token (auto-refreshes if needed before starting upload)
-      const token = await ensureValidDriveToken();
+      // Ensure we have a valid token (auto-refreshes from cloud Firestore or backend Service Account)
+      let token = await ensureValidDriveToken(true);
       if (token) {
         setSaveProgress('Menghitung format tanggal pengajuan...');
         // 1. Resolve Year/Month/Day folder structure parameters
@@ -1421,7 +1421,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
           );
           formData.append('file', compiledFile);
 
-          const res = await fetch(
+          let res = await fetch(
             'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink',
             {
               method: 'POST',
@@ -1431,6 +1431,25 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
               body: formData,
             }
           );
+
+          // Auto-refresh retry on 401
+          if (res.status === 401) {
+            console.log('🔄 [Drive Auto-Refresh] Token 401 terdeteksi, mencoba pembaruan token otomatis...');
+            const freshToken = await ensureValidDriveToken(true);
+            if (freshToken && freshToken !== token) {
+              token = freshToken;
+              res = await fetch(
+                'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink',
+                {
+                  method: 'POST',
+                  headers: {
+                    Authorization: `Bearer ${token}`,
+                  },
+                  body: formData,
+                }
+              );
+            }
+          }
 
           if (!res.ok) {
             if (res.status === 401) {
