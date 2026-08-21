@@ -39,15 +39,28 @@ import {
   Pencil,
   X,
   Check,
-  Cloud
+  Cloud,
+  Paperclip,
+  Eye,
+  Download
 } from 'lucide-react';
+
+export interface SPPDCostAttachment {
+  name: string;
+  url: string; // Base64 data URL
+  pageCount: number;
+  sizeBytes?: number;
+  uploadedAt?: string;
+  sourceImagesCount?: number;
+}
 
 export interface SPPDCostItem {
   id: string;
   kategori: string;   // Nama Biaya / Jenis Pengeluaran
   rincian: string;    // Rincian / Rumus (cth: 3 hari @ Rp 200.000)
-  hargaAcuan: number; // Harga Acuan / Pedoman Tarif Perusahaan
+  hargaAcuan?: number; // Harga Acuan / Pedoman Tarif Perusahaan
   jumlah: number;     // Harga Real Digunakan / Terpakai
+  attachment?: SPPDCostAttachment; // Converted multi-page PDF proof
 }
 
 export interface SPPDRecord {
@@ -68,6 +81,7 @@ export interface SPPDRecord {
   tujuanPerjalanan: string;
   keteranganSppd?: string;
   costItems: SPPDCostItem[];
+  attachedFiles?: { url: string; name: string; pageCount?: number; category?: string; sizeBytes?: number }[];
   pemberiPerintahName?: string;
   sppdDisetujuiName?: string;
   sppdDisetujuiJabatan?: string;
@@ -136,18 +150,68 @@ export const SppdManager: React.FC<SppdManagerProps> = ({
 
   const [previewPrintSppd, setPreviewPrintSppd] = useState<SPPDRecord | null>(null);
   const [isLinkCopied, setIsLinkCopied] = useState<boolean>(false);
+  const [previewAttachmentUrl, setPreviewAttachmentUrl] = useState<string | null>(null);
+  const [previewAttachmentTitle, setPreviewAttachmentTitle] = useState<string>('');
 
-  // Sync SPPD records from server and Firestore on load
+  // Helper to merge SPPD records without overwriting local changes
+  const mergeSppdRecords = (current: SPPDRecord[], incoming: SPPDRecord[]): SPPDRecord[] => {
+    if (!Array.isArray(incoming) || incoming.length === 0) return current;
+    const map = new Map<string, SPPDRecord>();
+    
+    // Register all incoming
+    incoming.forEach(rec => {
+      const key = rec.id || rec.noSppd;
+      if (key) map.set(key, rec);
+    });
+    
+    // Merge or preserve current local records
+    current.forEach(rec => {
+      const key = rec.id || rec.noSppd;
+      if (key) {
+        if (map.has(key)) {
+          map.set(key, { ...map.get(key)!, ...rec });
+        } else {
+          map.set(key, rec);
+        }
+      }
+    });
+
+    const merged = Array.from(map.values());
+    merged.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+    return merged;
+  };
+
+  // Sync SPPD records from server and Firestore on load & listen to local storage / custom events
   useEffect(() => {
+    const handleStorageOrCustomEvent = () => {
+      try {
+        const stored = localStorage.getItem('sppd_records_v1');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setRecords(prev => mergeSppdRecords(prev, parsed));
+          }
+        }
+        const requestedTab = sessionStorage.getItem('sppd_active_tab');
+        if (requestedTab && ['create', 'list', 'settings'].includes(requestedTab)) {
+          setActiveTabInternal(requestedTab as any);
+        }
+      } catch (err) {}
+    };
+
+    window.addEventListener('storage', handleStorageOrCustomEvent);
+    window.addEventListener('sppd_records_updated', handleStorageOrCustomEvent);
+
     // 1. Sync from server
     fetch('/api/sppd')
       .then(res => res.ok ? res.json() : null)
       .then(data => {
-        if (data && data.sppdRecords && Array.isArray(data.sppdRecords)) {
-          if (data.sppdRecords.length > 0) {
-            setRecords(data.sppdRecords);
-            localStorage.setItem('sppd_records_v1', JSON.stringify(data.sppdRecords));
-          }
+        if (data && data.sppdRecords && Array.isArray(data.sppdRecords) && data.sppdRecords.length > 0) {
+          setRecords(prev => {
+            const merged = mergeSppdRecords(prev, data.sppdRecords);
+            localStorage.setItem('sppd_records_v1', JSON.stringify(merged));
+            return merged;
+          });
         }
       })
       .catch(() => {
@@ -155,8 +219,11 @@ export const SppdManager: React.FC<SppdManagerProps> = ({
           .then(res => res.ok ? res.json() : null)
           .then(data => {
             if (data && data.sppdRecords && Array.isArray(data.sppdRecords) && data.sppdRecords.length > 0) {
-              setRecords(data.sppdRecords);
-              localStorage.setItem('sppd_records_v1', JSON.stringify(data.sppdRecords));
+              setRecords(prev => {
+                const merged = mergeSppdRecords(prev, data.sppdRecords);
+                localStorage.setItem('sppd_records_v1', JSON.stringify(merged));
+                return merged;
+              });
             }
           })
           .catch(() => {});
@@ -166,11 +233,19 @@ export const SppdManager: React.FC<SppdManagerProps> = ({
     loadSppdRecordsFromFirestore()
       .then(fsRecords => {
         if (fsRecords && Array.isArray(fsRecords) && fsRecords.length > 0) {
-          setRecords(fsRecords);
-          localStorage.setItem('sppd_records_v1', JSON.stringify(fsRecords));
+          setRecords(prev => {
+            const merged = mergeSppdRecords(prev, fsRecords);
+            localStorage.setItem('sppd_records_v1', JSON.stringify(merged));
+            return merged;
+          });
         }
       })
       .catch(err => console.warn('Firestore SPPD sync skipped:', err));
+
+    return () => {
+      window.removeEventListener('storage', handleStorageOrCustomEvent);
+      window.removeEventListener('sppd_records_updated', handleStorageOrCustomEvent);
+    };
   }, []);
 
   const [activeTab, setActiveTabInternal] = useState<'create' | 'list' | 'settings'>(() => {
@@ -983,7 +1058,26 @@ export const SppdManager: React.FC<SppdManagerProps> = ({
           </div>
 
           <div className="space-y-2.5 pt-1">
-            {records.map((rec) => {
+            {records.length === 0 ? (
+              <div className="text-center py-12 border-2 border-dashed border-stone-200 rounded-2xl space-y-3">
+                <Briefcase size={36} className="mx-auto text-stone-300" />
+                <div>
+                  <p className="text-sm font-bold text-stone-700">Belum ada arsip SPPD tersimpan</p>
+                  <p className="text-xs text-stone-400 mt-0.5">
+                    Buat pengajuan SPPD baru atau posting hasil dari modul Pemetaan Akun SPPD.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('create')}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-bold transition inline-flex items-center gap-1.5 cursor-pointer shadow-xs"
+                >
+                  <Plus size={14} />
+                  <span>+ Buat SPPD Baru</span>
+                </button>
+              </div>
+            ) : (
+              records.map((rec) => {
               const recTotal = (rec.costItems || []).reduce((acc, c) => acc + (c.jumlah || 0), 0);
               return (
                 <div 
@@ -998,6 +1092,23 @@ export const SppdManager: React.FC<SppdManagerProps> = ({
                       <span className="text-[10px] font-bold uppercase bg-emerald-100 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-full">
                         {rec.status}
                       </span>
+                      {(rec.costItems?.some(c => c.attachment?.url) || (rec.attachedFiles && rec.attachedFiles.length > 0)) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const firstAtt = rec.costItems?.find(c => c.attachment?.url)?.attachment || (rec.attachedFiles && rec.attachedFiles[0]);
+                            if (firstAtt) {
+                              setPreviewAttachmentUrl(firstAtt.url);
+                              setPreviewAttachmentTitle(`Bukti Bon SPPD - ${rec.noSppd} (${rec.namaPekerja})`);
+                            }
+                          }}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 transition cursor-pointer"
+                          title="Lihat Bukti Bon PDF Karyawan"
+                        >
+                          <Paperclip size={10} />
+                          <span>Bukti Bon PDF</span>
+                        </button>
+                      )}
                     </div>
 
                     <div className="text-xs font-bold text-stone-850 flex items-center gap-1.5 pt-0.5">
@@ -1066,7 +1177,8 @@ export const SppdManager: React.FC<SppdManagerProps> = ({
                   </div>
                 </div>
               );
-            })}
+            })
+            )}
           </div>
         </div>
       )}
@@ -1273,6 +1385,42 @@ export const SppdManager: React.FC<SppdManagerProps> = ({
                     <Trash2 size={14} />
                     <span>Ya, Hapus Sekarang</span>
                   </button>
+                </div>
+              </div>
+            </div>
+          )}
+          {/* PDF PREVIEW MODAL FOR ATTACHMENTS */}
+          {previewAttachmentUrl && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/75 backdrop-blur-xs animate-in fade-in">
+              <div className="relative w-full max-w-4xl h-[85vh] bg-white rounded-3xl shadow-2xl border border-stone-200 overflow-hidden flex flex-col">
+                <div className="flex items-center justify-between px-6 py-3.5 bg-stone-900 text-white border-b border-stone-800 shrink-0">
+                  <div className="flex items-center gap-2">
+                    <FileText size={18} className="text-amber-400" />
+                    <span className="font-bold text-xs sm:text-sm">{previewAttachmentTitle || 'Pratinjau Bukti Bon PDF'}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <a
+                      href={previewAttachmentUrl}
+                      download={`${(previewAttachmentTitle || 'Bukti_Bon').replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`}
+                      className="p-1.5 bg-stone-800 hover:bg-stone-700 text-stone-200 rounded-lg transition"
+                      title="Unduh PDF"
+                    >
+                      <Download size={16} />
+                    </a>
+                    <button
+                      onClick={() => setPreviewAttachmentUrl(null)}
+                      className="p-1.5 hover:bg-stone-800 text-stone-400 hover:text-white rounded-lg transition cursor-pointer"
+                    >
+                      <X size={18} />
+                    </button>
+                  </div>
+                </div>
+                <div className="flex-1 bg-stone-200">
+                  <iframe
+                    src={previewAttachmentUrl}
+                    className="w-full h-full border-none"
+                    title="PDF Viewer"
+                  />
                 </div>
               </div>
             </div>

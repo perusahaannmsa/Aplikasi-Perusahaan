@@ -23,6 +23,7 @@ interface AccountMappingContainerProps {
   onSaveSubmission?: (sub: Submission) => Promise<void> | void;
   onSelectSubmissionForView?: (sub: Submission) => void;
   onOpenSppdForm?: () => void;
+  onPostToVoucherHO?: (sppd: any) => void;
   onBack?: () => void;
 }
 
@@ -36,6 +37,7 @@ export function AccountMappingContainer({
   onSaveSubmission,
   onSelectSubmissionForView,
   onOpenSppdForm,
+  onPostToVoucherHO,
   onBack
 }: AccountMappingContainerProps) {
   // Main sub-section tab: 'accurate' (Petty Cash) vs 'sppd' (Biaya Perjalanan Dinas)
@@ -161,6 +163,7 @@ export function AccountMappingContainer({
           userProfile={userProfile}
           onSelectSubmissionForView={onSelectSubmissionForView}
           onOpenSppdForm={onOpenSppdForm}
+          onPostToVoucherHO={onPostToVoucherHO}
         />
       )}
     </div>

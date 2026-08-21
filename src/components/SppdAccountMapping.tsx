@@ -10,7 +10,7 @@ import {
   Upload, Trash2, Edit2, Plus, Settings, Copy, Eye, ArrowRight,
   FolderOpen, Calendar, MapPin, CheckSquare, X,
   MoreVertical, SlidersHorizontal, PlusCircle, ArrowUp, ArrowDown,
-  ListOrdered
+  ListOrdered, Send
 } from 'lucide-react';
 import { Submission, SubmissionItem } from '../types';
 import { 
@@ -37,6 +37,7 @@ interface SppdAccountMappingProps {
   userProfile?: any;
   onSelectSubmissionForView?: (sub: Submission) => void;
   onOpenSppdForm?: () => void;
+  onPostToVoucherHO?: (sppd: any) => void;
 }
 
 interface CachedSppdMapping {
@@ -85,7 +86,8 @@ export function SppdAccountMapping({
   submissions = [],
   userProfile,
   onSelectSubmissionForView,
-  onOpenSppdForm
+  onOpenSppdForm,
+  onPostToVoucherHO
 }: SppdAccountMappingProps) {
   // Master Guidelines state with custom keywords persistence
   const [guidelines, setGuidelines] = useState<SppdRateGuidelineItem[]>(() => {
@@ -158,6 +160,7 @@ export function SppdAccountMapping({
   const [processMessage, setProcessMessage] = useState<string>('Menganalisis Dokumen SPPD...');
   const [successMessage, setSuccessMessage] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string>('');
+  const [postedSppdRecord, setPostedSppdRecord] = useState<SPPDRecord | null>(null);
 
   // Google Drive state (using unified master account)
   const [driveAccount, setDriveAccount] = useState<{ email: string } | null>(null);
@@ -740,6 +743,112 @@ export function SppdAccountMapping({
     };
   };
 
+  // BUILD SPPD RECORD FROM MAPPED TRANSACTIONS
+  const buildSppdRecordFromMapping = (): { newSppdRecord: SPPDRecord; consolidatedList: any[] } => {
+    const now = new Date();
+    const sppdRecordId = `SPPD-${Date.now()}`;
+
+    // Estimate trip duration in days
+    let tripDays = 4;
+    const allDates: string[] = Array.from(new Set(transactions.map(t => t.date).filter(Boolean))).sort() as string[];
+    if (allDates.length > 0) {
+      const dFirst = new Date(allDates[0]).getTime();
+      const dLast = new Date(allDates[allDates.length - 1]).getTime();
+      const diff = Math.ceil((dLast - dFirst) / (1000 * 60 * 60 * 24)) + 1;
+      if (diff > 0 && diff <= 60) {
+        tripDays = diff;
+      } else {
+        tripDays = Math.max(1, allDates.length);
+      }
+    }
+
+    // Consolidate into standard official categories with zero duplicates & meal/pocket capping
+    const rawCostInputs = transactions.map(t => ({
+      id: t.id,
+      kategori: t.category,
+      rincian: t.description,
+      hargaAcuan: t.amount,
+      jumlah: t.amount,
+      date: t.date
+    }));
+
+    const consolidatedList = consolidateSppdCostItems(rawCostInputs, `${tripDays} Hari`, employeePosition);
+    const jabatanLabel = (SPPD_POSITIONS.find(p => p.key === employeePosition)?.label || 'Staf') as any;
+
+    const newSppdRecord: SPPDRecord = {
+      id: sppdRecordId,
+      noSppd: `SPPD/NMSA/${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}/${Math.floor(1000 + Math.random() * 9000)}`,
+      hariTanggal: now.toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }),
+      pemberiPerintah: 'Harijon',
+      pemberiPerintahName: 'Harijon',
+      pemberiPerintahJabatan: 'Direktur Operasional',
+      sppdDisetujuiName: 'Harijon',
+      sppdDisetujuiJabatan: 'Head of Operational',
+      namaPekerja: employeeName || 'Karyawan NMSA',
+      jabatan: jabatanLabel,
+      divisi: 'Operasional Lapangan',
+      kotaAsal: 'Jakarta (HO)',
+      kotaTujuan: destination || 'Site / Proyek Tambang',
+      transportasi: 'Pesawat / Operasional',
+      lamaPerjalanan: `${tripDays} Hari`,
+      tanggalMulai: allDates[0] || transactions[0]?.date || now.toISOString().substring(0, 10),
+      tanggalSelesai: allDates[allDates.length - 1] || transactions[transactions.length - 1]?.date || now.toISOString().substring(0, 10),
+      tujuanPerjalanan: reportTitle,
+      keteranganSppd: `Diposting dari Pemetaan Akun SPPD (${transactions.length} sub-transaksi). Kelebihan biaya di atas plafon acuan resmi telah diakumulasikan dan dihapuskan sesuai pedoman.`,
+      costItems: consolidatedList.map(c => ({
+        id: `cost-${Math.random().toString(36).substring(2, 7)}`,
+        kategori: c.kategori,
+        rincian: c.rincian,
+        hargaAcuan: typeof c.hargaAcuan === 'number' ? c.hargaAcuan : 0,
+        jumlah: c.jumlah
+      })),
+      status: 'Disetujui',
+      createdAt: now.toISOString(),
+      attachedFiles: activeDocumentUrl ? [{
+        url: activeDocumentUrl,
+        name: activeDocumentName || 'Dokumen_SPPD.pdf',
+        category: 'Dokumen SPPD'
+      }] : undefined
+    };
+
+    return { newSppdRecord, consolidatedList };
+  };
+
+  // PERSIST SPPD RECORD TO STORAGE, EVENT BUS, SERVER & FIRESTORE
+  const persistSppdRecord = async (newSppdRecord: SPPDRecord) => {
+    // 1. Save to localStorage SPPD records (merging without duplicates)
+    const existingStored = localStorage.getItem('sppd_records_v1');
+    let recordsList: SPPDRecord[] = existingStored ? JSON.parse(existingStored) : [];
+    recordsList = [newSppdRecord, ...recordsList.filter(r => r.id !== newSppdRecord.id && r.noSppd !== newSppdRecord.noSppd)];
+    localStorage.setItem('sppd_records_v1', JSON.stringify(recordsList));
+
+    // 2. Dispatch cross-component and storage event
+    window.dispatchEvent(new CustomEvent('sppd_records_updated', { detail: recordsList }));
+    window.dispatchEvent(new Event('storage'));
+
+    // 3. Save to server API
+    fetch('/api/sppd', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ record: newSppdRecord, sppdRecords: recordsList })
+    }).catch(e => console.warn('Server SPPD sync fallback:', e));
+
+    fetch('/api/shared-state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sppdRecords: recordsList })
+    }).catch(e => console.warn('Shared state SPPD sync fallback:', e));
+
+    // 4. Save to Firestore
+    try {
+      await saveSppdRecordsToFirestore(recordsList);
+    } catch (cloudErr) {
+      console.warn('Could not sync SPPD directly to cloud, saved locally:', cloudErr);
+    }
+
+    return recordsList;
+  };
+
   // POSTING TO SPPD FORMULIR & SPPD DATABASE
   const handlePostToSppdForm = async () => {
     if (transactions.length === 0) {
@@ -752,83 +861,51 @@ export function SppdAccountMapping({
     setSuccessMessage('');
 
     try {
-      const now = new Date();
-      const sppdRecordId = `SPPD-${Date.now()}`;
-      const totalAmount = transactions.reduce((sum, t) => sum + t.amount, 0);
+      const { newSppdRecord, consolidatedList } = buildSppdRecordFromMapping();
+      await persistSppdRecord(newSppdRecord);
+      setPostedSppdRecord(newSppdRecord);
 
-      // Estimate trip duration in days
-      let tripDays = 4;
-      const allDates: string[] = Array.from(new Set(transactions.map(t => t.date).filter(Boolean))).sort() as string[];
-      if (allDates.length > 0) {
-        const dFirst = new Date(allDates[0]).getTime();
-        const dLast = new Date(allDates[allDates.length - 1]).getTime();
-        const diff = Math.ceil((dLast - dFirst) / (1000 * 60 * 60 * 24)) + 1;
-        if (diff > 0 && diff <= 60) {
-          tripDays = diff;
-        } else {
-          tripDays = Math.max(1, allDates.length);
-        }
-      }
-
-      // Consolidate into standard official categories with zero duplicates & meal/pocket capping
-      const rawCostInputs = transactions.map(t => ({
-        id: t.id,
-        kategori: t.category,
-        rincian: t.description,
-        hargaAcuan: t.amount,
-        jumlah: t.amount,
-        date: t.date
-      }));
-
-      const consolidatedList = consolidateSppdCostItems(rawCostInputs, `${tripDays} Hari`, employeePosition);
-      const jabatanLabel = (SPPD_POSITIONS.find(p => p.key === employeePosition)?.label || 'Staf') as any;
-
-      const newSppdRecord: SPPDRecord = {
-        id: sppdRecordId,
-        noSppd: `SPPD/NMSA/${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}/${Math.floor(1000 + Math.random() * 9000)}`,
-        hariTanggal: now.toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }),
-        pemberiPerintah: 'Harijon',
-        pemberiPerintahJabatan: 'Direktur Operasional',
-        namaPekerja: employeeName || 'Karyawan NMSA',
-        jabatan: jabatanLabel,
-        divisi: 'Operasional Lapangan',
-        kotaAsal: 'Jakarta (HO)',
-        kotaTujuan: destination || 'Site / Proyek Tambang',
-        transportasi: 'Pesawat / Operasional',
-        lamaPerjalanan: `${tripDays} Hari`,
-        tanggalMulai: allDates[0] || transactions[0]?.date || now.toISOString().substring(0, 10),
-        tanggalSelesai: allDates[allDates.length - 1] || transactions[transactions.length - 1]?.date || now.toISOString().substring(0, 10),
-        tujuanPerjalanan: reportTitle,
-        keteranganSppd: `Diposting dari Pemetaan Akun SPPD (${transactions.length} sub-transaksi). Kelebihan biaya di atas plafon acuan resmi telah diakumulasikan dan dihapuskan sesuai pedoman.`,
-        costItems: consolidatedList.map(c => ({
-          id: `cost-${Math.random().toString(36).substring(2, 7)}`,
-          kategori: c.kategori,
-          rincian: c.rincian,
-          hargaAcuan: typeof c.hargaAcuan === 'number' ? c.hargaAcuan : 0,
-          jumlah: c.jumlah
-        })),
-        status: 'Disetujui',
-        createdAt: now.toISOString()
-      };
-
-      // Save to localStorage SPPD records
-      const existingStored = localStorage.getItem('sppd_records_v1');
-      let recordsList: SPPDRecord[] = existingStored ? JSON.parse(existingStored) : [];
-      recordsList = [newSppdRecord, ...recordsList.filter(r => r.id !== sppdRecordId)];
-      localStorage.setItem('sppd_records_v1', JSON.stringify(recordsList));
-
-      // Save to Firestore
-      try {
-        await saveSppdRecordsToFirestore(recordsList);
-      } catch (cloudErr) {
-        console.warn('Could not sync SPPD directly to cloud, saved locally:', cloudErr);
-      }
-
-      setSuccessMessage(`Berhasil memposting SPPD [${newSppdRecord.noSppd}] ke Formulir SPPD Dinas & Database! Total Disetujui: Rp ${consolidatedList.reduce((s, c) => s + c.jumlah, 0).toLocaleString('id-ID')}`);
+      const totalApproved = consolidatedList.reduce((s, c) => s + c.jumlah, 0);
+      setSuccessMessage(`Berhasil memposting SPPD [${newSppdRecord.noSppd}] ke Formulir SPPD Dinas & Arsip Database! Total Disetujui: Rp ${totalApproved.toLocaleString('id-ID')}`);
     } catch (err: any) {
       setErrorMessage('Gagal memposting ke Formulir SPPD: ' + (err.message || String(err)));
     } finally {
       setIsProcessing(false);
+    }
+  };
+
+  // DIRECT VOUCHER CREATION FROM MAPPED SPPD
+  const handleCreateVoucherDirectly = async (existingRec?: SPPDRecord) => {
+    if (!existingRec && transactions.length === 0) {
+      setErrorMessage('Tidak ada transaksi untuk dibuatkan voucher HO.');
+      return;
+    }
+
+    try {
+      let targetRec = existingRec;
+      if (!targetRec) {
+        const { newSppdRecord } = buildSppdRecordFromMapping();
+        await persistSppdRecord(newSppdRecord);
+        targetRec = newSppdRecord;
+        setPostedSppdRecord(newSppdRecord);
+      }
+
+      if (onPostToVoucherHO) {
+        onPostToVoucherHO(targetRec);
+      } else if (onOpenSppdForm) {
+        sessionStorage.setItem('sppd_active_tab', 'list');
+        onOpenSppdForm();
+      }
+    } catch (err: any) {
+      setErrorMessage('Gagal membuat voucher transaksi HO: ' + (err.message || String(err)));
+    }
+  };
+
+  // OPEN ARSIP SPPD LIST
+  const handleOpenSppdArchive = () => {
+    sessionStorage.setItem('sppd_active_tab', 'list');
+    if (onOpenSppdForm) {
+      onOpenSppdForm();
     }
   };
 
@@ -1356,9 +1433,40 @@ export function SppdAccountMapping({
       )}
 
       {successMessage && (
-        <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 p-4 rounded-2xl text-xs flex items-center gap-3 animate-fadeIn">
-          <CheckCircle2 size={18} className="text-emerald-600 shrink-0" />
-          <p className="font-semibold">{successMessage}</p>
+        <div className="bg-emerald-50 border border-emerald-300 text-emerald-950 p-4 sm:p-5 rounded-2xl text-xs space-y-3 animate-fadeIn shadow-xs">
+          <div className="flex items-start gap-3">
+            <CheckCircle2 size={20} className="text-emerald-600 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="font-bold text-sm text-emerald-950">{successMessage}</p>
+              {postedSppdRecord && (
+                <p className="text-emerald-800 text-[11px] mt-1">
+                  Nomor SPPD: <span className="font-mono font-bold bg-emerald-100 px-1.5 py-0.5 rounded text-emerald-950">{postedSppdRecord.noSppd}</span> • Karyawan: <span className="font-bold">{postedSppdRecord.namaPekerja}</span> • Tujuan: <span className="font-bold">{postedSppdRecord.kotaTujuan}</span>
+                </p>
+              )}
+            </div>
+          </div>
+
+          {postedSppdRecord && (
+            <div className="flex flex-wrap items-center gap-2.5 pt-2 border-t border-emerald-200/80">
+              <button
+                type="button"
+                onClick={() => handleCreateVoucherDirectly(postedSppdRecord)}
+                className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-stone-950 rounded-xl text-xs font-black transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <Send size={14} />
+                <span>⚡ Buat Voucher Transaksi HO Sekarang</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleOpenSppdArchive}
+                className="px-3.5 py-2 bg-emerald-800 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <Briefcase size={14} className="text-emerald-200" />
+                <span>📂 Buka di Arsip SPPD</span>
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -1589,7 +1697,7 @@ export function SppdAccountMapping({
                 type="button"
                 id="btn-add-manual-sppd-top"
                 onClick={handleOpenAddModal}
-                className="px-3.5 py-2 bg-amber-700 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                className="px-3.5 py-2 bg-stone-700 hover:bg-stone-600 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
                 title="Tambah Baris Transaksi Baru Secara Manual"
               >
                 <PlusCircle size={15} />
@@ -1599,13 +1707,36 @@ export function SppdAccountMapping({
               <button
                 type="button"
                 onClick={handlePostToSppdForm}
-                disabled={isProcessing}
-                className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
-                title="Posting langsung ke Formulir SPPD Dinas & Sinkronkan ke Database"
+                disabled={isProcessing || transactions.length === 0}
+                className="px-3.5 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                title="Posting langsung ke Formulir SPPD Dinas & Arsip Database"
               >
                 <CheckSquare size={15} />
-                <span>Posting ke Formulir SPPD Dinas</span>
+                <span>Posting ke Formulir SPPD</span>
               </button>
+
+              <button
+                type="button"
+                onClick={() => handleCreateVoucherDirectly()}
+                disabled={isProcessing || transactions.length === 0}
+                className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-stone-950 rounded-xl text-xs font-black transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                title="Langsung Buat Voucher Transaksi HO dari hasil pemetaan ini"
+              >
+                <Send size={15} />
+                <span>⚡ Buat Voucher HO</span>
+              </button>
+
+              {onOpenSppdForm && (
+                <button
+                  type="button"
+                  onClick={handleOpenSppdArchive}
+                  className="px-3 py-2 bg-stone-100 hover:bg-stone-200 text-stone-750 border border-stone-300 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-3xs"
+                  title="Lihat riwayat berkas SPPD di Arsip"
+                >
+                  <Briefcase size={14} className="text-amber-600" />
+                  <span>Arsip SPPD</span>
+                </button>
+              )}
 
               <button
                 type="button"
@@ -2404,15 +2535,35 @@ export function SppdAccountMapping({
                 </div>
               </div>
 
-              <div className="flex flex-col sm:flex-row items-center gap-3 shrink-0">
+              <div className="flex flex-wrap items-center gap-3 shrink-0">
                 <button
                   id="btn-add-manual-sppd-bottom"
                   type="button"
                   onClick={handleOpenAddModal}
-                  className="w-full sm:w-auto px-5 py-3 bg-amber-600 hover:bg-amber-500 active:scale-98 text-white rounded-2xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-md hover:shadow-lg"
+                  className="w-full sm:w-auto px-4 py-3 bg-stone-700 hover:bg-stone-600 active:scale-98 text-white rounded-2xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-xs"
                 >
-                  <PlusCircle size={16} />
-                  <span>+ Tambahkan Data Secara Manual</span>
+                  <PlusCircle size={15} />
+                  <span>+ Tambah Manual</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handlePostToSppdForm}
+                  disabled={isProcessing || transactions.length === 0}
+                  className="w-full sm:w-auto px-4 py-3 bg-amber-600 hover:bg-amber-500 active:scale-98 text-white rounded-2xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+                >
+                  <CheckSquare size={15} />
+                  <span>Posting ke Formulir SPPD</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleCreateVoucherDirectly()}
+                  disabled={isProcessing || transactions.length === 0}
+                  className="w-full sm:w-auto px-5 py-3 bg-amber-500 hover:bg-amber-400 active:scale-98 text-stone-950 rounded-2xl text-xs font-black transition flex items-center justify-center gap-2 cursor-pointer shadow-md hover:shadow-lg"
+                >
+                  <Send size={15} />
+                  <span>⚡ Buat Voucher HO Langsung</span>
                 </button>
               </div>
             </div>

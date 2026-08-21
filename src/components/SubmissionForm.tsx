@@ -5,7 +5,9 @@ import {
   getStoredGoogleDriveToken, 
   setGoogleDriveToken, 
   getConnectedDrives,
-  ensureValidDriveToken
+  ensureValidDriveToken,
+  getOrRenewDriveToken,
+  getActiveGoogleDriveAccount
 } from '../firebase';
 import { DriveAccountsManager } from './DriveAccountsManager';
 import { SppdIntegration, SppdRecord } from './SppdIntegration';
@@ -56,7 +58,8 @@ const extractGoogleDriveFileId = (url: string): string | null => {
 };
 
 // ═════════ GOOGLE DRIVE DIR HIERARCHY HELPER ACTIONS ═════════
-const getOrCreateFolder = async (token: string, name: string, parentId: string): Promise<string> => {
+const getOrCreateFolder = async (initialToken: string, name: string, parentId: string): Promise<string> => {
+  let token = initialToken;
   const cleanName = name.trim();
   // Escape backslashes first, then single quotes for safe Google Drive query string syntax
   const cleanSearchName = cleanName.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
@@ -64,11 +67,29 @@ const getOrCreateFolder = async (token: string, name: string, parentId: string):
   
   console.log(`[Drive API] Searching folder: "${cleanName}" under parent "${parentId}"`);
   
-  const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType)`, {
+  let res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType)`, {
     headers: {
       Authorization: `Bearer ${token}`,
     },
   });
+
+  if (res.status === 401) {
+    console.log('🔄 [Drive Auto-Renew] Token 401 saat mencari folder, memperbarui otomatis...');
+    try {
+      const activeAcc = getActiveGoogleDriveAccount();
+      const freshToken = await getOrRenewDriveToken(activeAcc?.email, true);
+      if (freshToken) {
+        token = freshToken;
+        res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType)`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+      }
+    } catch (renewErr) {
+      console.warn('Gagal renew token saat search folder:', renewErr);
+    }
+  }
 
   if (!res.ok) {
     if (res.status === 401) {
@@ -86,7 +107,7 @@ const getOrCreateFolder = async (token: string, name: string, parentId: string):
   console.log(`[Drive API] Folder NOT found. Creating folder: "${cleanName}" under parent "${parentId}"`);
 
   // Create folder if not found
-  const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+  let createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -98,6 +119,31 @@ const getOrCreateFolder = async (token: string, name: string, parentId: string):
       parents: [parentId],
     }),
   });
+
+  if (createRes.status === 401) {
+    console.log('🔄 [Drive Auto-Renew] Token 401 saat membuat folder, memperbarui otomatis...');
+    try {
+      const activeAcc = getActiveGoogleDriveAccount();
+      const freshToken = await getOrRenewDriveToken(activeAcc?.email, true);
+      if (freshToken) {
+        token = freshToken;
+        createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            name: cleanName,
+            mimeType: 'application/vnd.google-apps.folder',
+            parents: [parentId],
+          }),
+        });
+      }
+    } catch (renewErr) {
+      console.warn('Gagal renew token saat create folder:', renewErr);
+    }
+  }
 
   if (!createRes.ok) {
     if (createRes.status === 401) {
@@ -1236,8 +1282,23 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
       let finalPettyCashFile: { url: string; name: string } | undefined = undefined;
       let targetFolderId: string | undefined = undefined;
 
-      // Ensure we have a valid token (auto-refreshes from cloud Firestore or backend Service Account)
-      let token = await ensureValidDriveToken(true);
+      let token: string | null = null;
+      const activeAccount = getActiveGoogleDriveAccount();
+      const connectedDrives = getConnectedDrives();
+      const hasDriveSetup = connectedDrives.length > 0 || !!activeAccount?.email || isDriveConnected;
+
+      if (hasDriveSetup) {
+        setSaveProgress(`Menghubungkan akun Google Drive (${activeAccount?.email || 'NMSA'})...`);
+        try {
+          token = await getOrRenewDriveToken(activeAccount?.email, true);
+          if (token) {
+            setIsDriveConnected(true);
+          }
+        } catch (tokErr: any) {
+          console.warn('Gagal mendapatkan token Drive saat submit form:', tokErr);
+        }
+      }
+
       if (token) {
         setSaveProgress('Menghitung format tanggal pengajuan...');
         // 1. Resolve Year/Month/Day folder structure parameters
@@ -1435,19 +1496,24 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
           // Auto-refresh retry on 401
           if (res.status === 401) {
             console.log('🔄 [Drive Auto-Refresh] Token 401 terdeteksi, mencoba pembaruan token otomatis...');
-            const freshToken = await ensureValidDriveToken(true);
-            if (freshToken && freshToken !== token) {
-              token = freshToken;
-              res = await fetch(
-                'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink',
-                {
-                  method: 'POST',
-                  headers: {
-                    Authorization: `Bearer ${token}`,
-                  },
-                  body: formData,
-                }
-              );
+            try {
+              const activeAcc = getActiveGoogleDriveAccount();
+              const freshToken = await getOrRenewDriveToken(activeAcc?.email, true);
+              if (freshToken) {
+                token = freshToken;
+                res = await fetch(
+                  'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink',
+                  {
+                    method: 'POST',
+                    headers: {
+                      Authorization: `Bearer ${token}`,
+                    },
+                    body: formData,
+                  }
+                );
+              }
+            } catch (renewErr) {
+              console.warn('Gagal renew token saat upload file di SubmissionForm:', renewErr);
             }
           }
 

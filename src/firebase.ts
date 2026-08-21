@@ -1016,6 +1016,53 @@ export const ensureValidDriveToken = async (forceRefresh = false): Promise<strin
   return googleDriveTokenMemory || localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
 };
 
+// Auto-Renew Token with Guaranteed Account Lock
+export const getOrRenewDriveToken = async (
+  targetEmail?: string,
+  interactiveIfRequired = true
+): Promise<string> => {
+  // 1. Check if existing token is valid and unexpired
+  let token = getStoredGoogleDriveToken();
+  if (token) {
+    return token;
+  }
+
+  // 2. Try fetching from Service Account or Firestore company doc
+  token = await ensureValidDriveToken(true);
+  if (token) {
+    return token;
+  }
+
+  // 3. Determine the exact Google Drive email to connect / reconnect
+  const activeAccount = getActiveGoogleDriveAccount();
+  const lastEmail = localStorage.getItem('NUSANTARA_LAST_ACTIVE_EMAIL');
+  const emailToUse = targetEmail || activeAccount?.email || lastEmail || getConnectedDrives()[0]?.email || undefined;
+
+  // 4. If interactive renewal is allowed (triggered on user click/upload), renew using login_hint with the SAME account
+  if (interactiveIfRequired && emailToUse) {
+    console.log(`🔄 [Google Drive Auto-Renew] Memperbarui sesi token otomatis untuk akun: ${emailToUse}`);
+    try {
+      const loginRes = await googleDriveLogin(emailToUse, false);
+      if (loginRes.accessToken) {
+        return loginRes.accessToken;
+      }
+    } catch (err: any) {
+      console.warn('Auto-renew drive token failed:', err);
+      throw err;
+    }
+  }
+
+  // Fallback to any memory or localStorage token
+  const fallback = googleDriveTokenMemory || localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
+  if (fallback) return fallback;
+
+  throw new Error(
+    emailToUse
+      ? `Sesi Google Drive untuk akun "${emailToUse}" telah berakhir. Silakan hubungkan kembali akun tersebut.`
+      : 'Google Drive belum terhubung. Silakan hubungkan akun Google Drive Anda.'
+  );
+};
+
 // Periodic Background Auto-Keeper for Google Drive connection
 let tokenAutoRefreshIntervalId: any = null;
 let isRefreshingDriveToken = false;

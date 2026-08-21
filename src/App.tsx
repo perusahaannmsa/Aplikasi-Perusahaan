@@ -1141,6 +1141,35 @@ export default function App() {
     // Concise, clean notes without redundant stacking
     const cleanNotes = `SPPD No: ${sppd.noSppd} | Tujuan: ${destination}${purpose ? ` | Keperluan: ${purpose}` : ''}`;
 
+    // Collect all PDF attachments from SPPD cost items or attachedFiles
+    const pdfAttachments: Array<{ url: string; name: string; pageCount?: number; docType?: string; isF1?: boolean; isF2?: boolean; isBuktiPembayaran?: boolean }> = [];
+
+    if (sppd.costItems && Array.isArray(sppd.costItems)) {
+      sppd.costItems.forEach((c: any) => {
+        if (c.attachment && c.attachment.url) {
+          pdfAttachments.push({
+            url: c.attachment.url,
+            name: c.attachment.name || `Bukti_${c.kategori}.pdf`,
+            pageCount: c.attachment.pageCount || 1,
+            docType: `Bukti ${c.kategori}`
+          });
+        }
+      });
+    }
+
+    if (sppd.attachedFiles && Array.isArray(sppd.attachedFiles)) {
+      sppd.attachedFiles.forEach((f: any) => {
+        if (f.url && !pdfAttachments.some(p => p.url === f.url)) {
+          pdfAttachments.push({
+            url: f.url,
+            name: f.name || 'Bukti_SPPD.pdf',
+            pageCount: f.pageCount || 1,
+            docType: f.category ? `Bukti ${f.category}` : 'Bukti SPPD'
+          });
+        }
+      });
+    }
+
     // If it's from full SPPDRecord (SppdManager)
     if (sppd.costItems && Array.isArray(sppd.costItems) && sppd.costItems.length > 0) {
       const subItems = sppd.costItems.map((c: any, index: number) => {
@@ -1167,6 +1196,13 @@ export default function App() {
         dibayarkanDengan: 'Cek/Transfer',
         status: 'Belum Lunas',
         notes: cleanNotes,
+        isSppd: true,
+        sppdId: sppd.id,
+        sppdNo: sppd.noSppd,
+        sppdRecord: sppd,
+        googleDriveFiles: pdfAttachments.length > 0 ? pdfAttachments : undefined,
+        googleDriveFileUrl: pdfAttachments.length > 0 ? pdfAttachments[0].url : undefined,
+        googleDriveFileName: pdfAttachments.length > 0 ? pdfAttachments[0].name : undefined,
         dibuatOleh: userProfile ? userProfile.fullName : 'Nur Wahyudi',
         disetujuiOleh: sppd.sppdDisetujuiName || 'Harijon',
         diverifikasiOleh: 'Andi Dhiya Salsabila',
@@ -1195,6 +1231,13 @@ export default function App() {
       dibayarkanDengan: 'Cek/Transfer',
       status: 'Belum Lunas',
       notes: cleanNotes,
+      isSppd: true,
+      sppdId: sppd.id,
+      sppdNo: sppd.noSppd,
+      sppdRecord: sppd,
+      googleDriveFiles: pdfAttachments.length > 0 ? pdfAttachments : undefined,
+      googleDriveFileUrl: pdfAttachments.length > 0 ? pdfAttachments[0].url : undefined,
+      googleDriveFileName: pdfAttachments.length > 0 ? pdfAttachments[0].name : undefined,
       dibuatOleh: userProfile ? userProfile.fullName : 'Nur Wahyudi',
       disetujuiOleh: 'Harijon',
       diverifikasiOleh: 'Andi Dhiya Salsabila',
@@ -2215,6 +2258,9 @@ export default function App() {
             }}
             onOpenSppdForm={() => {
               setView('sppd');
+            }}
+            onPostToVoucherHO={(sppd) => {
+              handleImportSppdToSubmission(sppd);
             }}
             onBack={() => setView('list')}
           />
