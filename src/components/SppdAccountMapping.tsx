@@ -39,6 +39,33 @@ interface SppdAccountMappingProps {
   onOpenSppdForm?: () => void;
 }
 
+interface CachedSppdMapping {
+  reportTitle: string;
+  period: string;
+  employeeName: string;
+  employeePosition: SppdPositionKey;
+  destination: string;
+  activeDocumentName: string;
+  activeDocumentUrl: string;
+  transactions: SppdMappedTransaction[];
+  updatedAt: string;
+}
+
+const getInitialCachedSppdMapping = (): CachedSppdMapping | null => {
+  try {
+    const raw = localStorage.getItem('sppd_active_mapping_v2');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && Array.isArray(parsed.transactions) && parsed.transactions.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load cached SPPD mapping:', e);
+  }
+  return null;
+};
+
 export interface SppdMappedTransaction {
   id: string;
   date: string;
@@ -72,21 +99,59 @@ export function SppdAccountMapping({
     return SPPD_RATE_GUIDELINES;
   });
 
+  const cachedInitial = useMemo(() => getInitialCachedSppdMapping(), []);
+
   // Source Tab selection: 'voucher' | 'upload' | 'text'
   const [activeSourceTab, setActiveSourceTab] = useState<'voucher' | 'upload' | 'text'>('voucher');
 
-  // Transactions list currently mapped
-  const [transactions, setTransactions] = useState<SppdMappedTransaction[]>([]);
-  const [reportTitle, setReportTitle] = useState<string>('Laporan Biaya Perjalanan Dinas (SPPD)');
-  const [period, setPeriod] = useState<string>(() => new Date().toISOString().substring(0, 7));
-  const [employeeName, setEmployeeName] = useState<string>('');
-  const [employeePosition, setEmployeePosition] = useState<SppdPositionKey>('staf');
-  const [destination, setDestination] = useState<string>('Site / Proyek');
+  // Transactions list currently mapped (restored from browser cache if available)
+  const [transactions, setTransactions] = useState<SppdMappedTransaction[]>(() => cachedInitial?.transactions || []);
+  const [reportTitle, setReportTitle] = useState<string>(() => cachedInitial?.reportTitle || 'Laporan Biaya Perjalanan Dinas (SPPD)');
+  const [period, setPeriod] = useState<string>(() => cachedInitial?.period || new Date().toISOString().substring(0, 7));
+  const [employeeName, setEmployeeName] = useState<string>(() => cachedInitial?.employeeName || '');
+  const [employeePosition, setEmployeePosition] = useState<SppdPositionKey>(() => cachedInitial?.employeePosition || 'staf');
+  const [destination, setDestination] = useState<string>(() => cachedInitial?.destination || 'Site / Proyek');
 
   // Active document context
-  const [activeDocumentName, setActiveDocumentName] = useState<string>('');
-  const [activeDocumentUrl, setActiveDocumentUrl] = useState<string>('');
+  const [activeDocumentName, setActiveDocumentName] = useState<string>(() => cachedInitial?.activeDocumentName || '');
+  const [activeDocumentUrl, setActiveDocumentUrl] = useState<string>(() => cachedInitial?.activeDocumentUrl || '');
   const [rawTextInput, setRawTextInput] = useState<string>('');
+
+  // Auto-save mapped SPPD transactions to browser storage
+  useEffect(() => {
+    if (transactions.length > 0) {
+      try {
+        const payload: CachedSppdMapping = {
+          reportTitle,
+          period,
+          employeeName,
+          employeePosition,
+          destination,
+          activeDocumentName,
+          activeDocumentUrl,
+          transactions,
+          updatedAt: new Date().toISOString()
+        };
+        localStorage.setItem('sppd_active_mapping_v2', JSON.stringify(payload));
+      } catch (e) {
+        console.error('Failed to cache SPPD mapping:', e);
+      }
+    }
+  }, [transactions, reportTitle, period, employeeName, employeePosition, destination, activeDocumentName, activeDocumentUrl]);
+
+  // Handler to clear active SPPD mapping and reset
+  const handleClearSppdMapping = () => {
+    if (window.confirm('Bersihkan hasil pemetaan SPPD saat ini dan mulai pemetaan baru?')) {
+      setTransactions([]);
+      setReportTitle('Laporan Biaya Perjalanan Dinas (SPPD)');
+      setEmployeeName('');
+      setActiveDocumentName('');
+      setActiveDocumentUrl('');
+      localStorage.removeItem('sppd_active_mapping_v2');
+      setSuccessMessage('Hasil pemetaan SPPD berhasil dibersihkan.');
+      setTimeout(() => setSuccessMessage(''), 3000);
+    }
+  };
 
   // Processing & UI States
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
@@ -1558,6 +1623,16 @@ export function SppdAccountMapping({
               >
                 <Download size={15} />
                 <span>Cetak / PDF Rekap</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleClearSppdMapping}
+                className="px-3 py-2 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                title="Bersihkan hasil pemetaan SPPD saat ini dan mulai baru"
+              >
+                <Trash2 size={14} />
+                <span>Mulai Baru / Reset</span>
               </button>
             </div>
           </div>

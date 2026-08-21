@@ -32,6 +32,42 @@ interface AccuratePettyCashMappingProps {
   onBack?: () => void;
 }
 
+interface CachedPettyCashMapping {
+  reportTitle: string;
+  period: string;
+  transactions: AccurateMappedTransaction[];
+  selectedKasCode: string;
+  activeDocumentUrl: string | null;
+  activeDocumentName: string | null;
+  activeCustodianName: string | null;
+  activeSubmission: Submission | null;
+  updatedAt: string;
+}
+
+const getInitialCachedMapping = (): CachedPettyCashMapping | null => {
+  try {
+    const raw = localStorage.getItem('accurate_petty_cash_active_mapping_v2');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && Array.isArray(parsed.transactions) && parsed.transactions.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load cached petty cash mapping:', e);
+  }
+  return null;
+};
+
+// Helper to normalize person names (strip Pak/Bpk/Ibu, normalize spacing and case)
+const normalizePersonName = (rawName: string): string => {
+  if (!rawName) return '';
+  return rawName
+    .trim()
+    .replace(/^(pak|bpk|ibu|bapak)\s+/i, '')
+    .trim();
+};
+
 export function AccuratePettyCashMapping({
   pettyCashReports = [],
   submissions = [],
@@ -57,8 +93,10 @@ export function AccuratePettyCashMapping({
     }
   });
 
-  // Selected Kas Account (Credit account for Petty Cash)
-  const [selectedKasCode, setSelectedKasCode] = useState<string>('110102');
+  const cachedInitial = useMemo(() => getInitialCachedMapping(), []);
+
+  // Selected Kas Account (Credit account for Petty Cash - auto-detected or restored from cache)
+  const [selectedKasCode, setSelectedKasCode] = useState<string>(() => cachedInitial?.selectedKasCode || '110102');
 
   // Input Mode state with session persistence ('voucher' is priority if submissions exist)
   const [activeTab, setActiveTabInternal] = useState<'voucher' | 'upload' | 'workspace' | 'text'>(() => {
@@ -77,10 +115,10 @@ export function AccuratePettyCashMapping({
   };
 
   // Active Document & Custodian state
-  const [activeDocumentUrl, setActiveDocumentUrl] = useState<string | null>(null);
-  const [activeDocumentName, setActiveDocumentName] = useState<string | null>(null);
-  const [activeCustodianName, setActiveCustodianName] = useState<string | null>(null);
-  const [activeSubmission, setActiveSubmission] = useState<Submission | null>(null);
+  const [activeDocumentUrl, setActiveDocumentUrl] = useState<string | null>(() => cachedInitial?.activeDocumentUrl || null);
+  const [activeDocumentName, setActiveDocumentName] = useState<string | null>(() => cachedInitial?.activeDocumentName || null);
+  const [activeCustodianName, setActiveCustodianName] = useState<string | null>(() => cachedInitial?.activeCustodianName || null);
+  const [activeSubmission, setActiveSubmission] = useState<Submission | null>(() => cachedInitial?.activeSubmission || null);
 
   // In-App Interactive Document & Voucher Detail Modal state
   const [selectedVoucherForModal, setSelectedVoucherForModal] = useState<Submission | null>(null);
@@ -549,6 +587,39 @@ export function AccuratePettyCashMapping({
     }, 100);
   };
 
+  // Helper to check if a submission matches the selected custodian filter
+  const isSubmissionMatchingCustodian = (sub: Submission, filter: string): boolean => {
+    if (!filter || filter === 'All') return true;
+    const cleanFilter = normalizePersonName(filter).toLowerCase();
+    const filterTokens = cleanFilter.split(/\s+/).filter(t => t.length > 2);
+
+    const subFields = [
+      sub.pettyCashCustodian || '',
+      sub.dibayarkanKepada || '',
+      sub.diajukanOleh || '',
+      getPettyCashCustodian(sub),
+      sub.notes || '',
+      sub.kode || '',
+      sub.jenisPengajuan || ''
+    ];
+
+    return subFields.some(field => {
+      if (!field) return false;
+      const cleanField = normalizePersonName(field).toLowerCase();
+      
+      // Exact or bidirectional substring match
+      if (cleanField.includes(cleanFilter) || cleanFilter.includes(cleanField)) {
+        return true;
+      }
+      
+      // Token-level match (e.g. "Usmar", "Suryo", "Hasnawi", "Dhiya", "Ilham")
+      if (filterTokens.some(token => cleanField.includes(token))) {
+        return true;
+      }
+      return false;
+    });
+  };
+
   // Strictly filter submissions to only Petty Cash types (unified across all views)
   const pettyCashSubmissions = useMemo(() => {
     const list = submissions.filter(sub => isPettyCashSubmission(sub));
@@ -559,23 +630,49 @@ export function AccuratePettyCashMapping({
   const [custodianFilter, setCustodianFilter] = useState<string>('All');
   const [voucherSearchQuery, setVoucherSearchQuery] = useState<string>('');
 
-  // Collect unique available custodians
+  // Collect unique available custodians with clean title-casing & deduplication
   const availableCustodians = useMemo(() => {
-    const set = new Set<string>();
-    pettyCashHolders.forEach(h => { if (h && h.trim()) set.add(h.trim()); });
+    const rawList: string[] = [];
+    pettyCashHolders.forEach(h => { if (h && h.trim()) rawList.push(h.trim()); });
     pettyCashSubmissions.forEach(sub => {
-      const c = getPettyCashCustodian(sub);
-      if (c) set.add(c);
+      const c = getPettyCashCustodian(sub) || sub.pettyCashCustodian || sub.dibayarkanKepada;
+      if (c && c.trim()) rawList.push(c.trim());
     });
-    return Array.from(set).sort();
+
+    const uniqueMap = new Map<string, string>();
+    rawList.forEach(name => {
+      const norm = normalizePersonName(name).toLowerCase();
+      if (norm && !uniqueMap.has(norm)) {
+        const displayName = name.trim().split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+        uniqueMap.set(norm, displayName);
+      }
+    });
+
+    return Array.from(uniqueMap.values()).sort((a, b) => a.localeCompare(b));
   }, [pettyCashHolders, pettyCashSubmissions]);
+
+  // Handle Custodian filter change with auto Kas code synchronization
+  const handleCustodianFilterChange = (newVal: string) => {
+    setCustodianFilter(newVal);
+    if (newVal !== 'All') {
+      const norm = normalizePersonName(newVal).toLowerCase();
+      if (norm.includes('usmar')) setSelectedKasCode('11010201');
+      else if (norm.includes('suryo')) setSelectedKasCode('11010202');
+      else if (norm.includes('hasnawi')) setSelectedKasCode('11010203');
+      else if (norm.includes('pbm') || norm.includes('ilham')) setSelectedKasCode('11010204');
+      else if (norm.includes('deasy')) setSelectedKasCode('110103');
+      else if (norm.includes('dhiya')) setSelectedKasCode('110101');
+      else setSelectedKasCode('110102');
+    }
+  };
 
   // Filtered petty cash submissions for tab 0
   const filteredPettyCashSubmissions = useMemo(() => {
     const list = pettyCashSubmissions.filter(sub => {
       if (custodianFilter !== 'All') {
-        const c = getPettyCashCustodian(sub).toLowerCase();
-        if (!c.includes(custodianFilter.toLowerCase())) return false;
+        if (!isSubmissionMatchingCustodian(sub, custodianFilter)) {
+          return false;
+        }
       }
       if (voucherSearchQuery.trim()) {
         const q = voucherSearchQuery.toLowerCase();
@@ -585,7 +682,8 @@ export function AccuratePettyCashMapping({
           sub.pettyCashCustodian || '',
           sub.dibayarkanKepada || '',
           sub.jenisPengajuan || '',
-          sub.notes || ''
+          sub.notes || '',
+          sub.diajukanOleh || ''
         ].join(' ').toLowerCase();
         if (!text.includes(q)) return false;
       }
@@ -593,11 +691,49 @@ export function AccuratePettyCashMapping({
     });
     return sortSubmissionsDescending(list);
   }, [pettyCashSubmissions, custodianFilter, voucherSearchQuery]);
-  // Active Mapping Data
-  const [reportTitle, setReportTitle] = useState<string>('Laporan Petty Cash');
-  const [period, setPeriod] = useState<string>(new Date().toISOString().substring(0, 7));
-  const [transactions, setTransactions] = useState<AccurateMappedTransaction[]>([]);
+
+  // Active Mapping Data (restored from browser cache if exists)
+  const [reportTitle, setReportTitle] = useState<string>(() => cachedInitial?.reportTitle || 'Laporan Petty Cash');
+  const [period, setPeriod] = useState<string>(() => cachedInitial?.period || new Date().toISOString().substring(0, 7));
+  const [transactions, setTransactions] = useState<AccurateMappedTransaction[]>(() => cachedInitial?.transactions || []);
   
+  // Auto-persist active mapping changes to localStorage cache
+  useEffect(() => {
+    if (transactions.length > 0) {
+      try {
+        const payload: CachedPettyCashMapping = {
+          reportTitle,
+          period,
+          transactions,
+          selectedKasCode,
+          activeDocumentUrl,
+          activeDocumentName,
+          activeCustodianName,
+          activeSubmission,
+          updatedAt: new Date().toISOString()
+        };
+        localStorage.setItem('accurate_petty_cash_active_mapping_v2', JSON.stringify(payload));
+      } catch (e) {
+        console.error('Failed to cache petty cash mapping:', e);
+      }
+    }
+  }, [transactions, reportTitle, period, selectedKasCode, activeDocumentUrl, activeDocumentName, activeCustodianName, activeSubmission]);
+
+  // Handler to clear active mapping cache and start clean
+  const handleClearMapping = () => {
+    if (window.confirm('Bersihkan data pemetaan saat ini dan mulai pemetaan baru?')) {
+      setTransactions([]);
+      setReportTitle('Laporan Petty Cash');
+      setActiveDocumentUrl(null);
+      setActiveDocumentName(null);
+      setActiveCustodianName(null);
+      setActiveSubmission(null);
+      localStorage.removeItem('accurate_petty_cash_active_mapping_v2');
+      setSuccessMessage('Hasil pemetaan berhasil dibersihkan. Silakan pilih voucher baru untuk dipetakan.');
+      setTimeout(() => setSuccessMessage(''), 3000);
+    }
+  };
+
   // Loading & Error States
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [processMessage, setProcessMessage] = useState<string>('');
@@ -1746,31 +1882,13 @@ export function AccuratePettyCashMapping({
 
       {/* Main Input Source Section */}
       <div className="bg-white border border-stone-250 rounded-3xl p-6 shadow-xs space-y-5">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-stone-200 pb-4">
-          <div>
-            <h3 className="font-sans font-black text-stone-900 text-base">
-              1. Pilih Sumber File / Data Petty Cash
-            </h3>
-            <p className="text-stone-500 text-xs font-mono">
-              Unggah berkas Excel, PDF nota, pilih dari workspace, atau tempelkan teks tabel transaksi.
-            </p>
-          </div>
-
-          {/* Kas Account Selection */}
-          <div className="flex items-center gap-2 bg-stone-50 border border-stone-250 px-3 py-1.5 rounded-2xl">
-            <span className="text-[10px] font-mono font-bold text-stone-500 uppercase tracking-wider">Akun Kas (Kredit):</span>
-            <select
-              value={selectedKasCode}
-              onChange={(e) => setSelectedKasCode(e.target.value)}
-              className="text-xs font-mono font-bold text-stone-900 bg-transparent border-none focus:outline-none cursor-pointer"
-            >
-              {accounts.filter(a => a.category === 'Kas & Bank' || a.code.startsWith('1-')).map(a => (
-                <option key={a.code} value={a.code}>
-                  [{a.code}] {a.name}
-                </option>
-              ))}
-            </select>
-          </div>
+        <div className="border-b border-stone-200 pb-4">
+          <h3 className="font-sans font-black text-stone-900 text-base">
+            1. Pilih Sumber File / Data Petty Cash
+          </h3>
+          <p className="text-stone-500 text-xs font-mono">
+            Pilih dari daftar voucher terupload, unggah berkas Excel/PDF nota, atau tempelkan teks transaksi.
+          </p>
         </div>
 
         {/* Source Navigation Tabs */}
@@ -1823,7 +1941,7 @@ export function AccuratePettyCashMapping({
               <div className="flex items-start gap-3">
                 <Sparkles size={18} className="text-emerald-600 shrink-0 mt-0.5" />
                 <p className="text-xs text-emerald-950 leading-relaxed font-sans">
-                  <strong>Terfilter Khusus Voucher / Laporan Petty Cash:</strong> Menampilkan pengajuan berjenis Petty Cash (misal: Laporan Petty Cash Suryo Pranoto, Petty Cash HO, dll). Rincian item transaksi beserta <strong>link dokumen/nota terlampir</strong> otomatis terserap untuk dipetakan ke COA Accurate.
+                  <strong>Terfilter Khusus Voucher / Laporan Petty Cash:</strong> Menampilkan pengajuan berjenis Petty Cash. Rincian item transaksi beserta <strong>link dokumen/nota terlampir</strong> otomatis terserap untuk dipetakan ke COA Accurate.
                 </p>
               </div>
 
@@ -1842,7 +1960,7 @@ export function AccuratePettyCashMapping({
 
                 <select
                   value={custodianFilter}
-                  onChange={(e) => setCustodianFilter(e.target.value)}
+                  onChange={(e) => handleCustodianFilterChange(e.target.value)}
                   className="px-3 py-1.5 bg-white border border-emerald-300 rounded-xl text-xs font-extrabold text-stone-800 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer"
                 >
                   <option value="All">👤 Semua Pemegang Kas ({availableCustodians.length})</option>
@@ -2160,6 +2278,15 @@ export function AccuratePettyCashMapping({
               >
                 <FileText size={14} />
                 <span>PDF Laporan</span>
+              </button>
+
+              <button
+                onClick={handleClearMapping}
+                className="bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold px-3 py-2.5 rounded-xl text-xs transition flex items-center gap-1.5 cursor-pointer shadow-3xs"
+                title="Bersihkan pemetaan saat ini dan mulai baru"
+              >
+                <Trash2 size={14} />
+                <span>Mulai Baru / Reset</span>
               </button>
             </div>
           </div>
