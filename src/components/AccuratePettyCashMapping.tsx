@@ -68,6 +68,113 @@ const normalizePersonName = (rawName: string): string => {
     .trim();
 };
 
+const MONTH_NAMES_ID = [
+  'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+  'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+];
+
+export const formatIndonesianDate = (dateStr?: string): string => {
+  if (!dateStr) return '-';
+  try {
+    const clean = dateStr.trim();
+    if (/^\d{4}-\d{2}-\d{2}/.test(clean)) {
+      const parts = clean.split('T')[0].split('-');
+      const y = parts[0];
+      const m = parseInt(parts[1], 10) - 1;
+      const d = parseInt(parts[2], 10);
+      if (m >= 0 && m < 12 && !isNaN(d)) {
+        return `${d} ${MONTH_NAMES_ID[m]} ${y}`;
+      }
+    } else if (/^\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4}$/.test(clean)) {
+      const parts = clean.split(/[\/\-\.]/);
+      const d = parseInt(parts[0], 10);
+      const m = parseInt(parts[1], 10) - 1;
+      const y = parts[2];
+      if (m >= 0 && m < 12 && !isNaN(d)) {
+        return `${d} ${MONTH_NAMES_ID[m]} ${y}`;
+      }
+    }
+    const d = new Date(clean);
+    if (!isNaN(d.getTime())) {
+      return `${d.getDate()} ${MONTH_NAMES_ID[d.getMonth()]} ${d.getFullYear()}`;
+    }
+  } catch (e) {}
+  return dateStr;
+};
+
+export const calculatePettyCashPeriod = (
+  txs: { date?: string }[],
+  sub?: Submission | null,
+  periodFallback?: string
+): string => {
+  const dates: { year: number; month: number; day: number; raw: string }[] = [];
+
+  const parseToParts = (str?: string) => {
+    if (!str) return null;
+    const clean = str.trim();
+    if (/^\d{4}-\d{2}-\d{2}/.test(clean)) {
+      const parts = clean.split('T')[0].split('-');
+      return { year: parseInt(parts[0], 10), month: parseInt(parts[1], 10) - 1, day: parseInt(parts[2], 10), raw: clean };
+    }
+    if (/^\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4}$/.test(clean)) {
+      const parts = clean.split(/[\/\-\.]/);
+      return { year: parseInt(parts[2], 10), month: parseInt(parts[1], 10) - 1, day: parseInt(parts[0], 10), raw: clean };
+    }
+    const d = new Date(clean);
+    if (!isNaN(d.getTime())) {
+      return { year: d.getFullYear(), month: d.getMonth(), day: d.getDate(), raw: clean };
+    }
+    return null;
+  };
+
+  if (Array.isArray(txs)) {
+    txs.forEach((t) => {
+      const p = parseToParts(t.date);
+      if (p && !isNaN(p.year) && !isNaN(p.month) && !isNaN(p.day) && p.year > 2000) {
+        dates.push(p);
+      }
+    });
+  }
+
+  if (dates.length === 0 && sub?.tanggal) {
+    const p = parseToParts(sub.tanggal);
+    if (p && p.year > 2000) dates.push(p);
+  }
+
+  if (dates.length === 0) {
+    if (periodFallback && periodFallback.includes('-')) {
+      const parts = periodFallback.split('-');
+      const y = parts[0];
+      const m = parseInt(parts[1], 10) - 1;
+      if (m >= 0 && m < 12) return `${MONTH_NAMES_ID[m]} ${y}`;
+    }
+    return sub?.tanggal ? formatIndonesianDate(sub.tanggal) : '-';
+  }
+
+  dates.sort((a, b) => {
+    if (a.year !== b.year) return a.year - b.year;
+    if (a.month !== b.month) return a.month - b.month;
+    return a.day - b.day;
+  });
+
+  const minD = dates[0];
+  const maxD = dates[dates.length - 1];
+
+  if (minD.year === maxD.year && minD.month === maxD.month && minD.day === maxD.day) {
+    return `${minD.day} ${MONTH_NAMES_ID[minD.month]} ${minD.year}`;
+  }
+
+  if (minD.year === maxD.year && minD.month === maxD.month) {
+    return `${minD.day} - ${maxD.day} ${MONTH_NAMES_ID[minD.month]} ${minD.year}`;
+  }
+
+  if (minD.year === maxD.year) {
+    return `${minD.day} ${MONTH_NAMES_ID[minD.month]} - ${maxD.day} ${MONTH_NAMES_ID[maxD.month]} ${minD.year}`;
+  }
+
+  return `${minD.day} ${MONTH_NAMES_ID[minD.month]} ${minD.year} - ${maxD.day} ${MONTH_NAMES_ID[maxD.month]} ${maxD.year}`;
+};
+
 export function AccuratePettyCashMapping({
   pettyCashReports = [],
   submissions = [],
@@ -732,6 +839,94 @@ export function AccuratePettyCashMapping({
       setSuccessMessage('Hasil pemetaan berhasil dibersihkan. Silakan pilih voucher baru untuk dipetakan.');
       setTimeout(() => setSuccessMessage(''), 3000);
     }
+  };
+
+  // Saved Mappings for displaying previously mapped stats on cards
+  const [savedMappings, setSavedMappings] = useState<any[]>(() => {
+    try {
+      const stored = localStorage.getItem('accurate_mapped_reports_v1');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {}
+    return [];
+  });
+
+  useEffect(() => {
+    loadAccurateMappingsFromFirestore().then((res) => {
+      if (res && res.length > 0) {
+        setSavedMappings(res);
+      }
+    }).catch(() => {});
+  }, []);
+
+  // Helper to compute voucher card stats (submisi vs realisasi pengeluaran LPJ & date period)
+  const getVoucherStats = (sub: Submission) => {
+    const itemsCount = sub.items?.length || 0;
+    const totalAmt = sub.items?.reduce((acc, it) => acc + (Number(it.total) || 0), 0) || 0;
+    const custodian = sub.pettyCashCustodian || sub.dibayarkanKepada || getPettyCashCustodian(sub) || 'Petty Cash';
+    const lpjDocs = getSubmissionDocuments(sub);
+
+    // 1. Check if currently active mapped submission
+    const isActive = activeSubmission?.id === sub.id;
+    const activeExpense = isActive && transactions.length > 0
+      ? transactions.reduce((acc, t) => acc + (Number(t.amount) || 0), 0)
+      : null;
+
+    // 2. Check saved mappings from Firestore/localStorage
+    const saved = savedMappings.find((m) => {
+      if (m.id === `vh-map-${sub.id}` || m.id === sub.id) return true;
+      if (sub.kode && m.title && m.title.includes(sub.kode)) return true;
+      return false;
+    });
+
+    const savedExpense = saved 
+      ? (Number(saved.totalExpense) || (saved.transactions?.reduce((acc: number, t: any) => acc + (Number(t.amount) || 0), 0) || 0)) 
+      : null;
+
+    // 3. Check workspace petty cash reports
+    const report = pettyCashReports.find((r) => {
+      if (r.submissionId === sub.id) return true;
+      if (sub.kode && r.submissionCode === sub.kode) return true;
+      if (r.summary?.workerName && isSubmissionMatchingCustodian(sub, r.summary.workerName)) return true;
+      return false;
+    });
+
+    const reportExpense = report 
+      ? (Number(report.summary?.totalExpense) || (report.transactions?.reduce((acc, t) => acc + (Number(t.amount) || 0), 0) || 0)) 
+      : null;
+
+    const totalExpense = activeExpense !== null 
+      ? activeExpense 
+      : (savedExpense !== null 
+          ? savedExpense 
+          : (reportExpense !== null ? reportExpense : 0));
+
+    const isMapped = (activeExpense !== null && activeExpense > 0) || (savedExpense !== null && savedExpense > 0) || (reportExpense !== null && reportExpense > 0);
+
+    // Calculate dates & period string
+    let periodText = '';
+    if (isActive && transactions.length > 0) {
+      periodText = calculatePettyCashPeriod(transactions, sub, period);
+    } else if (saved && saved.transactions && saved.transactions.length > 0) {
+      periodText = calculatePettyCashPeriod(saved.transactions, sub, saved.period);
+    } else if (report && report.transactions && report.transactions.length > 0) {
+      periodText = calculatePettyCashPeriod(report.transactions, sub, report.summary?.reportMonth);
+    } else {
+      periodText = formatIndonesianDate(sub.tanggal);
+    }
+
+    return {
+      itemsCount,
+      totalAmt,
+      custodian,
+      lpjDocs,
+      totalExpense,
+      isMapped,
+      periodText,
+      diff: totalExpense > 0 ? totalExpense - totalAmt : 0
+    };
   };
 
   // Loading & Error States
@@ -1980,54 +2175,58 @@ export function AccuratePettyCashMapping({
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-96 overflow-y-auto p-1">
                 {filteredPettyCashSubmissions.map((sub) => {
-                  const itemsCount = sub.items?.length || 0;
-                  const totalAmt = sub.items?.reduce((acc, it) => acc + (Number(it.total) || 0), 0) || 0;
-                  const custodian = sub.pettyCashCustodian || sub.dibayarkanKepada || 'Petty Cash';
-                  const lpjDocs = getSubmissionDocuments(sub);
-                  const primaryLpj = lpjDocs[0] || null;
-                  const docUrl = primaryLpj?.url;
-                  const docName = primaryLpj?.fileName;
+                  const stats = getVoucherStats(sub);
 
                   return (
                     <div 
                       key={sub.id} 
-                      className="bg-stone-50 hover:bg-emerald-50/60 border border-stone-250 hover:border-emerald-400 rounded-2xl p-4 transition shadow-xs flex flex-col justify-between space-y-3 cursor-pointer group"
+                      className="bg-white hover:bg-emerald-50/40 border border-stone-250 hover:border-emerald-400 rounded-2xl p-4 transition shadow-xs flex flex-col justify-between space-y-3.5 cursor-pointer group"
                       onClick={() => handleOpenVoucherModal(sub)}
                     >
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="font-mono text-xs font-bold text-stone-900 group-hover:text-emerald-800">
+                      <div className="space-y-2.5">
+                        {/* Header: Document Code & Type Badge */}
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-mono text-xs font-black text-stone-900 group-hover:text-emerald-800 tracking-tight">
                             {sub.kode}
                           </span>
-                          <span className="text-[10px] font-mono font-bold bg-amber-100 text-amber-900 border border-amber-200 px-2.5 py-0.5 rounded-full">
+                          <span className="text-[10px] font-mono font-bold bg-amber-100 text-amber-900 border border-amber-200 px-2.5 py-0.5 rounded-full shrink-0">
                             Petty Cash
                           </span>
                         </div>
 
-                        <div>
-                          <p className="text-xs font-extrabold text-stone-900 flex items-center gap-1.5">
-                            <span>👤</span>
-                            <span>{custodian}</span>
+                        {/* Details: Custodian, Document Date & Item Count */}
+                        <div className="space-y-1">
+                          <p className="text-xs font-extrabold text-stone-900 flex items-center gap-1.5 truncate">
+                            <span className="shrink-0">👤</span>
+                            <span className="truncate">Dibayarkan: <strong className="text-emerald-950">{stats.custodian}</strong></span>
                           </p>
-                          <p className="text-[11px] text-stone-500 font-mono mt-0.5">
-                            📅 {sub.tanggal} • 📋 {itemsCount} Item Transaksi
+                          <p className="text-[11px] text-stone-600 font-mono flex items-center gap-1.5">
+                            <span>📅 Tanggal: {formatIndonesianDate(sub.tanggal)}</span>
+                            <span className="text-stone-300">•</span>
+                            <span>📋 {stats.itemsCount} Item</span>
                           </p>
+                          {stats.periodText && (
+                            <p className="text-[11px] text-amber-950 font-mono font-bold bg-amber-50/80 px-2 py-0.5 rounded-md border border-amber-200/80 flex items-center gap-1">
+                              <span>🗓️</span>
+                              <span className="truncate">Periode: {stats.periodText}</span>
+                            </p>
+                          )}
                         </div>
 
                         {/* Document Link Badges & Selection */}
-                        {lpjDocs.length > 0 ? (
-                          <div className="pt-1 space-y-1.5">
+                        {stats.lpjDocs.length > 0 ? (
+                          <div className="pt-0.5 space-y-1.5">
                             <div className="flex items-center justify-between">
                               <span className="text-[10px] font-mono font-bold text-emerald-800 bg-emerald-100/90 px-2 py-0.5 rounded-md border border-emerald-300">
-                                📎 {lpjDocs.length} Lampiran Terunggah
+                                📎 {stats.lpjDocs.length} Lampiran Terunggah
                               </span>
                               <span className="text-[9px] font-mono text-stone-400">
-                                F1/F2 Otomatis Diabaikan
+                                F1/F2 Diabaikan
                               </span>
                             </div>
 
                             <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
-                              {lpjDocs.map((doc, dIdx) => (
+                              {stats.lpjDocs.map((doc, dIdx) => (
                                 <button
                                   key={doc.id}
                                   type="button"
@@ -2047,7 +2246,7 @@ export function AccuratePettyCashMapping({
                             </div>
                           </div>
                         ) : (
-                          <div className="pt-1 space-y-1">
+                          <div className="pt-0.5 space-y-1">
                             <div className="flex items-center justify-between">
                               <span className="text-[10px] font-mono font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200 flex items-center gap-1">
                                 <AlertCircle size={10} className="text-amber-600 shrink-0" />
@@ -2057,22 +2256,61 @@ export function AccuratePettyCashMapping({
                                 F1/F2 Diabaikan
                               </span>
                             </div>
-                            <p className="text-[10px] font-mono text-stone-400 italic">
-                              Klik tombol Upload LPJ di bawah untuk melampirkan berkas
-                            </p>
                           </div>
                         )}
+
+                        {/* Financial Detail Grid: Total Submisi vs Total Pengeluaran LPJ */}
+                        <div className="p-2.5 bg-stone-50 group-hover:bg-emerald-50/50 border border-stone-200/90 rounded-xl space-y-1.5">
+                          <div className="flex items-center justify-between text-[11px] font-mono">
+                            <span className="text-stone-500 font-medium">Total Submisi:</span>
+                            <span className="font-bold text-stone-900">
+                              Rp {stats.totalAmt.toLocaleString('id-ID')}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between text-[11px] font-mono pt-1 border-t border-stone-200/80">
+                            <span className="text-emerald-900 font-bold flex items-center gap-1">
+                              <span>📊 Pengeluaran LPJ:</span>
+                            </span>
+                            {stats.totalExpense > 0 ? (
+                              <div className="text-right">
+                                <span className="font-black text-emerald-800">
+                                  Rp {stats.totalExpense.toLocaleString('id-ID')}
+                                </span>
+                                {stats.diff !== 0 && (
+                                  <span className={`block text-[9px] font-bold ${stats.diff > 0 ? 'text-amber-700' : 'text-sky-700'}`}>
+                                    {stats.diff > 0 ? `(+Rp ${stats.diff.toLocaleString('id-ID')})` : `(Sisa Rp ${Math.abs(stats.diff).toLocaleString('id-ID')})`}
+                                  </span>
+                                )}
+                              </div>
+                            ) : stats.lpjDocs.length > 0 ? (
+                              <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded border border-emerald-300">
+                                Siap Dipetakan
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-stone-400 italic">
+                                Belum Ada Berkas
+                              </span>
+                            )}
+                          </div>
+                        </div>
                       </div>
 
-                      <div className="pt-2.5 border-t border-stone-200/80 flex items-center justify-between">
-                        <div>
-                          <p className="text-[10px] text-stone-400 font-mono uppercase">Total Submisi</p>
-                          <p className="font-mono text-xs font-extrabold text-stone-900">
-                            Rp {totalAmt.toLocaleString('id-ID')}
-                          </p>
-                        </div>
+                      {/* Bottom Action Buttons */}
+                      <div className="pt-2 border-t border-stone-200/80 flex items-center justify-between">
+                        <span className="text-[10px] font-mono font-bold text-stone-500">
+                          {stats.isMapped ? (
+                            <span className="text-emerald-700 font-extrabold flex items-center gap-1">
+                              <CheckCircle2 size={11} />
+                              <span>Sudah Dipetakan</span>
+                            </span>
+                          ) : (
+                            <span className="text-stone-400">Status: Draft</span>
+                          )}
+                        </span>
+
                         <div className="flex items-center gap-1.5">
-                          {lpjDocs.length === 0 ? (
+                          {stats.lpjDocs.length === 0 ? (
                             <button
                               type="button"
                               onClick={(e) => {
@@ -2092,7 +2330,7 @@ export function AccuratePettyCashMapping({
                                 e.stopPropagation();
                                 handleOpenVoucherModal(sub);
                               }}
-                              className="bg-stone-200 hover:bg-stone-300 text-stone-800 px-2.5 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 transition cursor-pointer"
+                              className="bg-stone-100 hover:bg-stone-200 border border-stone-300 text-stone-800 px-2.5 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 transition cursor-pointer"
                               title="Pilih Berkas Lampiran & Pratinjau Dokumen"
                             >
                               <Eye size={12} />
@@ -2292,27 +2530,25 @@ export function AccuratePettyCashMapping({
           </div>
 
           {/* Document Source Banner & Multi-Document Switcher */}
-          {(activeDocumentUrl || activeCustodianName) && (
-            <div className="bg-emerald-50/80 border border-emerald-300 rounded-2xl p-4 space-y-3 shadow-2xs">
+          {(activeDocumentUrl || activeCustodianName || activeSubmission) && (
+            <div className="bg-emerald-50/90 border border-emerald-300 rounded-2xl p-4.5 space-y-3.5 shadow-2xs">
               <div className="flex items-center justify-between flex-wrap gap-3">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 bg-emerald-100 text-emerald-800 rounded-xl">
+                  <div className="p-2.5 bg-emerald-700 text-white rounded-xl shadow-3xs">
                     <FileText size={20} />
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="font-extrabold text-xs text-stone-900">
-                        Dokumen Sumber yang Dibaca:
+                      <span className="font-black text-xs text-stone-900 tracking-wide uppercase">
+                        Dokumen Sumber yang Dibaca (Petty Cash):
                       </span>
-                      {activeCustodianName && (
-                        <span className="text-[11px] font-bold font-mono bg-emerald-100 text-emerald-900 px-2 py-0.5 rounded-md border border-emerald-300">
-                          👤 Pemegang: {activeCustodianName}
-                        </span>
-                      )}
+                      <span className="text-[10px] font-bold font-mono bg-emerald-100 text-emerald-900 px-2 py-0.5 rounded-full border border-emerald-300">
+                        ✅ Terverifikasi
+                      </span>
                     </div>
                     {activeDocumentName ? (
-                      <p className="text-xs font-mono text-emerald-800 font-bold mt-0.5">
-                        📄 Berkas Aktif: {activeDocumentName}
+                      <p className="text-xs font-mono text-emerald-900 font-bold mt-0.5">
+                        📄 Berkas LPJ: {activeDocumentName}
                       </p>
                     ) : (
                       <p className="text-xs font-mono text-stone-500 mt-0.5">
@@ -2349,6 +2585,87 @@ export function AccuratePettyCashMapping({
                   )}
                 </div>
               </div>
+
+              {/* Detailed Source Metadata Cards (Nomor Dokumen, Tanggal, Dibayarkan Kepada, Periode Petty Cash) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-1">
+                {/* 1. Nomor Dokumen / Voucher */}
+                <div className="bg-white/95 border border-emerald-200/90 rounded-xl p-2.5 space-y-0.5 shadow-3xs">
+                  <span className="text-[10px] font-mono font-bold text-stone-400 uppercase tracking-wider block">
+                    📋 Nomor Dokumen / Voucher
+                  </span>
+                  <span className="font-mono text-xs font-extrabold text-stone-900 truncate block" title={activeSubmission?.kode || reportTitle}>
+                    {activeSubmission?.kode || (reportTitle.includes('BKK-') ? reportTitle.split(' - ')[0].replace('Laporan Petty Cash: ', '') : reportTitle)}
+                  </span>
+                </div>
+
+                {/* 2. Tanggal Dokumen / Voucher */}
+                <div className="bg-white/95 border border-emerald-200/90 rounded-xl p-2.5 space-y-0.5 shadow-3xs">
+                  <span className="text-[10px] font-mono font-bold text-stone-400 uppercase tracking-wider block">
+                    📅 Tanggal Dokumen
+                  </span>
+                  <span className="font-mono text-xs font-extrabold text-stone-900 block">
+                    {formatIndonesianDate(activeSubmission?.tanggal) || '-'}
+                  </span>
+                </div>
+
+                {/* 3. Dibayarkan Kepada */}
+                <div className="bg-white/95 border border-emerald-200/90 rounded-xl p-2.5 space-y-0.5 shadow-3xs">
+                  <span className="text-[10px] font-mono font-bold text-stone-400 uppercase tracking-wider block">
+                    👤 Dibayarkan Kepada
+                  </span>
+                  <span className="font-mono text-xs font-extrabold text-emerald-950 truncate block" title={activeCustodianName || activeSubmission?.dibayarkanKepada || 'Petty Cash'}>
+                    {activeCustodianName || activeSubmission?.dibayarkanKepada || activeSubmission?.pettyCashCustodian || 'Petty Cash Lapangan'}
+                  </span>
+                </div>
+
+                {/* 4. Periode Tanggal Petty Cash */}
+                <div className="bg-white/95 border border-emerald-200/90 rounded-xl p-2.5 space-y-0.5 shadow-3xs">
+                  <span className="text-[10px] font-mono font-bold text-stone-400 uppercase tracking-wider block">
+                    🗓️ Periode Tanggal Petty Cash
+                  </span>
+                  <span className="font-mono text-xs font-black text-amber-900 block truncate" title={calculatePettyCashPeriod(transactions, activeSubmission, period)}>
+                    {calculatePettyCashPeriod(transactions, activeSubmission, period)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Financial Summary Comparison Banner (Submisi Voucher vs Realisasi LPJ) */}
+              {activeSubmission && (
+                <div className="bg-white/90 border border-emerald-300/80 rounded-xl p-2.5 flex items-center justify-between flex-wrap gap-2 text-xs font-mono">
+                  <div className="flex items-center gap-3">
+                    <span className="text-stone-600">
+                      Total Submisi Voucher: <strong className="text-stone-900">Rp {(activeSubmission.items?.reduce((s, i) => s + (Number(i.total) || 0), 0) || 0).toLocaleString('id-ID')}</strong>
+                    </span>
+                    <span className="text-stone-300">•</span>
+                    <span className="text-emerald-950 font-bold">
+                      Total Realisasi Pengeluaran: <strong className="text-emerald-900">Rp {totalExpense.toLocaleString('id-ID')}</strong> ({transactions.length} Baris)
+                    </span>
+                  </div>
+                  {(() => {
+                    const subTotal = activeSubmission.items?.reduce((s, i) => s + (Number(i.total) || 0), 0) || 0;
+                    const diff = totalExpense - subTotal;
+                    if (diff === 0) {
+                      return (
+                        <span className="text-[10px] font-bold bg-emerald-100 text-emerald-900 px-2 py-0.5 rounded-md border border-emerald-300">
+                          ✅ Nominal Sesuai (Rp 0 Selisih)
+                        </span>
+                      );
+                    } else if (diff > 0) {
+                      return (
+                        <span className="text-[10px] font-bold bg-amber-100 text-amber-950 px-2 py-0.5 rounded-md border border-amber-300">
+                          ⚠️ Realisasi Melebihi Submisi (+Rp {diff.toLocaleString('id-ID')})
+                        </span>
+                      );
+                    } else {
+                      return (
+                        <span className="text-[10px] font-bold bg-sky-100 text-sky-950 px-2 py-0.5 rounded-md border border-sky-300">
+                          ℹ️ Sisa Saldo Kas (+Rp {Math.abs(diff).toLocaleString('id-ID')})
+                        </span>
+                      );
+                    }
+                  })()}
+                </div>
+              )}
 
               {/* Multi-Document Switcher if activeSubmission has multiple uploaded attachments */}
               {activeSubmission && (() => {
