@@ -411,19 +411,6 @@ export const PublicSppdInput: React.FC<PublicSppdInputProps> = ({ onBackToHome }
               <span>Input SPPD Baru Lainnya</span>
             </button>
           </div>
-
-          {onBackToHome && (
-            <div className="pt-3 border-t border-stone-150">
-              <button
-                type="button"
-                onClick={onBackToHome}
-                className="text-xs text-stone-500 hover:text-stone-800 font-bold underline cursor-pointer"
-              >
-                Kembali ke Aplikasi Utama
-              </button>
-            </div>
-          )}
-
         </div>
 
         {/* PDF PREVIEW MODAL */}
@@ -496,17 +483,6 @@ export const PublicSppdInput: React.FC<PublicSppdInputProps> = ({ onBackToHome }
               {isCopied ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
               <span>{isCopied ? 'Tersalin' : 'Bagikan Link'}</span>
             </button>
-
-            {onBackToHome && (
-              <button
-                type="button"
-                onClick={onBackToHome}
-                className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-400 text-stone-950 font-black px-3.5 py-1.5 rounded-xl text-xs transition cursor-pointer shadow-3xs"
-              >
-                <ArrowLeft size={13} />
-                <span>Masuk Admin HO</span>
-              </button>
-            )}
           </div>
         </div>
       </header>

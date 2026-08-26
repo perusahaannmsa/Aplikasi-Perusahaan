@@ -42,7 +42,9 @@ import {
   Cloud,
   Paperclip,
   Eye,
-  Download
+  Download,
+  AlertTriangle,
+  AlertCircle
 } from 'lucide-react';
 
 export interface SPPDCostAttachment {
@@ -88,6 +90,42 @@ export interface SPPDRecord {
   sppdMengetahuiName?: string;
   status: 'Draft' | 'Disetujui' | 'Terbayar';
   createdAt: string;
+}
+
+// Calculate guideline benchmark for individual cost item
+export function getItemBenchmark(
+  kategori: string,
+  rincian: string,
+  targetJabatan: JabatanDinas,
+  days: number,
+  nights: number,
+  matrix: RatePedoman[]
+): number {
+  const p = getPedomanByJabatan(targetJabatan, matrix);
+  const combined = `${kategori || ''} ${rincian || ''}`.toLowerCase();
+
+  if (combined.includes('makan') || combined.includes('konsumsi')) {
+    return p.uangMakanPerHari * days;
+  }
+  if (combined.includes('saku') || combined.includes('pocket') || combined.includes('allowance')) {
+    return p.uangSakuPerHari * days;
+  }
+  if (combined.includes('jkt - bandara') || combined.includes('rumah - bandara') || (combined.includes('transport') && combined.includes('bandara') && !combined.includes('hotel'))) {
+    return p.transportJkt + p.transportBandara;
+  }
+  if (combined.includes('pesawat') || combined.includes('flight') || combined.includes('tiket pesawat')) {
+    return p.tiketPesawatRate;
+  }
+  if (combined.includes('hotel') || combined.includes('penginapan') || combined.includes('lodging') || combined.includes('kamar')) {
+    return p.hotelPerMalam * nights;
+  }
+  if (combined.includes('double cabin') || combined.includes('dcabin') || combined.includes('hilux') || combined.includes('triton') || combined.includes('4x4')) {
+    return p.sewaMobilDoubleCabin;
+  }
+  if (combined.includes('sewa mobil') || combined.includes('avanza') || combined.includes('innova') || combined.includes('rental')) {
+    return p.sewaMobilAvanza;
+  }
+  return 0; // Other / flexible categories
 }
 
 interface SppdManagerProps {
@@ -398,7 +436,6 @@ export const SppdManager: React.FC<SppdManagerProps> = ({
   const handleJabatanChange = (newJabatan: JabatanDinas) => {
     setJabatan(newJabatan);
     setIsSaved(false);
-    rebuildCostItemsFromPedoman(newJabatan, daysCount, nightsCount);
   };
 
   const handleCostItemChange = (index: number, field: keyof SPPDCostItem, value: any) => {
@@ -423,7 +460,7 @@ export const SppdManager: React.FC<SppdManagerProps> = ({
   };
 
   const handleRemoveCostItem = (index: number) => {
-    setCostItems(costItems.filter((_, i) => i !== index));
+    setCostItems(prev => prev.filter((_, i) => i !== index));
     setIsSaved(false);
   };
 
@@ -519,25 +556,36 @@ export const SppdManager: React.FC<SppdManagerProps> = ({
   };
 
   const handleEditRecord = (record: SPPDRecord) => {
-    setEditingId(record.id);
-    setIsSaved(true);
-    setNoSppd(record.noSppd);
-    setPemberiPerintah(record.pemberiPerintah);
-    setPemberiPerintahJabatan(record.pemberiPerintahJabatan || 'Direktur');
-    setNamaPekerja(record.namaPekerja);
-    setJabatan(record.jabatan);
-    setDivisi(record.divisi || 'Operasional');
-    setKotaAsal(record.kotaAsal);
-    setKotaTujuan(record.kotaTujuan);
-    setTransportasi(record.transportasi);
-    setTanggalMulai(record.tanggalMulai);
-    setTanggalSelesai(record.tanggalSelesai);
-    setTujuanPerjalanan(record.tujuanPerjalanan);
-    setKeteranganSppd(record.keteranganSppd || '');
-    setCostItems(record.costItems || []);
-    setSppdDisetujuiName(record.sppdDisetujuiName || 'Harijon');
-    setSppdDisetujuiJabatan(record.sppdDisetujuiJabatan || 'Head of Operational');
-    setActiveTab('create');
+    try {
+      setEditingId(record.id);
+      setIsSaved(true);
+      setNoSppd(record.noSppd || '');
+      setPemberiPerintah(record.pemberiPerintah || 'H. A. Nursyam Halid');
+      setPemberiPerintahJabatan(record.pemberiPerintahJabatan || 'Direktur Utama');
+      setNamaPekerja(record.namaPekerja || '');
+      setJabatan(record.jabatan || 'Supervisor');
+      setDivisi(record.divisi || 'Operasional');
+      setKotaAsal(record.kotaAsal || 'Jakarta (HO)');
+      setKotaTujuan(record.kotaTujuan || '');
+      setTransportasi(record.transportasi || 'Pesawat + Mobil Operational');
+      setTanggalMulai(record.tanggalMulai || new Date().toISOString().split('T')[0]);
+      setTanggalSelesai(record.tanggalSelesai || new Date().toISOString().split('T')[0]);
+      setTujuanPerjalanan(record.tujuanPerjalanan || '');
+      setKeteranganSppd(record.keteranganSppd || '');
+      setCostItems((record.costItems || []).map((c, idx) => ({
+        ...c,
+        id: c.id || `c_${idx}_${Date.now()}`,
+        kategori: c.kategori || '',
+        rincian: c.rincian || '',
+        hargaAcuan: Number(c.hargaAcuan) || 0,
+        jumlah: Number(c.jumlah) || 0
+      })));
+      setSppdDisetujuiName(record.sppdDisetujuiName || 'Harijon');
+      setSppdDisetujuiJabatan(record.sppdDisetujuiJabatan || 'Head of Operational');
+      setActiveTab('create');
+    } catch (e) {
+      console.error('Error saat memuat SPPD untuk diedit:', e);
+    }
   };
 
   const handlePostDirectlyToVoucher = (record?: SPPDRecord) => {
@@ -915,87 +963,148 @@ export const SppdManager: React.FC<SppdManagerProps> = ({
 
               {/* LIST BIAYA */}
               <div className="space-y-2">
-                {costItems.map((item, idx) => (
-                  <div 
-                    key={item.id} 
-                    className="p-3 bg-stone-50 border border-stone-200 rounded-xl grid grid-cols-1 md:grid-cols-12 gap-2 items-center"
-                  >
-                    <div className="md:col-span-3">
-                      <span className="text-[10px] font-bold text-stone-400 block uppercase">
-                        {idx + 1}. Kategori Biaya
-                      </span>
-                      <input
-                        type="text"
-                        value={item.kategori}
-                        onChange={(e) => handleCostItemChange(idx, 'kategori', e.target.value)}
-                        className="w-full px-2 py-1 border border-stone-200 rounded-lg text-xs font-bold text-stone-900 bg-white"
-                      />
-                    </div>
+                {costItems.map((item, idx) => {
+                  const itemBenchmark = (item.hargaAcuan !== undefined && item.hargaAcuan > 0)
+                    ? item.hargaAcuan
+                    : getItemBenchmark(item.kategori, item.rincian, jabatan, daysCount, nightsCount, pedomanMatrix);
 
-                    <div className="md:col-span-4">
-                      <span className="text-[10px] font-bold text-stone-400 block uppercase">
-                        Rincian / Catatan
-                      </span>
-                      <input
-                        type="text"
-                        value={item.rincian}
-                        onChange={(e) => handleCostItemChange(idx, 'rincian', e.target.value)}
-                        placeholder="Contoh: 3 hari @ Rp 200.000"
-                        className="w-full px-2 py-1 border border-stone-200 rounded-lg text-xs text-stone-800 bg-white"
-                      />
-                    </div>
+                  const isExceeding = itemBenchmark > 0 && item.jumlah > itemBenchmark;
+                  const exceedDiff = isExceeding ? item.jumlah - itemBenchmark : 0;
 
-                    <div className="md:col-span-2 text-right">
-                      <span className="text-[10px] font-bold text-stone-400 block uppercase">
-                        Harga Acuan
-                      </span>
-                      <span className="text-xs font-mono text-stone-500 font-semibold">
-                        Rp {item.hargaAcuan.toLocaleString('id-ID')}
-                      </span>
-                    </div>
+                  return (
+                    <div 
+                      key={item.id} 
+                      className={`p-3 border rounded-xl grid grid-cols-1 md:grid-cols-12 gap-2 items-center transition ${
+                        isExceeding ? 'bg-rose-50/40 border-rose-200' : 'bg-stone-50 border-stone-200'
+                      }`}
+                    >
+                      <div className="md:col-span-3">
+                        <span className="text-[10px] font-bold text-stone-400 block uppercase">
+                          {idx + 1}. Kategori Biaya
+                        </span>
+                        <input
+                          type="text"
+                          value={item.kategori}
+                          onChange={(e) => handleCostItemChange(idx, 'kategori', e.target.value)}
+                          className="w-full px-2 py-1 border border-stone-200 rounded-lg text-xs font-bold text-stone-900 bg-white"
+                        />
+                      </div>
 
-                    <div className="md:col-span-2">
-                      <span className="text-[10px] font-bold text-stone-400 block uppercase">
-                        Nominal Real (Rp)
-                      </span>
-                      <input
-                        type="number"
-                        value={item.jumlah}
-                        onChange={(e) => handleCostItemChange(idx, 'jumlah', parseFloat(e.target.value) || 0)}
-                        className="w-full px-2 py-1 border border-stone-300 rounded-lg text-xs font-bold font-mono text-right text-stone-900 bg-white focus:border-amber-500"
-                      />
-                    </div>
+                      <div className="md:col-span-4">
+                        <span className="text-[10px] font-bold text-stone-400 block uppercase">
+                          Rincian / Catatan
+                        </span>
+                        <input
+                          type="text"
+                          value={item.rincian}
+                          onChange={(e) => handleCostItemChange(idx, 'rincian', e.target.value)}
+                          placeholder="Contoh: 3 hari @ Rp 200.000"
+                          className="w-full px-2 py-1 border border-stone-200 rounded-lg text-xs text-stone-800 bg-white"
+                        />
+                      </div>
 
-                    <div className="md:col-span-1 text-right">
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveCostItem(idx)}
-                        className="p-1 text-stone-400 hover:text-rose-600 transition cursor-pointer"
-                      >
-                        <Trash2 size={15} />
-                      </button>
+                      <div className="md:col-span-2 text-right">
+                        <span className="text-[10px] font-bold text-stone-400 block uppercase">
+                          Harga Acuan
+                        </span>
+                        <span className="text-xs font-mono text-stone-500 font-semibold block">
+                          {itemBenchmark > 0 ? `Rp ${itemBenchmark.toLocaleString('id-ID')}` : '-'}
+                        </span>
+                        {isExceeding && (
+                          <span className="text-[9px] font-bold text-rose-600 font-mono block leading-tight">
+                            +Rp {exceedDiff.toLocaleString('id-ID')}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="md:col-span-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold text-stone-400 uppercase">
+                            Nominal Real (Rp)
+                          </span>
+                          {isExceeding && (
+                            <span className="text-[9px] font-bold text-rose-600 bg-rose-100 border border-rose-300 px-1 py-0.2 rounded">
+                              Melebihi
+                            </span>
+                          )}
+                        </div>
+                        <input
+                          type="number"
+                          value={item.jumlah}
+                          onChange={(e) => handleCostItemChange(idx, 'jumlah', parseFloat(e.target.value) || 0)}
+                          className={`w-full px-2 py-1 border rounded-lg text-xs font-bold font-mono text-right bg-white transition ${
+                            isExceeding
+                              ? 'border-rose-400 text-rose-950 focus:border-rose-500 bg-rose-50/50'
+                              : 'border-stone-300 text-stone-900 focus:border-amber-500'
+                          }`}
+                        />
+                      </div>
+
+                      <div className="md:col-span-1 text-right">
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveCostItem(idx)}
+                          className="p-1 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                          title="Hapus Baris Biaya"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
-              {/* TOTAL SPPD */}
-              <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
-                <div>
-                  <span className="text-xs font-extrabold text-amber-900 uppercase">
-                    TOTAL ANGGARAN SPPD:
-                  </span>
-                  <div className="text-xs text-amber-800 font-medium italic pt-0.5">
-                    Terbilang: &quot;{terbilang(totalCost)}&quot;
-                  </div>
-                </div>
+              {/* TOTAL SPPD & OVER-BUDGET BANNER */}
+              {(() => {
+                const totalAcuanStandard = costItems.reduce((sum, item) => {
+                  const bm = (item.hargaAcuan !== undefined && item.hargaAcuan > 0)
+                    ? item.hargaAcuan
+                    : getItemBenchmark(item.kategori, item.rincian, jabatan, daysCount, nightsCount, pedomanMatrix);
+                  return sum + (bm > 0 ? bm : item.jumlah);
+                }, 0);
 
-                <div className="text-right shrink-0">
-                  <span className="text-lg font-black font-mono text-amber-900">
-                    Rp {totalCost.toLocaleString('id-ID')}
-                  </span>
-                </div>
-              </div>
+                const isTotalExceeding = totalCost > totalAcuanStandard && totalAcuanStandard > 0;
+
+                return (
+                  <div className="space-y-2">
+                    <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                      <div>
+                        <span className="text-xs font-extrabold text-amber-900 uppercase">
+                          TOTAL ANGGARAN SPPD:
+                        </span>
+                        <div className="text-xs text-amber-800 font-medium italic pt-0.5">
+                          Terbilang: &quot;{terbilang(totalCost)}&quot;
+                        </div>
+                      </div>
+
+                      <div className="text-right shrink-0">
+                        <span className="text-lg font-black font-mono text-amber-900">
+                          Rp {totalCost.toLocaleString('id-ID')}
+                        </span>
+                      </div>
+                    </div>
+
+                    {isTotalExceeding && (
+                      <div className="p-3 bg-rose-50 border border-rose-300 rounded-xl space-y-1 animate-in fade-in">
+                        <div className="flex items-center justify-between font-extrabold text-rose-900 text-xs">
+                          <span className="flex items-center gap-1.5">
+                            <AlertTriangle size={15} className="text-rose-600 shrink-0" />
+                            <span>PERINGATAN HO: Pengajuan Melebihi Plafon Acuan Tarif</span>
+                          </span>
+                          <span className="font-mono text-rose-700 bg-rose-100 border border-rose-300 px-2 py-0.5 rounded-md font-black">
+                            Selisih: +Rp {(totalCost - totalAcuanStandard).toLocaleString('id-ID')}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-rose-800 leading-relaxed">
+                          Total pengajuan riil karyawan: <strong>Rp {totalCost.toLocaleString('id-ID')}</strong> (Plafon Acuan {jabatan}: <strong>Rp {totalAcuanStandard.toLocaleString('id-ID')}</strong>).
+                          Sistem mempertahankan nominal asli dari karyawan tanpa pemotongan otomatis agar dapat disesuaikan langsung oleh tim HO.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
 
             {/* ACTION FOOTER: SAVE & POST TO VOUCHER */}
@@ -1078,106 +1187,126 @@ export const SppdManager: React.FC<SppdManagerProps> = ({
               </div>
             ) : (
               records.map((rec) => {
-              const recTotal = (rec.costItems || []).reduce((acc, c) => acc + (c.jumlah || 0), 0);
-              return (
-                <div 
-                  key={rec.id}
-                  className="p-3.5 bg-stone-50 hover:bg-amber-50/40 border border-stone-200 hover:border-amber-300 rounded-xl transition flex flex-col md:flex-row items-start md:items-center justify-between gap-3"
-                >
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-black font-mono text-stone-900 bg-stone-200 px-2 py-0.5 rounded-md border border-stone-300">
-                        {rec.noSppd}
-                      </span>
-                      <span className="text-[10px] font-bold uppercase bg-emerald-100 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-full">
-                        {rec.status}
-                      </span>
-                      {(rec.costItems?.some(c => c.attachment?.url) || (rec.attachedFiles && rec.attachedFiles.length > 0)) && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const firstAtt = rec.costItems?.find(c => c.attachment?.url)?.attachment || (rec.attachedFiles && rec.attachedFiles[0]);
-                            if (firstAtt) {
-                              setPreviewAttachmentUrl(firstAtt.url);
-                              setPreviewAttachmentTitle(`Bukti Bon SPPD - ${rec.noSppd} (${rec.namaPekerja})`);
-                            }
-                          }}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 transition cursor-pointer"
-                          title="Lihat Bukti Bon PDF Karyawan"
-                        >
-                          <Paperclip size={10} />
-                          <span>Bukti Bon PDF</span>
-                        </button>
-                      )}
-                    </div>
+                const recTotal = (rec.costItems || []).reduce((acc, c) => acc + (c.jumlah || 0), 0);
+                const recDays = calculateDays(rec.tanggalMulai, rec.tanggalSelesai);
+                const recNights = recDays > 1 ? recDays - 1 : 1;
+                const recBenchmarkTotal = (rec.costItems || []).reduce((sum, c) => {
+                  const bm = (c.hargaAcuan !== undefined && c.hargaAcuan > 0)
+                    ? c.hargaAcuan
+                    : getItemBenchmark(c.kategori, c.rincian, rec.jabatan, recDays, recNights, pedomanMatrix);
+                  return sum + (bm > 0 ? bm : c.jumlah);
+                }, 0);
+                const isRecExceeding = recTotal > recBenchmarkTotal && recBenchmarkTotal > 0;
 
-                    <div className="text-xs font-bold text-stone-850 flex items-center gap-1.5 pt-0.5">
-                      <User size={13} className="text-stone-400" />
-                      <span>{rec.namaPekerja}</span>
-                      <span className="text-[11px] font-normal text-stone-500">({rec.jabatan})</span>
-                    </div>
+                return (
+                  <div 
+                    key={rec.id}
+                    className={`p-3.5 border rounded-xl transition flex flex-col md:flex-row items-start md:items-center justify-between gap-3 ${
+                      isRecExceeding 
+                        ? 'bg-rose-50/20 hover:bg-rose-50/50 border-rose-200 hover:border-rose-300' 
+                        : 'bg-stone-50 hover:bg-amber-50/40 border-stone-200 hover:border-amber-300'
+                    }`}
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-black font-mono text-stone-900 bg-stone-200 px-2 py-0.5 rounded-md border border-stone-300">
+                          {rec.noSppd}
+                        </span>
+                        <span className="text-[10px] font-bold uppercase bg-emerald-100 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-full">
+                          {rec.status}
+                        </span>
+                        {isRecExceeding && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
+                            <AlertTriangle size={10} className="text-rose-600" />
+                            <span>Melebihi Acuan (+Rp {(recTotal - recBenchmarkTotal).toLocaleString('id-ID')})</span>
+                          </span>
+                        )}
+                        {(rec.costItems?.some(c => c.attachment?.url) || (rec.attachedFiles && rec.attachedFiles.length > 0)) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const firstAtt = rec.costItems?.find(c => c.attachment?.url)?.attachment || (rec.attachedFiles && rec.attachedFiles[0]);
+                              if (firstAtt) {
+                                setPreviewAttachmentUrl(firstAtt.url);
+                                setPreviewAttachmentTitle(`Bukti Bon SPPD - ${rec.noSppd} (${rec.namaPekerja})`);
+                              }
+                            }}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 transition cursor-pointer"
+                            title="Lihat Bukti Bon PDF Karyawan"
+                          >
+                            <Paperclip size={10} />
+                            <span>Bukti Bon PDF</span>
+                          </button>
+                        )}
+                      </div>
 
-                    <div className="text-[11px] text-stone-500 flex items-center gap-3">
-                      <span className="flex items-center gap-1">
-                        <MapPin size={12} className="text-rose-500" />
-                        <strong>{rec.kotaTujuan}</strong>
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Calendar size={12} className="text-amber-600" />
-                        <span>{rec.tanggalMulai} s.d {rec.tanggalSelesai}</span>
-                      </span>
-                    </div>
-                  </div>
+                      <div className="text-xs font-bold text-stone-850 flex items-center gap-1.5 pt-0.5">
+                        <User size={13} className="text-stone-400" />
+                        <span>{rec.namaPekerja}</span>
+                        <span className="text-[11px] font-normal text-stone-500">({rec.jabatan})</span>
+                      </div>
 
-                  <div className="flex items-center gap-3 w-full md:w-auto justify-between md:justify-end border-t md:border-t-0 border-stone-200 pt-2 md:pt-0">
-                    <div className="text-right">
-                      <div className="text-[10px] text-stone-400 font-semibold uppercase">Total SPPD</div>
-                      <div className="text-sm font-black text-amber-600 font-mono">
-                        Rp {recTotal.toLocaleString('id-ID')}
+                      <div className="text-[11px] text-stone-500 flex items-center gap-3">
+                        <span className="flex items-center gap-1">
+                          <MapPin size={12} className="text-rose-500" />
+                          <strong>{rec.kotaTujuan}</strong>
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Calendar size={12} className="text-amber-600" />
+                          <span>{rec.tanggalMulai} s.d {rec.tanggalSelesai}</span>
+                        </span>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteRecord(rec.id, rec.noSppd)}
-                        className="p-2 text-stone-400 hover:text-rose-600 hover:bg-rose-50 border border-stone-200 hover:border-rose-200 rounded-lg transition cursor-pointer"
-                        title="Hapus Berkas SPPD"
-                      >
-                        <Trash2 size={15} />
-                      </button>
+                    <div className="flex items-center gap-3 w-full md:w-auto justify-between md:justify-end border-t md:border-t-0 border-stone-200 pt-2 md:pt-0">
+                      <div className="text-right">
+                        <div className="text-[10px] text-stone-400 font-semibold uppercase">Total SPPD</div>
+                        <div className={`text-sm font-black font-mono ${isRecExceeding ? 'text-rose-600' : 'text-amber-600'}`}>
+                          Rp {recTotal.toLocaleString('id-ID')}
+                        </div>
+                      </div>
 
-                      <button
-                        type="button"
-                        onClick={() => setPreviewPrintSppd(rec)}
-                        className="px-2.5 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-800 border border-stone-200 text-xs font-bold rounded-lg transition flex items-center gap-1 cursor-pointer"
-                        title="Cetak Dokumen SPPD"
-                      >
-                        <Printer size={13} className="text-amber-600" />
-                        <span>Cetak</span>
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteRecord(rec.id, rec.noSppd)}
+                          className="p-2 text-stone-400 hover:text-rose-600 hover:bg-rose-50 border border-stone-200 hover:border-rose-200 rounded-lg transition cursor-pointer"
+                          title="Hapus Berkas SPPD"
+                        >
+                          <Trash2 size={15} />
+                        </button>
 
-                      <button
-                        type="button"
-                        onClick={() => handleEditRecord(rec)}
-                        className="px-2.5 py-1.5 bg-stone-200 hover:bg-stone-300 text-stone-800 text-xs font-bold rounded-lg transition cursor-pointer"
-                      >
-                        Edit
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => setPreviewPrintSppd(rec)}
+                          className="px-2.5 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-800 border border-stone-200 text-xs font-bold rounded-lg transition flex items-center gap-1 cursor-pointer"
+                          title="Cetak Dokumen SPPD"
+                        >
+                          <Printer size={13} className="text-amber-600" />
+                          <span>Cetak</span>
+                        </button>
 
-                      <button
-                        type="button"
-                        onClick={() => handlePostDirectlyToVoucher(rec)}
-                        className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-stone-950 text-xs font-bold rounded-lg shadow-xs transition flex items-center gap-1 cursor-pointer"
-                      >
-                        <Send size={13} />
-                        <span>Buat Voucher</span>
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => handleEditRecord(rec)}
+                          className="px-2.5 py-1.5 bg-stone-200 hover:bg-stone-300 text-stone-800 text-xs font-bold rounded-lg transition cursor-pointer"
+                        >
+                          Edit
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handlePostDirectlyToVoucher(rec)}
+                          className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-stone-950 text-xs font-bold rounded-lg shadow-xs transition flex items-center gap-1 cursor-pointer"
+                        >
+                          <Send size={13} />
+                          <span>Buat Voucher</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })
+                );
+              })
             )}
           </div>
         </div>
@@ -1347,84 +1476,86 @@ export const SppdManager: React.FC<SppdManagerProps> = ({
               </div>
             </div>
           )}
-          {/* MODAL KONFIRMASI HAPUS SPPD */}
-          {deleteConfirmTarget && (
-            <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
-              <div className="bg-white rounded-2xl max-w-md w-full p-5 shadow-2xl border border-stone-200 space-y-4 text-left">
-                <div className="flex items-center gap-3">
-                  <div className="p-3 bg-rose-100 text-rose-600 rounded-xl">
-                    <Trash2 size={22} />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-black text-stone-900">
-                      Hapus Berkas SPPD?
-                    </h4>
-                    <p className="text-xs text-stone-500 mt-0.5">
-                      Nomor: <strong className="font-mono text-stone-900">{deleteConfirmTarget.noSppd}</strong>
-                    </p>
-                  </div>
-                </div>
+        </div>
+      )}
 
-                <p className="text-xs text-stone-600 leading-relaxed">
-                  Apakah Anda yakin ingin menghapus berkas SPPD ini? Data yang dihapus akan dihilangkan dari sistem dan penyimpanan riwayat.
+      {/* MODAL KONFIRMASI HAPUS SPPD (AVAILABLE GLOBALLY) */}
+      {deleteConfirmTarget && (
+        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white rounded-2xl max-w-md w-full p-5 shadow-2xl border border-stone-200 space-y-4 text-left">
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-rose-100 text-rose-600 rounded-xl">
+                <Trash2 size={22} />
+              </div>
+              <div>
+                <h4 className="text-sm font-black text-stone-900">
+                  Hapus Berkas SPPD?
+                </h4>
+                <p className="text-xs text-stone-500 mt-0.5">
+                  Nomor: <strong className="font-mono text-stone-900">{deleteConfirmTarget.noSppd}</strong>
                 </p>
+              </div>
+            </div>
 
-                <div className="pt-2 border-t border-stone-150 flex items-center justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setDeleteConfirmTarget(null)}
-                    className="px-4 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold rounded-xl transition cursor-pointer"
-                  >
-                    Batal
-                  </button>
-                  <button
-                    type="button"
-                    onClick={confirmExecuteDelete}
-                    className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-black rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Trash2 size={14} />
-                    <span>Ya, Hapus Sekarang</span>
-                  </button>
-                </div>
+            <p className="text-xs text-stone-600 leading-relaxed">
+              Apakah Anda yakin ingin menghapus berkas SPPD ini? Data yang dihapus akan dihilangkan dari sistem dan penyimpanan riwayat.
+            </p>
+
+            <div className="pt-2 border-t border-stone-150 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmTarget(null)}
+                className="px-4 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold rounded-xl transition cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={confirmExecuteDelete}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-black rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+              >
+                <Trash2 size={14} />
+                <span>Ya, Hapus Sekarang</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PDF PREVIEW MODAL FOR ATTACHMENTS (AVAILABLE GLOBALLY) */}
+      {previewAttachmentUrl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/75 backdrop-blur-xs animate-in fade-in">
+          <div className="relative w-full max-w-4xl h-[85vh] bg-white rounded-3xl shadow-2xl border border-stone-200 overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between px-6 py-3.5 bg-stone-900 text-white border-b border-stone-800 shrink-0">
+              <div className="flex items-center gap-2">
+                <FileText size={18} className="text-amber-400" />
+                <span className="font-bold text-xs sm:text-sm">{previewAttachmentTitle || 'Pratinjau Bukti Bon PDF'}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <a
+                  href={previewAttachmentUrl}
+                  download={`${(previewAttachmentTitle || 'Bukti_Bon').replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`}
+                  className="p-1.5 bg-stone-800 hover:bg-stone-700 text-stone-200 rounded-lg transition"
+                  title="Unduh PDF"
+                >
+                  <Download size={16} />
+                </a>
+                <button
+                  onClick={() => setPreviewAttachmentUrl(null)}
+                  className="p-1.5 hover:bg-stone-800 text-stone-400 hover:text-white rounded-lg transition cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
               </div>
             </div>
-          )}
-          {/* PDF PREVIEW MODAL FOR ATTACHMENTS */}
-          {previewAttachmentUrl && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/75 backdrop-blur-xs animate-in fade-in">
-              <div className="relative w-full max-w-4xl h-[85vh] bg-white rounded-3xl shadow-2xl border border-stone-200 overflow-hidden flex flex-col">
-                <div className="flex items-center justify-between px-6 py-3.5 bg-stone-900 text-white border-b border-stone-800 shrink-0">
-                  <div className="flex items-center gap-2">
-                    <FileText size={18} className="text-amber-400" />
-                    <span className="font-bold text-xs sm:text-sm">{previewAttachmentTitle || 'Pratinjau Bukti Bon PDF'}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <a
-                      href={previewAttachmentUrl}
-                      download={`${(previewAttachmentTitle || 'Bukti_Bon').replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`}
-                      className="p-1.5 bg-stone-800 hover:bg-stone-700 text-stone-200 rounded-lg transition"
-                      title="Unduh PDF"
-                    >
-                      <Download size={16} />
-                    </a>
-                    <button
-                      onClick={() => setPreviewAttachmentUrl(null)}
-                      className="p-1.5 hover:bg-stone-800 text-stone-400 hover:text-white rounded-lg transition cursor-pointer"
-                    >
-                      <X size={18} />
-                    </button>
-                  </div>
-                </div>
-                <div className="flex-1 bg-stone-200">
-                  <iframe
-                    src={previewAttachmentUrl}
-                    className="w-full h-full border-none"
-                    title="PDF Viewer"
-                  />
-                </div>
-              </div>
+            <div className="flex-1 bg-stone-200">
+              <iframe
+                src={previewAttachmentUrl}
+                className="w-full h-full border-none"
+                title="PDF Viewer"
+              />
             </div>
-          )}
+          </div>
         </div>
       )}
     </div>

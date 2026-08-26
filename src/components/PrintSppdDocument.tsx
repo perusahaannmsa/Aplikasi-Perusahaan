@@ -278,57 +278,9 @@ export function consolidateSppdCostItems(
     }
   });
 
-  // 5. Intelligent Calculation of Uang Makan: Daily Cap & Spillover to Uang Saku
+  // 5. Intelligent Calculation of Uang Makan & Uang Saku: No capping, preserve 100% of employee raw input
   const rawMealItems = buckets.makan.items;
-  const maxMealAllowed = durationDays * dailyMealRate;
-
-  // Check if we have date-specific meal entries
-  const mealByDate: { [dateKey: string]: number } = {};
-  let itemsWithDateCount = 0;
-  rawMealItems.forEach(mi => {
-    if (mi.date && mi.date.trim()) {
-      itemsWithDateCount++;
-      mealByDate[mi.date] = (mealByDate[mi.date] || 0) + mi.jumlah;
-    }
-  });
-
-  let finalMealAmount = 0;
-  let excessMealToPocket = 0;
-
-  if (itemsWithDateCount > 0 && Object.keys(mealByDate).length > 0) {
-    // Calculate per-day capping
-    Object.keys(mealByDate).forEach(d => {
-      const dayTotal = mealByDate[d];
-      if (dayTotal > dailyMealRate) {
-        finalMealAmount += dailyMealRate; // capped to 1 full day acuan
-        excessMealToPocket += (dayTotal - dailyMealRate);
-      } else {
-        finalMealAmount += dayTotal;
-      }
-    });
-
-    // Handle any meal items without dates
-    const undatedMealTotal = rawMealItems.filter(mi => !mi.date || !mi.date.trim()).reduce((s, mi) => s + mi.jumlah, 0);
-    if (undatedMealTotal > 0) {
-      const remainingAllowed = Math.max(0, maxMealAllowed - finalMealAmount);
-      if (undatedMealTotal > remainingAllowed) {
-        finalMealAmount += remainingAllowed;
-        excessMealToPocket += (undatedMealTotal - remainingAllowed);
-      } else {
-        finalMealAmount += undatedMealTotal;
-      }
-    }
-  } else {
-    // Fallback to trip duration calculation: durationDays * dailyMealRate
-    const rawMealTotal = rawMealItems.reduce((sum, i) => sum + i.jumlah, 0);
-    if (rawMealTotal > maxMealAllowed) {
-      finalMealAmount = maxMealAllowed;
-      excessMealToPocket = rawMealTotal - maxMealAllowed;
-    } else {
-      finalMealAmount = rawMealTotal;
-      excessMealToPocket = 0;
-    }
-  }
+  const finalMealAmount = rawMealItems.reduce((sum, i) => sum + i.jumlah, 0);
 
   // 6. Build strictly deduplicated official list (max 7-9 official categories, only non-zero items)
   const consolidatedList: ConsolidatedCostItem[] = [];
@@ -348,7 +300,7 @@ export function consolidateSppdCostItems(
 
   // 2. Uang Makan / Hari
   if (finalMealAmount > 0) {
-    const mealDesc = `${durationDays} Hari @ Rp ${dailyMealRate.toLocaleString('id-ID')}`;
+    const mealDesc = `${durationDays} Hari (Klaim Riil: Rp ${finalMealAmount.toLocaleString('id-ID')})`;
     consolidatedList.push({
       no: 0,
       kategori: 'Uang Makan / Hari',
@@ -358,30 +310,19 @@ export function consolidateSppdCostItems(
     });
   }
 
-  // 3. Uang Saku (Includes base pocket allowance, snacks/jajanan, plus any excess meal over benchmark)
+  // 3. Uang Saku
   const rawPocketItems = buckets.saku.items;
-  const rawPocketTotal = rawPocketItems.reduce((sum, i) => sum + i.jumlah, 0);
-  const accumulatedPocketAmount = rawPocketTotal + excessMealToPocket;
-  const maxPocketAllowed = durationDays * dailyPocketRate;
+  const finalPocketAmount = rawPocketItems.reduce((sum, i) => sum + i.jumlah, 0);
 
-  let finalPocketAmount = accumulatedPocketAmount;
-  let eliminatedPocketExcess = 0;
-  if (accumulatedPocketAmount > maxPocketAllowed) {
-    finalPocketAmount = maxPocketAllowed;
-    eliminatedPocketExcess = accumulatedPocketAmount - maxPocketAllowed;
-  }
-
-  if (finalPocketAmount > 0 || accumulatedPocketAmount > 0) {
-    const pocketDesc = `${durationDays} Hari @ Rp ${dailyPocketRate.toLocaleString('id-ID')}`;
+  if (finalPocketAmount > 0) {
+    const pocketDesc = `${durationDays} Hari (Klaim Riil: Rp ${finalPocketAmount.toLocaleString('id-ID')})`;
 
     consolidatedList.push({
       no: 0,
       kategori: 'Uang Saku',
       rincian: pocketDesc,
       hargaAcuan: dailyPocketRate,
-      jumlah: finalPocketAmount,
-      rawJumlah: accumulatedPocketAmount,
-      eliminatedAmount: eliminatedPocketExcess
+      jumlah: finalPocketAmount
     });
   }
 
