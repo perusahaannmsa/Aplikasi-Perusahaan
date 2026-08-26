@@ -317,33 +317,277 @@ KEMBALIKAN HANYA FORMAT JSON VALID:
   }
 });
 
-app.get("/api/drive-token", async (req, res) => {
-  try {
-    let clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-    let privateKey = process.env.GOOGLE_PRIVATE_KEY;
-    if (process.env.GOOGLE_CREDENTIALS) {
+// Helper to safely obtain Google Service Account credentials from env, service-account.json, or data-store.json
+function getServiceAccountCredentials(): { clientEmail: string; privateKey: string; projectId?: string; source?: string } | null {
+  // 1. Check direct environment variables
+  if (process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGLE_PRIVATE_KEY) {
+    let pk = process.env.GOOGLE_PRIVATE_KEY;
+    if (pk.includes("\\n")) pk = pk.replace(/\\n/g, "\n");
+    return {
+      clientEmail: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL.trim(),
+      privateKey: pk,
+      projectId: process.env.GOOGLE_PROJECT_ID || process.env.GCP_PROJECT_ID || "Google Cloud",
+      source: "env_direct"
+    };
+  }
+
+  // 2. Check GOOGLE_CREDENTIALS environment variable (JSON string)
+  if (process.env.GOOGLE_CREDENTIALS) {
+    try {
       const creds = JSON.parse(process.env.GOOGLE_CREDENTIALS);
-      clientEmail = creds.client_email;
-      privateKey = creds.private_key;
+      if (creds.client_email && creds.private_key) {
+        let pk = creds.private_key;
+        if (pk.includes("\\n")) pk = pk.replace(/\\n/g, "\n");
+        return {
+          clientEmail: creds.client_email.trim(),
+          privateKey: pk,
+          projectId: creds.project_id || "Google Cloud",
+          source: "env_json"
+        };
+      }
+    } catch (e) {
+      console.warn("Failed to parse GOOGLE_CREDENTIALS env:", e);
     }
+  }
+
+  // 3. Check local service-account.json file in root
+  const saFilePath = path.join(process.cwd(), "service-account.json");
+  if (fs.existsSync(saFilePath)) {
+    try {
+      const content = fs.readFileSync(saFilePath, "utf8");
+      const creds = JSON.parse(content);
+      if (creds.client_email && creds.private_key) {
+        let pk = creds.private_key;
+        if (pk.includes("\\n")) pk = pk.replace(/\\n/g, "\n");
+        return {
+          clientEmail: creds.client_email.trim(),
+          privateKey: pk,
+          projectId: creds.project_id || "Google Cloud",
+          source: "file"
+        };
+      }
+    } catch (e) {
+      console.warn("Failed to read service-account.json file:", e);
+    }
+  }
+
+  // 4. Check data-store.json (persisted in dataStore)
+  try {
+    const dataStorePath = path.join(process.cwd(), "data-store.json");
+    if (fs.existsSync(dataStorePath)) {
+      const ds = JSON.parse(fs.readFileSync(dataStorePath, "utf8"));
+      if (ds.serviceAccount && ds.serviceAccount.client_email && ds.serviceAccount.private_key) {
+        let pk = ds.serviceAccount.private_key;
+        if (pk.includes("\\n")) pk = pk.replace(/\\n/g, "\n");
+        return {
+          clientEmail: ds.serviceAccount.client_email.trim(),
+          privateKey: pk,
+          projectId: ds.serviceAccount.project_id || "Google Cloud",
+          source: "data_store"
+        };
+      }
+    }
+  } catch (e) {}
+
+  return null;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// GOOGLE SERVICE ACCOUNT & DRIVE ENDPOINTS
+// ═════════════════════════════════════════════════════════════════════════════
+
+// 1. Check Service Account status
+app.get("/api/service-account/status", (req, res) => {
+  try {
+    const creds = getServiceAccountCredentials();
+    if (creds && creds.clientEmail) {
+      return res.json({
+        configured: true,
+        clientEmail: creds.clientEmail,
+        projectId: creds.projectId || "Google Cloud",
+        source: creds.source || "system",
+        hasPrivateKey: !!creds.privateKey
+      });
+    }
+    return res.json({
+      configured: false,
+      clientEmail: null,
+      projectId: null,
+      source: null
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: "Gagal memeriksa status Service Account", details: err.message });
+  }
+});
+
+// 2. Save / Plant Service Account (JSON Key or raw fields)
+app.post("/api/service-account/save", async (req, res) => {
+  try {
+    let { jsonKey, clientEmail, privateKey, projectId } = req.body;
+
+    // If jsonKey string or object is provided, parse it
+    if (jsonKey) {
+      let parsed = typeof jsonKey === "string" ? JSON.parse(jsonKey.trim()) : jsonKey;
+      clientEmail = parsed.client_email || clientEmail;
+      privateKey = parsed.private_key || privateKey;
+      projectId = parsed.project_id || projectId;
+    }
+
     if (!clientEmail || !privateKey) {
-       return res.status(500).json({ error: "Kredensial Service Account belum dikonfigurasi di server." });
+      return res.status(400).json({ 
+        error: "Kunci Service Account tidak lengkap. Pastikan JSON memiliki 'client_email' dan 'private_key'." 
+      });
     }
-    if (privateKey.includes("\\n")) {
-      privateKey = privateKey.replace(/\\n/g, "\n");
+
+    let cleanPrivateKey = privateKey;
+    if (cleanPrivateKey.includes("\\n")) {
+      cleanPrivateKey = cleanPrivateKey.replace(/\\n/g, "\n");
     }
+
+    // Verify validity by requesting a real JWT authorization test
     const jwtClient = new google.auth.JWT({
-      email: clientEmail,
-      key: privateKey,
+      email: clientEmail.trim(),
+      key: cleanPrivateKey,
       scopes: ["https://www.googleapis.com/auth/drive"]
     });
+
+    const tokens = await jwtClient.authorize();
+    if (!tokens.access_token) {
+      throw new Error("Gagal mengotorisasi Service Account dengan Google API.");
+    }
+
+    // Write to service-account.json
+    const saData = {
+      type: "service_account",
+      project_id: projectId || "Google Cloud",
+      client_email: clientEmail.trim(),
+      private_key: cleanPrivateKey
+    };
+
+    const saFilePath = path.join(process.cwd(), "service-account.json");
+    fs.writeFileSync(saFilePath, JSON.stringify(saData, null, 2), "utf8");
+
+    // Also persist in data-store.json as resilient backup
+    try {
+      const dataStorePath = path.join(process.cwd(), "data-store.json");
+      let ds: any = {};
+      if (fs.existsSync(dataStorePath)) {
+        ds = JSON.parse(fs.readFileSync(dataStorePath, "utf8"));
+      }
+      ds.serviceAccount = saData;
+      fs.writeFileSync(dataStorePath, JSON.stringify(ds, null, 2), "utf8");
+    } catch (dsErr) {
+      console.warn("Failed to write serviceAccount to data-store.json:", dsErr);
+    }
+
+    console.log(`✅ Google Service Account berhasil ditanamkan: ${clientEmail}`);
+    return res.json({
+      success: true,
+      message: "Google Service Account berhasil ditanamkan dan diuji secara langsung!",
+      clientEmail: clientEmail.trim(),
+      projectId: projectId || "Google Cloud",
+      accessToken: tokens.access_token
+    });
+  } catch (error: any) {
+    console.error("Error saving service account:", error);
+    return res.status(400).json({ 
+      error: "Kredensial Service Account tidak valid atau gagal diautentikasi dengan Google.", 
+      details: error.message 
+    });
+  }
+});
+
+// 3. Test Service Account connection against Google Drive API
+app.post("/api/service-account/test", async (req, res) => {
+  try {
+    const creds = getServiceAccountCredentials();
+    if (!creds || !creds.clientEmail || !creds.privateKey) {
+      return res.status(400).json({ error: "Service Account belum dikonfigurasi di server." });
+    }
+
+    const jwtClient = new google.auth.JWT({
+      email: creds.clientEmail,
+      key: creds.privateKey,
+      scopes: ["https://www.googleapis.com/auth/drive"]
+    });
+
+    const tokens = await jwtClient.authorize();
+    if (!tokens.access_token) {
+      throw new Error("Gagal mengotorisasi token JWT.");
+    }
+
+    // Call Google Drive API About to check storage/status
+    const drive = google.drive({ version: "v3", auth: jwtClient });
+    const aboutRes = await drive.about.get({ fields: "user, storageQuota" }).catch(() => null);
+
+    return res.json({
+      success: true,
+      message: "Koneksi Google Drive Service Account 100% Aktif & Berfungsi Normal!",
+      clientEmail: creds.clientEmail,
+      projectId: creds.projectId,
+      storageQuota: aboutRes?.data?.storageQuota || null,
+      user: aboutRes?.data?.user || null
+    });
+  } catch (error: any) {
+    console.error("Service Account test error:", error);
+    return res.status(500).json({ 
+      error: "Uji coba koneksi Google Drive gagal.", 
+      details: error.message 
+    });
+  }
+});
+
+// 4. Remove / Delete Service Account
+app.delete("/api/service-account/remove", (req, res) => {
+  try {
+    const saFilePath = path.join(process.cwd(), "service-account.json");
+    if (fs.existsSync(saFilePath)) {
+      fs.unlinkSync(saFilePath);
+    }
+
+    try {
+      const dataStorePath = path.join(process.cwd(), "data-store.json");
+      if (fs.existsSync(dataStorePath)) {
+        const ds = JSON.parse(fs.readFileSync(dataStorePath, "utf8"));
+        delete ds.serviceAccount;
+        fs.writeFileSync(dataStorePath, JSON.stringify(ds, null, 2), "utf8");
+      }
+    } catch (e) {}
+
+    return res.json({ success: true, message: "Google Service Account berhasil dihapus dari server." });
+  } catch (err: any) {
+    return res.status(500).json({ error: "Gagal menghapus Service Account", details: err.message });
+  }
+});
+
+// 5. Get fresh Drive token on demand (never expires for the application)
+app.get("/api/drive-token", async (req, res) => {
+  try {
+    const creds = getServiceAccountCredentials();
+    if (!creds || !creds.clientEmail || !creds.privateKey) {
+      return res.status(404).json({ error: "Kredensial Service Account belum ditanamkan di server." });
+    }
+
+    const jwtClient = new google.auth.JWT({
+      email: creds.clientEmail,
+      key: creds.privateKey,
+      scopes: ["https://www.googleapis.com/auth/drive"]
+    });
+
     const tokens = await jwtClient.authorize();
     if (tokens.access_token) {
-      return res.json({ success: true, accessToken: tokens.access_token });
+      return res.json({ 
+        success: true, 
+        accessToken: tokens.access_token,
+        clientEmail: creds.clientEmail,
+        projectId: creds.projectId,
+        expiresAt: tokens.expiry_date,
+        type: "service_account"
+      });
     } else {
       throw new Error("Gagal mendapatkan akses token dari Google");
     }
-  } catch (error) {
+  } catch (error: any) {
     return res.status(500).json({ error: "Gagal membuat akses token Drive", details: error.message });
   }
 });

@@ -975,16 +975,117 @@ export const getStoredGoogleDriveToken = (): string | null => {
   return fallbackDrive ? fallbackDrive.accessToken : null;
 };
 
+// ═════════ GOOGLE SERVICE ACCOUNT 24/7 API HELPERS ═════════
+
+export interface ServiceAccountStatus {
+  configured: boolean;
+  clientEmail: string | null;
+  projectId: string | null;
+  source?: string | null;
+  hasPrivateKey?: boolean;
+}
+
+export const getServiceAccountStatus = async (): Promise<ServiceAccountStatus> => {
+  try {
+    const res = await fetch('/api/service-account/status');
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (e) {
+    console.warn('Error checking Service Account status:', e);
+  }
+  return { configured: false, clientEmail: null, projectId: null };
+};
+
+export const saveServiceAccount = async (payload: { jsonKey?: string; clientEmail?: string; privateKey?: string; projectId?: string }) => {
+  const res = await fetch('/api/service-account/save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || data.details || 'Gagal menyimpan Google Service Account');
+  }
+  
+  // Also refresh token in memory & update connected drives
+  if (data.accessToken) {
+    setGoogleDriveToken(data.accessToken);
+    const saDrive: ConnectedDrive = {
+      email: data.clientEmail || 'service-account@google.com',
+      accessToken: data.accessToken,
+      displayName: `Service Account 24/7 (${data.projectId || 'Google Cloud'})`,
+      photoURL: '',
+      quotaUsed: 0,
+      quotaLimit: 15 * 1024 * 1024 * 1024,
+      lastChecked: new Date().toISOString(),
+      isExpired: false,
+      issuedAt: Date.now()
+    };
+    const current = getConnectedDrives();
+    const filtered = current.filter(d => !d.email.includes('iam.gserviceaccount.com'));
+    await saveConnectedDrives([saDrive, ...filtered]);
+  }
+
+  return data;
+};
+
+export const testServiceAccount = async () => {
+  const res = await fetch('/api/service-account/test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' }
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || data.details || 'Uji coba Service Account gagal');
+  }
+  return data;
+};
+
+export const removeServiceAccount = async () => {
+  const res = await fetch('/api/service-account/remove', {
+    method: 'DELETE'
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Gagal menghapus Service Account');
+  }
+  // Remove SA from connected drives
+  const current = getConnectedDrives();
+  const filtered = current.filter(d => !d.email.includes('iam.gserviceaccount.com'));
+  await saveConnectedDrives(filtered);
+  return data;
+};
+
 // Helper function to silently auto-refresh token if it's expired or about to expire
 export const ensureValidDriveToken = async (forceRefresh = false): Promise<string | null> => {
-  // OPSI B: Coba ambil token dari Service Account (Backend) terlebih dahulu
+  // OPSI A: Coba ambil token dari Service Account (Backend 24/7) terlebih dahulu
   try {
     const res = await fetch('/api/drive-token');
     if (res.ok) {
       const data = await res.json();
       if (data.success && data.accessToken) {
-        console.log('✅ Menggunakan Service Account untuk Google Drive');
+        console.log('✅ Menggunakan Service Account 24/7 untuk Google Drive');
         setGoogleDriveToken(data.accessToken);
+        
+        // Auto-register in connected drives if not already present
+        const currentDrives = getConnectedDrives();
+        const saEmail = data.clientEmail || 'service-account@google.com';
+        const hasSa = currentDrives.some(d => d.email.toLowerCase() === saEmail.toLowerCase());
+        if (!hasSa) {
+          const saDrive: ConnectedDrive = {
+            email: saEmail,
+            accessToken: data.accessToken,
+            displayName: `Service Account 24/7 (${data.projectId || 'Google Cloud'})`,
+            photoURL: '',
+            quotaUsed: 0,
+            quotaLimit: 15 * 1024 * 1024 * 1024,
+            lastChecked: new Date().toISOString(),
+            isExpired: false,
+            issuedAt: Date.now()
+          };
+          saveConnectedDrives([saDrive, ...currentDrives]);
+        }
         return data.accessToken;
       }
     }

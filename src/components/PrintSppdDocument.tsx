@@ -502,22 +502,37 @@ export const PrintSppdDocument: React.FC<PrintSppdDocumentProps> = ({
   return (
     <div className="w-full flex flex-col items-center print:items-start text-stone-900">
       
-      {/* INJECTED PRINT STYLES FOR EXACT SINGLE-PAGE A4 FIT */}
+      {/* INJECTED PRINT STYLES FOR EXACT SINGLE-PAGE A4 FIT & 2-PAGE VISUM FIT */}
       <style>{`
         @media print {
           @page {
             size: A4 portrait;
-            margin: 6mm 8mm 6mm 8mm;
+            margin: 10mm 12mm 10mm 12mm;
           }
-          body {
+          html, body {
             background: white !important;
             color: black !important;
+            margin: 0 !important;
+            padding: 0 !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
           }
-          .page-break {
+          .sppd-print-page {
+            width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            border: none !important;
+            box-shadow: none !important;
+            border-radius: 0 !important;
+            box-sizing: border-box !important;
+          }
+          .page-break-after {
             page-break-after: always !important;
             break-after: page !important;
+          }
+          .page-break-before {
+            page-break-before: always !important;
+            break-before: page !important;
           }
           .no-break {
             break-inside: avoid !important;
@@ -604,24 +619,24 @@ export const PrintSppdDocument: React.FC<PrintSppdDocumentProps> = ({
       {/* ========================================================================= */}
       {/* HALAMAN 1: SURAT PERINTAH PERJALANAN DINAS (SPPD) & RINCIAN BIAYA         */}
       {/* ========================================================================= */}
-      <div className={`w-[210mm] max-w-full bg-white p-[8mm] sm:p-[10mm] border border-stone-300 shadow-xl rounded-xl print:shadow-none print:border-none print:rounded-none print:p-0 print:m-0 print:w-full ${includeVisum ? 'page-break' : ''} box-border font-sans text-[11px] leading-snug flex flex-col justify-between`}>
+      <div className={`w-[210mm] max-w-full bg-white p-[8mm] sm:p-[10mm] border border-stone-300 shadow-xl rounded-xl print:shadow-none print:border-none print:rounded-none print:p-0 print:m-0 print:w-full sppd-print-page ${includeVisum ? 'page-break-after' : ''} box-border font-sans text-[11px] leading-snug flex flex-col justify-between`}>
         
         <div>
           {/* KOP SURAT RESMI PERUSAHAAN */}
-          <div className="border-b-[2px] border-black pb-1.5 mb-2">
-            <div className="flex items-center justify-between gap-3">
+          <div className="border-b-[2.5px] border-black pb-2 mb-2.5">
+            <div className="flex items-center justify-between gap-4">
               <div className="shrink-0">
-                <NusantaraLogo size="md" className="h-14 w-auto object-contain" />
+                <NusantaraLogo size="md" className="h-14 sm:h-16 w-auto object-contain" />
               </div>
               <div className="flex-1 text-center font-sans">
-                <h1 className="text-base sm:text-lg font-black uppercase tracking-wider text-black leading-tight">
+                <h1 className="text-base sm:text-[17px] font-black uppercase tracking-wider text-black leading-tight">
                   PT. NUSANTARA MINERAL SUKSES ABADI
                 </h1>
-                <p className="text-[9.5px] sm:text-[10px] text-black font-semibold mt-0.5 leading-tight">
+                <p className="text-[9.5px] sm:text-[10.5px] text-black font-semibold mt-0.5 leading-snug">
                   Jl. Raya Pasar Minggu Kav. 2B-C, RT.2/RW.2, Pancoran, Kecamatan Pancoran,<br />
                   Kota Jakarta Selatan, Daerah Khusus Ibukota Jakarta, Kode Pos 12780
                 </p>
-                <p className="text-[8.5px] text-stone-600 font-mono mt-0.5">
+                <p className="text-[9px] sm:text-[9.5px] text-stone-700 font-mono mt-0.5">
                   Email: info@nmsa.co.id &bull; Telp / WA: +62 821-8888-0000
                 </p>
               </div>
@@ -632,123 +647,170 @@ export const PrintSppdDocument: React.FC<PrintSppdDocumentProps> = ({
           </div>
 
           {/* JUDUL DOKUMEN & NOMOR */}
-          <div className="text-center my-1.5 font-sans">
-            <h2 className="text-sm font-black uppercase tracking-widest text-black underline underline-offset-4">
+          <div className="text-center my-2 font-sans">
+            <h2 className="text-sm sm:text-[15px] font-black uppercase tracking-widest text-black underline underline-offset-4">
               SURAT PERINTAH PERJALANAN DINAS (SPPD)
             </h2>
-            <div className="text-[11px] font-mono font-bold text-black mt-0.5">
-              Nomor: <span className="bg-stone-100 px-2 py-0.5 border border-stone-300 rounded font-black">{sppd.noSppd}</span>
+            <div className="text-[11px] sm:text-xs font-mono font-bold text-black mt-1">
+              Nomor: <span className="bg-stone-100 px-2.5 py-0.5 border border-stone-400 rounded font-black">{sppd.noSppd}</span>
             </div>
           </div>
 
-          {/* RINCIAN PERINTAH PENUGASAN (POIN 1 - 9) - FORMAT RESMI BERSIH & COMPACT (NON-TABEL BESAR) */}
-          <div className="my-2 border-y border-black py-1.5 text-[10px] sm:text-[10.5px] font-sans leading-tight text-stone-900 bg-stone-50/30">
-            <div className="grid grid-cols-[190px_10px_1fr] sm:grid-cols-[210px_10px_1fr] gap-y-1 items-start px-1">
-              <div className="font-semibold text-black">1. Pejabat Pemberi Perintah</div>
-              <div className="text-center font-bold">:</div>
-              <div className="font-semibold text-stone-900">
-                {sppd.pemberiPerintah} <span className="font-normal text-stone-600">({sppd.pemberiPerintahJabatan || 'Direktur Utama'})</span>
-              </div>
+          {/* RINCIAN PERINTAH PENUGASAN (POIN 1 - 9) - FORMAT TABEL RESMI STANDAR SPPD */}
+          <div className="my-2.5 font-sans">
+            <table className="w-full border-collapse border border-black text-[10px] sm:text-[10.5px]">
+              <tbody>
+                {/* 1. Pejabat Pemberi Perintah */}
+                <tr className="border-b border-black">
+                  <td className="border-r border-black p-1.5 w-7 text-center font-bold align-top">1.</td>
+                  <td className="border-r border-black p-1.5 w-48 sm:w-56 font-semibold text-black align-top">
+                    Pejabat Berwenang yang Memberi Perintah
+                  </td>
+                  <td className="p-1.5 text-stone-900 align-top">
+                    <span className="font-bold text-black">{sppd.pemberiPerintah}</span> <span className="text-stone-600">({sppd.pemberiPerintahJabatan || 'Direktur Utama'})</span>
+                  </td>
+                </tr>
 
-              <div className="font-semibold text-black">2. Nama Pegawai yang Diperintahkan</div>
-              <div className="text-center font-bold">:</div>
-              <div className="font-bold uppercase text-black">
-                {sppd.namaPekerja}
-              </div>
+                {/* 2. Pegawai yang Diperintahkan */}
+                <tr className="border-b border-black">
+                  <td className="border-r border-black p-1.5 text-center font-bold align-top">2.</td>
+                  <td className="border-r border-black p-1.5 font-semibold text-black align-top">
+                    Nama Pegawai yang Diperintahkan
+                  </td>
+                  <td className="p-1.5 font-black uppercase text-black align-top">
+                    {sppd.namaPekerja}
+                  </td>
+                </tr>
 
-              <div className="font-semibold text-black">3. Pangkat / Jabatan &amp; Divisi</div>
-              <div className="text-center font-bold">:</div>
-              <div>
-                <span className="font-semibold">{sppd.jabatan}</span> &bull; <span>{sppd.divisi || 'Operasional Lapangan & HO'}</span>
-              </div>
+                {/* 3. Pangkat / Jabatan & Divisi */}
+                <tr className="border-b border-black">
+                  <td className="border-r border-black p-1.5 text-center font-bold align-top">3.</td>
+                  <td className="border-r border-black p-1.5 font-semibold text-black align-top">
+                    Pangkat / Jabatan &amp; Divisi
+                  </td>
+                  <td className="p-1.5 text-stone-900 align-top">
+                    <span className="font-bold">{sppd.jabatan}</span> &bull; <span>{sppd.divisi || 'Operasional Lapangan & HO'}</span>
+                  </td>
+                </tr>
 
-              <div className="font-semibold text-black">4. Maksud &amp; Tujuan Perjalanan</div>
-              <div className="text-center font-bold">:</div>
-              <div className="font-medium text-stone-900 leading-snug">
-                {(() => {
-                  const purpose = sppd.tujuanPerjalanan || '';
-                  if (!purpose || purpose.includes('Voucher Biaya Perjalanan Dinas') || purpose.includes('Laporan SPPD:') || purpose.includes('Diposting dari')) {
-                    return `Pengawasan Lapangan & Verifikasi Operasional (${sppd.kotaTujuan || 'Site / Proyek'})`;
-                  }
-                  return purpose;
-                })()}
-              </div>
+                {/* 4. Maksud & Tujuan Perjalanan */}
+                <tr className="border-b border-black">
+                  <td className="border-r border-black p-1.5 text-center font-bold align-top">4.</td>
+                  <td className="border-r border-black p-1.5 font-semibold text-black align-top">
+                    Maksud &amp; Tujuan Perjalanan Dinas
+                  </td>
+                  <td className="p-1.5 text-stone-900 font-medium leading-snug align-top">
+                    {(() => {
+                      const purpose = sppd.tujuanPerjalanan || '';
+                      if (!purpose || purpose.includes('Voucher Biaya Perjalanan Dinas') || purpose.includes('Laporan SPPD:') || purpose.includes('Diposting dari')) {
+                        return `Pengawasan Lapangan & Verifikasi Operasional (${sppd.kotaTujuan || 'Site / Proyek'})`;
+                      }
+                      return purpose;
+                    })()}
+                  </td>
+                </tr>
 
-              <div className="font-semibold text-black">5. Alat Angkut / Transportasi</div>
-              <div className="text-center font-bold">:</div>
-              <div>
-                {sppd.transportasi}
-              </div>
+                {/* 5. Alat Angkut / Transportasi */}
+                <tr className="border-b border-black">
+                  <td className="border-r border-black p-1.5 text-center font-bold align-top">5.</td>
+                  <td className="border-r border-black p-1.5 font-semibold text-black align-top">
+                    Alat Angkut / Transportasi
+                  </td>
+                  <td className="p-1.5 text-stone-900 align-top">
+                    {sppd.transportasi}
+                  </td>
+                </tr>
 
-              <div className="font-semibold text-black">6. Tempat Berangkat &amp; Tujuan</div>
-              <div className="text-center font-bold">:</div>
-              <div>
-                Dari <strong>{sppd.kotaAsal}</strong> ke <strong>{sppd.kotaTujuan}</strong>
-              </div>
+                {/* 6. Tempat Berangkat & Tujuan */}
+                <tr className="border-b border-black">
+                  <td className="border-r border-black p-1.5 text-center font-bold align-top">6.</td>
+                  <td className="border-r border-black p-1.5 font-semibold text-black align-top">
+                    Tempat Berangkat &amp; Tujuan
+                  </td>
+                  <td className="p-1.5 text-stone-900 align-top">
+                    Dari <strong>{sppd.kotaAsal}</strong> ke <strong>{sppd.kotaTujuan}</strong>
+                  </td>
+                </tr>
 
-              <div className="font-semibold text-black">7. Lamanya Perjalanan Dinas</div>
-              <div className="text-center font-bold">:</div>
-              <div>
-                <strong>{sppd.lamaPerjalanan}</strong> &bull; ({formatDateIndonesian(sppd.tanggalMulai)} s/d {formatDateIndonesian(sppd.tanggalSelesai)})
-              </div>
+                {/* 7. Lamanya Perjalanan Dinas */}
+                <tr className="border-b border-black">
+                  <td className="border-r border-black p-1.5 text-center font-bold align-top">7.</td>
+                  <td className="border-r border-black p-1.5 font-semibold text-black align-top">
+                    Lamanya Perjalanan Dinas
+                  </td>
+                  <td className="p-1.5 text-stone-900 align-top">
+                    <strong>{sppd.lamaPerjalanan}</strong> &bull; ({formatDateIndonesian(sppd.tanggalMulai)} s/d {formatDateIndonesian(sppd.tanggalSelesai)})
+                  </td>
+                </tr>
 
-              <div className="font-semibold text-black">8. Pembebanan Anggaran</div>
-              <div className="text-center font-bold">:</div>
-              <div>
-                <strong>PT. Nusantara Mineral Sukses Abadi</strong> (Beban Perjalanan Dinas Operasional - Akun 600015)
-              </div>
+                {/* 8. Pembebanan Anggaran */}
+                <tr className="border-b border-black">
+                  <td className="border-r border-black p-1.5 text-center font-bold align-top">8.</td>
+                  <td className="border-r border-black p-1.5 font-semibold text-black align-top">
+                    Pembebanan Anggaran
+                  </td>
+                  <td className="p-1.5 text-stone-900 align-top">
+                    <strong>PT. Nusantara Mineral Sukses Abadi</strong> (Beban Perjalanan Dinas Operasional - Akun 600015)
+                  </td>
+                </tr>
 
-              <div className="font-semibold text-black">9. Keterangan Lain-lain</div>
-              <div className="text-center font-bold">:</div>
-              <div className="italic text-stone-700 text-[9.5px]">
-                {(() => {
-                  const remarks = sppd.keteranganSppd || '';
-                  if (!remarks || remarks.includes('Voucher Biaya Perjalanan Dinas') || remarks.includes('Diposting dari') || remarks.includes('SPPD/NMSA/')) {
-                    return 'Semua bukti tiket, boarding pass, kwitansi hotel, dan bukti transportasi dilampirkan lengkap.';
-                  }
-                  return remarks;
-                })()}
-              </div>
-            </div>
+                {/* 9. Keterangan Lain-lain */}
+                <tr>
+                  <td className="border-r border-black p-1.5 text-center font-bold align-top">9.</td>
+                  <td className="border-r border-black p-1.5 font-semibold text-black align-top">
+                    Keterangan Lain-lain
+                  </td>
+                  <td className="p-1.5 text-stone-700 italic text-[9.5px] sm:text-[10px] leading-snug align-top">
+                    {(() => {
+                      const remarks = sppd.keteranganSppd || '';
+                      if (!remarks || remarks.includes('Voucher Biaya Perjalanan Dinas') || remarks.includes('Diposting dari') || remarks.includes('SPPD/NMSA/')) {
+                        return 'Semua bukti tiket, boarding pass, kwitansi hotel, dan bukti pengeluaran transportasi wajib dilampirkan lengkap.';
+                      }
+                      return remarks;
+                    })()}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
 
           {/* TABEL RINCIAN BIAYA & PLAFON SPPD */}
-          <div className="mb-2 font-sans">
-            <div className="text-[10px] font-black uppercase tracking-wider text-black mb-0.5 flex items-center justify-between">
+          <div className="my-2.5 font-sans">
+            <div className="text-[10px] sm:text-[10.5px] font-black uppercase tracking-wider text-black mb-1 flex items-center justify-between">
               <span>Rincian Biaya &amp; Anggaran Perjalanan Dinas (Plafon / Realisasi):</span>
-              <span className="text-[9px] font-mono text-stone-500">Mata Uang: IDR (Rupiah)</span>
+              <span className="text-[9px] sm:text-[9.5px] font-mono text-stone-600">Mata Uang: IDR (Rupiah)</span>
             </div>
-            <table className="w-full border-collapse border border-black text-[9.5px] sm:text-[10px]">
+            <table className="w-full border-collapse border border-black text-[9.5px] sm:text-[10.5px]">
               <thead>
                 <tr className="bg-stone-100 border-b border-black font-bold uppercase text-center">
-                  <th className="border-r border-black p-1 w-7">No</th>
-                  <th className="border-r border-black p-1 text-left">Komponen / Kategori Biaya</th>
-                  <th className="border-r border-black p-1 text-left w-48 sm:w-56">Rincian / Catatan Perhitungan</th>
-                  <th className="border-r border-black p-1 text-right w-24">Tarif Acuan</th>
-                  <th className="p-1 text-right w-28">Jumlah (Rp)</th>
+                  <th className="border-r border-black p-1.5 w-7">No</th>
+                  <th className="border-r border-black p-1.5 text-left">Komponen / Kategori Biaya</th>
+                  <th className="border-r border-black p-1.5 text-left w-48 sm:w-56">Rincian / Catatan Perhitungan</th>
+                  <th className="border-r border-black p-1.5 text-right w-24 sm:w-28">Tarif Acuan</th>
+                  <th className="p-1.5 text-right w-28 sm:w-32">Jumlah (Rp)</th>
                 </tr>
               </thead>
               <tbody>
                 {consolidatedItems.map((item, idx) => (
                   <tr key={idx} className="border-b border-black">
-                    <td className="border-r border-black p-0.5 text-center font-mono">{item.no || idx + 1}</td>
-                    <td className="border-r border-black p-0.5 px-1 font-semibold">{item.kategori}</td>
-                    <td className="border-r border-black p-0.5 px-1 text-stone-700 leading-tight">{item.rincian}</td>
-                    <td className="border-r border-black p-0.5 px-1 text-right font-mono text-stone-600">
+                    <td className="border-r border-black p-1 text-center font-mono">{item.no || idx + 1}</td>
+                    <td className="border-r border-black p-1 px-1.5 font-semibold">{item.kategori}</td>
+                    <td className="border-r border-black p-1 px-1.5 text-stone-700 leading-tight">{item.rincian}</td>
+                    <td className="border-r border-black p-1 px-1.5 text-right font-mono text-stone-600">
                       {typeof item.hargaAcuan === 'number'
                         ? item.hargaAcuan.toLocaleString('id-ID')
                         : item.hargaAcuan || '-'}
                     </td>
-                    <td className="p-0.5 px-1 text-right font-mono font-bold">
+                    <td className="p-1 px-1.5 text-right font-mono font-bold">
                       {item.jumlah ? item.jumlah.toLocaleString('id-ID') : '0'}
                     </td>
                   </tr>
                 ))}
                 <tr className="border-t-[1.5px] border-black bg-stone-50 font-bold">
-                  <td colSpan={4} className="border-r border-black p-1 text-center uppercase tracking-wider text-[10px]">
+                  <td colSpan={4} className="border-r border-black p-1.5 text-center uppercase tracking-wider text-[10px] sm:text-[10.5px]">
                     TOTAL BIAYA PERJALANAN DINAS
                   </td>
-                  <td className="p-1 text-right font-mono text-[10.5px] font-black">
+                  <td className="p-1.5 text-right font-mono text-[11px] sm:text-xs font-black">
                     Rp {totalBiaya.toLocaleString('id-ID')}
                   </td>
                 </tr>
@@ -756,7 +818,7 @@ export const PrintSppdDocument: React.FC<PrintSppdDocumentProps> = ({
             </table>
 
             {/* TERBILANG BOX */}
-            <div className="border border-black border-t-0 p-1 bg-stone-50/50 text-[9.5px] flex gap-1.5 items-center">
+            <div className="border border-black border-t-0 p-1.5 bg-stone-50/50 text-[10px] sm:text-[10.5px] flex gap-1.5 items-center">
               <span className="font-bold shrink-0">Terbilang:</span>
               <span className="italic font-semibold text-stone-900">"{terbilangRupiah(totalBiaya)}"</span>
             </div>
@@ -764,46 +826,46 @@ export const PrintSppdDocument: React.FC<PrintSppdDocumentProps> = ({
         </div>
 
         {/* KOLOM TANDA TANGAN & PENGESAHAN RESMI (3 PIHAK) */}
-        <div className="pt-1 font-sans no-break">
-          <div className="flex justify-end text-[10px] mb-1 font-medium">
+        <div className="pt-2 font-sans no-break">
+          <div className="flex justify-end text-[10px] sm:text-[10.5px] mb-1.5 font-medium">
             <span>Dikeluarkan di: <strong>Jakarta</strong>, Pada Tanggal: <strong>{formatDateIndonesian(sppd.tanggalMulai)}</strong></span>
           </div>
 
-          <div className="grid grid-cols-3 gap-2 text-center text-[10px]">
+          <div className="grid grid-cols-3 gap-2.5 text-center text-[10px] sm:text-[10.5px]">
             {/* 1. Yang Melaksanakan Perintah */}
-            <div className="flex flex-col items-center justify-between min-h-[85px] p-1.5 border border-black rounded-xs bg-white">
-              <span className="font-semibold text-stone-800 text-[9.5px]">Pegawai yang Diperintahkan,</span>
-              <div className="mt-8 w-full px-1">
-                <span className="border-b border-black font-bold uppercase block px-1 leading-tight text-[10px]">
+            <div className="flex flex-col items-center justify-between min-h-[95px] p-2 border border-black rounded-xs bg-white">
+              <span className="font-semibold text-stone-800 text-[9.5px] sm:text-[10px]">Pegawai yang Diperintahkan,</span>
+              <div className="mt-8 sm:mt-10 w-full px-1">
+                <span className="border-b border-black font-bold uppercase block px-1 leading-tight text-[10px] sm:text-[10.5px]">
                   {sppd.namaPekerja}
                 </span>
-                <span className="text-[9px] text-stone-600 font-mono block mt-0.5">
+                <span className="text-[9px] sm:text-[9.5px] text-stone-600 font-mono block mt-0.5">
                   {sppd.jabatan}
                 </span>
               </div>
             </div>
 
             {/* 2. Mengetahui / Head of Ops */}
-            <div className="flex flex-col items-center justify-between min-h-[85px] p-1.5 border border-black rounded-xs bg-white">
-              <span className="font-semibold text-stone-800 text-[9.5px]">Mengetahui / Menyetujui,</span>
-              <div className="mt-8 w-full px-1">
-                <span className="border-b border-black font-bold uppercase block px-1 leading-tight text-[10px]">
+            <div className="flex flex-col items-center justify-between min-h-[95px] p-2 border border-black rounded-xs bg-white">
+              <span className="font-semibold text-stone-800 text-[9.5px] sm:text-[10px]">Mengetahui / Menyetujui,</span>
+              <div className="mt-8 sm:mt-10 w-full px-1">
+                <span className="border-b border-black font-bold uppercase block px-1 leading-tight text-[10px] sm:text-[10.5px]">
                   {sppd.sppdDisetujuiName || 'Harijon'}
                 </span>
-                <span className="text-[9px] text-stone-600 font-mono block mt-0.5">
+                <span className="text-[9px] sm:text-[9.5px] text-stone-600 font-mono block mt-0.5">
                   {sppd.sppdDisetujuiJabatan || 'Head of Operational'}
                 </span>
               </div>
             </div>
 
             {/* 3. Pejabat Pemberi Perintah / Direktur */}
-            <div className="flex flex-col items-center justify-between min-h-[85px] p-1.5 border border-black rounded-xs bg-white">
-              <span className="font-semibold text-stone-800 text-[9.5px]">Pejabat Pemberi Perintah,</span>
-              <div className="mt-8 w-full px-1">
-                <span className="border-b border-black font-bold uppercase block px-1 leading-tight text-[10px]">
+            <div className="flex flex-col items-center justify-between min-h-[95px] p-2 border border-black rounded-xs bg-white">
+              <span className="font-semibold text-stone-800 text-[9.5px] sm:text-[10px]">Pejabat Pemberi Perintah,</span>
+              <div className="mt-8 sm:mt-10 w-full px-1">
+                <span className="border-b border-black font-bold uppercase block px-1 leading-tight text-[10px] sm:text-[10.5px]">
                   {sppd.pemberiPerintah}
                 </span>
-                <span className="text-[9px] text-stone-600 font-mono block mt-0.5">
+                <span className="text-[9px] sm:text-[9.5px] text-stone-600 font-mono block mt-0.5">
                   {sppd.pemberiPerintahJabatan || 'Direktur Utama'}
                 </span>
               </div>
@@ -817,123 +879,125 @@ export const PrintSppdDocument: React.FC<PrintSppdDocumentProps> = ({
       {/* HALAMAN 2: LEMBAR VISUM & CATATAN KEDATANGAN / KEBERANGKATAN LAPANGAN     */}
       {/* ========================================================================= */}
       {includeVisum && (
-        <div className="w-[210mm] min-h-[297mm] bg-white p-[10mm] sm:p-[12mm] border border-stone-300 shadow-xl rounded-xl print:shadow-none print:border-none print:rounded-none print:p-0 print:m-0 print:w-full page-break box-border font-serif text-[11px] leading-relaxed mt-6 print:mt-0">
+        <div className="w-[210mm] max-w-full bg-white p-[8mm] sm:p-[10mm] border border-stone-300 shadow-xl rounded-xl print:shadow-none print:border-none print:rounded-none print:p-0 print:m-0 print:w-full sppd-print-page page-break-before box-border font-sans text-[11px] leading-relaxed mt-6 print:mt-0 flex flex-col justify-between">
           
-          {/* HEADER VISUM */}
-          <div className="border-b-[2px] border-black pb-2 mb-4 font-sans flex items-center justify-between">
-            <div>
-              <h2 className="text-xs sm:text-sm font-black uppercase text-black">
-                LEMBAR VISUM &amp; KEDATANGAN / KEBERANGKATAN DINAS LAPANGAN
-              </h2>
-              <p className="text-[10px] text-stone-600 font-mono">
-                Lampiran SPPD No: <strong>{sppd.noSppd}</strong> &bull; Pegawai: <strong>{sppd.namaPekerja}</strong>
-              </p>
+          <div>
+            {/* HEADER VISUM */}
+            <div className="border-b-[2px] border-black pb-2 mb-3.5 font-sans flex items-center justify-between">
+              <div>
+                <h2 className="text-xs sm:text-sm font-black uppercase text-black tracking-wide">
+                  LEMBAR VISUM &amp; KEDATANGAN / KEBERANGKATAN DINAS LAPANGAN
+                </h2>
+                <p className="text-[10px] text-stone-600 font-mono mt-0.5">
+                  Lampiran SPPD No: <strong>{sppd.noSppd}</strong> &bull; Pegawai: <strong>{sppd.namaPekerja}</strong>
+                </p>
+              </div>
+              <div className="text-right">
+                <span className="text-[10px] font-bold border border-black px-2.5 py-1 bg-stone-100 font-mono rounded-xs">
+                  HALAMAN 2 (VISUM)
+                </span>
+              </div>
             </div>
-            <div className="text-right">
-              <span className="text-[10px] font-bold border border-black px-2 py-1 bg-stone-50">
-                HALAMAN 2 (VISUM)
+
+            <p className="text-[10px] font-sans text-stone-600 italic mb-2.5">
+              * Lembar visum ini wajib diisi dan dicap/ditandatangani oleh pimpinan/penanggung jawab di setiap lokasi tujuan perjalanan dinas.
+            </p>
+
+            {/* TABEL VISUM 4 POSISI */}
+            <div className="grid grid-cols-2 border border-black text-xs font-sans">
+              
+              {/* POS 1: Keberangkatan dari Kantor Asal */}
+              <div className="border-r border-b border-black p-3 space-y-2 min-h-[145px] flex flex-col justify-between">
+                <div>
+                  <div className="font-bold uppercase text-[11px] text-black">I. Berangkat dari Kantor Asal</div>
+                  <div className="text-[10.5px] text-stone-700 mt-1 space-y-0.5">
+                    <div>Tempat: <strong>{sppd.kotaAsal}</strong></div>
+                    <div>Ke: <strong>{sppd.kotaTujuan}</strong></div>
+                    <div>Pada Tanggal: <strong>{formatDateIndonesian(sppd.tanggalMulai)}</strong></div>
+                  </div>
+                </div>
+                <div className="text-center pt-4">
+                  <span className="text-[9.5px] text-stone-400 block mb-5">(Tanda Tangan &amp; Cap Bagian SDM / HO)</span>
+                  <span className="border-t border-dashed border-stone-400 block pt-1 text-[10px] font-bold">
+                    Bagian Administrasi HO
+                  </span>
+                </div>
+              </div>
+
+              {/* POS 2: Tiba di Tempat Tujuan Lapangan / Site */}
+              <div className="border-b border-black p-3 space-y-2 min-h-[145px] flex flex-col justify-between">
+                <div>
+                  <div className="font-bold uppercase text-[11px] text-black">II. Tiba di Lokasi Tujuan (Site / Wilayah)</div>
+                  <div className="text-[10.5px] text-stone-700 mt-1 space-y-0.5">
+                    <div>Tempat: <strong>{sppd.kotaTujuan}</strong></div>
+                    <div>Pada Tanggal: _____________________</div>
+                    <div>Pukul: _______ WITA / WIB</div>
+                  </div>
+                </div>
+                <div className="text-center pt-4">
+                  <span className="text-[9.5px] text-stone-400 block mb-5">(Tanda Tangan &amp; Cap Pimpinan Lokasi Tujuan)</span>
+                  <span className="border-t border-dashed border-stone-400 block pt-1 text-[10px] font-bold">
+                    Penanggung Jawab / Kepala Unit Site
+                  </span>
+                </div>
+              </div>
+
+              {/* POS 3: Berangkat Kembali dari Tempat Tujuan */}
+              <div className="border-r border-black p-3 space-y-2 min-h-[145px] flex flex-col justify-between">
+                <div>
+                  <div className="font-bold uppercase text-[11px] text-black">III. Berangkat Kembali dari Lokasi Tujuan</div>
+                  <div className="text-[10.5px] text-stone-700 mt-1 space-y-0.5">
+                    <div>Dari: <strong>{sppd.kotaTujuan}</strong></div>
+                    <div>Ke: <strong>{sppd.kotaAsal}</strong></div>
+                    <div>Pada Tanggal: _____________________</div>
+                  </div>
+                </div>
+                <div className="text-center pt-4">
+                  <span className="text-[9.5px] text-stone-400 block mb-5">(Tanda Tangan &amp; Cap Pimpinan Lokasi Tujuan)</span>
+                  <span className="border-t border-dashed border-stone-400 block pt-1 text-[10px] font-bold">
+                    Penanggung Jawab / Kepala Unit Site
+                  </span>
+                </div>
+              </div>
+
+              {/* POS 4: Tiba Kembali di Kantor Asal */}
+              <div className="p-3 space-y-2 min-h-[145px] flex flex-col justify-between">
+                <div>
+                  <div className="font-bold uppercase text-[11px] text-black">IV. Tiba Kembali di Kantor Asal (HO)</div>
+                  <div className="text-[10.5px] text-stone-700 mt-1 space-y-0.5">
+                    <div>Tempat: <strong>{sppd.kotaAsal}</strong></div>
+                    <div>Pada Tanggal: <strong>{formatDateIndonesian(sppd.tanggalSelesai)}</strong></div>
+                    <div>Pukul: _______ WIB</div>
+                  </div>
+                </div>
+                <div className="text-center pt-4">
+                  <span className="text-[9.5px] text-stone-400 block mb-5">(Tanda Tangan &amp; Cap Verifikasi SDM / HO)</span>
+                  <span className="border-t border-dashed border-stone-400 block pt-1 text-[10px] font-bold">
+                    Pejabat yang Memberi Perintah / Keuangan
+                  </span>
+                </div>
+              </div>
+
+            </div>
+
+            {/* CATATAN RESUME DINAS */}
+            <div className="mt-3.5 border border-black p-3 font-sans">
+              <span className="text-[11px] font-bold uppercase block mb-1">
+                V. Catatan Hasil Kegiatan Perjalanan Dinas / Resume Lapangan:
               </span>
-            </div>
-          </div>
-
-          <p className="text-[10px] font-sans text-stone-600 italic mb-3">
-            * Lembar visum ini wajib diisi dan dicap/ditandatangani oleh pimpinan/penanggung jawab di setiap lokasi tujuan perjalan dinas.
-          </p>
-
-          {/* TABEL VISUM 4 POSISI */}
-          <div className="grid grid-cols-2 border border-black text-xs font-sans">
-            
-            {/* POS 1: Keberangkatan dari Kantor Asal */}
-            <div className="border-r border-b border-black p-3 space-y-2 min-h-[140px] flex flex-col justify-between">
-              <div>
-                <div className="font-bold uppercase text-[11px] text-black">I. Berangkat dari Kantor Asal</div>
-                <div className="text-[10.5px] text-stone-700 mt-1 space-y-0.5">
-                  <div>Tempat: <strong>{sppd.kotaAsal}</strong></div>
-                  <div>Ke: <strong>{sppd.kotaTujuan}</strong></div>
-                  <div>Pada Tanggal: <strong>{formatDateIndonesian(sppd.tanggalMulai)}</strong></div>
-                </div>
+              <div className="min-h-[70px] border border-dashed border-stone-300 p-2.5 text-[10px] text-stone-600 bg-stone-50/50">
+                {(() => {
+                  const remarks = sppd.keteranganSppd || '';
+                  if (remarks && !remarks.includes('Voucher Biaya Perjalanan Dinas') && !remarks.includes('Diposting dari') && !remarks.includes('SPPD/NMSA/')) {
+                    return <p className="text-stone-800 font-sans">{remarks}</p>;
+                  }
+                  return (
+                    <p className="italic text-stone-500 font-sans">
+                      Perjalanan dinas telah terlaksana sesuai penugasan operasional lapangan.
+                    </p>
+                  );
+                })()}
               </div>
-              <div className="text-center pt-6">
-                <span className="text-[9.5px] text-stone-400 block mb-6">(Tanda Tangan &amp; Cap Bagian SDM / HO)</span>
-                <span className="border-t border-dashed border-stone-400 block pt-1 text-[10px] font-bold">
-                  Bagian Administrasi HO
-                </span>
-              </div>
-            </div>
-
-            {/* POS 2: Tiba di Tempat Tujuan Lapangan / Site */}
-            <div className="border-b border-black p-3 space-y-2 min-h-[140px] flex flex-col justify-between">
-              <div>
-                <div className="font-bold uppercase text-[11px] text-black">II. Tiba di Lokasi Tujuan (Site / Wilayah)</div>
-                <div className="text-[10.5px] text-stone-700 mt-1 space-y-0.5">
-                  <div>Tempat: <strong>{sppd.kotaTujuan}</strong></div>
-                  <div>Pada Tanggal: _____________________</div>
-                  <div>Pukul: _______ WITA / WIB</div>
-                </div>
-              </div>
-              <div className="text-center pt-6">
-                <span className="text-[9.5px] text-stone-400 block mb-6">(Tanda Tangan &amp; Cap Pimpinan Lokasi Tujuan)</span>
-                <span className="border-t border-dashed border-stone-400 block pt-1 text-[10px] font-bold">
-                  Penanggung Jawab / Kepala Unit Site
-                </span>
-              </div>
-            </div>
-
-            {/* POS 3: Berangkat Kembali dari Tempat Tujuan */}
-            <div className="border-r border-black p-3 space-y-2 min-h-[140px] flex flex-col justify-between">
-              <div>
-                <div className="font-bold uppercase text-[11px] text-black">III. Berangkat Kembali dari Lokasi Tujuan</div>
-                <div className="text-[10.5px] text-stone-700 mt-1 space-y-0.5">
-                  <div>Dari: <strong>{sppd.kotaTujuan}</strong></div>
-                  <div>Ke: <strong>{sppd.kotaAsal}</strong></div>
-                  <div>Pada Tanggal: _____________________</div>
-                </div>
-              </div>
-              <div className="text-center pt-6">
-                <span className="text-[9.5px] text-stone-400 block mb-6">(Tanda Tangan &amp; Cap Pimpinan Lokasi Tujuan)</span>
-                <span className="border-t border-dashed border-stone-400 block pt-1 text-[10px] font-bold">
-                  Penanggung Jawab / Kepala Unit Site
-                </span>
-              </div>
-            </div>
-
-            {/* POS 4: Tiba Kembali di Kantor Asal */}
-            <div className="p-3 space-y-2 min-h-[140px] flex flex-col justify-between">
-              <div>
-                <div className="font-bold uppercase text-[11px] text-black">IV. Tiba Kembali di Kantor Asal (HO)</div>
-                <div className="text-[10.5px] text-stone-700 mt-1 space-y-0.5">
-                  <div>Tempat: <strong>{sppd.kotaAsal}</strong></div>
-                  <div>Pada Tanggal: <strong>{formatDateIndonesian(sppd.tanggalSelesai)}</strong></div>
-                  <div>Pukul: _______ WIB</div>
-                </div>
-              </div>
-              <div className="text-center pt-6">
-                <span className="text-[9.5px] text-stone-400 block mb-6">(Tanda Tangan &amp; Cap Verifikasi SDM / HO)</span>
-                <span className="border-t border-dashed border-stone-400 block pt-1 text-[10px] font-bold">
-                  Pejabat yang Memberi Perintah / Keuangan
-                </span>
-              </div>
-            </div>
-
-          </div>
-
-          {/* CATATAN RESUME DINAS */}
-          <div className="mt-4 border border-black p-3 font-sans">
-            <span className="text-[11px] font-bold uppercase block mb-1">
-              V. Catatan Hasil Kegiatan Perjalanan Dinas / Resume Lapangan:
-            </span>
-            <div className="min-h-[70px] border border-dashed border-stone-300 p-2 text-[10px] text-stone-600 bg-stone-50/50">
-              {(() => {
-                const remarks = sppd.keteranganSppd || '';
-                if (remarks && !remarks.includes('Voucher Biaya Perjalanan Dinas') && !remarks.includes('Diposting dari') && !remarks.includes('SPPD/NMSA/')) {
-                  return <p className="text-stone-800 font-sans">{remarks}</p>;
-                }
-                return (
-                  <p className="italic text-stone-500 font-sans">
-                    Perjalanan dinas telah terlaksana sesuai penugasan operasional lapangan.
-                  </p>
-                );
-              })()}
             </div>
           </div>
 
