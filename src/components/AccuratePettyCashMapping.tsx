@@ -6,13 +6,15 @@ import {
   FileSpreadsheet, FileText, Upload, Sparkles, CheckCircle2, AlertCircle, 
   Copy, Download, RefreshCw, Plus, Trash2, Edit2, Check, ArrowRight, 
   Settings, BookOpen, Layers, ShieldCheck, Search, Filter, HelpCircle,
-  FileCheck, DollarSign, ChevronDown, ChevronUp, Save, Eye, X, ArrowLeftRight, ExternalLink
+  FileCheck, DollarSign, ChevronDown, ChevronUp, Save, Eye, X, ArrowLeftRight, ExternalLink,
+  Cloud, Database, HardDrive, History, CheckCheck
 } from 'lucide-react';
-import { AccurateAccount, AccurateMappedTransaction, PettyCashReport, Submission } from '../types';
+import { AccurateAccount, AccurateMappedTransaction, AccurateMappingReport, PettyCashReport, Submission } from '../types';
 import { DEFAULT_ACCURATE_ACCOUNTS, autoMapTransactionToAccurate } from '../data/accurateCoaData';
 import { isPettyCashSubmission, getPettyCashCustodian, sortSubmissionsDescending } from '../utils';
 import { 
   saveAccurateMappingToFirestore, 
+  deleteAccurateMappingFromFirestore,
   loadAccurateMappingsFromFirestore,
   ensureValidDriveToken,
   googleDriveLogin,
@@ -206,17 +208,17 @@ export function AccuratePettyCashMapping({
   const [selectedKasCode, setSelectedKasCode] = useState<string>(() => cachedInitial?.selectedKasCode || '110102');
 
   // Input Mode state with session persistence ('voucher' is priority if submissions exist)
-  const [activeTab, setActiveTabInternal] = useState<'voucher' | 'upload' | 'workspace' | 'text'>(() => {
+  const [activeTab, setActiveTabInternal] = useState<'voucher' | 'upload' | 'workspace' | 'text' | 'saved'>(() => {
     try {
       const saved = sessionStorage.getItem('accurate_active_tab');
-      if (saved && ['voucher', 'upload', 'workspace', 'text'].includes(saved)) {
+      if (saved && ['voucher', 'upload', 'workspace', 'text', 'saved'].includes(saved)) {
         return saved as any;
       }
     } catch (e) {}
     return submissions.length > 0 ? 'voucher' : 'upload';
   });
 
-  const setActiveTab = (tab: 'voucher' | 'upload' | 'workspace' | 'text') => {
+  const setActiveTab = (tab: 'voucher' | 'upload' | 'workspace' | 'text' | 'saved') => {
     setActiveTabInternal(tab);
     try { sessionStorage.setItem('accurate_active_tab', tab); } catch (e) {}
   };
@@ -803,46 +805,25 @@ export function AccuratePettyCashMapping({
   const [reportTitle, setReportTitle] = useState<string>(() => cachedInitial?.reportTitle || 'Laporan Petty Cash');
   const [period, setPeriod] = useState<string>(() => cachedInitial?.period || new Date().toISOString().substring(0, 7));
   const [transactions, setTransactions] = useState<AccurateMappedTransaction[]>(() => cachedInitial?.transactions || []);
+  const [savedSearchQuery, setSavedSearchQuery] = useState<string>('');
   
-  // Auto-persist active mapping changes to localStorage cache
-  useEffect(() => {
-    if (transactions.length > 0) {
-      try {
-        const payload: CachedPettyCashMapping = {
-          reportTitle,
-          period,
-          transactions,
-          selectedKasCode,
-          activeDocumentUrl,
-          activeDocumentName,
-          activeCustodianName,
-          activeSubmission,
-          updatedAt: new Date().toISOString()
-        };
-        localStorage.setItem('accurate_petty_cash_active_mapping_v2', JSON.stringify(payload));
-      } catch (e) {
-        console.error('Failed to cache petty cash mapping:', e);
+  // Last saved timestamp & Auto-save status
+  const [lastSavedTime, setLastSavedTime] = useState<string | null>(() => {
+    try {
+      const raw = localStorage.getItem('accurate_petty_cash_active_mapping_v2');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.updatedAt) {
+          return new Date(parsed.updatedAt).toLocaleTimeString('id-ID');
+        }
       }
-    }
-  }, [transactions, reportTitle, period, selectedKasCode, activeDocumentUrl, activeDocumentName, activeCustodianName, activeSubmission]);
+    } catch {}
+    return null;
+  });
+  const [isAutoSaving, setIsAutoSaving] = useState<boolean>(false);
 
-  // Handler to clear active mapping cache and start clean
-  const handleClearMapping = () => {
-    if (window.confirm('Bersihkan data pemetaan saat ini dan mulai pemetaan baru?')) {
-      setTransactions([]);
-      setReportTitle('Laporan Petty Cash');
-      setActiveDocumentUrl(null);
-      setActiveDocumentName(null);
-      setActiveCustodianName(null);
-      setActiveSubmission(null);
-      localStorage.removeItem('accurate_petty_cash_active_mapping_v2');
-      setSuccessMessage('Hasil pemetaan berhasil dibersihkan. Silakan pilih voucher baru untuk dipetakan.');
-      setTimeout(() => setSuccessMessage(''), 3000);
-    }
-  };
-
-  // Saved Mappings for displaying previously mapped stats on cards
-  const [savedMappings, setSavedMappings] = useState<any[]>(() => {
+  // Saved Mappings list from Firestore & localStorage
+  const [savedMappings, setSavedMappings] = useState<AccurateMappingReport[]>(() => {
     try {
       const stored = localStorage.getItem('accurate_mapped_reports_v1');
       if (stored) {
@@ -861,6 +842,301 @@ export function AccuratePettyCashMapping({
     }).catch(() => {});
   }, []);
 
+  // Multi-tier Persistence Engine: Local Cache + Firebase Firestore + Google Drive + Linked Submission
+  const persistMappingData = async (
+    customPayload?: Partial<AccurateMappingReport>,
+    explicitSub?: Submission | null,
+    showToast: boolean = false
+  ) => {
+    const currentTransactions = customPayload?.transactions || transactions;
+    if (!currentTransactions || currentTransactions.length === 0) return;
+
+    const currentTitle = customPayload?.title || reportTitle;
+    const currentPeriod = customPayload?.period || period;
+    const currentKas = customPayload?.selectedKasCode || selectedKasCode;
+    const currentDocUrl = customPayload?.documentUrl !== undefined ? customPayload.documentUrl : activeDocumentUrl;
+    const currentDocName = customPayload?.documentName !== undefined ? customPayload.documentName : activeDocumentName;
+    const currentCustodian = customPayload?.custodian !== undefined ? customPayload.custodian : activeCustodianName;
+    const targetSub = explicitSub !== undefined ? explicitSub : activeSubmission;
+    const currentTotal = currentTransactions.reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
+
+    const reportId = customPayload?.id || (targetSub ? `vh-map-${targetSub.id}` : `acc-map-${Date.now()}`);
+    const nowIso = new Date().toISOString();
+
+    const mappingPayload: AccurateMappingReport = {
+      id: reportId,
+      title: currentTitle,
+      period: currentPeriod,
+      selectedKasCode: currentKas,
+      kasAccountCode: currentKas,
+      kasAccountName: accounts.find(a => a.code === currentKas)?.name || 'Petty Cash Lapangan',
+      totalExpense: currentTotal,
+      transactions: currentTransactions,
+      custodian: currentCustodian,
+      documentUrl: currentDocUrl,
+      documentName: currentDocName,
+      submissionId: targetSub?.id || null,
+      submissionCode: targetSub?.kode || null,
+      sourceType: customPayload?.sourceType || (targetSub ? 'voucher_submission' : 'excel'),
+      accountsCount: accounts.length,
+      savedAt: nowIso,
+      updatedAt: nowIso,
+      driveBackupUrl: customPayload?.driveBackupUrl || null,
+      driveBackupFileId: customPayload?.driveBackupFileId || null
+    };
+
+    // 1. Save to LocalStorage active cache
+    try {
+      const activeCache: CachedPettyCashMapping = {
+        reportTitle: currentTitle,
+        period: currentPeriod,
+        transactions: currentTransactions,
+        selectedKasCode: currentKas,
+        activeDocumentUrl: currentDocUrl,
+        activeDocumentName: currentDocName,
+        activeCustodianName: currentCustodian,
+        activeSubmission: targetSub,
+        updatedAt: nowIso
+      };
+      localStorage.setItem('accurate_petty_cash_active_mapping_v2', JSON.stringify(activeCache));
+    } catch (e) {}
+
+    // 2. Save to Firestore and sync local list
+    try {
+      setIsAutoSaving(true);
+      await saveAccurateMappingToFirestore(mappingPayload);
+      setSavedMappings(prev => {
+        const filtered = prev.filter(m => m.id !== reportId);
+        return [mappingPayload, ...filtered];
+      });
+      setLastSavedTime(new Date().toLocaleTimeString('id-ID'));
+    } catch (e) {
+      console.warn('Gagal menyimpan pemetaan ke Firestore:', e);
+    } finally {
+      setIsAutoSaving(false);
+    }
+
+    // 3. Link back to Submission object if applicable
+    if (targetSub) {
+      const updatedSub: Submission = {
+        ...targetSub,
+        isAccurateMapped: true,
+        accurateMappedAt: nowIso,
+        accurateMappingReportId: reportId,
+        accurateMappedTransactions: currentTransactions,
+        accurateTotalExpense: currentTotal,
+        accurateKasAccountCode: currentKas,
+        accurateReportTitle: currentTitle
+      };
+
+      if (onSaveSubmission) {
+        try { await onSaveSubmission(updatedSub); } catch (e) {}
+      } else {
+        try {
+          if (isFirebaseConfigured()) {
+            await saveSubmissionToFirestore(updatedSub, userProfile?.companyId, userProfile?.companyName);
+          }
+          const localRaw = localStorage.getItem('NUSANTARA_HO_SUBMISSIONS');
+          if (localRaw) {
+            const list: Submission[] = JSON.parse(localRaw);
+            const updatedList = list.map(s => s.id === updatedSub.id ? updatedSub : s);
+            localStorage.setItem('NUSANTARA_HO_SUBMISSIONS', JSON.stringify(updatedList));
+          }
+        } catch (e) {}
+      }
+    }
+
+    if (showToast) {
+      setSuccessMessage(`Hasil pemetaan akun tersimpan secara permanen di Cloud Database & Cache Aplikasi (${currentTransactions.length} transaksi - Rp ${currentTotal.toLocaleString('id-ID')})!`);
+      setTimeout(() => setSuccessMessage(''), 3500);
+    }
+  };
+
+  // Debounced auto-save effect when transactions change in active workspace
+  useEffect(() => {
+    if (transactions.length === 0) return;
+    
+    // Save to local active cache immediately
+    try {
+      const activeCache: CachedPettyCashMapping = {
+        reportTitle,
+        period,
+        transactions,
+        selectedKasCode,
+        activeDocumentUrl,
+        activeDocumentName,
+        activeCustodianName,
+        activeSubmission,
+        updatedAt: new Date().toISOString()
+      };
+      localStorage.setItem('accurate_petty_cash_active_mapping_v2', JSON.stringify(activeCache));
+    } catch (e) {}
+
+    // Debounced cloud save
+    const timer = setTimeout(() => {
+      persistMappingData(undefined, undefined, false);
+    }, 1800);
+
+    return () => clearTimeout(timer);
+  }, [transactions, reportTitle, period, selectedKasCode]);
+
+  // Handler to clear active mapping cache and start clean
+  const handleClearMapping = () => {
+    if (window.confirm('Bersihkan data pemetaan saat ini dan mulai pemetaan baru? (Data riwayat yang tersimpan di Cloud/Database tetap aman)')) {
+      setTransactions([]);
+      setReportTitle('Laporan Petty Cash');
+      setActiveDocumentUrl(null);
+      setActiveDocumentName(null);
+      setActiveCustodianName(null);
+      setActiveSubmission(null);
+      localStorage.removeItem('accurate_petty_cash_active_mapping_v2');
+      setSuccessMessage('Workspace pemetaan aktif berhasil dibersihkan. Anda dapat memilih voucher baru atau membuka riwayat pemetaan tersimpan.');
+      setTimeout(() => setSuccessMessage(''), 3000);
+    }
+  };
+
+  // Handler to load a saved mapping report from history
+  const handleLoadSavedMapping = (mapping: AccurateMappingReport) => {
+    if (!mapping || !mapping.transactions) return;
+
+    setReportTitle(mapping.title || 'Laporan Petty Cash');
+    setPeriod(mapping.period || new Date().toISOString().substring(0, 7));
+    if (mapping.selectedKasCode || mapping.kasAccountCode) {
+      setSelectedKasCode(mapping.selectedKasCode || mapping.kasAccountCode || '110102');
+    }
+    setTransactions(mapping.transactions);
+    setActiveDocumentUrl(mapping.documentUrl || null);
+    setActiveDocumentName(mapping.documentName || null);
+    setActiveCustodianName(mapping.custodian || null);
+
+    if (mapping.submissionId) {
+      const foundSub = pettyCashSubmissions.find(s => s.id === mapping.submissionId);
+      setActiveSubmission(foundSub || null);
+    } else {
+      setActiveSubmission(null);
+    }
+
+    setSuccessMessage(`Berhasil memuat pemetaan tersimpan "${mapping.title}" (${mapping.transactions.length} baris transaksi - Rp ${(mapping.totalExpense || 0).toLocaleString('id-ID')})!`);
+    setTimeout(() => setSuccessMessage(''), 3500);
+
+    // Scroll to verification table
+    setTimeout(() => {
+      const tableEl = document.getElementById('accurate-mapped-table-section');
+      if (tableEl) {
+        tableEl.scrollIntoView({ behavior: 'smooth' });
+      }
+    }, 100);
+  };
+
+  // Handler to delete a saved mapping report from Firestore & localStorage
+  const handleDeleteSavedMapping = async (id: string, title?: string) => {
+    if (!window.confirm(`Hapus riwayat pemetaan "${title || id}" secara permanen dari Cloud Database & Cache?`)) {
+      return;
+    }
+
+    try {
+      await deleteAccurateMappingFromFirestore(id);
+      setSavedMappings(prev => prev.filter(m => m.id !== id));
+      setSuccessMessage(`Riwayat pemetaan "${title || id}" berhasil dihapus.`);
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (e: any) {
+      setErrorMessage(`Gagal menghapus riwayat pemetaan: ${e.message || String(e)}`);
+    }
+  };
+
+  // Backup mapping to Google Drive
+  const handleBackupToGoogleDrive = async (targetMapping?: any) => {
+    const mapToSave = targetMapping || {
+      id: activeSubmission ? `vh-map-${activeSubmission.id}` : `acc-map-${Date.now()}`,
+      title: reportTitle,
+      period,
+      selectedKasCode,
+      totalExpense,
+      transactions,
+      custodian: activeCustodianName,
+      documentUrl: activeDocumentUrl,
+      documentName: activeDocumentName,
+      savedAt: new Date().toISOString()
+    };
+
+    if (!mapToSave.transactions || mapToSave.transactions.length === 0) {
+      setErrorMessage('Tidak ada data transaksi yang dapat dicadangkan ke Google Drive.');
+      return;
+    }
+
+    setIsProcessing(true);
+    setProcessMessage('Menyiapkan & Mengunggah Cadangan Pemetaan ke Google Drive...');
+    setErrorMessage('');
+    setSuccessMessage('');
+
+    try {
+      // 1. Check or authenticate Google Drive
+      let token = await ensureValidDriveToken();
+      if (!token) {
+        const authed = await googleDriveLogin();
+        if (!authed) {
+          throw new Error('Google Drive belum terhubung. Silakan login ke Google Drive pada menu pengaturan.');
+        }
+        token = await ensureValidDriveToken();
+      }
+
+      if (!token) {
+        throw new Error('Token Google Drive tidak tersedia.');
+      }
+
+      // 2. Prepare JSON backup blob
+      const jsonContent = JSON.stringify(mapToSave, null, 2);
+      const jsonBlob = new Blob([jsonContent], { type: 'application/json' });
+      const safeTitle = (mapToSave.title || 'Pemetaan_Accurate_PettyCash').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const backupFileName = `Backup_Accurate_${safeTitle}_${new Date().toISOString().substring(0, 10)}.json`;
+
+      // 3. Upload directly to Google Drive
+      const metadata = {
+        name: backupFileName,
+        mimeType: 'application/json',
+        description: `Cadangan Pemetaan Akun Accurate Petty Cash: ${mapToSave.title} (${mapToSave.transactions.length} baris, Total Rp ${mapToSave.totalExpense?.toLocaleString('id-ID')})`
+      };
+
+      const form = new FormData();
+      form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+      form.append('file', jsonBlob);
+
+      const driveRes = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`
+        },
+        body: form
+      });
+
+      if (!driveRes.ok) {
+        const errText = await driveRes.text();
+        throw new Error(`Google Drive API error: ${errText}`);
+      }
+
+      const driveData = await driveRes.json();
+      const driveUrl = driveData.webViewLink || `https://drive.google.com/file/d/${driveData.id}/view`;
+
+      // Update mapping record with drive backup info
+      const updatedMapping: AccurateMappingReport = {
+        ...mapToSave,
+        driveBackupUrl: driveUrl,
+        driveBackupFileId: driveData.id,
+        updatedAt: new Date().toISOString()
+      };
+
+      await saveAccurateMappingToFirestore(updatedMapping);
+      setSavedMappings(prev => [updatedMapping, ...prev.filter(m => m.id !== updatedMapping.id)]);
+
+      setSuccessMessage(`Berhasil mencadangkan pemetaan ke Google Drive! Berkas: "${backupFileName}". Anda dapat mengaksesnya kapan saja.`);
+    } catch (err: any) {
+      console.error('Error backing up to Google Drive:', err);
+      setErrorMessage(err.message || 'Gagal mencadangkan ke Google Drive.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   // Helper to compute voucher card stats (submisi vs realisasi pengeluaran LPJ & date period)
   const getVoucherStats = (sub: Submission) => {
     const itemsCount = sub.items?.length || 0;
@@ -874,12 +1150,23 @@ export function AccuratePettyCashMapping({
       ? transactions.reduce((acc, t) => acc + (Number(t.amount) || 0), 0)
       : null;
 
-    // 2. Check saved mappings from Firestore/localStorage
+    // 2. Check saved mappings from Firestore/localStorage or directly on sub
     const saved = savedMappings.find((m) => {
       if (m.id === `vh-map-${sub.id}` || m.id === sub.id) return true;
+      if (m.submissionId === sub.id) return true;
+      if (sub.kode && m.submissionCode === sub.kode) return true;
       if (sub.kode && m.title && m.title.includes(sub.kode)) return true;
       return false;
-    });
+    }) || (sub.isAccurateMapped && Array.isArray(sub.accurateMappedTransactions) && sub.accurateMappedTransactions.length > 0 ? {
+      id: sub.accurateMappingReportId || `vh-map-${sub.id}`,
+      title: sub.accurateReportTitle || `Laporan Petty Cash: ${sub.kode} - ${custodian}`,
+      period: sub.tanggal ? sub.tanggal.substring(0, 7) : '',
+      selectedKasCode: sub.accurateKasAccountCode || '110102',
+      totalExpense: typeof sub.accurateTotalExpense === 'number' ? sub.accurateTotalExpense : sub.accurateMappedTransactions.reduce((acc, t) => acc + (Number(t.amount) || 0), 0),
+      transactions: sub.accurateMappedTransactions,
+      custodian,
+      savedAt: sub.accurateMappedAt || ''
+    } : null);
 
     const savedExpense = saved 
       ? (Number(saved.totalExpense) || (saved.transactions?.reduce((acc: number, t: any) => acc + (Number(t.amount) || 0), 0) || 0)) 
@@ -924,6 +1211,8 @@ export function AccuratePettyCashMapping({
       lpjDocs,
       totalExpense,
       isMapped,
+      savedMapping: saved || null,
+      savedCount: saved?.transactions?.length || 0,
       periodText,
       diff: totalExpense > 0 ? totalExpense - totalAmt : 0
     };
@@ -2127,6 +2416,16 @@ export function AccuratePettyCashMapping({
             <FileText size={15} />
             <span>Copy & Paste Teks Tabel</span>
           </button>
+
+          <button
+            onClick={() => setActiveTab('saved')}
+            className={`px-4 py-2.5 rounded-xl text-xs font-extrabold transition flex items-center gap-2 cursor-pointer ml-auto ${
+              activeTab === 'saved' ? 'bg-indigo-700 text-white shadow-sm' : 'bg-indigo-50 text-indigo-900 hover:bg-indigo-100 border border-indigo-200'
+            }`}
+          >
+            <History size={15} className="text-indigo-500" />
+            <span>Riwayat Pemetaan Tersimpan ({savedMappings.length})</span>
+          </button>
         </div>
 
         {/* Tab Content 0: Voucher HO Submissions (Filtered strictly to Petty Cash) */}
@@ -2297,58 +2596,95 @@ export function AccuratePettyCashMapping({
                       </div>
 
                       {/* Bottom Action Buttons */}
-                      <div className="pt-2 border-t border-stone-200/80 flex items-center justify-between">
-                        <span className="text-[10px] font-mono font-bold text-stone-500">
-                          {stats.isMapped ? (
-                            <span className="text-emerald-700 font-extrabold flex items-center gap-1">
-                              <CheckCircle2 size={11} />
-                              <span>Sudah Dipetakan</span>
+                      <div className="pt-2 border-t border-stone-200/80 flex items-center justify-between flex-wrap gap-2">
+                        <div className="flex items-center gap-1.5">
+                          {stats.savedMapping ? (
+                            <span className="text-[10px] font-mono font-black text-emerald-800 bg-emerald-100/90 border border-emerald-300 px-2 py-0.5 rounded-md flex items-center gap-1">
+                              <CheckCircle2 size={11} className="text-emerald-700" />
+                              <span>Tersimpan di Cloud</span>
+                            </span>
+                          ) : stats.isMapped ? (
+                            <span className="text-[10px] font-mono font-extrabold text-indigo-800 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-md flex items-center gap-1">
+                              <Sparkles size={11} className="text-indigo-600" />
+                              <span>Sedang Terpetakan</span>
                             </span>
                           ) : (
-                            <span className="text-stone-400">Status: Draft</span>
+                            <span className="text-[10px] font-mono text-stone-400">Status: Belum Dipetakan</span>
                           )}
-                        </span>
+                        </div>
 
                         <div className="flex items-center gap-1.5">
-                          {stats.lpjDocs.length === 0 ? (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleOpenVoucherModal(sub);
-                              }}
-                              className="bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 px-2.5 py-1.5 rounded-xl text-[11px] font-extrabold flex items-center gap-1 transition cursor-pointer shadow-3xs"
-                              title="Unggah berkas LPJ / Dokumen fisik untuk voucher ini"
-                            >
-                              <Upload size={12} className="text-amber-700" />
-                              <span>Upload LPJ</span>
-                            </button>
+                          {stats.savedMapping ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleLoadSavedMapping(stats.savedMapping);
+                                }}
+                                className="bg-indigo-700 hover:bg-indigo-800 text-white px-2.5 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 shadow-3xs cursor-pointer"
+                                title="Buka data pemetaan yang tersimpan di Cloud/Cache tanpa perlu analisis ulang"
+                              >
+                                <History size={12} />
+                                <span>Buka Pemetaan</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleLoadVoucherSubmission(sub);
+                                }}
+                                className="bg-stone-100 hover:bg-stone-200 text-stone-700 border border-stone-300 px-2 py-1.5 rounded-xl text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                                title="Analisis ulang dokumen fisik atau rincian item voucher ini"
+                              >
+                                <RefreshCw size={11} />
+                                <span className="hidden sm:inline">Ulangi</span>
+                              </button>
+                            </>
                           ) : (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleOpenVoucherModal(sub);
-                              }}
-                              className="bg-stone-100 hover:bg-stone-200 border border-stone-300 text-stone-800 px-2.5 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 transition cursor-pointer"
-                              title="Pilih Berkas Lampiran & Pratinjau Dokumen"
-                            >
-                              <Eye size={12} />
-                              <span>Pilih Dokumen</span>
-                            </button>
+                            <>
+                              {stats.lpjDocs.length === 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleOpenVoucherModal(sub);
+                                  }}
+                                  className="bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 px-2.5 py-1.5 rounded-xl text-[11px] font-extrabold flex items-center gap-1 transition cursor-pointer shadow-3xs"
+                                  title="Unggah berkas LPJ / Dokumen fisik untuk voucher ini"
+                                >
+                                  <Upload size={12} className="text-amber-700" />
+                                  <span>Upload LPJ</span>
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleOpenVoucherModal(sub);
+                                  }}
+                                  className="bg-stone-100 hover:bg-stone-200 border border-stone-300 text-stone-800 px-2.5 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 transition cursor-pointer"
+                                  title="Pilih Berkas Lampiran & Pratinjau Dokumen"
+                                >
+                                  <Eye size={12} />
+                                  <span>Pilih Dokumen</span>
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleLoadVoucherSubmission(sub);
+                                }}
+                                className="bg-emerald-700 hover:bg-emerald-800 text-white px-3 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 shadow-xs transition cursor-pointer"
+                                title="Petakan Dokumen Lampiran ke Akun COA Accurate"
+                              >
+                                <span>Petakan</span>
+                                <ArrowRight size={13} />
+                              </button>
+                            </>
                           )}
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleLoadVoucherSubmission(sub);
-                            }}
-                            className="bg-emerald-700 hover:bg-emerald-800 text-white px-3 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 shadow-xs transition cursor-pointer"
-                            title="Petakan Dokumen Lampiran ke Akun COA Accurate"
-                          >
-                            <span>Petakan</span>
-                            <ArrowRight size={13} />
-                          </button>
                         </div>
                       </div>
                     </div>
@@ -2457,6 +2793,179 @@ export function AccuratePettyCashMapping({
           </div>
         )}
 
+        {/* Tab Content 4: Saved Mappings History (Cloud Database & Local Storage & Google Drive) */}
+        {activeTab === 'saved' && (
+          <div className="space-y-4">
+            <div className="bg-indigo-50/90 border border-indigo-200 p-4 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <Database size={18} className="text-indigo-600 shrink-0 mt-0.5" />
+                <div>
+                  <h4 className="text-xs font-black text-indigo-950 uppercase tracking-wide">
+                    Riwayat Pemetaan Akun Tersimpan (Cloud Firestore & Cache Aplikasi)
+                  </h4>
+                  <p className="text-xs text-indigo-900 leading-relaxed font-sans mt-0.5">
+                    Hasil pemetaan akun Accurate yang telah dibacakan dan diverifikasi disimpan secara permanen di database Cloud Firebase, cache browser, dan dapat dicadangkan langsung ke Google Drive.
+                  </p>
+                </div>
+              </div>
+
+              {/* Search Filter for Saved Reports */}
+              <div className="flex items-center gap-2 shrink-0">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" size={14} />
+                  <input
+                    type="text"
+                    value={savedSearchQuery}
+                    onChange={(e) => setSavedSearchQuery(e.target.value)}
+                    placeholder="Cari riwayat pemetaan..."
+                    className="pl-8 pr-3 py-1.5 bg-white border border-indigo-300 rounded-xl text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-indigo-500 text-stone-800"
+                  />
+                </div>
+                {savedMappings.length > 0 && (
+                  <button
+                    onClick={() => {
+                      loadAccurateMappingsFromFirestore().then((res) => {
+                        if (res) setSavedMappings(res);
+                        setSuccessMessage('Data riwayat pemetaan berhasil disinkronkan dari Cloud!');
+                        setTimeout(() => setSuccessMessage(''), 2500);
+                      });
+                    }}
+                    className="p-1.5 bg-white hover:bg-indigo-100 border border-indigo-300 text-indigo-800 rounded-xl transition cursor-pointer shadow-3xs"
+                    title="Sinkronkan Ulang dari Cloud"
+                  >
+                    <RefreshCw size={14} />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {savedMappings.length === 0 ? (
+              <div className="p-8 text-center bg-stone-50 rounded-2xl border border-stone-200 space-y-2">
+                <Database size={32} className="mx-auto text-stone-400" />
+                <p className="text-xs font-bold text-stone-700">Belum ada riwayat pemetaan akun Accurate yang tersimpan.</p>
+                <p className="text-[11px] text-stone-500 max-w-md mx-auto">
+                  Saat Anda memilih voucher atau mengunggah laporan dan sistem selesai membacakan serta memetakan transaksi, data akan otomatis tersimpan di sini dan tidak akan hilang saat aplikasi di-restart atau di-update.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 max-h-[460px] overflow-y-auto p-1">
+                {savedMappings
+                  .filter((m) => {
+                    if (!savedSearchQuery.trim()) return true;
+                    const q = savedSearchQuery.toLowerCase();
+                    const text = [
+                      m.title || '',
+                      m.custodian || '',
+                      m.period || '',
+                      m.submissionCode || '',
+                      m.selectedKasCode || '',
+                      m.documentName || ''
+                    ].join(' ').toLowerCase();
+                    return text.includes(q);
+                  })
+                  .map((m) => {
+                    const txCount = m.transactions?.length || 0;
+                    const totalAmt = m.totalExpense || m.transactions?.reduce((s: number, t: any) => s + (Number(t.amount) || 0), 0) || 0;
+                    const isCurrentlyActive = activeSubmission?.id === m.submissionId || (reportTitle === m.title && transactions.length === txCount);
+
+                    return (
+                      <div
+                        key={m.id}
+                        className={`border rounded-2xl p-4 transition shadow-xs flex flex-col justify-between space-y-3 ${
+                          isCurrentlyActive 
+                            ? 'bg-emerald-50/60 border-emerald-400 ring-1 ring-emerald-400' 
+                            : 'bg-white hover:bg-stone-50/80 border-stone-250 hover:border-indigo-300'
+                        }`}
+                      >
+                        <div className="space-y-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="space-y-0.5">
+                              <span className="text-[10px] font-mono font-bold bg-indigo-100 text-indigo-900 border border-indigo-200 px-2 py-0.5 rounded-full inline-block">
+                                ☁️ Cloud & Cache
+                              </span>
+                              <h4 className="font-sans font-black text-xs text-stone-900 line-clamp-1 pt-1">
+                                {m.title || 'Laporan Petty Cash Mapped'}
+                              </h4>
+                            </div>
+                            <span className="text-[10px] font-mono bg-stone-100 text-stone-700 px-2 py-0.5 rounded-md font-bold shrink-0">
+                              {txCount} Transaksi
+                            </span>
+                          </div>
+
+                          <div className="space-y-1 text-[11px] font-mono text-stone-600">
+                            {m.custodian && (
+                              <p className="truncate">
+                                👤 Pemegang: <strong className="text-stone-900">{m.custodian}</strong>
+                              </p>
+                            )}
+                            {m.period && (
+                              <p>
+                                🗓️ Periode: <strong className="text-stone-900">{m.period}</strong>
+                              </p>
+                            )}
+                            <p>
+                              🏦 Kas: <span className="text-emerald-800 font-bold">[{m.selectedKasCode || '110102'}]</span>
+                            </p>
+                            {m.documentName && (
+                              <p className="text-[10px] text-stone-500 truncate" title={m.documentName}>
+                                📄 Lampiran: {m.documentName}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="p-2 bg-stone-100/80 rounded-xl flex items-center justify-between text-xs font-mono">
+                            <span className="text-stone-500 font-medium">Total Beban:</span>
+                            <span className="font-black text-emerald-900">
+                              Rp {totalAmt.toLocaleString('id-ID')}
+                            </span>
+                          </div>
+
+                          {m.savedAt && (
+                            <p className="text-[9px] font-mono text-stone-400">
+                              Disimpan: {new Date(m.savedAt).toLocaleString('id-ID')}
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="pt-2 border-t border-stone-200/80 flex items-center justify-between gap-1.5 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => handleLoadSavedMapping(m)}
+                            className="bg-indigo-700 hover:bg-indigo-800 text-white px-3 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 shadow-3xs cursor-pointer"
+                            title="Buka dan muat pemetaan ini ke tabel verifikasi"
+                          >
+                            <Eye size={12} />
+                            <span>Buka Pemetaan</span>
+                          </button>
+
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleBackupToGoogleDrive(m)}
+                              className="p-1.5 bg-stone-100 hover:bg-stone-200 border border-stone-300 text-stone-700 rounded-xl transition cursor-pointer"
+                              title="Cadangkan arsip pemetaan ini ke Google Drive"
+                            >
+                              <HardDrive size={13} />
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteSavedMapping(m.id, m.title)}
+                              className="p-1.5 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 rounded-xl transition cursor-pointer"
+                              title="Hapus riwayat pemetaan ini dari Cloud & Cache"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Processing Indicator */}
         {isProcessing && (
           <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center gap-3 text-xs text-amber-900 animate-pulse">
@@ -2468,63 +2977,87 @@ export function AccuratePettyCashMapping({
 
       {/* Mapping & Verification Table Section */}
       {transactions.length > 0 && (
-        <div className="bg-white border border-stone-250 rounded-3xl p-6 shadow-xs space-y-6">
+        <div id="accurate-mapped-table-section" className="bg-white border border-stone-250 rounded-3xl p-6 shadow-xs space-y-6">
           {/* Top Control Stats Header */}
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-stone-200 pb-5">
             <div className="space-y-1">
-              <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200">
-                Langkah 2: Verifikasi & Jurnal
-              </span>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200">
+                  Langkah 2: Verifikasi & Jurnal
+                </span>
+
+                {isAutoSaving ? (
+                  <span className="text-[10px] font-mono font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200 flex items-center gap-1 animate-pulse">
+                    <RefreshCw size={11} className="animate-spin" />
+                    <span>Menyimpan ke Cloud...</span>
+                  </span>
+                ) : lastSavedTime ? (
+                  <span className="text-[10px] font-mono font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 flex items-center gap-1">
+                    <CheckCheck size={12} className="text-emerald-600" />
+                    <span>Tersimpan di Cloud & Cache ({lastSavedTime})</span>
+                  </span>
+                ) : null}
+              </div>
+
               <h3 className="font-sans font-black text-stone-900 text-lg flex items-center gap-2 pt-1">
                 <span>{reportTitle}</span>
                 <span className="text-xs font-mono font-bold text-stone-500">({transactions.length} Baris)</span>
               </h3>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2.5">
               <button
                 onClick={handleSaveMappingToCloud}
-                className="bg-indigo-700 hover:bg-indigo-800 text-white font-extrabold px-4 py-2.5 rounded-xl text-xs transition flex items-center gap-2 cursor-pointer shadow-3xs"
-                title="Simpan hasil pemetaan ke Cloud / Aplikasi agar tidak hilang saat restart/update"
+                className="bg-indigo-700 hover:bg-indigo-800 text-white font-extrabold px-3.5 py-2 rounded-xl text-xs transition flex items-center gap-1.5 cursor-pointer shadow-3xs"
+                title="Simpan hasil pemetaan secara permanen ke Cloud Database & Cache Aplikasi"
               >
-                <Save size={15} />
-                <span>Simpan ke Cloud / Aplikasi</span>
+                <Save size={14} />
+                <span>Simpan ke Cloud</span>
+              </button>
+
+              <button
+                onClick={() => handleBackupToGoogleDrive()}
+                className="bg-stone-800 hover:bg-stone-900 text-stone-100 font-extrabold px-3.5 py-2 rounded-xl text-xs transition flex items-center gap-1.5 cursor-pointer shadow-3xs"
+                title="Cadangkan berkas pemetaan ke Google Drive"
+              >
+                <HardDrive size={14} className="text-emerald-400" />
+                <span>Cadangkan ke Drive</span>
               </button>
 
               <button
                 onClick={handleExportAccurateExcel}
-                className="bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold px-4 py-2.5 rounded-xl text-xs transition flex items-center gap-2 cursor-pointer shadow-3xs"
+                className="bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold px-3.5 py-2 rounded-xl text-xs transition flex items-center gap-1.5 cursor-pointer shadow-3xs"
                 title="Download file Excel khusus siap impor ke Accurate Online/Desktop"
               >
-                <Download size={15} />
-                <span>Download Impor Accurate (.xlsx)</span>
+                <Download size={14} />
+                <span>Impor Accurate (.xlsx)</span>
               </button>
 
               <button
                 onClick={handleCopyClipboard}
-                className="bg-stone-900 hover:bg-stone-800 text-white font-extrabold px-3.5 py-2.5 rounded-xl text-xs transition flex items-center gap-1.5 cursor-pointer shadow-3xs"
+                className="bg-stone-100 hover:bg-stone-200 border border-stone-300 text-stone-800 font-extrabold px-3 py-2 rounded-xl text-xs transition flex items-center gap-1.5 cursor-pointer shadow-3xs"
                 title="Salin rekapitulasi ke clipboard"
               >
-                <Copy size={14} />
+                <Copy size={13} />
                 <span>Salin Teks</span>
               </button>
 
               <button
                 onClick={handleExportPDF}
-                className="bg-stone-100 hover:bg-stone-200 border border-stone-300 text-stone-800 font-extrabold px-3.5 py-2.5 rounded-xl text-xs transition flex items-center gap-1.5 cursor-pointer shadow-3xs"
+                className="bg-stone-100 hover:bg-stone-200 border border-stone-300 text-stone-800 font-extrabold px-3 py-2 rounded-xl text-xs transition flex items-center gap-1.5 cursor-pointer shadow-3xs"
                 title="Cetak Berita Acara / Laporan Pemetaan PDF"
               >
-                <FileText size={14} />
+                <FileText size={13} />
                 <span>PDF Laporan</span>
               </button>
 
               <button
                 onClick={handleClearMapping}
-                className="bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold px-3 py-2.5 rounded-xl text-xs transition flex items-center gap-1.5 cursor-pointer shadow-3xs"
-                title="Bersihkan pemetaan saat ini dan mulai baru"
+                className="bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold px-3 py-2 rounded-xl text-xs transition flex items-center gap-1 cursor-pointer shadow-3xs"
+                title="Bersihkan workspace pemetaan saat ini"
               >
-                <Trash2 size={14} />
-                <span>Mulai Baru / Reset</span>
+                <Trash2 size={13} />
+                <span>Reset</span>
               </button>
             </div>
           </div>

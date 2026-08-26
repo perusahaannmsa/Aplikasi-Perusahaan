@@ -206,6 +206,15 @@ export const mapFirestoreToSubmission = (docId: string, data: any): Submission =
     pettyCashCustodian: getPettyCashCustodian(data),
     pettyCashFile: data.pettyCashFile || undefined,
 
+    // Accurate Online Mapping properties
+    isAccurateMapped: data.isAccurateMapped === true || !!data.accurateMappingReportId || (Array.isArray(data.accurateMappedTransactions) && data.accurateMappedTransactions.length > 0),
+    accurateMappedAt: data.accurateMappedAt || '',
+    accurateMappingReportId: data.accurateMappingReportId || '',
+    accurateMappedTransactions: Array.isArray(data.accurateMappedTransactions) ? data.accurateMappedTransactions : undefined,
+    accurateTotalExpense: typeof data.accurateTotalExpense === 'number' ? data.accurateTotalExpense : undefined,
+    accurateKasAccountCode: data.accurateKasAccountCode || '',
+    accurateReportTitle: data.accurateReportTitle || '',
+
     items: mappedItems,
     createdAt: createdAtStr,
     deletedPageIds: Array.isArray(data.deletedPageIds) ? data.deletedPageIds : []
@@ -352,6 +361,15 @@ export const mapSubmissionToFirestore = (
       url: sanitizeUrlForFirestore(sub.pettyCashFile.url, sub.pettyCashFile.name || 'Laporan Petty Cash')
     } : null,
     
+    // Accurate Online mapping persistence
+    isAccurateMapped: sub.isAccurateMapped === true || !!sub.accurateMappingReportId || (Array.isArray(sub.accurateMappedTransactions) && sub.accurateMappedTransactions.length > 0),
+    accurateMappedAt: sub.accurateMappedAt || '',
+    accurateMappingReportId: sub.accurateMappingReportId || '',
+    accurateMappedTransactions: Array.isArray(sub.accurateMappedTransactions) ? sub.accurateMappedTransactions : null,
+    accurateTotalExpense: typeof sub.accurateTotalExpense === 'number' ? sub.accurateTotalExpense : null,
+    accurateKasAccountCode: sub.accurateKasAccountCode || '',
+    accurateReportTitle: sub.accurateReportTitle || '',
+
     lokasi: sub.lokasi || 'Lt. 1',
     tanggal: sub.tanggal || '',
     jenisPengajuan: sub.jenisPengajuan || '',
@@ -1678,6 +1696,29 @@ export const saveAccurateMappingToFirestore = async (mappingData: any): Promise<
   }
 };
 
+// Delete Accurate Petty Cash Mapping from Firestore & localStorage
+export const deleteAccurateMappingFromFirestore = async (id: string): Promise<void> => {
+  try {
+    const stored = localStorage.getItem('accurate_mapped_reports_v1');
+    if (stored) {
+      const list = JSON.parse(stored);
+      const filtered = list.filter((item: any) => item.id !== id);
+      localStorage.setItem('accurate_mapped_reports_v1', JSON.stringify(filtered));
+    }
+  } catch (e) {
+    console.warn('Gagal menghapus pemetaan Accurate dari localStorage:', e);
+  }
+
+  if (!isFirebaseConfigured() || !firestoreDb) return;
+
+  try {
+    await deleteDoc(doc(firestoreDb, 'accurate_mappings', id));
+    console.log(`🗑️ Accurate mapping ${id} deleted from Firestore.`);
+  } catch (error) {
+    console.warn('Gagal menghapus pemetaan Accurate dari Firestore:', error);
+  }
+};
+
 // Load Accurate Petty Cash Mappings from Firestore
 export const loadAccurateMappingsFromFirestore = async (): Promise<any[]> => {
   if (!isFirebaseConfigured() || !firestoreDb) {
@@ -1693,8 +1734,22 @@ export const loadAccurateMappingsFromFirestore = async (): Promise<any[]> => {
     const snapshot = await getDocs(collection(firestoreDb, 'accurate_mappings'));
     const list: any[] = [];
     snapshot.forEach(docSnap => {
-      list.push(docSnap.data());
+      const data = docSnap.data();
+      if (data) {
+        list.push({
+          id: docSnap.id || data.id,
+          ...data
+        });
+      }
     });
+
+    // Sort by savedAt or updatedAt descending
+    list.sort((a, b) => {
+      const timeA = new Date(a.updatedAt || a.savedAt || 0).getTime();
+      const timeB = new Date(b.updatedAt || b.savedAt || 0).getTime();
+      return timeB - timeA;
+    });
+
     if (list.length > 0) {
       localStorage.setItem('accurate_mapped_reports_v1', JSON.stringify(list));
     }

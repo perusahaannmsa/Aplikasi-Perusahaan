@@ -59,6 +59,15 @@ export interface Submission {
   sppdNo?: string;
   sppdRecord?: any;
 
+  // Accurate Online Mapping properties (Petty Cash)
+  isAccurateMapped?: boolean;
+  accurateMappedAt?: string;
+  accurateMappingReportId?: string;
+  accurateMappedTransactions?: AccurateMappedTransaction[];
+  accurateTotalExpense?: number;
+  accurateKasAccountCode?: string;
+  accurateReportTitle?: string;
+
   // Google Drive attachment support
   googleDriveFileUrl?: string;
   googleDriveFileName?: string;
@@ -259,11 +268,22 @@ export interface AccurateMappingReport {
   id: string;
   title: string;
   period: string;
-  sourceType: 'excel' | 'pdf' | 'text' | 'workspace_petty_cash';
-  createdAt: string;
+  sourceType?: 'excel' | 'pdf' | 'text' | 'workspace_petty_cash' | 'voucher_submission';
+  createdAt?: string;
+  savedAt?: string;
+  updatedAt?: string;
   totalExpense: number;
-  kasAccountCode: string;
-  kasAccountName: string;
+  selectedKasCode?: string;
+  kasAccountCode?: string;
+  kasAccountName?: string;
+  custodian?: string | null;
+  documentUrl?: string | null;
+  documentName?: string | null;
+  driveBackupUrl?: string | null;
+  driveBackupFileId?: string | null;
+  submissionId?: string | null;
+  submissionCode?: string | null;
+  accountsCount?: number;
   transactions: AccurateMappedTransaction[];
 }
 
