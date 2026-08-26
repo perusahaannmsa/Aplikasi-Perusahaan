@@ -1130,16 +1130,50 @@ export default function App() {
     saveSubmissionsToStorage(updated);
   };
 
+  // Helper function to extract concise, clean official category names
+  const getCleanCategoryItemTitle = (kategori: string, durationStr?: string): string => {
+    const cat = (kategori || '').toLowerCase();
+    if (cat.includes('jkt - bandara') || cat.includes('rumah - bandara') || cat.includes('transport jkt') || (cat.includes('transport') && (cat.includes('bandara') || cat.includes('stasiun')) && !cat.includes('hotel'))) {
+      return 'Transport Rumah - Bandara PP';
+    }
+    if (cat.includes('makan') || cat.includes('konsumsi')) {
+      return durationStr ? `Uang Makan (${durationStr})` : 'Uang Makan / Hari';
+    }
+    if (cat.includes('saku') || cat.includes('pocket') || cat.includes('allowance')) {
+      return durationStr ? `Uang Saku (${durationStr})` : 'Uang Saku';
+    }
+    if ((cat.includes('hotel') && cat.includes('bandara')) || cat.includes('taksi') || cat.includes('taxi') || cat.includes('perjalanan') || cat.includes('antar jemput') || cat.includes('lokal')) {
+      return 'Transport Bandara - Hotel PP';
+    }
+    if (cat.includes('pesawat') || cat.includes('flight') || cat.includes('boarding')) {
+      return 'Tiket Pesawat PP';
+    }
+    if (cat.includes('kereta') || cat.includes('kai') || cat.includes('whoosh')) {
+      return 'Tiket Kereta Api';
+    }
+    if (cat.includes('hotel') || cat.includes('penginapan') || cat.includes('lodging') || cat.includes('kamar')) {
+      return 'Penginapan / Hotel';
+    }
+    if (cat.includes('double cabin') || cat.includes('dcabin') || cat.includes('hilux') || cat.includes('triton')) {
+      return 'Sewa Mobil Double Cabin';
+    }
+    if (cat.includes('sewa mobil') || cat.includes('rental mobil') || cat.includes('avanza') || cat.includes('innova')) {
+      return 'Sewa Mobil Operasional';
+    }
+    const base = (kategori || '').split(/[:\-\–]/)[0].trim();
+    return base || 'Biaya SPPD';
+  };
+
   // SPPD Import to Submission handler
   const handleImportSppdToSubmission = (sppd: any) => {
     // Determine traveler name
     const travelerName = sppd.namaPekerja || sppd.namaPegawai || '';
     const dateVal = sppd.tanggalMulai || sppd.tanggalBerangkat || new Date().toISOString().split('T')[0];
     const destination = sppd.kotaTujuan || '';
-    const purpose = sppd.tujuanPerjalanan || sppd.maksudDinas || '';
 
-    // Concise, clean notes without redundant stacking
-    const cleanNotes = `SPPD No: ${sppd.noSppd} | Tujuan: ${destination}${purpose ? ` | Keperluan: ${purpose}` : ''}`;
+    // Concise, single-line note without vertical overflow
+    const cleanDestination = (destination || 'Site / Proyek').replace(/^(Kota\s+Tujuan:?\s*)/i, '').trim();
+    const cleanNotes = `SPPD No: ${sppd.noSppd || 'SPPD'} | Tujuan: ${cleanDestination}`;
 
     // Collect all PDF attachments from SPPD cost items or attachedFiles
     const pdfAttachments: Array<{ url: string; name: string; pageCount?: number; docType?: string; isF1?: boolean; isF2?: boolean; isBuktiPembayaran?: boolean }> = [];
@@ -1173,7 +1207,7 @@ export default function App() {
     // If it's from full SPPDRecord (SppdManager)
     if (sppd.costItems && Array.isArray(sppd.costItems) && sppd.costItems.length > 0) {
       const subItems = sppd.costItems.map((c: any, index: number) => {
-        const itemTitle = c.rincian ? `${c.kategori} - ${c.rincian}` : c.kategori;
+        const itemTitle = getCleanCategoryItemTitle(c.kategori, sppd.lamaPerjalanan);
         const volumeStr = c.vol && c.satuan ? `${c.vol} ${c.satuan}` : (c.vol ? `${c.vol}` : '1 Paket');
         const calculatedTotal = c.jumlah || (c.vol && c.hargaSatuan ? c.vol * c.hargaSatuan : 0);
         return {

@@ -337,14 +337,10 @@ export function consolidateSppdCostItems(
   const jktItems = buckets.transport_jkt.items;
   const jktTotal = jktItems.reduce((sum, i) => sum + i.jumlah, 0);
   if (jktTotal > 0) {
-    const uniqueRincians = Array.from(new Set(jktItems.map(i => i.rincian).filter(Boolean)));
-    const desc = uniqueRincians.length > 1
-      ? uniqueRincians.join(' & ')
-      : (uniqueRincians[0] || 'Transport Rumah - Bandara / Stasiun PP');
     consolidatedList.push({
       no: 0,
       kategori: 'Transport Jkt - Bandara/Stasiun (1x)',
-      rincian: desc,
+      rincian: 'Transport Rumah - Bandara PP',
       hargaAcuan: buckets.transport_jkt.defaultAcuan,
       jumlah: jktTotal
     });
@@ -352,13 +348,7 @@ export function consolidateSppdCostItems(
 
   // 2. Uang Makan / Hari
   if (finalMealAmount > 0) {
-    const mealNames = Array.from(new Set(rawMealItems.map(i => i.rincian).filter(Boolean)));
-    let mealDesc = `${durationDays} Hari @ Rp ${dailyMealRate.toLocaleString('id-ID')}`;
-    if (mealNames.length > 0) {
-      const summaryList = mealNames.slice(0, 3).join(', ') + (mealNames.length > 3 ? ` + ${mealNames.length - 3} lainnya` : '');
-      mealDesc += ` (${summaryList})`;
-    }
-
+    const mealDesc = `${durationDays} Hari @ Rp ${dailyMealRate.toLocaleString('id-ID')}`;
     consolidatedList.push({
       no: 0,
       kategori: 'Uang Makan / Hari',
@@ -382,25 +372,7 @@ export function consolidateSppdCostItems(
   }
 
   if (finalPocketAmount > 0 || accumulatedPocketAmount > 0) {
-    const pocketDetails: string[] = [];
-    const uniquePocketRincians = Array.from(new Set(rawPocketItems.map(i => i.rincian).filter(Boolean)));
-    
-    if (uniquePocketRincians.length > 0) {
-      pocketDetails.push(uniquePocketRincians.join(', '));
-    }
-    
-    if (excessMealToPocket > 0) {
-      pocketDetails.push(`Pelimpahan kelebihan Uang Makan: Rp ${excessMealToPocket.toLocaleString('id-ID')}`);
-    }
-
-    if (eliminatedPocketExcess > 0) {
-      pocketDetails.push(`Plafon ${durationDays} Hari: Rp ${maxPocketAllowed.toLocaleString('id-ID')} (Kelebihan Rp ${eliminatedPocketExcess.toLocaleString('id-ID')} dihapuskan)`);
-    }
-
-    let pocketDesc = pocketDetails.join('; ');
-    if (pocketDetails.length === 0) {
-      pocketDesc = `${durationDays} Hari @ Rp ${dailyPocketRate.toLocaleString('id-ID')} (Uang Saku Operasional)`;
-    }
+    const pocketDesc = `${durationDays} Hari @ Rp ${dailyPocketRate.toLocaleString('id-ID')}`;
 
     consolidatedList.push({
       no: 0,
@@ -417,14 +389,10 @@ export function consolidateSppdCostItems(
   const hotelTransItems = buckets.transport_hotel.items;
   const hotelTransTotal = hotelTransItems.reduce((sum, i) => sum + i.jumlah, 0);
   if (hotelTransTotal > 0) {
-    const uniqueHotelTrans = Array.from(new Set(hotelTransItems.map(i => i.rincian).filter(Boolean)));
-    const desc = hotelTransItems.length > 1
-      ? `${hotelTransItems.length}x Perjalanan: ` + uniqueHotelTrans.slice(0, 2).join(', ') + (uniqueHotelTrans.length > 2 ? ' dll' : '')
-      : (uniqueHotelTrans[0] || 'Transportasi Bandara - Hotel PP');
     consolidatedList.push({
       no: 0,
       kategori: 'Transport Bandara - Hotel',
-      rincian: desc,
+      rincian: 'Transport Bandara - Hotel PP',
       hargaAcuan: buckets.transport_hotel.defaultAcuan,
       jumlah: hotelTransTotal
     });
@@ -434,12 +402,10 @@ export function consolidateSppdCostItems(
   const pesawatItems = buckets.tiket_pesawat.items;
   const pesawatTotal = pesawatItems.reduce((sum, i) => sum + i.jumlah, 0);
   if (pesawatTotal > 0) {
-    const uniquePesawat = Array.from(new Set(pesawatItems.map(i => i.rincian).filter(Boolean)));
-    const desc = uniquePesawat.join(', ') || 'Tiket Pesawat PP';
     consolidatedList.push({
       no: 0,
       kategori: 'Tiket Pesawat',
-      rincian: desc,
+      rincian: 'Tiket Pesawat PP',
       hargaAcuan: 'Sesuai Keuangan',
       jumlah: pesawatTotal
     });
@@ -449,12 +415,10 @@ export function consolidateSppdCostItems(
   const keretaItems = buckets.tiket_kereta.items;
   const keretaTotal = keretaItems.reduce((sum, i) => sum + i.jumlah, 0);
   if (keretaTotal > 0) {
-    const uniqueKereta = Array.from(new Set(keretaItems.map(i => i.rincian).filter(Boolean)));
-    const desc = uniqueKereta.join(', ') || 'Tiket Kereta Api';
     consolidatedList.push({
       no: 0,
       kategori: 'Tiket Kereta Api',
-      rincian: desc,
+      rincian: 'Tiket Kereta Api PP',
       hargaAcuan: 'Sesuai Keuangan',
       jumlah: keretaTotal
     });
@@ -464,12 +428,11 @@ export function consolidateSppdCostItems(
   const lodgingItems = buckets.hotel.items;
   const lodgingTotal = lodgingItems.reduce((sum, i) => sum + i.jumlah, 0);
   if (lodgingTotal > 0) {
-    const uniqueHotels = Array.from(new Set(lodgingItems.map(i => i.rincian).filter(Boolean)));
-    const desc = uniqueHotels.join(', ') || 'Biaya Penginapan / Hotel';
+    const nightCount = durationDays > 1 ? durationDays - 1 : 1;
     consolidatedList.push({
       no: 0,
       kategori: 'Hotel / Hari',
-      rincian: desc,
+      rincian: `Penginapan / Hotel (${nightCount} Malam)`,
       hargaAcuan: buckets.hotel.defaultAcuan,
       jumlah: lodgingTotal
     });
@@ -479,12 +442,10 @@ export function consolidateSppdCostItems(
   const mobilStandarItems = buckets.mobil_standar.items;
   const mobilStandarTotal = mobilStandarItems.reduce((sum, i) => sum + i.jumlah, 0);
   if (mobilStandarTotal > 0) {
-    const uniqueMobil = Array.from(new Set(mobilStandarItems.map(i => i.rincian).filter(Boolean)));
-    const desc = uniqueMobil.join(', ') || 'Sewa Mobil Standar Operasional';
     consolidatedList.push({
       no: 0,
       kategori: 'Sewa Mobil/Hari (Standar Avanza) + Sopir + BBM',
-      rincian: desc,
+      rincian: 'Sewa Mobil Standar + Sopir + BBM',
       hargaAcuan: buckets.mobil_standar.defaultAcuan,
       jumlah: mobilStandarTotal
     });
@@ -494,12 +455,10 @@ export function consolidateSppdCostItems(
   const dcabinItems = buckets.mobil_dcabin.items;
   const dcabinTotal = dcabinItems.reduce((sum, i) => sum + i.jumlah, 0);
   if (dcabinTotal > 0) {
-    const uniqueDcabin = Array.from(new Set(dcabinItems.map(i => i.rincian).filter(Boolean)));
-    const desc = uniqueDcabin.join(', ') || 'Sewa Mobil Double Cabin Tambang';
     consolidatedList.push({
       no: 0,
       kategori: 'Sewa Mobil/Hari (Double Cabin) + Sopir + BBM',
-      rincian: desc,
+      rincian: 'Sewa Mobil Double Cabin + Sopir + BBM',
       hargaAcuan: buckets.mobil_dcabin.defaultAcuan,
       jumlah: dcabinTotal
     });
@@ -543,6 +502,30 @@ export const PrintSppdDocument: React.FC<PrintSppdDocumentProps> = ({
   return (
     <div className="w-full flex flex-col items-center print:items-start text-stone-900">
       
+      {/* INJECTED PRINT STYLES FOR EXACT SINGLE-PAGE A4 FIT */}
+      <style>{`
+        @media print {
+          @page {
+            size: A4 portrait;
+            margin: 6mm 8mm 6mm 8mm;
+          }
+          body {
+            background: white !important;
+            color: black !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          .page-break {
+            page-break-after: always !important;
+            break-after: page !important;
+          }
+          .no-break {
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
+          }
+        }
+      `}</style>
+
       {/* ACTION BAR (HIDDEN IN PRINT) */}
       <div className="w-full max-w-5xl bg-white border border-stone-200 rounded-2xl p-4 mb-6 shadow-xs flex flex-wrap items-center justify-between gap-3 print:hidden">
         <div className="flex items-center gap-3">
@@ -621,228 +604,206 @@ export const PrintSppdDocument: React.FC<PrintSppdDocumentProps> = ({
       {/* ========================================================================= */}
       {/* HALAMAN 1: SURAT PERINTAH PERJALANAN DINAS (SPPD) & RINCIAN BIAYA         */}
       {/* ========================================================================= */}
-      <div className="w-[210mm] min-h-[297mm] bg-white p-[10mm] sm:p-[12mm] border border-stone-300 shadow-xl rounded-xl print:shadow-none print:border-none print:rounded-none print:p-0 print:m-0 print:w-full page-break box-border font-serif text-[12px] leading-relaxed">
+      <div className={`w-[210mm] max-w-full bg-white p-[8mm] sm:p-[10mm] border border-stone-300 shadow-xl rounded-xl print:shadow-none print:border-none print:rounded-none print:p-0 print:m-0 print:w-full ${includeVisum ? 'page-break' : ''} box-border font-sans text-[11px] leading-snug flex flex-col justify-between`}>
         
-        {/* KOP SURAT RESMI PERUSAHAAN */}
-        <div className="border-b-[2.5px] border-black pb-2 mb-3">
-          <div className="flex items-center justify-between gap-4">
-            <div className="shrink-0">
-              <NusantaraLogo size="md" className="h-16 w-auto object-contain" />
+        <div>
+          {/* KOP SURAT RESMI PERUSAHAAN */}
+          <div className="border-b-[2px] border-black pb-1.5 mb-2">
+            <div className="flex items-center justify-between gap-3">
+              <div className="shrink-0">
+                <NusantaraLogo size="md" className="h-14 w-auto object-contain" />
+              </div>
+              <div className="flex-1 text-center font-sans">
+                <h1 className="text-base sm:text-lg font-black uppercase tracking-wider text-black leading-tight">
+                  PT. NUSANTARA MINERAL SUKSES ABADI
+                </h1>
+                <p className="text-[9.5px] sm:text-[10px] text-black font-semibold mt-0.5 leading-tight">
+                  Jl. Raya Pasar Minggu Kav. 2B-C, RT.2/RW.2, Pancoran, Kecamatan Pancoran,<br />
+                  Kota Jakarta Selatan, Daerah Khusus Ibukota Jakarta, Kode Pos 12780
+                </p>
+                <p className="text-[8.5px] text-stone-600 font-mono mt-0.5">
+                  Email: info@nmsa.co.id &bull; Telp / WA: +62 821-8888-0000
+                </p>
+              </div>
+              <div className="w-12 hidden sm:block shrink-0" />
             </div>
-            <div className="flex-1 text-center font-sans">
-              <h1 className="text-base sm:text-lg font-black uppercase tracking-wider text-black">
-                PT. NUSANTARA MINERAL SUKSES ABADI
-              </h1>
-              <p className="text-[10px] sm:text-[11px] text-black font-semibold mt-0.5 leading-snug">
-                Jl. Raya Pasar Minggu Kav. 2B-C, RT.2/RW.2, Pancoran, Kecamatan Pancoran,<br />
-                Kota Jakarta Selatan, Daerah Khusus Ibukota Jakarta, Kode Pos 12780
-              </p>
-              <p className="text-[9px] text-stone-600 font-mono mt-0.5">
-                Email: info@nmsa.co.id &bull; Telp / WA: +62 821-8888-0000
-              </p>
+            {/* Garis Tipis Tambahan Kop Surat */}
+            <div className="border-b border-black mt-1" />
+          </div>
+
+          {/* JUDUL DOKUMEN & NOMOR */}
+          <div className="text-center my-1.5 font-sans">
+            <h2 className="text-sm font-black uppercase tracking-widest text-black underline underline-offset-4">
+              SURAT PERINTAH PERJALANAN DINAS (SPPD)
+            </h2>
+            <div className="text-[11px] font-mono font-bold text-black mt-0.5">
+              Nomor: <span className="bg-stone-100 px-2 py-0.5 border border-stone-300 rounded font-black">{sppd.noSppd}</span>
             </div>
-            <div className="w-16 hidden sm:block shrink-0" />
           </div>
-          {/* Garis Tipis Tambahan Kop Surat */}
-          <div className="border-b border-black mt-1" />
-        </div>
 
-        {/* JUDUL DOKUMEN & NOMOR */}
-        <div className="text-center my-3 font-sans">
-          <h2 className="text-sm sm:text-base font-black uppercase tracking-widest text-black underline underline-offset-4">
-            SURAT PERINTAH PERJALANAN DINAS (SPPD)
-          </h2>
-          <div className="text-xs font-mono font-bold text-black mt-1">
-            Nomor: <span className="bg-stone-100 px-2 py-0.5 border border-stone-300 rounded font-black">{sppd.noSppd}</span>
-          </div>
-        </div>
+          {/* RINCIAN PERINTAH PENUGASAN (POIN 1 - 9) - FORMAT RESMI BERSIH & COMPACT (NON-TABEL BESAR) */}
+          <div className="my-2 border-y border-black py-1.5 text-[10px] sm:text-[10.5px] font-sans leading-tight text-stone-900 bg-stone-50/30">
+            <div className="grid grid-cols-[190px_10px_1fr] sm:grid-cols-[210px_10px_1fr] gap-y-1 items-start px-1">
+              <div className="font-semibold text-black">1. Pejabat Pemberi Perintah</div>
+              <div className="text-center font-bold">:</div>
+              <div className="font-semibold text-stone-900">
+                {sppd.pemberiPerintah} <span className="font-normal text-stone-600">({sppd.pemberiPerintahJabatan || 'Direktur Utama'})</span>
+              </div>
 
-        {/* TABEL FORMAT STANDAR SPPD NASIONAL */}
-        <table className="w-full border-collapse border border-black text-[11px] sm:text-[12px] mb-3">
-          <tbody>
-            <tr className="border-b border-black">
-              <td className="w-8 border-r border-black p-1.5 text-center font-bold font-sans">1.</td>
-              <td className="w-64 border-r border-black p-1.5 font-bold font-sans">Pejabat Berwenang yang Memberi Perintah</td>
-              <td className="p-1.5 font-sans font-semibold">
-                {sppd.pemberiPerintah} <span className="text-stone-600 font-normal">({sppd.pemberiPerintahJabatan || 'Direktur Utama'})</span>
-              </td>
-            </tr>
-
-            <tr className="border-b border-black">
-              <td className="border-r border-black p-1.5 text-center font-bold font-sans">2.</td>
-              <td className="border-r border-black p-1.5 font-bold font-sans">Nama Pegawai yang Diperintahkan</td>
-              <td className="p-1.5 font-sans font-bold text-stone-900">
+              <div className="font-semibold text-black">2. Nama Pegawai yang Diperintahkan</div>
+              <div className="text-center font-bold">:</div>
+              <div className="font-bold uppercase text-black">
                 {sppd.namaPekerja}
-              </td>
-            </tr>
+              </div>
 
-            <tr className="border-b border-black">
-              <td className="border-r border-black p-1.5 text-center font-bold font-sans">3.</td>
-              <td className="border-r border-black p-1.5 font-bold font-sans">
-                a. Pangkat / Golongan / Jabatan<br />
-                b. Divisi / Unit Kerja
-              </td>
-              <td className="p-1.5 font-sans">
-                a. <span className="font-semibold">{sppd.jabatan}</span><br />
-                b. <span>{sppd.divisi || 'Operasional Lapangan & HO'}</span>
-              </td>
-            </tr>
+              <div className="font-semibold text-black">3. Pangkat / Jabatan &amp; Divisi</div>
+              <div className="text-center font-bold">:</div>
+              <div>
+                <span className="font-semibold">{sppd.jabatan}</span> &bull; <span>{sppd.divisi || 'Operasional Lapangan & HO'}</span>
+              </div>
 
-            <tr className="border-b border-black">
-              <td className="border-r border-black p-1.5 text-center font-bold font-sans">4.</td>
-              <td className="border-r border-black p-1.5 font-bold font-sans">Maksud &amp; Tujuan Perjalanan Dinas</td>
-              <td className="p-1.5 font-sans font-semibold leading-snug text-stone-850">
-                {sppd.tujuanPerjalanan}
-              </td>
-            </tr>
+              <div className="font-semibold text-black">4. Maksud &amp; Tujuan Perjalanan</div>
+              <div className="text-center font-bold">:</div>
+              <div className="font-medium text-stone-900 leading-snug">
+                {(() => {
+                  const purpose = sppd.tujuanPerjalanan || '';
+                  if (!purpose || purpose.includes('Voucher Biaya Perjalanan Dinas') || purpose.includes('Laporan SPPD:') || purpose.includes('Diposting dari')) {
+                    return `Pengawasan Lapangan & Verifikasi Operasional (${sppd.kotaTujuan || 'Site / Proyek'})`;
+                  }
+                  return purpose;
+                })()}
+              </div>
 
-            <tr className="border-b border-black">
-              <td className="border-r border-black p-1.5 text-center font-bold font-sans">5.</td>
-              <td className="border-r border-black p-1.5 font-bold font-sans">Alat Angkut / Transportasi yang Digunakan</td>
-              <td className="p-1.5 font-sans">
+              <div className="font-semibold text-black">5. Alat Angkut / Transportasi</div>
+              <div className="text-center font-bold">:</div>
+              <div>
                 {sppd.transportasi}
-              </td>
-            </tr>
+              </div>
 
-            <tr className="border-b border-black">
-              <td className="border-r border-black p-1.5 text-center font-bold font-sans">6.</td>
-              <td className="border-r border-black p-1.5 font-bold font-sans">
-                a. Tempat Berangkat (Asal)<br />
-                b. Tempat Tujuan
-              </td>
-              <td className="p-1.5 font-sans">
-                a. <strong>{sppd.kotaAsal}</strong><br />
-                b. <strong>{sppd.kotaTujuan}</strong>
-              </td>
-            </tr>
+              <div className="font-semibold text-black">6. Tempat Berangkat &amp; Tujuan</div>
+              <div className="text-center font-bold">:</div>
+              <div>
+                Dari <strong>{sppd.kotaAsal}</strong> ke <strong>{sppd.kotaTujuan}</strong>
+              </div>
 
-            <tr className="border-b border-black">
-              <td className="border-r border-black p-1.5 text-center font-bold font-sans">7.</td>
-              <td className="border-r border-black p-1.5 font-bold font-sans">
-                a. Lamanya Perjalanan Dinas<br />
-                b. Tanggal Berangkat<br />
-                c. Tanggal Harus Kembali / Tiba
-              </td>
-              <td className="p-1.5 font-sans">
-                a. <span className="font-semibold">{sppd.lamaPerjalanan}</span><br />
-                b. <span>{formatDateIndonesian(sppd.tanggalMulai)}</span><br />
-                c. <span>{formatDateIndonesian(sppd.tanggalSelesai)}</span>
-              </td>
-            </tr>
+              <div className="font-semibold text-black">7. Lamanya Perjalanan Dinas</div>
+              <div className="text-center font-bold">:</div>
+              <div>
+                <strong>{sppd.lamaPerjalanan}</strong> &bull; ({formatDateIndonesian(sppd.tanggalMulai)} s/d {formatDateIndonesian(sppd.tanggalSelesai)})
+              </div>
 
-            <tr className="border-b border-black">
-              <td className="border-r border-black p-1.5 text-center font-bold font-sans">8.</td>
-              <td className="border-r border-black p-1.5 font-bold font-sans">
-                Pembebanan Anggaran<br />
-                <span className="text-[10px] font-normal text-stone-500 font-sans">a. Entitas Perusahaan<br />b. Akun Pembebanan</span>
-              </td>
-              <td className="p-1.5 font-sans">
-                a. <strong>PT. Nusantara Mineral Sukses Abadi</strong><br />
-                b. <span>Beban Perjalanan Dinas Operasional (Akun 600015)</span>
-              </td>
-            </tr>
+              <div className="font-semibold text-black">8. Pembebanan Anggaran</div>
+              <div className="text-center font-bold">:</div>
+              <div>
+                <strong>PT. Nusantara Mineral Sukses Abadi</strong> (Beban Perjalanan Dinas Operasional - Akun 600015)
+              </div>
 
-            <tr>
-              <td className="border-r border-black p-1.5 text-center font-bold font-sans">9.</td>
-              <td className="border-r border-black p-1.5 font-bold font-sans">Keterangan Lain-lain</td>
-              <td className="p-1.5 font-sans text-stone-700 italic text-[11px]">
-                {sppd.keteranganSppd || 'Semua bukti tiket, boarding pass, kwitansi hotel, dan bukti transportasi wajib dilampirkan.'}
-              </td>
-            </tr>
-          </tbody>
-        </table>
-
-        {/* TABEL RINCIAN BIAYA & PLAFON SPPD */}
-        <div className="mb-3 font-sans">
-          <div className="text-[11px] font-black uppercase tracking-wider text-black mb-1 flex items-center justify-between">
-            <span>Rincian Biaya &amp; Anggaran Perjalanan Dinas (Plafon / Realisasi):</span>
-            <span className="text-[10px] font-mono text-stone-500">Mata Uang: IDR (Rupiah)</span>
+              <div className="font-semibold text-black">9. Keterangan Lain-lain</div>
+              <div className="text-center font-bold">:</div>
+              <div className="italic text-stone-700 text-[9.5px]">
+                {(() => {
+                  const remarks = sppd.keteranganSppd || '';
+                  if (!remarks || remarks.includes('Voucher Biaya Perjalanan Dinas') || remarks.includes('Diposting dari') || remarks.includes('SPPD/NMSA/')) {
+                    return 'Semua bukti tiket, boarding pass, kwitansi hotel, dan bukti transportasi dilampirkan lengkap.';
+                  }
+                  return remarks;
+                })()}
+              </div>
+            </div>
           </div>
-          <table className="w-full border-collapse border border-black text-[10.5px]">
-            <thead>
-              <tr className="bg-stone-100 border-b border-black font-bold uppercase text-center">
-                <th className="border-r border-black p-1 w-8">No</th>
-                <th className="border-r border-black p-1 text-left">Komponen / Kategori Biaya</th>
-                <th className="border-r border-black p-1 text-left w-52">Rincian / Catatan Perhitungan</th>
-                <th className="border-r border-black p-1 text-right w-24">Tarif Acuan</th>
-                <th className="p-1 text-right w-28">Jumlah (Rp)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {consolidatedItems.map((item, idx) => (
-                <tr key={idx} className="border-b border-black">
-                  <td className="border-r border-black p-1 text-center font-mono">{item.no || idx + 1}</td>
-                  <td className="border-r border-black p-1 font-semibold">{item.kategori}</td>
-                  <td className="border-r border-black p-1 text-stone-700 leading-snug">{item.rincian}</td>
-                  <td className="border-r border-black p-1 text-right font-mono text-stone-600">
-                    {typeof item.hargaAcuan === 'number'
-                      ? item.hargaAcuan.toLocaleString('id-ID')
-                      : item.hargaAcuan || '-'}
+
+          {/* TABEL RINCIAN BIAYA & PLAFON SPPD */}
+          <div className="mb-2 font-sans">
+            <div className="text-[10px] font-black uppercase tracking-wider text-black mb-0.5 flex items-center justify-between">
+              <span>Rincian Biaya &amp; Anggaran Perjalanan Dinas (Plafon / Realisasi):</span>
+              <span className="text-[9px] font-mono text-stone-500">Mata Uang: IDR (Rupiah)</span>
+            </div>
+            <table className="w-full border-collapse border border-black text-[9.5px] sm:text-[10px]">
+              <thead>
+                <tr className="bg-stone-100 border-b border-black font-bold uppercase text-center">
+                  <th className="border-r border-black p-1 w-7">No</th>
+                  <th className="border-r border-black p-1 text-left">Komponen / Kategori Biaya</th>
+                  <th className="border-r border-black p-1 text-left w-48 sm:w-56">Rincian / Catatan Perhitungan</th>
+                  <th className="border-r border-black p-1 text-right w-24">Tarif Acuan</th>
+                  <th className="p-1 text-right w-28">Jumlah (Rp)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {consolidatedItems.map((item, idx) => (
+                  <tr key={idx} className="border-b border-black">
+                    <td className="border-r border-black p-0.5 text-center font-mono">{item.no || idx + 1}</td>
+                    <td className="border-r border-black p-0.5 px-1 font-semibold">{item.kategori}</td>
+                    <td className="border-r border-black p-0.5 px-1 text-stone-700 leading-tight">{item.rincian}</td>
+                    <td className="border-r border-black p-0.5 px-1 text-right font-mono text-stone-600">
+                      {typeof item.hargaAcuan === 'number'
+                        ? item.hargaAcuan.toLocaleString('id-ID')
+                        : item.hargaAcuan || '-'}
+                    </td>
+                    <td className="p-0.5 px-1 text-right font-mono font-bold">
+                      {item.jumlah ? item.jumlah.toLocaleString('id-ID') : '0'}
+                    </td>
+                  </tr>
+                ))}
+                <tr className="border-t-[1.5px] border-black bg-stone-50 font-bold">
+                  <td colSpan={4} className="border-r border-black p-1 text-center uppercase tracking-wider text-[10px]">
+                    TOTAL BIAYA PERJALANAN DINAS
                   </td>
-                  <td className="p-1 text-right font-mono font-bold">
-                    {item.jumlah ? item.jumlah.toLocaleString('id-ID') : '0'}
+                  <td className="p-1 text-right font-mono text-[10.5px] font-black">
+                    Rp {totalBiaya.toLocaleString('id-ID')}
                   </td>
                 </tr>
-              ))}
-              <tr className="border-t-[1.5px] border-black bg-stone-50 font-bold">
-                <td colSpan={4} className="border-r border-black p-1.5 text-center uppercase tracking-wider text-xs">
-                  TOTAL BIAYA PERJALANAN DINAS
-                </td>
-                <td className="p-1.5 text-right font-mono text-xs font-black">
-                  Rp {totalBiaya.toLocaleString('id-ID')}
-                </td>
-              </tr>
-            </tbody>
-          </table>
+              </tbody>
+            </table>
 
-          {/* TERBILANG BOX */}
-          <div className="border border-black border-t-0 p-1.5 bg-stone-50/50 text-[10.5px] flex gap-2">
-            <span className="font-bold shrink-0">Terbilang:</span>
-            <span className="italic font-semibold text-stone-900">"{terbilangRupiah(totalBiaya)}"</span>
+            {/* TERBILANG BOX */}
+            <div className="border border-black border-t-0 p-1 bg-stone-50/50 text-[9.5px] flex gap-1.5 items-center">
+              <span className="font-bold shrink-0">Terbilang:</span>
+              <span className="italic font-semibold text-stone-900">"{terbilangRupiah(totalBiaya)}"</span>
+            </div>
           </div>
         </div>
 
         {/* KOLOM TANDA TANGAN & PENGESAHAN RESMI (3 PIHAK) */}
-        <div className="pt-2 font-sans">
-          <div className="flex justify-end text-[11px] mb-2 font-medium">
+        <div className="pt-1 font-sans no-break">
+          <div className="flex justify-end text-[10px] mb-1 font-medium">
             <span>Dikeluarkan di: <strong>Jakarta</strong>, Pada Tanggal: <strong>{formatDateIndonesian(sppd.tanggalMulai)}</strong></span>
           </div>
 
-          <div className="grid grid-cols-3 gap-2 text-center text-[10.5px]">
+          <div className="grid grid-cols-3 gap-2 text-center text-[10px]">
             {/* 1. Yang Melaksanakan Perintah */}
-            <div className="flex flex-col items-center justify-between min-h-[95px] p-1 border border-stone-200 rounded">
-              <span className="font-semibold text-stone-700">Pegawai yang Diperintahkan,</span>
-              <div className="mt-12">
-                <span className="border-b border-black font-bold uppercase block px-2 leading-tight">
+            <div className="flex flex-col items-center justify-between min-h-[85px] p-1.5 border border-black rounded-xs bg-white">
+              <span className="font-semibold text-stone-800 text-[9.5px]">Pegawai yang Diperintahkan,</span>
+              <div className="mt-8 w-full px-1">
+                <span className="border-b border-black font-bold uppercase block px-1 leading-tight text-[10px]">
                   {sppd.namaPekerja}
                 </span>
-                <span className="text-[9.5px] text-stone-500 font-mono block mt-0.5">
+                <span className="text-[9px] text-stone-600 font-mono block mt-0.5">
                   {sppd.jabatan}
                 </span>
               </div>
             </div>
 
             {/* 2. Mengetahui / Head of Ops */}
-            <div className="flex flex-col items-center justify-between min-h-[95px] p-1 border border-stone-200 rounded">
-              <span className="font-semibold text-stone-700">Mengetahui / Menyetujui,</span>
-              <div className="mt-12">
-                <span className="border-b border-black font-bold uppercase block px-2 leading-tight">
+            <div className="flex flex-col items-center justify-between min-h-[85px] p-1.5 border border-black rounded-xs bg-white">
+              <span className="font-semibold text-stone-800 text-[9.5px]">Mengetahui / Menyetujui,</span>
+              <div className="mt-8 w-full px-1">
+                <span className="border-b border-black font-bold uppercase block px-1 leading-tight text-[10px]">
                   {sppd.sppdDisetujuiName || 'Harijon'}
                 </span>
-                <span className="text-[9.5px] text-stone-500 font-mono block mt-0.5">
+                <span className="text-[9px] text-stone-600 font-mono block mt-0.5">
                   {sppd.sppdDisetujuiJabatan || 'Head of Operational'}
                 </span>
               </div>
             </div>
 
             {/* 3. Pejabat Pemberi Perintah / Direktur */}
-            <div className="flex flex-col items-center justify-between min-h-[95px] p-1 border border-stone-200 rounded">
-              <span className="font-semibold text-stone-700">Pejabat Pemberi Perintah,</span>
-              <div className="mt-12">
-                <span className="border-b border-black font-bold uppercase block px-2 leading-tight">
+            <div className="flex flex-col items-center justify-between min-h-[85px] p-1.5 border border-black rounded-xs bg-white">
+              <span className="font-semibold text-stone-800 text-[9.5px]">Pejabat Pemberi Perintah,</span>
+              <div className="mt-8 w-full px-1">
+                <span className="border-b border-black font-bold uppercase block px-1 leading-tight text-[10px]">
                   {sppd.pemberiPerintah}
                 </span>
-                <span className="text-[9.5px] text-stone-500 font-mono block mt-0.5">
+                <span className="text-[9px] text-stone-600 font-mono block mt-0.5">
                   {sppd.pemberiPerintahJabatan || 'Direktur Utama'}
                 </span>
               </div>
@@ -961,14 +922,18 @@ export const PrintSppdDocument: React.FC<PrintSppdDocumentProps> = ({
             <span className="text-[11px] font-bold uppercase block mb-1">
               V. Catatan Hasil Kegiatan Perjalanan Dinas / Resume Lapangan:
             </span>
-            <div className="min-h-[100px] border border-dashed border-stone-300 p-2 text-[10px] text-stone-600 bg-stone-50/50">
-              {sppd.keteranganSppd ? (
-                <p className="text-stone-800">{sppd.keteranganSppd}</p>
-              ) : (
-                <p className="italic text-stone-400">
-                  (Dapat diisi secara manual oleh pegawai bersangkutan setelah kembali dari perjalanan dinas untuk pelaporan hasil audit/inspeksi/tugas).
-                </p>
-              )}
+            <div className="min-h-[70px] border border-dashed border-stone-300 p-2 text-[10px] text-stone-600 bg-stone-50/50">
+              {(() => {
+                const remarks = sppd.keteranganSppd || '';
+                if (remarks && !remarks.includes('Voucher Biaya Perjalanan Dinas') && !remarks.includes('Diposting dari') && !remarks.includes('SPPD/NMSA/')) {
+                  return <p className="text-stone-800 font-sans">{remarks}</p>;
+                }
+                return (
+                  <p className="italic text-stone-500 font-sans">
+                    Perjalanan dinas telah terlaksana sesuai penugasan operasional lapangan.
+                  </p>
+                );
+              })()}
             </div>
           </div>
 

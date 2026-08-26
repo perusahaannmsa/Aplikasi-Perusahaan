@@ -457,7 +457,7 @@ export function SppdAccountMapping({
       // 2. Direct line items extraction from submission items
       setProcessMessage(`Mengekstrak ${(sub.items || []).length} rincian biaya dari data voucher...`);
       const mappedTxs: SppdMappedTransaction[] = (sub.items || []).map((item, idx) => {
-        const desc = item.keterangan || item.item || 'Pengeluaran SPPD';
+        const desc = item.item || item.keterangan || 'Pengeluaran SPPD';
         const { guideline, confidence } = autoMapSppdLine(desc, posKey);
         return {
           id: `item-${sub.id}-${idx}`,
@@ -793,8 +793,8 @@ export function SppdAccountMapping({
       lamaPerjalanan: `${tripDays} Hari`,
       tanggalMulai: allDates[0] || transactions[0]?.date || now.toISOString().substring(0, 10),
       tanggalSelesai: allDates[allDates.length - 1] || transactions[transactions.length - 1]?.date || now.toISOString().substring(0, 10),
-      tujuanPerjalanan: reportTitle,
-      keteranganSppd: `Diposting dari Pemetaan Akun SPPD (${transactions.length} sub-transaksi). Kelebihan biaya di atas plafon acuan resmi telah diakumulasikan dan dihapuskan sesuai pedoman.`,
+      tujuanPerjalanan: destination ? `Perjalanan Dinas Lapangan (${destination})` : 'Perjalanan Dinas Lapangan & Operasional Site',
+      keteranganSppd: 'Semua bukti tiket, boarding pass, kwitansi hotel, dan bukti pengeluaran dilampirkan lengkap.',
       costItems: consolidatedList.map(c => ({
         id: `cost-${Math.random().toString(36).substring(2, 7)}`,
         kategori: c.kategori,

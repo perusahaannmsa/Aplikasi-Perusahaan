@@ -31,6 +31,58 @@ const getGoogleDriveEmbedUrl = (url: string): string => {
   return url;
 };
 
+const formatDisplayItemTitle = (itemTitle: string): string => {
+  if (!itemTitle) return '-';
+  const lower = itemTitle.toLowerCase();
+  
+  if (lower.includes('rumah - bandara') || lower.includes('jkt - bandara') || (lower.includes('transport') && (lower.includes('bandara') || lower.includes('stasiun')) && !lower.includes('hotel'))) {
+    return 'Transport Rumah - Bandara PP';
+  }
+  if ((lower.includes('hotel') && lower.includes('bandara')) || lower.includes('taksi') || lower.includes('taxi') || lower.includes('perjalanan:') || lower.includes('antar jemput')) {
+    return 'Transport Bandara - Hotel PP';
+  }
+  if (lower.includes('uang makan') || lower.includes('makan')) {
+    const daysMatch = itemTitle.match(/(\d+\s*Hari)/i);
+    return daysMatch ? `Uang Makan (${daysMatch[1]})` : 'Uang Makan / Hari';
+  }
+  if (lower.includes('uang saku') || lower.includes('saku')) {
+    const daysMatch = itemTitle.match(/(\d+\s*Hari)/i);
+    return daysMatch ? `Uang Saku (${daysMatch[1]})` : 'Uang Saku';
+  }
+  if (lower.includes('tiket pesawat') || lower.includes('pesawat')) {
+    return 'Tiket Pesawat PP';
+  }
+  if (lower.includes('kereta') || lower.includes('kai')) {
+    return 'Tiket Kereta Api';
+  }
+  if (lower.includes('penginapan') || lower.includes('hotel')) {
+    return 'Penginapan / Hotel';
+  }
+  if (lower.includes('double cabin') || lower.includes('dcabin')) {
+    return 'Sewa Mobil Double Cabin';
+  }
+  if (lower.includes('sewa mobil') || lower.includes('rental mobil')) {
+    return 'Sewa Mobil Operasional';
+  }
+  return itemTitle;
+};
+
+const formatDisplayNoteText = (notes?: string): string => {
+  if (!notes) return '';
+  if (notes.includes('Voucher Biaya Perjalanan Dinas') || notes.includes('Maksud Dinas:') || notes.includes('Kota Tujuan:') || notes.includes('Diposting dari')) {
+    const noMatch = notes.match(/SPPD[\/\-][^\s,;|]+/i);
+    const destMatch = notes.match(/(?:Tujuan|Kota Tujuan)[:\s]+([^|;\n,.]+)/i);
+    const sppdNo = noMatch ? noMatch[0] : '';
+    const dest = destMatch ? destMatch[1].trim() : '';
+    if (sppdNo && dest) return `SPPD No: ${sppdNo} | Tujuan: ${dest}`;
+    if (sppdNo) return `SPPD No: ${sppdNo}`;
+  }
+  if (notes.length > 140) {
+    return notes.substring(0, 137).trim() + '...';
+  }
+  return notes;
+};
+
 export interface RenderedPage {
   id: string;
   fileName: string;
@@ -1996,7 +2048,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                     <tbody>
                       {submission.items.map((item) => (
                         <tr key={item.id} className="border-b border-black">
-                          <td className="border-r border-black p-1.5 font-semibold">{item.item}</td>
+                          <td className="border-r border-black p-1.5 font-semibold">{formatDisplayItemTitle(item.item)}</td>
                           <td className="p-1.5 text-right font-mono font-bold">
                             Rp <span className="float-right">{formatRupiah(item.total)}</span>
                           </td>
@@ -2058,7 +2110,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                     <div className="mt-1 text-xs">
                       <span className="font-bold uppercase text-black block mb-0.5">NOTE :</span>
                       <div className="border border-black p-1.5 text-stone-800 bg-stone-50/30 font-sans leading-tight">
-                        {submission.notes}
+                        {formatDisplayNoteText(submission.notes)}
                       </div>
                     </div>
                   )}
@@ -2139,7 +2191,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                   {submission.items.map((item, idx) => (
                     <tr key={item.id} className="border-b border-black align-top text-black">
                       <td className="border-r border-black py-3 px-1 text-center font-mono text-xs">{idx + 1}</td>
-                      <td className="border-r border-black py-3 px-3 font-semibold text-xs leading-relaxed break-words whitespace-pre-wrap text-stone-900">{item.item}</td>
+                      <td className="border-r border-black py-3 px-3 font-semibold text-xs leading-relaxed break-words whitespace-pre-wrap text-stone-900">{formatDisplayItemTitle(item.item)}</td>
                       <td className="border-r border-black py-3 px-2 text-center text-xs text-stone-800">{item.jumlahVolume || '-'}</td>
                       <td className="border-r border-black py-3 px-3 text-right font-mono font-bold text-xs font-semibold">
                         {formatRupiah(item.total)}
@@ -2265,7 +2317,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                       {submission.items.map((item, idx) => (
                         <tr key={item.id} className="border-b border-black align-top">
                           <td className="border-r border-black p-1.5 text-center font-mono">{idx + 1}</td>
-                          <td className="border-r border-black p-1.5 font-semibold leading-tight">{item.item}</td>
+                          <td className="border-r border-black p-1.5 font-semibold leading-tight">{formatDisplayItemTitle(item.item)}</td>
                           <td className="border-r border-black p-1.5 text-center">{item.jumlahVolume || '-'}</td>
                           <td className="border-r border-black p-1.5 text-right font-mono font-bold">
                             {formatRupiah(item.total)}
@@ -2315,7 +2367,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                     <div className="mt-1 text-xs">
                       <span className="font-bold block uppercase text-black mb-0.5">NOTE :</span>
                       <div className="border border-black p-1.5 text-stone-800 bg-stone-50/30 font-sans leading-tight">
-                        {submission.notes}
+                        {formatDisplayNoteText(submission.notes)}
                       </div>
                     </div>
                   )}
@@ -2391,7 +2443,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                     <tbody>
                       {submission.items.map((item) => (
                         <tr key={item.id} className="border-b border-black">
-                          <td className="border-r border-black p-1.5 font-semibold">{item.item}</td>
+                          <td className="border-r border-black p-1.5 font-semibold">{formatDisplayItemTitle(item.item)}</td>
                           <td className="p-1.5 text-right font-mono font-bold">
                             Rp <span className="float-right">{formatRupiah(item.total)}</span>
                           </td>
@@ -2453,7 +2505,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                     <div className="mt-1 text-xs">
                       <span className="font-bold uppercase text-black block mb-0.5">NOTE :</span>
                       <div className="border border-black p-1.5 text-stone-800 bg-stone-50/30 font-sans leading-tight">
-                        {submission.notes}
+                        {formatDisplayNoteText(submission.notes)}
                       </div>
                     </div>
                   )}
@@ -2565,7 +2617,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                       <div className="mt-1 text-xs">
                         <span className="font-bold block uppercase text-black mb-0.5">NOTE :</span>
                         <div className="border border-black p-1.5 text-stone-800 bg-stone-50/30 font-sans leading-tight">
-                          {submission.notes}
+                          {formatDisplayNoteText(submission.notes)}
                         </div>
                       </div>
                     )}
