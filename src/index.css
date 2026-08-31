@@ -130,3 +130,36 @@
 #app-root, header, footer, main, select, input, button, table, transition-all {
   transition: background-color 0.15s ease-out, border-color 0.15s ease-out, color 0.15s ease-out;
 }
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 10mm 12mm 10mm 12mm;
+  }
+  @page landscape-page {
+    size: A4 landscape;
+    margin: 10mm 12mm 10mm 12mm;
+  }
+  body, #app-root, main {
+    background: white !important;
+    color: black !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  .page-break {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+  .print-force-page-break {
+    page-break-after: always !important;
+    break-after: page !important;
+  }
+  .sppd-print-page {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+  table, tr, td, th {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+}

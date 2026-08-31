@@ -287,4 +287,38 @@ export interface AccurateMappingReport {
   transactions: AccurateMappedTransaction[];
 }
 
+/* ============================================================================
+ * FITUR PENGINGAT KEGIATAN & AGENDA KERJA (TASK & ACTIVITY REMINDER)
+ * ============================================================================ */
+export type AgendaCategory = 
+  | 'Keuangan'
+  | 'Pajak'
+  | 'Penggajian'
+  | 'SPPD & Lapangan'
+  | 'Vendor & Tagihan'
+  | 'Operasional'
+  | 'Administrasi'
+  | 'Lainnya';
+
+export type AgendaPriority = 'tinggi' | 'sedang' | 'normal';
+export type AgendaRecurrence = 'none' | 'daily' | 'weekly' | 'monthly';
+
+export interface AgendaItem {
+  id: string;
+  title: string;
+  description?: string;
+  dueDate: string; // YYYY-MM-DD
+  dueTime?: string; // HH:mm
+  category: AgendaCategory;
+  priority: AgendaPriority;
+  status: 'pending' | 'completed';
+  completedAt?: string;
+  completedBy?: string;
+  recurrence?: AgendaRecurrence;
+  voucherCode?: string;
+  assignedTo?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
 

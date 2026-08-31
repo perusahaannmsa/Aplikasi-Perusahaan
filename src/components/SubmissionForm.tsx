@@ -562,50 +562,62 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
   const [showSppdModal, setShowSppdModal] = useState(false);
 
   const handleImportSppdData = (sppd: any) => {
-    setJenisPengajuan('Biaya Perjalanan Dinas (SPPD)');
-    setDibayarkanKepada(sppd.namaPegawai || sppd.namaPekerja || '');
-    setNotes(`Voucher Biaya Perjalanan Dinas (SPPD) No: ${sppd.noSppd}. Kota Tujuan: ${sppd.kotaTujuan} (${sppd.tanggalBerangkat || sppd.tanggalMulai} s.d ${sppd.tanggalKembali || sppd.tanggalSelesai}). Maksud Dinas: ${sppd.maksudDinas || sppd.tujuanPerjalanan}`);
+    setJenisPengajuan('Perjalanan Dinas');
+    const travelerName = (sppd.namaPegawai || sppd.namaPekerja || '').trim();
+    setDibayarkanKepada(travelerName);
     
+    const tripStart = sppd.tanggalMulai || sppd.tanggalBerangkat;
+    if (tripStart) {
+      setTanggal(tripStart);
+    }
+
+    const comp = (userProfile?.companyId || 'NMSA').toUpperCase();
+    let seqStr = '';
+    if (sppd.noSppd) {
+      const match = sppd.noSppd.match(/(\d{3,5})/);
+      if (match) seqStr = match[1];
+    }
+    if (!seqStr) seqStr = '7648';
+    setKode(`BKK-${comp}-SPPD-${seqStr}`);
+
+    const sppdPurpose = (sppd.tujuanPerjalanan || sppd.maksudDinas || '').trim();
+    setNotes(sppdPurpose || (sppd.noSppd ? `Tujuan SPPD ${sppd.noSppd}: ${sppd.kotaTujuan || ''}` : (sppd.kotaTujuan || '')));
+
+    const lamaDinas = sppd.lamaPerjalanan || 'Dinas';
+    const tglMulai = sppd.tanggalMulai || sppd.tanggalBerangkat || '';
+    const tglSelesai = sppd.tanggalSelesai || sppd.tanggalKembali || '';
+    const dateRangeStr = tglMulai && tglSelesai
+      ? `${formatDateIndonesian(tglMulai)} s/d ${formatDateIndonesian(tglSelesai)}`
+      : (tglMulai ? formatDateIndonesian(tglMulai) : '');
+    const dateFormattedPart = dateRangeStr ? `(${dateRangeStr})` : '';
+    const destination = sppd.kotaTujuan || '';
+    const locationPart = destination ? `ke ${destination}` : '';
+    const singleItemDescription = `Biaya Perjalanan Dinas ${travelerName} ${lamaDinas} ${dateFormattedPart} ${locationPart}`.replace(/\s+/g, ' ').trim();
+
+    let totalSppdNominal = 0;
     const fullRec = sppd.fullRecord || sppd;
     if (fullRec && fullRec.costItems && Array.isArray(fullRec.costItems) && fullRec.costItems.length > 0) {
-      const mappedItems = fullRec.costItems.map((c: any, index: number) => ({
-        id: `sppd_item_${index + 1}_` + Date.now(),
-        no: index + 1,
-        item: `${c.kategori} - ${c.rincian || ''}`,
-        jumlahVolume: '1 Paket',
-        total: c.jumlah || 0,
-        keterangan: `SPPD ${sppd.noSppd} (${sppd.kotaTujuan || ''})`
-      }));
-      setItems(mappedItems);
+      totalSppdNominal = fullRec.costItems.reduce((sum: number, c: any) => {
+        const calc = c.jumlah !== undefined ? Number(c.jumlah) : (c.vol && c.hargaSatuan ? Number(c.vol) * Number(c.hargaSatuan) : 0);
+        return sum + (calc || 0);
+      }, 0);
+    } else if (sppd.totalBiaya !== undefined && Number(sppd.totalBiaya) > 0) {
+      totalSppdNominal = Number(sppd.totalBiaya);
     } else {
-      const generated = [
-        {
-          id: 'sppd_1_' + Date.now(),
-          no: 1,
-          item: `Biaya Transportasi & Tiket SPPD (${sppd.kotaTujuan})`,
-          jumlahVolume: '1 Paket',
-          total: sppd.biayaTransport || 0,
-          keterangan: `Transportasi SPPD ${sppd.noSppd}`
-        },
-        {
-          id: 'sppd_2_' + Date.now(),
-          no: 2,
-          item: `Uang Harian Perjalanan Dinas (${sppd.tanggalBerangkat} s.d ${sppd.tanggalKembali})`,
-          jumlahVolume: '1 Paket',
-          total: sppd.uangHarian || 0,
-          keterangan: `Uang Harian SPPD ${sppd.noSppd}`
-        },
-        {
-          id: 'sppd_3_' + Date.now(),
-          no: 3,
-          item: `Biaya Akomodasi & Penginapan Hotel (${sppd.kotaTujuan})`,
-          jumlahVolume: '1 Paket',
-          total: sppd.biayaPenginapan || 0,
-          keterangan: `Penginapan SPPD ${sppd.noSppd}`
-        }
-      ].filter(i => i.total > 0 || i.no === 1);
-      setItems(generated);
+      totalSppdNominal = (Number(sppd.biayaTransport) || 0) + (Number(sppd.uangHarian) || 0) + (Number(sppd.biayaPenginapan) || 0);
     }
+
+    setItems([
+      {
+        id: `sppd_item_` + Date.now(),
+        no: 1,
+        item: singleItemDescription,
+        jumlahVolume: '1 Paket',
+        total: totalSppdNominal,
+        keterangan: sppd.noSppd ? `SPPD No: ${sppd.noSppd}` : 'Biaya SPPD'
+      }
+    ]);
+
     setShowSppdModal(false);
   };
   

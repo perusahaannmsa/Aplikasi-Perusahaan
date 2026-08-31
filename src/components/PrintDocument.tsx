@@ -4,6 +4,8 @@ import { formatRupiah, formatDateIndonesian, numberToTerbilang } from '../utils'
 import { NusantaraLogo } from './NusantaraLogo';
 import { Printer, ArrowLeft, Layers, FileText, CheckCircle, Cloud, Loader2, Lock, ShieldAlert, RefreshCw, Share2, Copy, Check, Send, Edit2, Trash, Trash2, RotateCw, Coins } from 'lucide-react';
 import { getStoredGoogleDriveToken, googleDriveLogin, saveSubmissionToFirestore } from '../firebase';
+import { SppdSheetContent } from './PrintSppdDocument';
+import { SPPDRecord } from './SppdManager';
 
 interface PrintDocumentProps {
   submission: Submission;
@@ -11,7 +13,7 @@ interface PrintDocumentProps {
   onEdit?: () => void;
   onOpenSppdEditor?: () => void;
   userProfile?: any;
-  initialTab?: 'both' | 'pengajuan' | 'pengeluaran' | 'lampiran';
+  initialTab?: 'both' | 'pengajuan' | 'pengeluaran' | 'lampiran' | 'slip_gaji' | 'sppd_sheet';
   onUpdateSubmission?: (updated: Submission) => void;
   isSharedView?: boolean;
 }
@@ -389,24 +391,80 @@ const PageScaleWrapper: React.FC<{ children: React.ReactNode; isLandscape?: bool
 };
 
 export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack, onEdit, onOpenSppdEditor, userProfile, initialTab, onUpdateSubmission, isSharedView }) => {
-  const [activeTab, setActiveTab] = useState<'both' | 'pengajuan' | 'pengeluaran' | 'slip_gaji' | 'lampiran'>(
+  const [activeTab, setActiveTab] = useState<'both' | 'pengajuan' | 'pengeluaran' | 'slip_gaji' | 'lampiran' | 'sppd_sheet'>(
     initialTab || 'both'
   );
+
+  const isSppdSubmission = useMemo(() => {
+    const jp = (submission.jenisPengajuan || '').toLowerCase();
+    const kd = (submission.kode || '').toLowerCase();
+    return jp.includes('perjalanan dinas') || jp.includes('sppd') || kd.includes('sppd') || !!submission.isSppd;
+  }, [submission]);
+
+  const effectiveSppdRecord = useMemo<SPPDRecord | null>(() => {
+    if (submission.sppdRecord) return submission.sppdRecord;
+
+    try {
+      const raw = localStorage.getItem('sppd_records_v1');
+      if (raw) {
+        const list = JSON.parse(raw);
+        if (Array.isArray(list)) {
+          if (submission.sppdId) {
+            const found = list.find((r: any) => r.id === submission.sppdId);
+            if (found) return found;
+          }
+          if (submission.sppdNo) {
+            const found = list.find((r: any) => r.noSppd === submission.sppdNo);
+            if (found) return found;
+          }
+          const byKode = list.find((r: any) => submission.kode?.includes(r.noSppd) || submission.notes?.includes(r.noSppd));
+          if (byKode) return byKode;
+          const byNameAndDate = list.find((r: any) => (r.namaPekerja === submission.dibayarkanKepada || r.namaPegawai === submission.dibayarkanKepada) && (r.tanggalMulai === submission.tanggal || r.tanggalBerangkat === submission.tanggal));
+          if (byNameAndDate) return byNameAndDate;
+        }
+      }
+    } catch (e) {}
+
+    if (!isSppdSubmission) return null;
+
+    return {
+      id: submission.sppdId || 'sppd_' + submission.id,
+      noSppd: submission.sppdNo || submission.kode || 'SPPD/HO/2026',
+      namaPekerja: submission.dibayarkanKepada || 'Karyawan',
+      jabatan: 'Supervisor / Staff',
+      divisi: 'Operasional & Finance',
+      kotaAsal: 'Jakarta (HO)',
+      kotaTujuan: submission.lokasi || 'Site / Proyek',
+      transportasi: 'Pesawat / Kendaraan Operasional',
+      lamaPerjalanan: 'Perjalanan Dinas',
+      tanggalMulai: submission.tanggal,
+      tanggalSelesai: submission.tanggal,
+      tujuanPerjalanan: submission.notes || 'Perjalanan Dinas Lapangan',
+      keteranganSppd: 'Bukti fisik dan kwitansi terlampir.',
+      pemberiPerintah: submission.disetujuiOleh2 || 'H. A. Nursyam Halid',
+      pemberiPerintahJabatan: submission.disetujuiJabatan2 || 'Direktur Utama',
+      sppdDisetujuiName: submission.disetujuiOleh || 'Harijon',
+      sppdDisetujuiJabatan: 'Head of Operational',
+      sppdMengetahuiName: submission.dibayarkanKepada || 'Karyawan',
+      costItems: submission.items.map((it, idx) => ({
+        id: it.id || `ci_${idx}`,
+        kategori: it.item,
+        rincian: it.keterangan || it.item,
+        jumlah: it.total,
+        hargaAcuan: it.total
+      })),
+      status: 'Disetujui',
+      createdAt: submission.createdAt || new Date().toISOString()
+    };
+  }, [submission, isSppdSubmission]);
   const [printLayoutMode, setPrintLayoutMode] = useState<'standard' | 'compact_70' | 'eco_1page'>('standard');
   const [showF2, setShowF2] = useState<boolean>(true);
   const [f1Verifier, setF1Verifier] = useState<'rifki' | 'nursyam'>(() => {
     if (submission.diverifikasiOleh?.toLowerCase().includes('nursyam')) return 'nursyam';
     return 'rifki';
   });
-  const [f2ApprovedBy, setF2ApprovedBy] = useState<'harijon' | 'nursyam' | 'none'>(() => {
-    if (submission.disetujuiOleh && submission.disetujuiOleh.toLowerCase().includes('nursyam')) {
-      return 'nursyam';
-    }
-    if (submission.disetujuiOleh && submission.disetujuiOleh.toLowerCase().includes('harijon')) {
-      return 'harijon';
-    }
-    return 'none';
-  });
+  // Default Penanda Tangan F2: Tanpa Disetujui (1 orang: Dibuat Oleh saja) sesuai permintaan pengguna
+  const [f2ApprovedBy, setF2ApprovedBy] = useState<'harijon' | 'nursyam' | 'none'>('none');
   const [renderedPages, setRenderedPages] = useState<RenderedPage[]>([]);
   const [deletedPageIds, setDeletedPageIds] = useState<string[]>([]);
   const [pageRotations, setPageRotations] = useState<{[key: string]: number}>({});
@@ -1179,10 +1237,24 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
     return true;
   });
 
+  const isSalarySubmission = (submission.jenisPengajuan || '').toLowerCase().includes('gaji') || !!submission.salaryDetails;
+  const salarySlipPagesCount = isSalarySubmission ? 1 : 0;
+  const sppdPagesCount = effectiveSppdRecord ? 2 : 0;
   const basePagesCount = showF2 ? (printLayoutMode === 'eco_1page' ? 1 : 2) : 1;
   const totalPagesCount = activeTab === 'pengajuan'
     ? basePagesCount
-    : (activeTab === 'pengeluaran' || activeTab === 'lampiran' ? visiblePages.length : basePagesCount + visiblePages.length);
+    : activeTab === 'slip_gaji'
+    ? salarySlipPagesCount
+    : activeTab === 'sppd_sheet'
+    ? sppdPagesCount
+    : (activeTab === 'pengeluaran' || activeTab === 'lampiran' 
+        ? visiblePages.length 
+        : basePagesCount + (isSalarySubmission ? salarySlipPagesCount : 0) + (effectiveSppdRecord ? sppdPagesCount : 0) + visiblePages.length);
+
+  const hasMoreAfterF1 = (activeTab === 'both' && (showF2 || isSalarySubmission || !!effectiveSppdRecord || visiblePages.length > 0)) || (activeTab === 'pengajuan' && showF2);
+  const hasMoreAfterF2 = (activeTab === 'both' && (isSalarySubmission || !!effectiveSppdRecord || visiblePages.length > 0));
+  const hasMoreAfterSalarySlip = (activeTab === 'both' && (!!effectiveSppdRecord || visiblePages.length > 0));
+  const hasMoreAfterSppd = (activeTab === 'both' && visiblePages.length > 0);
 
   return (
     <div className="space-y-6">
@@ -1207,14 +1279,28 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
 
           {/* Action Buttons */}
           <div className="flex flex-wrap items-center gap-2.5 shrink-0 w-full sm:w-auto">
-            {((submission.jenisPengajuan || '').toLowerCase().includes('perjalanan dinas') || (submission.jenisPengajuan || '').toLowerCase().includes('sppd')) && onOpenSppdEditor && (
+            {effectiveSppdRecord && (
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('sppd_sheet');
+                  setTimeout(() => window.print(), 250);
+                }}
+                className="flex-1 sm:flex-initial flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-600 text-stone-950 font-extrabold px-4 py-2.5 rounded-xl transition cursor-pointer shadow-3xs text-sm shrink-0"
+                title="Cetak Khusus Dokumen SPPD & Lembar Visum"
+              >
+                <FileText size={16} />
+                <span>Cetak SPPD</span>
+              </button>
+            )}
+            {isSppdSubmission && onOpenSppdEditor && (
               <button
                 type="button"
                 onClick={onOpenSppdEditor}
-                className="flex-1 sm:flex-initial flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-600 text-stone-950 font-extrabold px-4 py-2.5 rounded-xl transition cursor-pointer shadow-3xs text-sm shrink-0"
+                className="flex-1 sm:flex-initial flex items-center justify-center gap-2 bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 font-bold px-4 py-2.5 rounded-xl transition cursor-pointer shadow-3xs text-sm shrink-0"
                 title="Edit Form SPPD & Lembar Perjalanan Dinas"
               >
-                <FileText size={16} />
+                <Edit2 size={16} />
                 <span>Edit Form SPPD</span>
               </button>
             )}
@@ -1258,7 +1344,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                 }`}
               >
                 <Layers size={13} />
-                {attachmentFiles.length > 0 ? `Cetak Semua (${isLoadingPages ? '...' : totalPagesCount} Hal)` : 'Cetak Semua Halaman'}
+                {attachmentFiles.length > 0 ? `Cetak Semua (${isLoadingPages ? '...' : totalPagesCount} Hal)` : `Cetak Semua (${totalPagesCount} Hal)`}
               </button>
               <button
                 onClick={() => setActiveTab('pengajuan')}
@@ -1269,6 +1355,17 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                 <FileText size={13} />
                 Hanya Pengajuan ( F1 & F2 )
               </button>
+              {effectiveSppdRecord && (
+                <button
+                  onClick={() => setActiveTab('sppd_sheet')}
+                  className={`flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg transition ${
+                    activeTab === 'sppd_sheet' ? 'bg-amber-500 text-stone-950 font-bold shadow-xs' : 'text-amber-800 bg-amber-50 hover:bg-amber-100'
+                  }`}
+                >
+                  <FileText size={13} />
+                  Form SPPD &amp; Visum
+                </button>
+              )}
               <button
                 onClick={() => setActiveTab('pengeluaran')}
                 className={`flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg transition ${
@@ -1835,7 +1932,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
           {/* ================= PAGE 1: BUKTI PENGELUARAN KAS / BANK ================= */}
         {/* ================= PAGE 1: BUKTI PENGELUARAN KAS / BANK (STANDARD 100% LAYOUT) ================= */}
         {printLayoutMode === 'standard' && (activeTab === 'both' || activeTab === 'pengajuan') && (
-          <PageScaleWrapper isLandscape={false} isLastPage={1 === totalPagesCount}>
+          <PageScaleWrapper isLandscape={false} isLastPage={!hasMoreAfterF1}>
             <div className="w-[210mm] min-h-[297mm] bg-white p-[15mm] border border-stone-250 shadow-md rounded-xl print:shadow-none print:border-none print:rounded-none print:!p-0 print:!m-0 page-break">
               
               {/* Header Block Left (Logo) & Right (Code & Tanggal) */}
@@ -1994,7 +2091,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
 
         {/* ================= PAGE 1: BUKTI PENGELUARAN KAS / BANK (COMPACT TOP LAYOUT) ================= */}
         {printLayoutMode === 'compact_70' && (activeTab === 'both' || activeTab === 'pengajuan') && (
-          <PageScaleWrapper isLandscape={false} isLastPage={1 === totalPagesCount}>
+          <PageScaleWrapper isLandscape={false} isLastPage={!hasMoreAfterF1}>
             <div className="w-[210mm] print:w-full min-h-[297mm] print:h-[297mm] bg-white p-[8mm] border border-stone-250 shadow-md rounded-xl print:shadow-none print:border-none print:rounded-none page-break flex flex-col justify-between box-border overflow-hidden">
               
               {/* Top Half (50%): F1 Box */}
@@ -2139,7 +2236,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
 
         {/* ================= PAGE 2: FORMULIR PENGAJUAN HO (STANDARD 100% LAYOUT) ================= */}
         {showF2 && printLayoutMode === 'standard' && (activeTab === 'both' || activeTab === 'pengajuan') && (
-          <PageScaleWrapper isLandscape={false} isLastPage={2 === totalPagesCount}>
+          <PageScaleWrapper isLandscape={false} isLastPage={!hasMoreAfterF2}>
             <div className="w-[210mm] min-h-[297mm] bg-white p-[15mm] border border-stone-250 shadow-md rounded-xl print:shadow-none print:border-none print:rounded-none print:!p-0 print:!m-0 page-break">
               
               {/* Header Area */}
@@ -2263,7 +2360,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
 
         {/* ================= PAGE 2: FORMULIR PENGAJUAN HO (COMPACT TOP LAYOUT) ================= */}
         {showF2 && printLayoutMode === 'compact_70' && (activeTab === 'both' || activeTab === 'pengajuan') && (
-          <PageScaleWrapper isLandscape={false} isLastPage={2 === totalPagesCount}>
+          <PageScaleWrapper isLandscape={false} isLastPage={!hasMoreAfterF2}>
             <div className="w-[210mm] print:w-full min-h-[297mm] print:h-[297mm] bg-white p-[8mm] border border-stone-250 shadow-md rounded-xl print:shadow-none print:border-none print:rounded-none page-break flex flex-col justify-between box-border overflow-hidden">
               
               {/* Top Half (50%): F2 Box */}
@@ -2389,7 +2486,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
 
         {/* ================= ECO 1-PAGE COMBINED LAYOUT (50% F1 / 50% F2) ================= */}
         {printLayoutMode === 'eco_1page' && (activeTab === 'both' || activeTab === 'pengajuan') && (
-          <PageScaleWrapper isLandscape={false} isLastPage={1 === totalPagesCount}>
+          <PageScaleWrapper isLandscape={false} isLastPage={!hasMoreAfterF2}>
             <div className="w-[210mm] print:w-full min-h-[297mm] print:h-[297mm] bg-white p-[8mm] border border-stone-250 shadow-md rounded-xl print:shadow-none print:border-none print:rounded-none page-break flex flex-col justify-between box-border overflow-hidden">
               
               {/* Top Half (50%): F1 (BUKTI PENGELUARAN KAS / BANK) */}
@@ -2663,7 +2760,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                   <span className="text-xs bg-amber-50 text-amber-800 px-3 py-1 rounded-full font-bold">SLIP GAJI KARYAWAN</span>
                 </div>
               )}
-              <PageScaleWrapper isLandscape={false} isLastPage={true}>
+              <PageScaleWrapper isLandscape={false} isLastPage={activeTab === 'slip_gaji' || !hasMoreAfterSalarySlip}>
                 <div className="w-[210mm] min-h-[297mm] bg-white p-[15mm] border border-stone-250 shadow-md rounded-xl print:shadow-none print:border-none print:rounded-none print:!p-0 print:!m-0 page-break">
                   
                   {/* Header */}
@@ -2823,6 +2920,20 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
           );
         })()}
 
+        {/* ================= PAGE: FORMULIR SPPD RESMI & LEMBAR VISUM ================= */}
+        {(activeTab === 'both' || activeTab === 'sppd_sheet') && effectiveSppdRecord && (
+          <div className="w-full flex flex-col items-center">
+            {activeTab === 'both' && (
+              <div className="w-[210mm] border-t-2 border-dashed border-amber-400 py-2 print:hidden flex justify-center">
+                <span className="text-xs bg-amber-100 text-amber-900 px-3 py-1 rounded-full font-bold">
+                  HALAMAN SPPD RESMI &amp; VISUM PERJALANAN DINAS
+                </span>
+              </div>
+            )}
+            <SppdSheetContent sppd={effectiveSppdRecord} includeVisum={true} isLastPage={activeTab === 'sppd_sheet' || !hasMoreAfterSppd} />
+          </div>
+        )}
+
         {/* Loading state indicator on screen only */}
         {isLoadingPages && (
           <div className="w-[210mm] min-h-[140mm] bg-white border border-stone-250 shadow-md rounded-xl p-8 flex flex-col items-center justify-center gap-3 print:hidden">
@@ -2896,7 +3007,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                 </div>
               )}
 
-              <PageScaleWrapper isLandscape={isLandscape} isLastPage={((activeTab === "both" || activeTab === "pengajuan") ? basePagesCount : 0) + idx + 1 === totalPagesCount}>
+              <PageScaleWrapper isLandscape={isLandscape} isLastPage={idx === visiblePages.length - 1}>
                 {/* Responsive container matching orientation format on screen & print */}
                 <div 
                   className={`bg-white border border-stone-250 shadow-md rounded-xl print:shadow-none print:border-none print:rounded-none print:!p-0 print:!m-0 page-break is-image-page relative overflow-hidden bg-stone-50/10 flex items-center justify-center transition-all duration-200 ${

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Submission, SubmissionItem, PettyCashReport, TransactionType, NpwpRecord } from './types';
+import { Submission, SubmissionItem, PettyCashReport, TransactionType, NpwpRecord, AgendaItem } from './types';
 import { INITIAL_SUBMISSIONS } from './data/initialData';
+import { INITIAL_AGENDA_ITEMS } from './data/initialAgenda';
 import { SubmissionsList } from './components/SubmissionsList';
 import { SubmissionForm } from './components/SubmissionForm';
 import { PrintDocument } from './components/PrintDocument';
@@ -20,7 +21,9 @@ import { PettyCashHoldersModal } from './components/PettyCashHoldersModal';
 import { NpwpManager } from './components/NpwpManager';
 import { AccuratePettyCashMapping } from './components/AccuratePettyCashMapping';
 import { AccountMappingContainer } from './components/AccountMappingContainer';
-import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission } from './utils';
+import { AgendaManager } from './components/AgendaManager';
+import { AgendaReminderBanner } from './components/AgendaReminderBanner';
+import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, formatDateIndonesian } from './utils';
 import { 
   isFirebaseConfigured, 
   saveSubmissionToFirestore, 
@@ -45,7 +48,7 @@ import {
   getMasterDriveEmail,
   getActiveGoogleDriveAccount
 } from './firebase';
-import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers } from 'lucide-react';
+import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell } from 'lucide-react';
 
 export default function App() {
   const [theme, setTheme] = useState<'classic' | 'gold-dark' | 'emerald' | 'slate'>(() => {
@@ -116,6 +119,20 @@ export default function App() {
       return stored ? JSON.parse(stored) : [];
     } catch (e) {
       return [];
+    }
+  });
+
+  // Task / Activity Reminders (Agenda Kegiatan & Pengingat Tenggat Waktu)
+  const [agendaItems, setAgendaItems] = useState<AgendaItem[]>(() => {
+    try {
+      const stored = localStorage.getItem('nmsa_agenda_items_v1');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+      return INITIAL_AGENDA_ITEMS;
+    } catch (e) {
+      return INITIAL_AGENDA_ITEMS;
     }
   });
 
@@ -374,6 +391,48 @@ export default function App() {
     }
   };
 
+  const handleSaveAgendaItems = (newItems: AgendaItem[]) => {
+    setAgendaItems(newItems);
+    try {
+      localStorage.setItem('nmsa_agenda_items_v1', JSON.stringify(newItems));
+    } catch (e) {
+      console.error('Gagal menyimpan agenda ke localStorage:', e);
+    }
+  };
+
+  const handleToggleAgendaComplete = (id: string) => {
+    const newList = agendaItems.map(item => {
+      if (item.id === id) {
+        const isNowCompleted = item.status === 'pending';
+        return {
+          ...item,
+          status: (isNowCompleted ? 'completed' : 'pending') as 'pending' | 'completed',
+          completedAt: isNowCompleted ? new Date().toISOString() : undefined,
+          completedBy: isNowCompleted ? (userProfile?.fullName || 'Nur Wahyudi') : undefined
+        };
+      }
+      return item;
+    });
+    handleSaveAgendaItems(newList);
+  };
+
+  const handlePostponeAgenda = (id: string, days: number = 1) => {
+    const newList = agendaItems.map(item => {
+      if (item.id === id) {
+        const curr = new Date(item.dueDate);
+        curr.setDate(curr.getDate() + days);
+        const newDue = curr.toISOString().split('T')[0];
+        return {
+          ...item,
+          dueDate: newDue,
+          updatedAt: new Date().toISOString()
+        };
+      }
+      return item;
+    });
+    handleSaveAgendaItems(newList);
+  };
+
   // Automatic periodic Google Drive token keepalive and auto-refresh
   useEffect(() => {
     const stopAutoRefresh = startGoogleDriveTokenAutoRefresh(3); // Auto checks every 3 minutes
@@ -382,20 +441,20 @@ export default function App() {
     };
   }, []);
 
-  const [view, setViewInternal] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate'>(() => {
+  const [view, setViewInternal] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda'>(() => {
     try {
       const stored = sessionStorage.getItem('NUSANTARA_ACTIVE_VIEW') || localStorage.getItem('NUSANTARA_ACTIVE_VIEW');
-      if (stored && ['list', 'form', 'print', 'sppd', 'absen', 'npwp', 'accurate'].includes(stored)) {
+      if (stored && ['list', 'form', 'print', 'sppd', 'absen', 'npwp', 'accurate', 'agenda'].includes(stored)) {
         return stored as any;
       }
     } catch (e) {}
     return 'list';
   });
 
-  const [previousView, setPreviousView] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate'>(() => {
+  const [previousView, setPreviousView] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda'>(() => {
     try {
       const stored = sessionStorage.getItem('NUSANTARA_PREVIOUS_VIEW');
-      if (stored && ['list', 'form', 'print', 'sppd', 'absen', 'npwp', 'accurate'].includes(stored)) {
+      if (stored && ['list', 'form', 'print', 'sppd', 'absen', 'npwp', 'accurate', 'agenda'].includes(stored)) {
         return stored as any;
       }
     } catch (e) {}
@@ -403,7 +462,7 @@ export default function App() {
   });
 
   const setView = (
-    newView: 'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate',
+    newView: 'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda',
     options?: { preservePrevious?: boolean }
   ) => {
     setViewInternal((current) => {
@@ -489,6 +548,11 @@ export default function App() {
   const pettyCashCount = useMemo(() => {
     return submissions.filter(sub => isPettyCashSubmission(sub)).length;
   }, [submissions]);
+
+  const agendaDueCount = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0];
+    return agendaItems.filter(item => item.status === 'pending' && item.dueDate <= today).length;
+  }, [agendaItems]);
 
   const userMenuRef = useRef<HTMLDivElement>(null);
   const dashboardNavRef = useRef<HTMLDivElement>(null);
@@ -1164,18 +1228,65 @@ export default function App() {
     return base || 'Biaya SPPD';
   };
 
+  // Helper to generate SPPD voucher code matching requested format (e.g. BKK-NMSA-SPPD-7648)
+  const generateSppdVoucherDocumentCode = (sppd: any, allSubmissions: Submission[]): string => {
+    const comp = (userProfile?.companyId || sppd.company || 'NMSA').toUpperCase();
+    
+    // Check if sppd.noSppd has numeric sequence (e.g. 7648)
+    let seqStr = '';
+    if (sppd.noSppd) {
+      const match = sppd.noSppd.match(/(\d{3,5})/);
+      if (match) {
+        seqStr = match[1];
+      } else {
+        const digits = sppd.noSppd.replace(/\D/g, '');
+        if (digits.length >= 3) {
+          seqStr = digits.slice(-4);
+        }
+      }
+    }
+
+    if (!seqStr) {
+      // Find highest SPPD sequence in existing submissions
+      let maxSeq = 7647;
+      allSubmissions.forEach(sub => {
+        if (sub.kode) {
+          const m = sub.kode.match(/SPPD[-/](\d+)/i) || sub.kode.match(/(\d{4})/);
+          if (m && m[1]) {
+            const v = parseInt(m[1], 10);
+            if (v > maxSeq && v < 99999) maxSeq = v;
+          }
+        }
+      });
+      seqStr = String(maxSeq + 1);
+    }
+
+    return `BKK-${comp}-SPPD-${seqStr}`;
+  };
+
   // SPPD Import to Submission handler
   const handleImportSppdToSubmission = (sppd: any) => {
-    // Determine traveler name
-    const travelerName = sppd.namaPekerja || sppd.namaPegawai || '';
+    // 1. Determine traveler name (nama dibayarkan = nama karyawan)
+    const travelerName = (sppd.namaPekerja || sppd.namaPegawai || '').trim();
+    // 2. Tanggal pengajuan = tanggal default tanggal awal dimulai perjalanan dinas
     const dateVal = sppd.tanggalMulai || sppd.tanggalBerangkat || new Date().toISOString().split('T')[0];
     const destination = sppd.kotaTujuan || '';
+    const lamaDinas = sppd.lamaPerjalanan || 'Dinas';
+    const tglMulai = sppd.tanggalMulai || sppd.tanggalBerangkat || '';
+    const tglSelesai = sppd.tanggalSelesai || sppd.tanggalKembali || '';
+    
+    const dateRangeStr = tglMulai && tglSelesai
+      ? `${formatDateIndonesian(tglMulai)} s/d ${formatDateIndonesian(tglSelesai)}`
+      : (tglMulai ? formatDateIndonesian(tglMulai) : '');
 
-    // Concise, single-line note without vertical overflow
-    const cleanDestination = (destination || 'Site / Proyek').replace(/^(Kota\s+Tujuan:?\s*)/i, '').trim();
-    const cleanNotes = `SPPD No: ${sppd.noSppd || 'SPPD'} | Tujuan: ${cleanDestination}`;
+    // 3. Document code: nomor dok + SPPD setelah no default, e.g. BKK-NMSA-SPPD-7648
+    const docKode = generateSppdVoucherDocumentCode(sppd, submissions);
 
-    // Collect all PDF attachments from SPPD cost items or attachedFiles
+    // 4. Notes: khusus dari tujuan perjalanan dinas yang tertulis di form SPPD
+    const sppdPurpose = (sppd.tujuanPerjalanan || sppd.maksudDinas || '').trim();
+    const cleanNotes = sppdPurpose || (sppd.noSppd ? `Tujuan SPPD ${sppd.noSppd}: ${destination}` : destination);
+
+    // 5. Collect all attachments uploaded by employee
     const pdfAttachments: Array<{ url: string; name: string; pageCount?: number; docType?: string; isF1?: boolean; isF2?: boolean; isBuktiPembayaran?: boolean }> = [];
 
     if (sppd.costItems && Array.isArray(sppd.costItems)) {
@@ -1183,9 +1294,9 @@ export default function App() {
         if (c.attachment && c.attachment.url) {
           pdfAttachments.push({
             url: c.attachment.url,
-            name: c.attachment.name || `Bukti_${c.kategori}.pdf`,
+            name: c.attachment.name || `Bukti_${c.kategori || 'Biaya'}.pdf`,
             pageCount: c.attachment.pageCount || 1,
-            docType: `Bukti ${c.kategori}`
+            docType: `Bukti ${c.kategori || 'SPPD'}`
           });
         }
       });
@@ -1204,63 +1315,30 @@ export default function App() {
       });
     }
 
-    // If it's from full SPPDRecord (SppdManager)
+    // 6. Calculate total SPPD amount
+    let totalSppdNominal = 0;
     if (sppd.costItems && Array.isArray(sppd.costItems) && sppd.costItems.length > 0) {
-      const subItems = sppd.costItems.map((c: any, index: number) => {
-        const itemTitle = getCleanCategoryItemTitle(c.kategori, sppd.lamaPerjalanan);
-        const volumeStr = c.vol && c.satuan ? `${c.vol} ${c.satuan}` : (c.vol ? `${c.vol}` : '1 Paket');
-        const calculatedTotal = c.jumlah || (c.vol && c.hargaSatuan ? c.vol * c.hargaSatuan : 0);
-        return {
-          id: `item_${index + 1}_` + Date.now(),
-          no: index + 1,
-          item: itemTitle,
-          jumlahVolume: volumeStr,
-          total: calculatedTotal,
-          keterangan: `SPPD ${sppd.noSppd}`
-        };
-      });
-
-      const newSppdSubmission: Submission = {
-        id: 'sub_' + Date.now(),
-        lokasi: 'Lt. 1',
-        tanggal: dateVal,
-        jenisPengajuan: 'Biaya Perjalanan Dinas (SPPD)',
-        kode: 'HO',
-        dibayarkanKepada: travelerName,
-        dibayarkanDengan: 'Cek/Transfer',
-        status: 'Belum Lunas',
-        notes: cleanNotes,
-        isSppd: true,
-        sppdId: sppd.id,
-        sppdNo: sppd.noSppd,
-        sppdRecord: sppd,
-        googleDriveFiles: pdfAttachments.length > 0 ? pdfAttachments : undefined,
-        googleDriveFileUrl: pdfAttachments.length > 0 ? pdfAttachments[0].url : undefined,
-        googleDriveFileName: pdfAttachments.length > 0 ? pdfAttachments[0].name : undefined,
-        dibuatOleh: userProfile ? userProfile.fullName : 'Nur Wahyudi',
-        disetujuiOleh: sppd.sppdDisetujuiName || 'Harijon',
-        diverifikasiOleh: 'Andi Dhiya Salsabila',
-        diverifikasiJabatan: 'Keuangan',
-        disetujuiOleh2: sppd.pemberiPerintah || sppd.pemberiPerintahName || 'H. A. Nursyam Halid',
-        disetujuiJabatan2: sppd.pemberiPerintahJabatan || 'Direktur Utama',
-        dibukukanOleh: 'Sri Ekowati',
-        dibukukanJabatan: 'Accounting',
-        items: subItems,
-        createdAt: new Date().toISOString()
-      };
-
-      setEditingSubmission(newSppdSubmission);
-      setView('form');
-      return;
+      totalSppdNominal = sppd.costItems.reduce((sum: number, c: any) => {
+        const calc = c.jumlah !== undefined ? Number(c.jumlah) : (c.vol && c.hargaSatuan ? Number(c.vol) * Number(c.hargaSatuan) : 0);
+        return sum + (calc || 0);
+      }, 0);
+    } else if (sppd.totalBiaya !== undefined && Number(sppd.totalBiaya) > 0) {
+      totalSppdNominal = Number(sppd.totalBiaya);
+    } else {
+      totalSppdNominal = (Number(sppd.biayaTransport) || 0) + (Number(sppd.uangHarian) || 0) + (Number(sppd.biayaPenginapan) || 0);
     }
 
-    // Fallback for simple SppdRecord
+    // 7. Format single-row item description: Biaya Perjalanan Dinas + Nama Karyawan + lama Dinas dengan tanggalnya + lokasi dinas
+    const dateFormattedPart = dateRangeStr ? `(${dateRangeStr})` : '';
+    const locationPart = destination ? `ke ${destination}` : '';
+    const singleItemDescription = `Biaya Perjalanan Dinas ${travelerName} ${lamaDinas} ${dateFormattedPart} ${locationPart}`.replace(/\s+/g, ' ').trim();
+
     const newSppdSubmission: Submission = {
       id: 'sub_' + Date.now(),
-      lokasi: 'Lt. 1',
+      lokasi: destination || 'Lt. 1',
       tanggal: dateVal,
-      jenisPengajuan: 'Biaya Perjalanan Dinas (SPPD)',
-      kode: 'HO',
+      jenisPengajuan: 'Perjalanan Dinas',
+      kode: docKode,
       dibayarkanKepada: travelerName,
       dibayarkanDengan: 'Cek/Transfer',
       status: 'Belum Lunas',
@@ -1273,41 +1351,26 @@ export default function App() {
       googleDriveFileUrl: pdfAttachments.length > 0 ? pdfAttachments[0].url : undefined,
       googleDriveFileName: pdfAttachments.length > 0 ? pdfAttachments[0].name : undefined,
       dibuatOleh: userProfile ? userProfile.fullName : 'Nur Wahyudi',
-      disetujuiOleh: 'Harijon',
+      disetujuiOleh: sppd.sppdDisetujuiName || 'Harijon',
       diverifikasiOleh: 'Andi Dhiya Salsabila',
       diverifikasiJabatan: 'Keuangan',
-      disetujuiOleh2: 'H. A. Nursyam Halid',
-      disetujuiJabatan2: 'Direktur Utama',
+      disetujuiOleh2: sppd.pemberiPerintah || sppd.pemberiPerintahName || 'H. A. Nursyam Halid',
+      disetujuiJabatan2: sppd.pemberiPerintahJabatan || 'Direktur Utama',
       dibukukanOleh: 'Sri Ekowati',
       dibukukanJabatan: 'Accounting',
       items: [
-        ...(sppd.biayaTransport ? [{
-          id: 'item_1_' + Date.now(),
+        {
+          id: 'item_sppd_' + Date.now(),
           no: 1,
-          item: `Biaya Transportasi & Tiket (${destination})`,
+          item: singleItemDescription,
           jumlahVolume: '1 Paket',
-          total: sppd.biayaTransport,
-          keterangan: `SPPD ${sppd.noSppd}`
-        }] : []),
-        ...(sppd.uangHarian ? [{
-          id: 'item_2_' + Date.now(),
-          no: 2,
-          item: `Uang Harian Perjalanan Dinas (${sppd.lamaPerjalanan || 'Dinas'})`,
-          jumlahVolume: '1 Paket',
-          total: sppd.uangHarian,
-          keterangan: `SPPD ${sppd.noSppd}`
-        }] : []),
-        ...(sppd.biayaPenginapan ? [{
-          id: 'item_3_' + Date.now(),
-          no: 3,
-          item: `Biaya Akomodasi & Hotel (${destination})`,
-          jumlahVolume: '1 Paket',
-          total: sppd.biayaPenginapan,
-          keterangan: `SPPD ${sppd.noSppd}`
-        }] : [])
+          total: totalSppdNominal,
+          keterangan: sppd.noSppd ? `SPPD No: ${sppd.noSppd}` : 'Biaya SPPD'
+        }
       ],
       createdAt: new Date().toISOString()
     };
+
     setEditingSubmission(newSppdSubmission);
     setView('form');
   };
@@ -1944,7 +2007,7 @@ export default function App() {
                     {/* 5. SURAT PERINTAH PERJALANAN DINAS (SPPD) */}
                     <button
                       onClick={() => { setView('sppd'); setIsDashboardNavOpen(false); }}
-                      className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer text-left ${
+                      className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer text-left mb-1 ${
                         view === 'sppd' ? 'bg-amber-600 text-white font-black' : 'text-stone-700 hover:bg-stone-100'
                       }`}
                     >
@@ -1957,7 +2020,32 @@ export default function App() {
                       </div>
                     </button>
 
-                    {(view === 'form' || view === 'print' || view === 'sppd') && (
+                    {/* 6. PENGINGAT & AGENDA KERJA */}
+                    <button
+                      onClick={() => { setView('agenda'); setIsDashboardNavOpen(false); }}
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer text-left mb-1 ${
+                        view === 'agenda' ? 'bg-amber-500 text-stone-950 font-black' : 'text-stone-700 hover:bg-stone-100'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <Calendar size={15} className={view === 'agenda' ? 'text-stone-950' : 'text-amber-600'} />
+                        <div className="flex flex-col">
+                          <span>Pengingat &amp; Agenda Kerja</span>
+                          <span className={`text-[10px] font-normal ${view === 'agenda' ? 'text-stone-900' : 'text-stone-400'}`}>
+                            Jadwal Pajak, Gaji, SPPD &amp; Tugas
+                          </span>
+                        </div>
+                      </div>
+                      {agendaDueCount > 0 && (
+                        <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-black ${
+                          view === 'agenda' ? 'bg-rose-700 text-white' : 'bg-rose-600 text-white'
+                        }`}>
+                          {agendaDueCount}
+                        </span>
+                      )}
+                    </button>
+
+                    {(view === 'form' || view === 'print' || view === 'sppd' || view === 'agenda') && (
                       <button
                         onClick={() => { setView('list'); setIsDashboardNavOpen(false); }}
                         className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer text-left text-amber-700 bg-amber-50 hover:bg-amber-100 mt-1 border border-amber-200"
@@ -1972,6 +2060,28 @@ export default function App() {
             </div>
 
             <div className="flex items-center gap-2.5">
+              {/* Quick Agenda & Reminder Header Button */}
+              <button
+                type="button"
+                onClick={() => setView('agenda')}
+                className={`flex items-center gap-1.5 py-1.5 px-3 rounded-2xl border transition cursor-pointer shadow-3xs font-mono text-xs font-bold ${
+                  view === 'agenda'
+                    ? 'bg-amber-500 text-stone-950 border-amber-600 font-black'
+                    : agendaDueCount > 0
+                    ? 'bg-amber-50 hover:bg-amber-100 border-amber-300 text-amber-950'
+                    : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
+                }`}
+                title={`Agenda Kegiatan & Pengingat Tugas (${agendaDueCount} tugas jatuh tempo / hari ini)`}
+              >
+                <Bell size={14} className={agendaDueCount > 0 ? 'text-rose-600 animate-bounce' : 'text-stone-500'} />
+                <span className="hidden md:inline font-sans">Agenda</span>
+                {agendaDueCount > 0 && (
+                  <span className="flex h-4 min-w-[16px] px-1 items-center justify-center rounded-full bg-rose-600 text-[10px] font-black text-white">
+                    {agendaDueCount}
+                  </span>
+                )}
+              </button>
+
               {/* Master Google Drive 24/7 Status Header Badge */}
               <button
                 type="button"
@@ -2145,7 +2255,13 @@ export default function App() {
       </div>
     </header>
 
-
+    {/* PERSISTENT REMINDER BANNER FOR DUE / OVERDUE AGENDA ITEMS */}
+    <AgendaReminderBanner
+      agendaItems={agendaItems}
+      onToggleComplete={handleToggleAgendaComplete}
+      onOpenAgendaView={() => setView('agenda')}
+      onPostponeOneDay={handlePostponeAgenda}
+    />
 
       {/* MAIN CONTAINER */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -2297,6 +2413,22 @@ export default function App() {
               handleImportSppdToSubmission(sppd);
             }}
             onBack={() => setView('list')}
+          />
+        )}
+
+        {/* VIEW 8: Modul Pengingat & Agenda Kegiatan Kerja */}
+        {view === 'agenda' && (
+          <AgendaManager
+            agendaItems={agendaItems}
+            onSaveAgendaItems={handleSaveAgendaItems}
+            submissions={submissions}
+            userProfile={userProfile}
+            onOpenSubmissionForPrint={(sub) => {
+              setActiveSubmission(sub);
+              setPrintInitialTab('both');
+              setView('print');
+            }}
+            onClose={() => setView(previousView || 'list')}
           />
         )}
 
