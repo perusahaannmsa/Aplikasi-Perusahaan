@@ -923,12 +923,7 @@ export const autoCleanDriveFolders = async (activeSubmissions: any[]) => {
 };
 
 export const deleteGoogleDriveFile = async (fileId: string): Promise<void> => {
-  const token = await ensureValidDriveToken();
-  if (!token) {
-    throw new Error('Google Drive token not available');
-  }
-
-  try {
+  return executeDriveApiWithAutoRefresh(async (token) => {
     const response = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
       method: 'DELETE',
       headers: {
@@ -941,19 +936,50 @@ export const deleteGoogleDriveFile = async (fileId: string): Promise<void> => {
         console.log(`[Google Drive] File/folder ${fileId} already deleted or not found.`);
         return;
       }
+      if (response.status === 401) {
+        throw new Error('UNAUTHORIZED_401'); // Triggers auto-refresh retry in wrapper
+      }
       const errorData = await response.json().catch(() => null);
       throw new Error(`Failed to delete file/folder: ${response.status} ${response.statusText} - ${errorData?.error?.message || ''}`);
     }
     console.log(`[Google Drive] Successfully deleted file/folder ${fileId}`);
-  } catch (error) {
-    console.error(`[Google Drive] Error deleting file/folder ${fileId}:`, error);
-    throw error;
+  }, { actionName: `delete file ${fileId}` });
+};
+
+// Invalidate a specific token or current active token so next calls trigger fresh renewal
+export const invalidateDriveToken = (badToken?: string | null): void => {
+  const currentDrives = getConnectedDrives();
+  let changed = false;
+
+  if (badToken) {
+    currentDrives.forEach(d => {
+      if (d.accessToken === badToken) {
+        d.isExpired = true;
+        changed = true;
+      }
+    });
+    if (googleDriveTokenMemory === badToken) {
+      googleDriveTokenMemory = null;
+      localStorage.removeItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
+      changed = true;
+    }
+  } else {
+    // Invalidate active one
+    const active = currentDrives.find(d => !d.isExpired);
+    if (active) {
+      active.isExpired = true;
+      changed = true;
+    }
+    googleDriveTokenMemory = null;
+    localStorage.removeItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
+  }
+
+  if (changed) {
+    saveConnectedDrives(currentDrives);
   }
 };
 
-export const getStoredGoogleDriveToken = (): string | null => {
-  // Let's implement the smart auto-chain priority switching:
-  // We return the first valid, unexpired token that has remaining space (> 10MB free)
+export const getStoredGoogleDriveToken = (strictFreshnessCheck = false): string | null => {
   const drives = getConnectedDrives();
   if (drives.length === 0) {
     if (googleDriveTokenMemory) return googleDriveTokenMemory;
@@ -968,10 +994,12 @@ export const getStoredGoogleDriveToken = (): string | null => {
   const availableDrive = drives.find(d => {
     if (d.isExpired) return false;
     
-    // Check if token is older than 50 minutes (3000 seconds)
-    const tokenAge = Date.now() - (d.issuedAt || 0);
-    if (d.issuedAt && tokenAge > 3000 * 1000) {
-      return false; // Token has expired or is about to expire
+    // If strict freshness check is enabled, check if token is older than 48 minutes (2880 seconds)
+    if (strictFreshnessCheck && d.issuedAt) {
+      const tokenAge = Date.now() - d.issuedAt;
+      if (tokenAge > 2880 * 1000) {
+        return false; // Token is approaching 1 hour expiry, should be renewed
+      }
     }
 
     const remainingBytes = d.quotaLimit - d.quotaUsed;
@@ -982,15 +1010,13 @@ export const getStoredGoogleDriveToken = (): string | null => {
     return availableDrive.accessToken;
   }
 
-  // If all are full or expired, fallback to the first active one that isn't expired by time
-  const fallbackDrive = drives.find(d => {
-    if (d.isExpired) return false;
-    const tokenAge = Date.now() - (d.issuedAt || 0);
-    if (d.issuedAt && tokenAge > 3000 * 1000) return false;
-    return true;
-  });
+  // Fallback to first non-expired drive
+  const fallbackDrive = drives.find(d => !d.isExpired);
+  if (fallbackDrive) {
+    return fallbackDrive.accessToken;
+  }
   
-  return fallbackDrive ? fallbackDrive.accessToken : null;
+  return googleDriveTokenMemory || localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
 };
 
 // ═════════ GOOGLE SERVICE ACCOUNT 24/7 API HELPERS ═════════
@@ -1075,15 +1101,17 @@ export const removeServiceAccount = async () => {
   return data;
 };
 
+// Global Single-Flight Mutex to ensure simultaneous uploads NEVER collide or open duplicate popups
+let activeDriveRenewalPromise: Promise<string> | null = null;
+
 // Helper function to silently auto-refresh token if it's expired or about to expire
 export const ensureValidDriveToken = async (forceRefresh = false): Promise<string | null> => {
-  // OPSI A: Coba ambil token dari Service Account (Backend 24/7) terlebih dahulu
+  // 1. Coba ambil token dari Service Account (Backend 24/7) terlebih dahulu
   try {
     const res = await fetch('/api/drive-token');
     if (res.ok) {
       const data = await res.json();
       if (data.success && data.accessToken) {
-        console.log('✅ Menggunakan Service Account 24/7 untuk Google Drive');
         setGoogleDriveToken(data.accessToken);
         
         // Auto-register in connected drives if not already present
@@ -1108,85 +1136,170 @@ export const ensureValidDriveToken = async (forceRefresh = false): Promise<strin
       }
     }
   } catch (err) {
-    // Service Account token tidak tersedia, menggunakan User Login
+    // Service Account token tidak tersedia di backend
   }
 
-  // If force refresh is requested, sync latest cloud drives from Firestore first
+  // 2. If force refresh is requested, sync latest cloud drives from Firestore first
   if (forceRefresh) {
     try {
       await loadConnectedDrivesFromFirestore();
     } catch (e) {}
   }
 
-  // Check if current stored token is valid
-  let token = getStoredGoogleDriveToken();
+  // 3. Check if stored token is fresh (< 48 min old)
+  let token = getStoredGoogleDriveToken(!forceRefresh);
   if (token && !forceRefresh) {
-    return token; // Still valid
+    return token;
   }
 
-  // Check if token exists in Firestore company document (e.g. from another tab or previous login)
+  // 4. Check if a fresh token exists in Firestore company document (e.g. from another tab or previous login)
   try {
     await loadConnectedDrivesFromFirestore();
-    token = getStoredGoogleDriveToken();
+    token = getStoredGoogleDriveToken(true);
     if (token) return token;
   } catch (e) {}
 
-  // Return fallback token in memory or localStorage
+  // 5. Fallback token in memory or localStorage
   return googleDriveTokenMemory || localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
 };
 
-// Auto-Renew Token with Guaranteed Account Lock
+// Auto-Renew Token with Anti-Collision Mutex Protection
 export const getOrRenewDriveToken = async (
   targetEmail?: string,
   interactiveIfRequired = true
 ): Promise<string> => {
-  // 1. Check if existing token is valid and unexpired
-  let token = getStoredGoogleDriveToken();
-  if (token) {
-    return token;
+  // If a renewal is already in-flight across the app, reuse the exact same promise!
+  if (activeDriveRenewalPromise) {
+    console.log('⏳ [Google Drive Token] Menunggu proses pembaruan token yang sedang berlangsung (Anti-Bentrok)...');
+    return activeDriveRenewalPromise;
   }
 
-  // 2. Try fetching from Service Account or Firestore company doc
-  token = await ensureValidDriveToken(true);
-  if (token) {
-    return token;
-  }
-
-  // 3. Determine the exact Google Drive email to connect / reconnect
-  const activeAccount = getActiveGoogleDriveAccount();
-  const lastEmail = localStorage.getItem('NUSANTARA_LAST_ACTIVE_EMAIL');
-  const emailToUse = targetEmail || activeAccount?.email || lastEmail || getConnectedDrives()[0]?.email || undefined;
-
-  // 4. If interactive renewal is allowed (triggered on user click/upload), renew using login_hint with the SAME account
-  if (interactiveIfRequired && emailToUse) {
-    console.log(`🔄 [Google Drive Auto-Renew] Memperbarui sesi token otomatis untuk akun: ${emailToUse}`);
+  activeDriveRenewalPromise = (async () => {
     try {
-      const loginRes = await googleDriveLogin(emailToUse, false);
-      if (loginRes.accessToken) {
-        return loginRes.accessToken;
+      // 1. Check if Service Account is available in backend
+      try {
+        const res = await fetch('/api/drive-token');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && data.accessToken) {
+            console.log('✅ [Google Drive Auto-Token] Token berhasil diperbarui dari Service Account 24/7');
+            setGoogleDriveToken(data.accessToken);
+            return data.accessToken;
+          }
+        }
+      } catch (saErr) {}
+
+      // 2. Check Firestore for latest synced cloud drive token
+      try {
+        await loadConnectedDrivesFromFirestore();
+        const freshCloudToken = getStoredGoogleDriveToken(true);
+        if (freshCloudToken) {
+          console.log('✅ [Google Drive Auto-Token] Menggunakan token segar dari sinkronisasi Firestore');
+          return freshCloudToken;
+        }
+      } catch (fsErr) {}
+
+      // 3. Determine the exact Google Drive email to connect / reconnect
+      const activeAccount = getActiveGoogleDriveAccount();
+      const lastEmail = localStorage.getItem('NUSANTARA_LAST_ACTIVE_EMAIL');
+      const emailToUse = targetEmail || activeAccount?.email || lastEmail || getConnectedDrives()[0]?.email || undefined;
+
+      // 4. If interactive renewal is allowed, renew using login_hint with the SAME account
+      if (interactiveIfRequired && emailToUse) {
+        console.log(`🔄 [Google Drive Auto-Renew] Memperbarui sesi token otomatis untuk akun: ${emailToUse}`);
+        try {
+          const loginRes = await googleDriveLogin(emailToUse, false);
+          if (loginRes.accessToken) {
+            return loginRes.accessToken;
+          }
+        } catch (err: any) {
+          console.warn('Auto-renew drive token popup failed:', err);
+          throw err;
+        }
       }
+
+      // Fallback to any memory or localStorage token
+      const fallback = googleDriveTokenMemory || localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
+      if (fallback) return fallback;
+
+      throw new Error(
+        emailToUse
+          ? `Sesi Google Drive untuk akun "${emailToUse}" telah berakhir. Silakan hubungkan kembali akun tersebut.`
+          : 'Google Drive belum terhubung. Silakan hubungkan akun Google Drive Anda.'
+      );
+    } finally {
+      // Clear mutex lock after 500ms cooling period
+      setTimeout(() => {
+        activeDriveRenewalPromise = null;
+      }, 500);
+    }
+  })();
+
+  return activeDriveRenewalPromise;
+};
+
+// Universal High-Reliability Google Drive API Executor with Auto-Token Precheck & Auto-Retry
+export const executeDriveApiWithAutoRefresh = async <T>(
+  action: (token: string) => Promise<T>,
+  options?: {
+    actionName?: string;
+    maxRetries?: number;
+  }
+): Promise<T> => {
+  const maxRetries = options?.maxRetries ?? 2;
+  let attempts = 0;
+
+  while (attempts <= maxRetries) {
+    attempts++;
+    
+    // Obtain valid token (forces fresh sync on retry)
+    let token = await ensureValidDriveToken(attempts > 1);
+    if (!token) {
+      token = await getOrRenewDriveToken(undefined, true);
+    }
+
+    try {
+      const result = await action(token);
+
+      // Handle fetch Response object with 401 Unauthorized
+      if (result instanceof Response && result.status === 401) {
+        console.warn(`⚠️ [Google Drive Auto-Check] Mendeteksi respons 401 pada ${options?.actionName || 'Drive API'}. Memperbarui token otomatis tanpa bentrok (Percobaan ${attempts}/${maxRetries + 1})...`);
+        if (attempts <= maxRetries) {
+          invalidateDriveToken(token);
+          const freshToken = await getOrRenewDriveToken(undefined, true);
+          token = freshToken;
+          continue; // Retry loop with fresh token
+        }
+      }
+
+      return result;
     } catch (err: any) {
-      console.warn('Auto-renew drive token failed:', err);
+      const isAuthErr = 
+        err?.message?.includes('401') || 
+        err?.message?.includes('UNAUTHORIZED') ||
+        err?.message?.includes('UNAUTHENTICATED') ||
+        err?.message?.includes('Invalid Credentials') ||
+        err?.message?.includes('invalid_grant') ||
+        err?.status === 401;
+
+      if (isAuthErr && attempts <= maxRetries) {
+        console.warn(`⚠️ [Google Drive Auto-Check] Kesalahan autentikasi token (${err.message}). Memperbarui token otomatis tanpa bentrok (Percobaan ${attempts}/${maxRetries + 1})...`);
+        invalidateDriveToken(token);
+        await getOrRenewDriveToken(undefined, true);
+        continue;
+      }
       throw err;
     }
   }
 
-  // Fallback to any memory or localStorage token
-  const fallback = googleDriveTokenMemory || localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
-  if (fallback) return fallback;
-
-  throw new Error(
-    emailToUse
-      ? `Sesi Google Drive untuk akun "${emailToUse}" telah berakhir. Silakan hubungkan kembali akun tersebut.`
-      : 'Google Drive belum terhubung. Silakan hubungkan akun Google Drive Anda.'
-  );
+  throw new Error(`Operasi Google Drive gagal setelah ${maxRetries + 1} percobaan.`);
 };
 
 // Periodic Background Auto-Keeper for Google Drive connection
 let tokenAutoRefreshIntervalId: any = null;
 let isRefreshingDriveToken = false;
 
-export const startGoogleDriveTokenAutoRefresh = (intervalMinutes = 3): (() => void) => {
+export const startGoogleDriveTokenAutoRefresh = (intervalMinutes = 2): (() => void) => {
   if (typeof window === 'undefined') return () => {};
 
   const runKeepAliveCheck = async () => {
@@ -1194,7 +1307,7 @@ export const startGoogleDriveTokenAutoRefresh = (intervalMinutes = 3): (() => vo
     isRefreshingDriveToken = true;
 
     try {
-      // 1. Check if we have drives connected
+      // 1. Check if we have drives connected or stored email
       const drives = getConnectedDrives();
       const lastEmail = localStorage.getItem('NUSANTARA_LAST_ACTIVE_EMAIL');
       
@@ -1206,21 +1319,21 @@ export const startGoogleDriveTokenAutoRefresh = (intervalMinutes = 3): (() => vo
       const activeDrives = getConnectedDrives();
       if (activeDrives.length > 0 || lastEmail) {
         // Check if current token needs refresh (> 45 min old or expired)
-        const currentToken = getStoredGoogleDriveToken();
+        const currentToken = getStoredGoogleDriveToken(true);
         if (!currentToken) {
-          console.log('⏰ [Google Drive Auto-Refresh] Token kedaluwarsa, memperbarui otomatis...');
-          await ensureValidDriveToken();
+          console.log('⏰ [Google Drive Auto-Keeper] Memeriksa & memperbarui token latar belakang...');
+          await ensureValidDriveToken(true);
         } else {
           // Token is present, periodically refresh quotas & verify
           try {
             await refreshAllDrivesQuota();
           } catch (qErr) {
-            console.warn('[Google Drive Auto-Refresh] Quota ping check:', qErr);
+            console.warn('[Google Drive Auto-Keeper] Quota ping check notice:', qErr);
           }
         }
       }
     } catch (err) {
-      console.warn('[Google Drive Auto-Refresh] Background check error:', err);
+      console.warn('[Google Drive Auto-Keeper] Background check error:', err);
     } finally {
       isRefreshingDriveToken = false;
     }
@@ -1234,7 +1347,7 @@ export const startGoogleDriveTokenAutoRefresh = (intervalMinutes = 3): (() => vo
     clearInterval(tokenAutoRefreshIntervalId);
   }
 
-  // Set interval (every 3 minutes by default)
+  // Set interval (every 2 minutes)
   tokenAutoRefreshIntervalId = setInterval(runKeepAliveCheck, intervalMinutes * 60 * 1000);
 
   // Also trigger when tab becomes visible or gains focus!

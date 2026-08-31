@@ -7,7 +7,8 @@ import {
   getConnectedDrives,
   ensureValidDriveToken,
   getOrRenewDriveToken,
-  getActiveGoogleDriveAccount
+  getActiveGoogleDriveAccount,
+  executeDriveApiWithAutoRefresh
 } from '../firebase';
 import { DriveAccountsManager } from './DriveAccountsManager';
 import { SppdIntegration, SppdRecord } from './SppdIntegration';
@@ -58,104 +59,61 @@ const extractGoogleDriveFileId = (url: string): string | null => {
 };
 
 // ═════════ GOOGLE DRIVE DIR HIERARCHY HELPER ACTIONS ═════════
-const getOrCreateFolder = async (initialToken: string, name: string, parentId: string): Promise<string> => {
-  let token = initialToken;
+const getOrCreateFolder = async (_token: string, name: string, parentId: string): Promise<string> => {
   const cleanName = name.trim();
-  // Escape backslashes first, then single quotes for safe Google Drive query string syntax
   const cleanSearchName = cleanName.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
   const query = `name = '${cleanSearchName}' and mimeType = 'application/vnd.google-apps.folder' and '${parentId}' in parents and trashed = false`;
   
-  console.log(`[Drive API] Searching folder: "${cleanName}" under parent "${parentId}"`);
-  
-  let res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType)`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  });
+  return executeDriveApiWithAutoRefresh(async (token) => {
+    console.log(`[Drive API] Searching folder: "${cleanName}" under parent "${parentId}"`);
+    const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType)`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
 
-  if (res.status === 401) {
-    console.log('🔄 [Drive Auto-Renew] Token 401 saat mencari folder, memperbarui otomatis...');
-    try {
-      const activeAcc = getActiveGoogleDriveAccount();
-      const freshToken = await getOrRenewDriveToken(activeAcc?.email, true);
-      if (freshToken) {
-        token = freshToken;
-        res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType)`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
-      }
-    } catch (renewErr) {
-      console.warn('Gagal renew token saat search folder:', renewErr);
+    if (searchRes.status === 401) {
+      throw new Error('UNAUTHORIZED_401'); // Automatically triggers fresh token acquisition in wrapper
     }
-  }
 
-  if (!res.ok) {
-    if (res.status === 401) {
-      throw new Error('UNAUTHORIZED_DRIVE_TOKEN');
+    if (!searchRes.ok) {
+      throw new Error(`Gagal mencari folder '${cleanName}': ${searchRes.statusText}`);
     }
-    throw new Error(`Gagal mencari folder '${cleanName}': ${res.statusText}`);
-  }
 
-  const data = await res.json();
-  if (data.files && data.files.length > 0) {
-    console.log(`[Drive API] Folder found: "${cleanName}" with ID: ${data.files[0].id}`);
-    return data.files[0].id;
-  }
-
-  console.log(`[Drive API] Folder NOT found. Creating folder: "${cleanName}" under parent "${parentId}"`);
-
-  // Create folder if not found
-  let createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      name: cleanName,
-      mimeType: 'application/vnd.google-apps.folder',
-      parents: [parentId],
-    }),
-  });
-
-  if (createRes.status === 401) {
-    console.log('🔄 [Drive Auto-Renew] Token 401 saat membuat folder, memperbarui otomatis...');
-    try {
-      const activeAcc = getActiveGoogleDriveAccount();
-      const freshToken = await getOrRenewDriveToken(activeAcc?.email, true);
-      if (freshToken) {
-        token = freshToken;
-        createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            name: cleanName,
-            mimeType: 'application/vnd.google-apps.folder',
-            parents: [parentId],
-          }),
-        });
-      }
-    } catch (renewErr) {
-      console.warn('Gagal renew token saat create folder:', renewErr);
+    const data = await searchRes.json();
+    if (data.files && data.files.length > 0) {
+      console.log(`[Drive API] Folder found: "${cleanName}" with ID: ${data.files[0].id}`);
+      return data.files[0].id;
     }
-  }
 
-  if (!createRes.ok) {
-    if (createRes.status === 401) {
-      throw new Error('UNAUTHORIZED_DRIVE_TOKEN');
+    console.log(`[Drive API] Folder NOT found. Creating folder: "${cleanName}" under parent "${parentId}"`);
+
+    const createResSyst = await fetch('https://www.googleapis.com/drive/v3/files', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: cleanName,
+        mimeType: 'application/vnd.google-apps.folder',
+        parents: [parentId],
+      }),
+    });
+
+    if (createResSyst.status === 401) {
+      throw new Error('UNAUTHORIZED_401'); // Automatically triggers fresh token acquisition in wrapper
     }
-    const errText = await createRes.text();
-    throw new Error(`Gagal membuat folder '${cleanName}': ${errText}`);
-  }
 
-  const createdData = await createRes.json();
-  console.log(`[Drive API] Folder created: "${cleanName}" with ID: ${createdData.id}`);
-  return createdData.id;
+    if (!createResSyst.ok) {
+      const errText = await createResSyst.text();
+      throw new Error(`Gagal membuat folder '${cleanName}': ${errText}`);
+    }
+
+    const createdData = await createResSyst.json();
+    console.log(`[Drive API] Folder created: "${cleanName}" with ID: ${createdData.id}`);
+    return createdData.id;
+  }, { actionName: `getOrCreateFolder(${cleanName})` });
 };
 
 const parseCompanyAndSequence = (kodeStr: string): { company: string; customFolderKode: string } => {
@@ -1443,126 +1401,112 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         }
 
         // Define reusable upload function to avoid duplicates
-        const uploadFileToFolder = async (
+        const uploadFileToFolder剩下 = async (
           fileName: string,
           fileMimeType: string,
           fileBytes: Uint8Array,
           folderId: string
         ): Promise<{ url: string; name: string }> => {
-          // Check if file already exists in this folder to avoid duplicates
-          try {
-            const searchRes = await fetch(
-              `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
-                `name = '${fileName.replace(/'/g, "\\'")}' and '${folderId}' in parents and trashed = false`
-              )}&fields=files(id)`,
-              {
-                headers: {
-                  Authorization: `Bearer ${token}`,
-                },
-              }
-            );
-            if (searchRes.ok) {
-              const searchData = await searchRes.json();
-              if (searchData.files && searchData.files.length > 0) {
-                for (const existingFile of searchData.files) {
-                  await fetch(`https://www.googleapis.com/drive/v3/files/${existingFile.id}`, {
-                    method: 'DELETE',
-                    headers: {
-                      Authorization: `Bearer ${token}`,
-                    },
-                  });
+          return executeDriveApiWithAutoRefresh(async (driveToken) => {
+            // Check if file already exists in this folder to avoid duplicates
+            try {
+              const searchRes = await fetch(
+                `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
+                  `name = '${fileName.replace(/'/g, "\\'")}' and '${folderId}' in parents and trashed = false`
+                )}&fields=files(id)`,
+                {
+                  headers: {
+                    Authorization: `Bearer ${driveToken}`,
+                  },
+                }
+              );
+              if (searchRes.status === 401) throw new Error('UNAUTHORIZED_401');
+              if (searchRes.ok) {
+                const searchData足 = await searchRes.json();
+                if (searchData足.files && searchData足.files.length > 0) {
+                  for (const existingFile of searchData足.files) {
+                    await fetch(`https://www.googleapis.com/drive/v3/files/${existingFile.id}`, {
+                      method: 'DELETE',
+                      headers: {
+                        Authorization: `Bearer ${driveToken}`,
+                      },
+                    });
+                  }
                 }
               }
+            } catch (dupErr: any) {
+              if (dupErr?.message?.includes('UNAUTHORIZED') || dupErr?.message?.includes('401')) throw dupErr;
+              console.warn('Error checking/deleting duplicate file:', fileName, dupErr);
             }
-          } catch (dupErr) {
-            console.warn('Error checking/deleting duplicate file:', fileName, dupErr);
-          }
 
-          const fileBlob = new Blob([fileBytes], { type: fileMimeType });
-          const compiledFile = new File([fileBlob], fileName, { type: fileMimeType });
+            const fileBlob = new Blob([fileBytes], { type: fileMimeType });
+            const compiledFile = new File([fileBlob], fileName, { type: fileMimeType });
 
-          const metadata = {
-            name: fileName,
-            mimeType: fileMimeType,
-            parents: [folderId],
-          };
+            const metadata = {
+              name: fileName,
+              mimeType: fileMimeType,
+              parents: [folderId],
+            };
 
-          const formData = new FormData();
-          formData.append(
-            'metadata',
-            new Blob([JSON.stringify(metadata)], { type: 'application/json' })
-          );
-          formData.append('file', compiledFile);
+            const formData = new FormData();
+            formData.append(
+              'metadata',
+              new Blob([JSON.stringify(metadata)], { type: 'application/json' })
+            );
+            formData.append('file', compiledFile);
 
-          let res = await fetch(
-            'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink',
-            {
-              method: 'POST',
-              headers: {
-                Authorization: `Bearer ${token}`,
-              },
-              body: formData,
-            }
-          );
-
-          // Auto-refresh retry on 401
-          if (res.status === 401) {
-            console.log('🔄 [Drive Auto-Refresh] Token 401 terdeteksi, mencoba pembaruan token otomatis...');
-            try {
-              const activeAcc = getActiveGoogleDriveAccount();
-              const freshToken = await getOrRenewDriveToken(activeAcc?.email, true);
-              if (freshToken) {
-                token = freshToken;
-                res = await fetch(
-                  'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink',
-                  {
-                    method: 'POST',
-                    headers: {
-                      Authorization: `Bearer ${token}`,
-                    },
-                    body: formData,
-                  }
-                );
+            const res = await fetch(
+              'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink',
+              {
+                method: 'POST',
+                headers: {
+                  Authorization: `Bearer ${driveToken}`,
+                },
+                body: formData,
               }
-            } catch (renewErr) {
-              console.warn('Gagal renew token saat upload file di SubmissionForm:', renewErr);
-            }
-          }
+            );
 
-          if (!res.ok) {
             if (res.status === 401) {
-              setIsDriveConnected(false);
-              setGoogleDriveToken(null);
-              throw new Error('Sesi otentikasi Google Drive telah kedaluwarsa. Silakan hubungkan ulang Google Drive Anda.');
+              throw new Error('UNAUTHORIZED_401'); // Triggers auto-renewal without collision in wrapper
             }
-            const errorText = await res.text();
-            throw new Error(`Gagal mengunggah file '${fileName}' ke Drive: ${errorText}`);
-          }
 
-          const fileData = await res.json();
+            if (!res.ok) {
+              const errorText = await res.text();
+              throw new Error(`Gagal mengunggah file '${fileName}' ke Drive: ${errorText}`);
+            }
 
-          // Set permissions
-          try {
-            await fetch(`https://www.googleapis.com/drive/v3/files/${fileData.id}/permissions`, {
-              method: 'POST',
-              headers: {
-                Authorization: `Bearer ${token}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                role: 'reader',
-                type: 'anyone',
-              }),
-            });
-          } catch (perErr) {
-            console.warn('Could not set permissions for uploaded file:', fileName, perErr);
-          }
+            const fileData = await res.json();
 
-          return {
-            url: fileData.webViewLink || `https://drive.google.com/file/d/${fileData.id}/view?usp=drivesdk`,
-            name: fileData.name || fileName,
-          };
+            // Set permissions
+            try {
+              await fetch(`https://www.googleapis.com/drive/v3/files/${fileData.id}/permissions`, {
+                method: 'POST',
+                headers: {
+                  Authorization: `Bearer ${driveToken}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  role: 'reader',
+                  type: 'anyone',
+                }),
+              });
+            } catch (perErr) {
+              console.warn('Could not set permissions for uploaded file:', fileName, perErr);
+            }
+
+            return {
+              url: fileData.webViewLink || `https://drive.google.com/file/d/${fileData.id}/view?usp=drivesdk`,
+              name: fileData.name || fileName,
+            };
+          }, { actionName: `upload ${fileName}` });
         };
+
+        const uploadFileToFolder = (
+          fileName: string,
+          fileMimeType: string,
+          fileBytes: Uint8Array,
+          folderId: string
+        ) => uploadFileToFolder剩下(fileName, fileMimeType, fileBytes, folderId);
 
         // Create a temporary object representation for PDF drawing
         const tempSubmissionForPdf = {

@@ -21,7 +21,8 @@ import {
   isFirebaseConfigured,
   saveSubmissionToFirestore,
   getActiveGoogleDriveAccount,
-  getConnectedDrives
+  getConnectedDrives,
+  executeDriveApiWithAutoRefresh
 } from '../firebase';
 
 interface AccuratePettyCashMappingProps {
@@ -274,7 +275,7 @@ export function AccuratePettyCashMapping({
   };
 
   // Google Drive Folder & File Upload Helpers
-  const getOrCreateFolder = async (token: string, folderName: string, parentId?: string): Promise<string> => {
+  const getOrCreateFolder = async (_token: string, folderName: string, parentId?: string): Promise<string> => {
     const queryParts = [
       `name = '${folderName.replace(/'/g, "\\'")}'`,
       "mimeType = 'application/vnd.google-apps.folder'",
@@ -284,42 +285,49 @@ export function AccuratePettyCashMapping({
       queryParts.push(`'${parentId}' in parents`);
     }
     const q = queryParts.join(' and ');
-    const searchRes = await fetch(
-      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)&spaces=drive`,
-      {
+
+    return executeDriveApiWithAutoRefresh(async (token) => {
+      const searchRes = await fetch(
+        `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)&spaces=drive`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+      if (searchRes.status === 401) throw new Error('UNAUTHORIZED_401');
+      if (searchRes.ok) {
+        const data = await searchRes.json();
+        if (data.files && data.files.length > 0) {
+          return data.files[0].id;
+        }
+      }
+
+      const metadata: any = {
+        name: folderName,
+        mimeType: 'application/vnd.google-apps.folder',
+      };
+      if (parentId) {
+        metadata.parents = [parentId];
+      }
+      const createRes = await fetch('https://www.googleapis.com/drive/v3/files?fields=id', {
+        method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
         },
-      }
-    );
-    if (searchRes.ok) {
-      const data = await searchRes.json();
-      if (data.files && data.files.length > 0) {
-        return data.files[0].id;
-      }
-    }
+        body: JSON.stringify(metadata),
+      });
 
-    const metadata: any = {
-      name: folderName,
-      mimeType: 'application/vnd.google-apps.folder',
-    };
-    if (parentId) {
-      metadata.parents = [parentId];
-    }
-    const createRes = await fetch('https://www.googleapis.com/drive/v3/files?fields=id', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(metadata),
-    });
-    if (!createRes.ok) {
-      const errorText = await createRes.text();
-      throw new Error(`Gagal membuat folder '${folderName}': ${errorText}`);
-    }
-    const folderData = await createRes.json();
-    return folderData.id;
+      if (createRes.status === 401) throw new Error('UNAUTHORIZED_401');
+
+      if (!createRes.ok) {
+        const errorText = await createRes.text();
+        throw new Error(`Gagal membuat folder '${folderName}': ${errorText}`);
+      }
+      const folderData = await createRes.json();
+      return folderData.id;
+    }, { actionName: `getOrCreateFolder(${folderName})` });
   };
 
   const getOrCreatePettyCashFolderHierarchy = async (
@@ -353,64 +361,68 @@ export function AccuratePettyCashMapping({
   };
 
   const uploadFileToGoogleDrive = async (
-    token: string,
+    _token: string,
     fileName: string,
     fileMimeType: string,
     fileBlob: Blob,
     folderId: string
   ): Promise<{ url: string; name: string; fileId: string }> => {
-    const metadata = {
-      name: fileName,
-      mimeType: fileMimeType,
-      parents: [folderId],
-    };
+    return executeDriveApiWithAutoRefresh(async (token) => {
+      const metadata = {
+        name: fileName,
+        mimeType: fileMimeType,
+        parents: [folderId],
+      };
 
-    const formData = new FormData();
-    formData.append(
-      'metadata',
-      new Blob([JSON.stringify(metadata)], { type: 'application/json' })
-    );
-    formData.append('file', fileBlob);
+      const formData = new FormData();
+      formData.append(
+        'metadata',
+        new Blob([JSON.stringify(metadata)], { type: 'application/json' })
+      );
+      formData.append('file', fileBlob);
 
-    const res = await fetch(
-      'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink',
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        body: formData,
+      const res = await fetch(
+        'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          body: formData,
+        }
+      );
+
+      if (res.status === 401) throw new Error('UNAUTHORIZED_401');
+
+      if (!res.ok) {
+        const errorText = await res.text();
+        throw new Error(`Gagal mengunggah file '${fileName}' ke Drive: ${errorText}`);
       }
-    );
 
-    if (!res.ok) {
-      const errorText = await res.text();
-      throw new Error(`Gagal mengunggah file '${fileName}' ke Drive: ${errorText}`);
-    }
+      const fileData = await res.json();
 
-    const fileData = await res.json();
+      try {
+        await fetch(`https://www.googleapis.com/drive/v3/files/${fileData.id}/permissions`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            role: 'reader',
+            type: 'anyone',
+          }),
+        });
+      } catch (perErr) {
+        console.warn('Could not set permissions for uploaded file:', fileName, perErr);
+      }
 
-    try {
-      await fetch(`https://www.googleapis.com/drive/v3/files/${fileData.id}/permissions`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          role: 'reader',
-          type: 'anyone',
-        }),
-      });
-    } catch (perErr) {
-      console.warn('Could not set permissions for uploaded file:', fileName, perErr);
-    }
-
-    return {
-      url: fileData.webViewLink || `https://drive.google.com/file/d/${fileData.id}/view?usp=drivesdk`,
-      name: fileData.name || fileName,
-      fileId: fileData.id
-    };
+      return {
+        url: fileData.webViewLink || `https://drive.google.com/file/d/${fileData.id}/view?usp=drivesdk`,
+        name: fileData.name || fileName,
+        fileId: fileData.id
+      };
+    }, { actionName: `upload ${fileName}` });
   };
 
   // Upload handler for missing petty cash documents directly from modal
