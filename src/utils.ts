@@ -974,3 +974,155 @@ export function sortSubmissionsDescending<T extends { tanggal?: string; kode?: s
     return (b.id || '').localeCompare(a.id || '');
   });
 }
+
+// Stop words for corporate entities, titles, legal terms, and generic business labels
+const ENTITY_STOP_WORDS = new Set([
+  'pt', 'cv', 'ud', 'tbk', 'ltd', 'inc', 'corp', 'corporation', 'persero',
+  'koperasi', 'yayasan', 'perum', 'cabang', 'cab', 'kantor', 'toko', 'bengkel',
+  'h', 'hj', 'haji', 'hajjah', 'dr', 'drs', 'ir', 'sh', 'se', 'mm', 'st', 'skm',
+  'bpk', 'bapak', 'ibu', 'sdr', 'sdri', 'dan', 'and', 'the', 'of', 'in', 'di',
+  'consult', 'consulting', 'solution', 'solusi', 'servis', 'service', 'services',
+  'makassar', 'jakarta', 'kendari', 'kolaka', 'pomalaa', 'surabaya'
+]);
+
+/**
+ * Normalizes text for smart fuzzy and semantic token matching
+ */
+export function normalizeEntityString(str: string | null | undefined): string {
+  if (!str) return '';
+  return str
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // remove diacritics
+    .replace(/[^a-z0-9\s]/g, ' ') // replace punctuation with spaces
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Extracts core meaningful tokens from a company/vendor/person name
+ */
+export function extractCoreTokens(name: string | null | undefined): string[] {
+  const norm = normalizeEntityString(name);
+  if (!norm) return [];
+  const words = norm.split(' ');
+  const core = words.filter(w => w.length >= 2 && !ENTITY_STOP_WORDS.has(w));
+  return core.length > 0 ? core : words.filter(w => w.length >= 2);
+}
+
+/**
+ * Calculates Levenshtein distance between two strings
+ */
+function levenshteinDistance(a: string, b: string): number {
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  const matrix: number[][] = [];
+
+  for (let i = 0; i <= b.length; i++) {
+    matrix[i] = [i];
+  }
+  for (let j = 0; j <= a.length; j++) {
+    matrix[0][j] = j;
+  }
+
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1, // substitution
+          matrix[i][j - 1] + 1,     // insertion
+          matrix[i - 1][j] + 1      // deletion
+        );
+      }
+    }
+  }
+
+  return matrix[b.length][a.length];
+}
+
+/**
+ * Determines if two company or vendor names refer to the same entity
+ * even with typos, abbreviations, prefixes ("PT", "CV", "H."), or incomplete names.
+ */
+export function isVendorOrCompanyMatch(nameA: string | null | undefined, nameB: string | null | undefined): boolean {
+  if (!nameA || !nameB) return false;
+
+  const rawA = nameA.trim();
+  const rawB = nameB.trim();
+  if (!rawA || !rawB) return false;
+
+  // 1. Direct case-insensitive match
+  if (rawA.toLowerCase() === rawB.toLowerCase()) return true;
+
+  const normA = normalizeEntityString(rawA);
+  const normB = normalizeEntityString(rawB);
+  if (!normA || !normB) return false;
+  if (normA === normB) return true;
+
+  // 2. Direct Substring Match if length >= 3
+  if (normA.length >= 3 && normB.length >= 3) {
+    if (normA.includes(normB) || normB.includes(normA)) {
+      return true;
+    }
+  }
+
+  const tokensA = extractCoreTokens(rawA);
+  const tokensB = extractCoreTokens(rawB);
+
+  if (tokensA.length === 0 || tokensB.length === 0) return false;
+
+  // 3. Compact joined string comparison (e.g. "oowlindonesia" vs "oowl indonesia")
+  const compactA = tokensA.join('');
+  const compactB = tokensB.join('');
+  if (compactA === compactB || (compactA.length >= 4 && compactB.length >= 4 && (compactA.includes(compactB) || compactB.includes(compactA)))) {
+    return true;
+  }
+
+  // 4. Token Overlap & Fuzzy Token Evaluation
+  let matchCount = 0;
+  for (const tA of tokensA) {
+    for (const tB of tokensB) {
+      if (tA === tB) {
+        matchCount++;
+        break;
+      }
+      // Substring of token (e.g., "geoservice" and "geoservices", "wiraputra" and "wira")
+      if (tA.length >= 4 && tB.length >= 4 && (tA.includes(tB) || tB.includes(tA))) {
+        matchCount++;
+        break;
+      }
+      // Levenshtein typo tolerance (1 typo for tokens >= 5 chars, 2 typos for tokens >= 8 chars)
+      if (tA.length >= 5 && tB.length >= 5) {
+        const maxDist = tA.length >= 8 ? 2 : 1;
+        if (levenshteinDistance(tA, tB) <= maxDist) {
+          matchCount++;
+          break;
+        }
+      }
+    }
+  }
+
+  // Rule A: If ALL core tokens of the shorter entity exist in the longer entity
+  const minTokens = Math.min(tokensA.length, tokensB.length);
+  if (minTokens > 0 && matchCount >= minTokens) {
+    return true;
+  }
+
+  // Rule B: If at least 2 significant core tokens match
+  if (matchCount >= 2) {
+    return true;
+  }
+
+  // Rule C: If single unique distinct token (e.g., "sucofindo", "geoservices", "anindya", "tonasa", "krakatau") >= 4 chars matches
+  if ((tokensA.length === 1 || tokensB.length === 1) && matchCount >= 1) {
+    const singleToken = tokensA.length === 1 ? tokensA[0] : tokensB[0];
+    if (singleToken.length >= 4 && !['utama', 'jaya', 'abadi', 'sukses', 'karya', 'mandiri', 'bersama'].includes(singleToken)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+

@@ -8,6 +8,7 @@ import {
   User,
   signOut
 } from "firebase/auth";
+import { ensureValidDriveToken, setGoogleDriveToken, getStoredGoogleDriveToken, getActiveGoogleDriveAccount } from "../firebase";
 
 // Your web app's Firebase configuration
 const firebaseConfig = {
@@ -37,13 +38,27 @@ export const saveGoogleToken = (token: string, email?: string) => {
   cachedAccessToken = token;
   localStorage.setItem("g_access_token", token);
   localStorage.setItem("g_access_token_time", Date.now().toString());
+  setGoogleDriveToken(token);
   if (email) {
     localStorage.setItem("g_user_email", email);
   }
 };
 
 export const getFreshGoogleToken = async (forceRefresh = false): Promise<string> => {
-  const currentToken = localStorage.getItem("g_access_token");
+  // 1. Try unified system drive token first to ensure identical Google Drive account
+  try {
+    const unifiedToken = await ensureValidDriveToken(forceRefresh);
+    if (unifiedToken) {
+      cachedAccessToken = unifiedToken;
+      localStorage.setItem("g_access_token", unifiedToken);
+      localStorage.setItem("g_access_token_time", Date.now().toString());
+      return unifiedToken;
+    }
+  } catch (err) {
+    console.warn("Notice: unified drive token resolution fallback in absen:", err);
+  }
+
+  const currentToken = localStorage.getItem("g_access_token") || getStoredGoogleDriveToken(!forceRefresh);
   const tokenTimeStr = localStorage.getItem("g_access_token_time");
   const tokenAgeMs = tokenTimeStr ? Date.now() - parseInt(tokenTimeStr, 10) : Infinity;
 

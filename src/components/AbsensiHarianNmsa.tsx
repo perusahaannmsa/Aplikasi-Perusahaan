@@ -77,7 +77,7 @@ import { triggerExcelDownload } from "../lib/excelGenerator";
 import { triggerAttendanceExcelDownload, printWeeklyReportPDF, generateAttendanceExcelBlob } from "../lib/attendanceSheetGenerator";
 import { getOrCreateFolder, getOrCreateNestedFolder, uploadFileToDrive, exportAttendanceToGoogleSheet } from "../lib/googleWorkspaceAbsen";
 import { initAuth, googleSignIn, googleSignOut, getFreshGoogleToken, saveGoogleToken } from "../lib/firebaseAbsen";
-import { saveSubmissionToFirestore, saveAbsenDataToFirestore } from "../firebase";
+import { saveSubmissionToFirestore, saveAbsenDataToFirestore, ensureValidDriveToken, getActiveGoogleDriveAccount, getConnectedDrives, executeDriveApiWithAutoRefresh } from "../firebase";
 import { SignaturePad } from "./SignaturePad";
 
 // Utility to format Date as local YYYY-MM-DD
@@ -1225,17 +1225,18 @@ export function AbsensiHarianNmsa({
     return () => unsubscribe();
   }, []);
 
-  // Automatically fetch unified Google Drive access token from server on mount
+  // Automatically fetch unified Google Drive access token from unified system and server on mount
   useEffect(() => {
     const fetchUnifiedDriveToken = async () => {
       try {
-        const res = await fetch("/api/drive-token");
-        if (res.ok) {
-          const data = await res.json();
-          if (data.accessToken) {
-            localStorage.setItem("g_access_token", data.accessToken);
-            setGoogleToken(data.accessToken);
-            setIsDriveConnected(true);
+        const token = await ensureValidDriveToken(false);
+        if (token) {
+          localStorage.setItem("g_access_token", token);
+          setGoogleToken(token);
+          setIsDriveConnected(true);
+          const activeAccount = getActiveGoogleDriveAccount();
+          if (activeAccount?.email) {
+            setGoogleUserEmail(activeAccount.email);
           }
         }
       } catch (err) {
@@ -1243,19 +1244,35 @@ export function AbsensiHarianNmsa({
       }
     };
     fetchUnifiedDriveToken();
+
+    // Listen for unified drive account switch across application
+    const handleDriveSyncEvent = (e: any) => {
+      const activeAccount = e.detail?.activeAccount || getActiveGoogleDriveAccount();
+      if (activeAccount?.accessToken) {
+        setGoogleToken(activeAccount.accessToken);
+        setIsDriveConnected(true);
+        if (activeAccount.email) {
+          setGoogleUserEmail(activeAccount.email);
+        }
+      }
+    };
+
+    window.addEventListener("nusantara-drive-updated", handleDriveSyncEvent);
+    return () => window.removeEventListener("nusantara-drive-updated", handleDriveSyncEvent);
   }, []);
 
   // Automated background Google token check and refresh every 15 minutes
   useEffect(() => {
     const checkAndRefreshToken = async () => {
       try {
-        const res = await fetch("/api/drive-token");
-        if (res.ok) {
-          const data = await res.json();
-          if (data.accessToken) {
-            localStorage.setItem("g_access_token", data.accessToken);
-            setGoogleToken(data.accessToken);
-            setIsDriveConnected(true);
+        const token = await ensureValidDriveToken(false);
+        if (token) {
+          localStorage.setItem("g_access_token", token);
+          setGoogleToken(token);
+          setIsDriveConnected(true);
+          const activeAccount = getActiveGoogleDriveAccount();
+          if (activeAccount?.email) {
+            setGoogleUserEmail(activeAccount.email);
           }
         }
       } catch (err) {
@@ -1267,29 +1284,19 @@ export function AbsensiHarianNmsa({
     return () => clearInterval(interval);
   }, []);
 
-  // Helper to execute Google Drive / Sheets operations with active token
+  // Helper to execute Google Drive / Sheets operations with active unified token & auto-renewal
   const executeWithAutoRefreshToken = async <T,>(actionFn: (activeToken: string) => Promise<T>): Promise<T> => {
-    let token = localStorage.getItem("g_access_token") || googleToken;
-
+    let token = await ensureValidDriveToken(false);
     if (!token) {
-      try {
-        const res = await fetch("/api/drive-token");
-        if (res.ok) {
-          const data = await res.json();
-          if (data.accessToken) {
-            token = data.accessToken;
-            localStorage.setItem("g_access_token", token);
-            setGoogleToken(token);
-            setIsDriveConnected(true);
-          }
-        }
-      } catch (e) {
-        console.error("Failed fetching drive token:", e);
-      }
+      token = localStorage.getItem("g_access_token") || googleToken;
     }
 
     if (!token) {
-      throw new Error("Gagal mendapatkan akses token Google Drive dari server.");
+      token = await ensureValidDriveToken(true);
+    }
+
+    if (!token) {
+      throw new Error("Gagal mendapatkan akses token Google Drive dari server. Silakan hubungkan akun Google Drive di bilah atas.");
     }
 
     try {
@@ -1305,16 +1312,12 @@ export function AbsensiHarianNmsa({
         errMsg.includes("invalid authentication credentials")
       ) {
         try {
-          const res = await fetch("/api/drive-token");
-          if (res.ok) {
-            const data = await res.json();
-            if (data.accessToken) {
-              const freshToken = data.accessToken;
-              localStorage.setItem("g_access_token", freshToken);
-              setGoogleToken(freshToken);
-              setIsDriveConnected(true);
-              return await actionFn(freshToken);
-            }
+          const freshToken = await ensureValidDriveToken(true);
+          if (freshToken) {
+            localStorage.setItem("g_access_token", freshToken);
+            setGoogleToken(freshToken);
+            setIsDriveConnected(true);
+            return await actionFn(freshToken);
           }
         } catch (retryErr) {
           console.error("Retry drive token fetch failed:", retryErr);

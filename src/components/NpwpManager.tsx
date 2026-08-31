@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { NpwpRecord, Submission } from '../types';
+import { isVendorOrCompanyMatch, normalizeEntityString } from '../utils';
 import { 
   Building2, 
   Search, 
@@ -146,24 +147,43 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
 
   // Auto-extract vendors from submissions that are missing in npwpRecords
   const unrecordedVendors = useMemo(() => {
-    const recordedNames = new Set(npwpRecords.map(r => r.companyName.trim().toLowerCase()));
     const vendorMap = new Map<string, { name: string; count: number; totalAmount: number }>();
 
     submissions.forEach(sub => {
       const vendorName = (sub.dibayarkanKepada || '').trim();
-      if (vendorName && vendorName.length > 2 && !recordedNames.has(vendorName.toLowerCase())) {
+      if (!vendorName || vendorName.length < 2) return;
+
+      // Check if this vendor name matches ANY registered NPWP record using smart fuzzy / token matching
+      const hasRegisteredNpwp = npwpRecords.some(r => isVendorOrCompanyMatch(r.companyName, vendorName));
+
+      if (!hasRegisteredNpwp) {
         const total = sub.items ? sub.items.reduce((acc, it) => acc + (it.total || 0), 0) : 0;
-        const existing = vendorMap.get(vendorName.toLowerCase());
-        if (existing) {
+        const normKey = normalizeEntityString(vendorName);
+        
+        // Check if already in vendorMap under similar name
+        let foundExistingKey: string | null = null;
+        for (const [key, val] of vendorMap.entries()) {
+          if (isVendorOrCompanyMatch(val.name, vendorName) || key === normKey) {
+            foundExistingKey = key;
+            break;
+          }
+        }
+
+        if (foundExistingKey) {
+          const existing = vendorMap.get(foundExistingKey)!;
           existing.count += 1;
           existing.totalAmount += total;
+          // Prefer longer/more descriptive name
+          if (vendorName.length > existing.name.length) {
+            existing.name = vendorName;
+          }
         } else {
-          vendorMap.set(vendorName.toLowerCase(), { name: vendorName, count: 1, totalAmount: total });
+          vendorMap.set(normKey || vendorName.toLowerCase(), { name: vendorName, count: 1, totalAmount: total });
         }
       }
     });
 
-    return Array.from(vendorMap.values());
+    return Array.from(vendorMap.values()).sort((a, b) => b.count - a.count);
   }, [npwpRecords, submissions]);
 
   const handleQuickAddVendor = (vendorName: string) => {
@@ -178,22 +198,42 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
     setIsFormModalOpen(true);
   };
 
-  // Get linked invoices for a given company name
+  // Get linked invoices for a given company name using smart fuzzy & token matching
   const getLinkedSubmissionsForCompany = (companyName: string) => {
-    const lower = companyName.toLowerCase();
     return submissions.filter(sub => {
-      const matchVendor = (sub.dibayarkanKepada || '').toLowerCase().includes(lower);
-      const matchItem = sub.items && sub.items.some(it => (it.item || '').toLowerCase().includes(lower));
-      const matchNotes = (sub.notes || '').toLowerCase().includes(lower);
-      return matchVendor || matchItem || matchNotes;
+      // 1. Match Dibayarkan Kepada / Vendor Name
+      if (isVendorOrCompanyMatch(companyName, sub.dibayarkanKepada)) {
+        return true;
+      }
+
+      // 2. Match in items
+      if (sub.items && sub.items.some(it => 
+        isVendorOrCompanyMatch(companyName, it.item) || 
+        isVendorOrCompanyMatch(companyName, it.keterangan)
+      )) {
+        return true;
+      }
+
+      // 3. Match in notes
+      if (sub.notes && isVendorOrCompanyMatch(companyName, sub.notes)) {
+        return true;
+      }
+
+      return false;
     });
   };
 
   // Filtered NPWP records
   const filteredNpwpRecords = useMemo(() => {
     return npwpRecords.filter(rec => {
-      const query = searchQuery.toLowerCase();
-      const matchSearch = rec.companyName.toLowerCase().includes(query) ||
+      const query = searchQuery.toLowerCase().trim();
+      if (!query) {
+        return selectedTaxFilter === 'ALL' || rec.taxStatus === selectedTaxFilter;
+      }
+
+      const matchSearch = isVendorOrCompanyMatch(rec.companyName, query) ||
+                          rec.companyName.toLowerCase().includes(query) ||
+                          rec.npwpNumber.replace(/\D/g, '').includes(query.replace(/\D/g, '')) ||
                           rec.npwpNumber.toLowerCase().includes(query) ||
                           (rec.address || '').toLowerCase().includes(query) ||
                           (rec.kppName || '').toLowerCase().includes(query);
