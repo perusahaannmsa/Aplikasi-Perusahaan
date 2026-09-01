@@ -573,84 +573,313 @@ export async function requestWhatsAppPairingCode(phone: string): Promise<string>
 }
 
 /**
+ * Helper to normalize Indonesian phone numbers for comparison
+ */
+export function normalizePhoneNumber(phone: string): string {
+  let clean = phone.replace(/[^0-9]/g, "");
+  if (clean.startsWith("0")) {
+    clean = "62" + clean.slice(1);
+  } else if (clean.startsWith("8")) {
+    clean = "62" + clean;
+  }
+  return clean;
+}
+
+/**
+ * Core AI Business Knowledge engine powered by Gemini
+ */
+export async function generateBusinessAiReply(userQuery: string, senderName?: string, senderPhoneOrJid?: string): Promise<string> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return `🤖 *Asisten AI PT NMSA*\n\nTerima kasih atas pesan Anda: "${userQuery}".\n\nUntuk mengaktifkan fitur tanya-jawab otomatis seputar voucher dan transaksi bisnis secara langsung melalui WhatsApp, pastikan kunci API AI telah aktif di pengaturan server.`;
+  }
+
+  // Load available data store
+  const DATA_FILE = path.join(process.cwd(), "data-store.json");
+  let stateData: any = {};
+  if (fs.existsSync(DATA_FILE)) {
+    try {
+      stateData = JSON.parse(fs.readFileSync(DATA_FILE, "utf-8"));
+    } catch (e) {}
+  }
+
+  // Extract security settings
+  const secSettings = stateData.waSecuritySettings || {
+    privacyMode: "whitelist", // 'whitelist' | 'pin' | 'public'
+    allowedPhones: [],
+    securityPin: "1234",
+    enableDriveLinks: true,
+    unauthorizedMessage: "Nomor WhatsApp Anda belum terdaftar dalam otorisasi akses voucher keuangan PT NMSA. Silakan hubungi Finance/Admin untuk mendaftarkan nomor Anda."
+  };
+
+  // Determine if query is requesting sensitive voucher or financial transaction data
+  const qLower = userQuery.toLowerCase();
+  const isFinancialQuery = (
+    qLower.includes("voucher") ||
+    qLower.includes("bkk") ||
+    qLower.includes("transaksi") ||
+    qLower.includes("bayar") ||
+    qLower.includes("lunas") ||
+    qLower.includes("belum bayar") ||
+    qLower.includes("nominal") ||
+    qLower.includes("biaya") ||
+    qLower.includes("pengeluaran") ||
+    qLower.includes("kas kecil") ||
+    qLower.includes("petty cash") ||
+    qLower.includes("dana") ||
+    qLower.includes("uang") ||
+    qLower.includes("ho-") ||
+    qLower.includes("solar") ||
+    qLower.includes("bbm") ||
+    qLower.includes("invoice") ||
+    qLower.includes("rekening") ||
+    qLower.includes("drive") ||
+    qLower.includes("file") ||
+    qLower.includes("lampiran") ||
+    qLower.includes("dokumen") ||
+    qLower.includes("sppd") ||
+    qLower.includes("gaji") ||
+    qLower.includes("rp")
+  );
+
+  // Normalize sender phone
+  let cleanSenderPhone = "";
+  if (senderPhoneOrJid) {
+    const rawNumber = senderPhoneOrJid.split("@")[0].split(":")[0];
+    cleanSenderPhone = normalizePhoneNumber(rawNumber);
+  }
+
+  // Check admin / authorized status
+  const connectedAdminId = connectedUser?.id ? normalizePhoneNumber(connectedUser.id.split("@")[0].split(":")[0]) : "";
+  const allowedList = (secSettings.allowedPhones || []).map((p: string) => normalizePhoneNumber(p));
+  
+  // Also check if sender is registered as an Admin/Finance worker
+  const isWorkerAdmin = (stateData.workers || []).some((w: any) => {
+    if (!w.phoneNumber || !w.isActive) return false;
+    const pNorm = normalizePhoneNumber(w.phoneNumber);
+    const roleLower = (w.role || "").toLowerCase();
+    const isAdminRole = roleLower.includes("admin") || roleLower.includes("finance") || roleLower.includes("direktur") || roleLower.includes("manager") || roleLower.includes("keuangan");
+    return pNorm === cleanSenderPhone && isAdminRole;
+  });
+
+  const isSenderAdmin = (
+    senderPhoneOrJid === "admin_ui" ||
+    senderPhoneOrJid === "Pengguna WhatsApp" || // Sandbox
+    (cleanSenderPhone && (cleanSenderPhone === connectedAdminId || allowedList.includes(cleanSenderPhone) || isWorkerAdmin))
+  );
+
+  // Check PIN in query if mode is PIN
+  const pinPattern = /#pin\s*([0-9a-zA-Z]+)|pin\s*:\s*([0-9a-zA-Z]+)/i;
+  const pinMatch = userQuery.match(pinPattern);
+  const providedPin = pinMatch ? (pinMatch[1] || pinMatch[2]) : "";
+  const isPinValid = providedPin && String(providedPin).trim() === String(secSettings.securityPin || "1234").trim();
+
+  // Access Control enforcement for financial queries
+  if (isFinancialQuery) {
+    if (secSettings.privacyMode === "whitelist" && !isSenderAdmin) {
+      return `🔒 *Akses Data Transaksi Terbatas (Privasi Terjaga)*\n\nHalo *${senderName || 'Bapak/Ibu'}*,\n\n${secSettings.unauthorizedMessage || 'Nomor WhatsApp Anda belum terdaftar dalam otorisasi akses voucher keuangan PT NMSA.'}\n\n📱 Nomor Anda: *+${cleanSenderPhone || 'Tidak terdeteksi'}*\n\n💡 *Untuk Mendaftarkan Nomor:* Hubungi Tim Finance / Admin PT NMSA untuk menambahkan nomor Anda ke daftar otorisasi WhatsApp AI.`;
+    }
+
+    if (secSettings.privacyMode === "pin" && !isSenderAdmin && !isPinValid) {
+      return `🔐 *Otorisasi PIN Keamanan Diperlukan*\n\nUntuk melihat rincian voucher transaksi & data keuangan PT NMSA, silakan sertakan PIN Otorisasi Anda dalam pesan.\n\nContoh format:\n👉 *${userQuery} #PIN${secSettings.securityPin || '1234'}*\n\nAtau ketik PIN Anda untuk membuka akses.`;
+    }
+  }
+
+  const { GoogleGenAI } = await import("@google/genai");
+  const ai = new GoogleGenAI({
+    apiKey,
+    httpOptions: {
+      headers: { "User-Agent": "aistudio-build" }
+    }
+  });
+
+  const workersList = (stateData.workers || []).map((w: any) => ({
+    nama: w.name,
+    posisi: w.role,
+    noHp: w.phoneNumber,
+    aktif: w.isActive
+  }));
+
+  const allSubmissions = stateData.submissions || [];
+  const pettyCashReports = stateData.pettyCashReports || [];
+  const sppdRecords = stateData.sppdRecords || [];
+  const npwpRecords = stateData.npwpRecords || [];
+  const attendanceRecords = stateData.attendanceRecords || [];
+
+  // Summary statistics for fast high-level queries
+  const totalSubmissionsCount = allSubmissions.length;
+  const totalNominalAll = allSubmissions.reduce((acc: number, s: any) => {
+    const nom = Number(s.totalAmount) || Number(s.nominal) || (s.items ? s.items.reduce((sum: number, it: any) => sum + (Number(it.total) || 0), 0) : 0);
+    return acc + nom;
+  }, 0);
+  
+  const unpaidSubmissions = allSubmissions.filter((s: any) => {
+    const st = (s.statusPembayaran || s.status || "").toUpperCase();
+    return st !== 'SUDAH DIBAYAR' && st !== 'PAID' && st !== 'LUNAS' && !s.isPaid;
+  });
+  
+  const totalUnpaidNominal = unpaidSubmissions.reduce((acc: number, s: any) => {
+    const nom = Number(s.totalAmount) || Number(s.nominal) || (s.items ? s.items.reduce((sum: number, it: any) => sum + (Number(it.total) || 0), 0) : 0);
+    return acc + nom;
+  }, 0);
+
+  // Search relevant submissions
+  let relevantSubmissions = allSubmissions.slice(0, 30);
+  if (qLower.length > 1) {
+    const terms = qLower.split(/\s+/).filter((t: string) => t.length > 1);
+    const matched = allSubmissions.filter((s: any) => {
+      const codeStr = (s.kode || s.id || s.noVoucher || '').toLowerCase();
+      const descStr = (s.perihal || s.notes || s.jenisPengajuan || s.keterangan || '').toLowerCase();
+      const payeeStr = (s.dibayarkanKepada || s.kepada || s.namaPenerima || '').toLowerCase();
+      const catStr = (s.kategori || s.jenisPengajuan || '').toLowerCase();
+      const dateStr = (s.tanggal || '').toLowerCase();
+      const itemsStr = (s.items || []).map((it: any) => (it.item || '') + ' ' + (it.keterangan || '')).join(' ').toLowerCase();
+
+      return terms.some((t: string) => 
+        codeStr.includes(t) || 
+        descStr.includes(t) || 
+        payeeStr.includes(t) || 
+        catStr.includes(t) || 
+        dateStr.includes(t) || 
+        itemsStr.includes(t)
+      );
+    });
+    if (matched.length > 0) {
+      relevantSubmissions = matched.slice(0, 40);
+    }
+  }
+
+  const cleanSubmissions = relevantSubmissions.map((s: any) => {
+    const items = (s.items || []).map((it: any) => ({
+      no: it.no,
+      item: it.item,
+      volume: it.jumlahVolume,
+      total: it.total,
+      keterangan: it.keterangan
+    }));
+    const totalAmount = s.totalAmount || s.nominal || (items.length > 0 ? items.reduce((acc: number, cur: any) => acc + (Number(cur.total) || 0), 0) : 0);
+    
+    // Google Drive Consolidated 1-File Link
+    const driveUrl = s.googleDriveFileUrl || (s.googleDriveFiles && s.googleDriveFiles[0]?.url) || (s.buktiPembayaran?.url) || (s.pettyCashFile?.url) || null;
+    const driveFileName = s.googleDriveFileName || (s.googleDriveFiles && s.googleDriveFiles[0]?.name) || (s.buktiPembayaran?.name) || "Dokumen_Lengkap_Voucher.pdf";
+    const allDriveFiles = (s.googleDriveFiles || []).map((f: any) => ({ nama: f.name, link: f.url }));
+
+    const isPaid = (
+      (s.statusPembayaran && s.statusPembayaran.toUpperCase().includes("SUDAH")) ||
+      (s.status && (s.status.toUpperCase() === "LUNAS" || s.status.toUpperCase() === "PAID")) ||
+      s.isPaid === true
+    );
+
+    return {
+      id: s.id,
+      kodeVoucher: s.kode || s.id || s.noVoucher,
+      tanggal: s.tanggal,
+      jenisPengajuan: s.jenisPengajuan || 'Operasional',
+      perihal: s.perihal || s.notes || s.keterangan || 'Biaya Operasional PT NMSA',
+      dibayarkanKepada: s.dibayarkanKepada || s.kepada || s.namaPenerima || 'Pihak Terkait',
+      dibayarkanDengan: s.dibayarkanDengan || s.metodePembayaran || 'Transfer Bank / Kas Tunai',
+      totalNominal: totalAmount,
+      statusPembayaran: isPaid ? 'SUDAH DIBAYAR (LUNAS)' : 'BELUM DIBAYAR (PENDING)',
+      isPaid: isPaid,
+      rincianItems: items,
+      linkDokumenGoogleDrive: driveUrl,
+      namaFileGoogleDrive: driveFileName,
+      daftarLampiranLengkap: allDriveFiles,
+      diajukanOleh: s.diajukanOleh || s.dibuatOleh || 'Staff Finance NMSA',
+      disetujuiOleh: s.disetujuiOleh || s.disetujuiOleh2 || 'Direktur Keuangan / Manajemen'
+    };
+  });
+
+  const systemPrompt = `Anda adalah Asisten AI Senior Keuangan & Operasional Perusahaan PT Nusantara Mineral Sukses Abadi (NMSA).
+Anda bertugas seperti seorang rekan kerja keuangan senior yang ramah, sangat teliti, sigap, dan hafal seluruh data transaksi, voucher kas/bank, kas kecil, dan operasional tambang.
+
+RINGKASAN DATABASE KEUANGAN TERKINI:
+- Total Seluruh Voucher: ${totalSubmissionsCount} dokumen (Total Nilai: Rp ${totalNominalAll.toLocaleString('id-ID')})
+- Voucher Belum Bayar / Outstanding: ${unpaidSubmissions.length} dokumen (Total Nilai: Rp ${totalUnpaidNominal.toLocaleString('id-ID')})
+- Pemegang Petty Cash: ${JSON.stringify(stateData.pettyCashHolders || ['Suryo Pranoto', 'Deasy Anisa'])}
+- Rekap Laporan Kas Kecil: ${pettyCashReports.length} laporan
+- Total Karyawan Lapangan/HO: ${workersList.length} orang
+
+DATA TRANSAKSI / VOUCHER YANG COCOK / TERSEDIA:
+${JSON.stringify(cleanSubmissions, null, 2)}
+
+PANDUAN MENJAWAB (SANGAT PENTING):
+1. Ketika ditanya mengenai detail suatu transaksi / voucher (misal: status bayar, nomor voucher, perihal, nominal, penerima dana, atau minta file):
+   - Jelaskan dengan format rapi dan profesional WhatsApp:
+     📋 *DETAIL VOUCHER [KODE VOUCHER]*
+     • *Tanggal*: [Tanggal transaksi]
+     • *Penerima*: [Penerima / Vendor]
+     • *Perihal*: [Keperluan transaksi]
+     • *Total Nominal*: *Rp [Nominal formatted]*
+     • *Status Pembayaran*: *[SUDAH DIBAYAR]* atau *[BELUM DIBAYAR / PENDING]*
+     • *Metode Bayar*: [Metode transfer/tunai]
+     • *Rincian Item*: [Sebutkan item-item transaksi jika ada]
+     • *Disetujui Oleh*: [Approver]
+   
+   - LAMPIRAN FILE GOOGLE DRIVE (1 FILE UTUH LENGKAP):
+     Jika voucher memiliki "linkDokumenGoogleDrive" atau "daftarLampiranLengkap", WAJIB sertakan link Google Drive langsung:
+     📎 *Lampiran Dokumen Lengkap (Google Drive):*
+     👉 [Buka / Download Dokumen Lengkap](LINK_URL)
+     
+     Jika belum memiliki link file Google Drive, sampaikan bahwa transaksi sudah valid terdata di pembukuan dan berkas fisik belum diunggah ke Google Drive.
+
+2. PANDUAN PANDUAN PENGGUNA BARU / KATA KUNCI / BANTUAN (JIKA PENGGUNA BINGUNG / TIDAK TAHU MAU CARI APA):
+   Jika pengguna hanya menyapa ("Halo", "P", "Hai"), mengetik "Menu", "Bantuan", "Help", "Kata Kunci", atau menyampaikan bahwa mereka bingung/tidak tahu apa yang harus dicari:
+   - Sambut dengan hangat dan jelaskan apa saja yang bisa ditanyakan.
+   - Berikan *Daftar Kata Kunci Populer* yang bisa langsung diketik (misal: nama vendor, nomor voucher terbaru, *Solar*, *Kas Kecil*, *Belum Bayar*, *Absensi*).
+   - Tampilkan 3 sampai 5 sampel voucher terbaru yang ada di database sebagai contoh nyata agar pengguna tinggal memilih.
+   - Tuliskan contoh kalimat tanya singkat siap pakai.
+
+3. Berikan jawaban dalam Bahasa Indonesia yang sopan, solutif, percaya diri, dan mudah dibaca di smartphone.
+4. Gunakan simbol WhatsApp (*tebal*, 👉, •, ✅, ⏳) agar mudah dipindai dengan mata.`;
+
+  const modelsToTry = [
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    "gemini-3.1-flash-lite",
+    "gemini-flash-latest"
+  ];
+
+  let lastError: any = null;
+  for (const modelName of modelsToTry) {
+    try {
+      const response = await ai.models.generateContent({
+        model: modelName,
+        contents: [
+          {
+            role: "user",
+            parts: [
+              { text: `${systemPrompt}\n\nPertanyaan dari ${senderName || 'Pengguna'}:\n"${userQuery}"` }
+            ]
+          }
+        ]
+      });
+
+      if (response && response.text) {
+        return response.text;
+      }
+    } catch (err: any) {
+      console.warn(`Gemini model ${modelName} attempt error in WhatsApp AI:`, err.message || err);
+      lastError = err;
+    }
+  }
+
+  throw lastError || new Error("Gagal memproses pertanyaan dengan model AI.");
+}
+
+/**
  * AI Business Knowledge query handler powered by Gemini 2.5
  */
 export async function handleBusinessAiQuery(userQuery: string, senderJid: string, senderName?: string) {
   if (!sock) return;
 
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      console.warn("GEMINI_API_KEY is not set for WhatsApp Business AI queries.");
-      await sock.sendMessage(senderJid, {
-        text: `🤖 *Asisten AI PT NMSA*\n\nTerima kasih atas pesan Anda: "${userQuery}".\n\nUntuk mengaktifkan fitur tanya-jawab otomatis seputar voucher dan transaksi bisnis secara langsung melalui WhatsApp, pastikan kunci API AI telah aktif di pengaturan server.`
-      });
-      return;
-    }
-
     // Send typing presence
     try {
       await sock.sendPresenceUpdate('composing', senderJid);
     } catch (e) {}
 
-    const { GoogleGenAI } = await import("@google/genai");
-    const ai = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: { "User-Agent": "aistudio-build" }
-      }
-    });
-
-    // Load available data store
-    const DATA_FILE = path.join(process.cwd(), "data-store.json");
-    let stateData: any = {};
-    if (fs.existsSync(DATA_FILE)) {
-      try {
-        stateData = JSON.parse(fs.readFileSync(DATA_FILE, "utf-8"));
-      } catch (e) {}
-    }
-
-    const workersList = (stateData.workers || []).map((w: any) => ({
-      nama: w.name,
-      posisi: w.role,
-      noHp: w.phoneNumber,
-      aktif: w.isActive
-    }));
-
-    const attendanceSummary = (stateData.attendanceRecords || []).slice(0, 15);
-    const pettyCashSummary = (stateData.pettyCashReports || []).slice(0, 10);
-    const submissionsSummary = (stateData.submissions || []).slice(0, 20);
-
-    const systemPrompt = `Anda adalah Asisten Virtual Cerdas AI Bisnis & Keuangan untuk PT Nusantara Mineral Sukses Abadi (NMSA).
-Anda melayani pertanyaan bisnis, status voucher transaksi, pengeluaran solar / operasional, kas kecil (petty cash), daftar karyawan, dan presensi via WhatsApp.
-
-DATA PERUSAHAAN SAAT INI:
-- Perusahaan: PT Nusantara Mineral Sukses Abadi (NMSA)
-- Daftar Karyawan: ${JSON.stringify(workersList)}
-- Pemegang Kas Kecil: ${JSON.stringify(stateData.pettyCashHolders || ['Suryo Pranoto'])}
-- Data Presensi Karyawan: ${JSON.stringify(attendanceSummary)}
-- Laporan Kas Kecil Terakhir: ${JSON.stringify(pettyCashSummary)}
-- Transaksi / Voucher Terakhir: ${JSON.stringify(submissionsSummary)}
-
-FORMAT PESAN WHATSAPP:
-- Gunakan bahasa Indonesia yang ramah, sopan, dan profesional.
-- Gunakan format bold (*tebal*), list nomor/bullet point, dan emoji yang rapi agar nyaman dibaca di layar HP.
-- Jika ditanya seputar transaksi atau pengeluaran, sertakan nominal Rupiah yang jelas (contoh: *Rp 15.000.000*).
-- Jika data yang dicari belum ada, sampaikan dengan santun bahwa data belum terdaftar atau dapat dicek langsung di menu web aplikasi.`;
-
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: [
-        {
-          role: "user",
-          parts: [
-            { text: `${systemPrompt}\n\nPertanyaan dari ${senderName || 'Pengguna'} (${senderJid}):\n"${userQuery}"` }
-          ]
-        }
-      ]
-    });
-
-    const reply = response.text || "Mohon maaf, tidak ada respon dari sistem saat ini.";
+    const reply = await generateBusinessAiReply(userQuery, senderName || senderJid, senderJid);
 
     // Clear typing presence
     try {

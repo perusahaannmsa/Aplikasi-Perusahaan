@@ -840,17 +840,17 @@ export function AbsensiHarianNmsa({
   const [isAgreedToDataVerification, setIsAgreedToDataVerification] = useState<boolean>(false);
 
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
-  const [activeTab, setActiveTabInternal] = useState<"dashboard" | "absen" | "pettycash" | "workers">(() => {
+  const [activeTab, setActiveTabInternal] = useState<"absen" | "workers">(() => {
     try {
       const saved = sessionStorage.getItem("nmsa_absen_active_tab");
-      if (saved && ["dashboard", "absen", "pettycash", "workers"].includes(saved)) {
+      if (saved && ["absen", "workers"].includes(saved)) {
         return saved as any;
       }
     } catch (e) {}
-    return "dashboard";
+    return "absen";
   });
 
-  const setActiveTab = (tab: "dashboard" | "absen" | "pettycash" | "workers") => {
+  const setActiveTab = (tab: "absen" | "workers") => {
     setActiveTabInternal(tab);
     try { sessionStorage.setItem("nmsa_absen_active_tab", tab); } catch (e) {}
   };
@@ -5060,23 +5060,11 @@ export function AbsensiHarianNmsa({
           </div>
 
           <div className="flex items-center gap-2">
-            {/* QUICK 4 TABS SWITCHER */}
+            {/* 2 MAIN TABS: ABSEN UANG MAKAN & KELOLA KARYAWAN */}
             <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 w-full sm:w-auto overflow-x-auto">
               <button
-                onClick={() => setActiveTab("dashboard")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition duration-150 cursor-pointer whitespace-nowrap ${
-                  activeTab === "dashboard"
-                    ? "bg-white text-slate-900 shadow-xs font-bold"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                <LayoutDashboard className="w-3.5 h-3.5 text-indigo-600" />
-                <span>Ringkasan Analitik</span>
-              </button>
-
-              <button
                 onClick={() => setActiveTab("absen")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition duration-150 cursor-pointer whitespace-nowrap ${
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition duration-150 cursor-pointer whitespace-nowrap ${
                   activeTab === "absen"
                     ? "bg-white text-slate-900 shadow-xs font-bold"
                     : "text-slate-600 hover:text-slate-900"
@@ -5085,22 +5073,10 @@ export function AbsensiHarianNmsa({
                 <Calendar className="w-3.5 h-3.5 text-emerald-600" />
                 <span>Absen Uang Makan</span>
               </button>
-              
-              <button
-                onClick={() => setActiveTab("pettycash")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition duration-150 cursor-pointer whitespace-nowrap ${
-                  activeTab === "pettycash"
-                    ? "bg-white text-slate-900 shadow-xs font-bold"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                <FileText className="w-3.5 h-3.5 text-blue-600" />
-                <span>Pembacaan Dokumen PDF</span>
-              </button>
 
               <button
                 onClick={() => setActiveTab("workers")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition duration-150 cursor-pointer whitespace-nowrap ${
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition duration-150 cursor-pointer whitespace-nowrap ${
                   activeTab === "workers"
                     ? "bg-white text-slate-900 shadow-xs font-bold"
                     : "text-slate-600 hover:text-slate-900"
@@ -5790,12 +5766,15 @@ export function AbsensiHarianNmsa({
                                 <span className="text-slate-500">Nomor Telepon:</span>
                                 <span className="font-mono font-bold text-slate-800">{waBotUser?.id ? waBotUser.id.split(":")[0] : "Terhubung"}</span>
                               </div>
-                              <div className="flex justify-between">
-                                <span className="text-slate-500">Status Operasional:</span>
+                              <div className="flex justify-between border-b border-slate-100 pb-1.5">
+                                <span className="text-slate-500">Status Gateway:</span>
                                 <span className="text-emerald-600 font-bold flex items-center gap-1">
                                   <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping" />
-                                  <span>Aktif (Standby)</span>
+                                  <span>Aktif Terpadu 24/7</span>
                                 </span>
+                              </div>
+                              <div className="pt-1 text-[11px] text-emerald-800 bg-emerald-50/80 p-2 rounded-lg border border-emerald-200/60 leading-relaxed font-sans">
+                                <strong>✅ 1x Penautan untuk Seluruh Fitur:</strong> Mengirimkan link absensi harian, menerima absen share location, dan menjawab tanya-jawab AI Bisnis secara otomatis.
                               </div>
                             </div>
 

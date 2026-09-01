@@ -11,7 +11,8 @@ import {
   getWhatsAppStatus, 
   disconnectWhatsApp, 
   sendWhatsAppMessage, 
-  requestWhatsAppPairingCode 
+  requestWhatsAppPairingCode,
+  generateBusinessAiReply
 } from "./server/wa-bot";
 
 dotenv.config();
@@ -2151,6 +2152,222 @@ app.post("/api/wa/send-test", async (req, res) => {
   }
   const result = await sendWhatsAppMessage(phone, message);
   res.json(result);
+});
+
+// GET WhatsApp Security & Privacy Settings for Financial Vouchers
+app.get("/api/wa/security-settings", (req, res) => {
+  const state = readState();
+  const waStatus = getWhatsAppStatus();
+  
+  const defaultSettings = {
+    privacyMode: "whitelist", // 'whitelist' | 'pin' | 'public'
+    allowedPhones: [],
+    securityPin: "1234",
+    enableDriveLinks: true,
+    unauthorizedMessage: "Nomor WhatsApp Anda belum terdaftar dalam otorisasi akses voucher keuangan PT NMSA. Silakan hubungi Finance/Admin untuk mendaftarkan nomor Anda."
+  };
+
+  const settings = state.waSecuritySettings || defaultSettings;
+  res.json({
+    success: true,
+    settings,
+    connectedUser: waStatus.user
+  });
+});
+
+// POST WhatsApp Security & Privacy Settings
+app.post("/api/wa/security-settings", (req, res) => {
+  if (!validateAdminToken(req)) {
+    return res.status(401).json({ success: false, error: "Unauthorized: Admin login required" });
+  }
+  const { privacyMode, allowedPhones, securityPin, enableDriveLinks, unauthorizedMessage } = req.body;
+  const state = readState();
+  state.waSecuritySettings = {
+    privacyMode: privacyMode || "whitelist",
+    allowedPhones: Array.isArray(allowedPhones) ? allowedPhones : [],
+    securityPin: securityPin || "1234",
+    enableDriveLinks: enableDriveLinks !== false,
+    unauthorizedMessage: unauthorizedMessage || "Nomor WhatsApp Anda belum terdaftar dalam otorisasi akses voucher keuangan PT NMSA. Silakan hubungi Finance/Admin untuk mendaftarkan nomor Anda."
+  };
+  writeState(state);
+  res.json({ success: true, settings: state.waSecuritySettings });
+});
+
+// --- UNIVERSAL WHATSAPP WEBHOOK & MAKE.COM / FONNTE / WABLAS INTEGRATION ---
+
+// POST /api/whatsapp-webhook (Direct Webhook for Make.com / Fonnte / Custom Integrations)
+// POST /api/fonnte-webhook (Alias for Fonnte Webhook URL)
+const handleIncomingWebhook = async (req: express.Request, res: express.Response) => {
+  try {
+    const payload = req.body || {};
+    console.log("Incoming WhatsApp Webhook Payload:", JSON.stringify(payload).slice(0, 300));
+
+    // Extract message query from various webhook formats (Fonnte, Make.com, Wablas, Baileys, Custom)
+    const userMessage = (
+      payload.message || 
+      payload.text || 
+      payload.query || 
+      payload.pesan || 
+      payload.body || 
+      payload.content || 
+      payload.msg || 
+      (payload.entry && payload.entry[0]?.changes && payload.entry[0]?.changes[0]?.value?.messages && payload.entry[0]?.changes[0]?.value?.messages[0]?.text?.body) ||
+      ""
+    ).toString().trim();
+
+    const senderPhone = (
+      payload.sender || 
+      payload.from || 
+      payload.target || 
+      payload.phone || 
+      payload.senderPhone || 
+      payload.user || 
+      payload.number ||
+      (payload.entry && payload.entry[0]?.changes && payload.entry[0]?.changes[0]?.value?.messages && payload.entry[0]?.changes[0]?.value?.messages[0]?.from) ||
+      "Pengguna WhatsApp"
+    ).toString().trim();
+
+    const senderName = (payload.name || payload.senderName || payload.pushName || "Pengguna").toString().trim();
+
+    if (!userMessage) {
+      return res.json({ 
+        status: "success", 
+        message: "Webhook diterima tetapi tidak ada pesan teks.",
+        reply: "Halo! Silakan ketik pertanyaan Anda seputar voucher atau data perusahaan NMSA." 
+      });
+    }
+
+    // Generate intelligent reply using Gemini AI with full company data context and security access control
+    const aiReply = await generateBusinessAiReply(userMessage, senderName, senderPhone);
+
+    // If request contains a Fonnte Token (or fonnteToken query/body) and target phone, send reply back to Fonnte API
+    const fonnteToken = req.headers["x-fonnte-token"] || payload.fonnteToken || req.query.fonnteToken;
+    if (fonnteToken && senderPhone && senderPhone !== "Pengguna WhatsApp") {
+      try {
+        const formData = new URLSearchParams();
+        formData.append("target", senderPhone);
+        formData.append("message", aiReply);
+
+        await fetch("https://api.fonnte.com/send", {
+          method: "POST",
+          headers: {
+            "Authorization": String(fonnteToken)
+          },
+          body: formData
+        });
+      } catch (fErr) {
+        console.warn("Failed to auto-dispatch reply to Fonnte:", fErr);
+      }
+    }
+
+    // Return standard JSON response that works directly in Make.com, Fonnte Webhooks, and HTTP modules
+    return res.json({
+      status: "success",
+      reply: aiReply,
+      message: aiReply,
+      text: aiReply,
+      data: {
+        sender: senderPhone,
+        senderName,
+        query: userMessage,
+        response: aiReply
+      }
+    });
+  } catch (error: any) {
+    console.error("Error handling WhatsApp Webhook:", error);
+    return res.status(500).json({
+      status: "error",
+      error: error.message || "Failed to process WhatsApp Webhook query",
+      reply: "Mohon maaf, terjadi kendala pemrosesan sistem saat membaca data perusahaan."
+    });
+  }
+};
+
+app.post("/api/whatsapp-webhook", handleIncomingWebhook);
+app.post("/api/fonnte-webhook", handleIncomingWebhook);
+app.get("/api/whatsapp-webhook", (req, res) => {
+  // Webhook verification / healthcheck ping
+  res.json({
+    status: "active",
+    name: "PT Nusantara Mineral Sukses Abadi WhatsApp AI Webhook",
+    instructions: "Kirimkan POST request dengan payload { message: 'pertanyaan', sender: 'nomor_hp' } untuk mendapatkan jawaban AI otomatis berbasis data perusahaan."
+  });
+});
+
+// POST /api/ai-query (Interactive query endpoint for UI test / direct AI sandbox)
+app.post("/api/ai-query", async (req, res) => {
+  try {
+    const { query, sender, senderPhone } = req.body;
+    if (!query) {
+      return res.status(400).json({ error: "Parameter 'query' wajib diisi." });
+    }
+    const reply = await generateBusinessAiReply(query, sender || "Admin", senderPhone || "admin_ui");
+    res.json({ success: true, reply });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || "Gagal menghasilkan jawaban AI." });
+  }
+});
+
+// GET /api/data & GET /api/vouchers (Clean JSON endpoints for Make.com / external tools)
+app.get(["/api/data", "/api/vouchers", "/api/summary"], (req, res) => {
+  const state = readState();
+  const allSubmissions = state.submissions || [];
+  const pettyCashReports = state.pettyCashReports || [];
+  const workers = (state.workers || []).map((w: any) => ({
+    id: w.id,
+    name: w.name,
+    role: w.role,
+    phoneNumber: w.phoneNumber,
+    isActive: w.isActive
+  }));
+
+  const totalNominal = allSubmissions.reduce((acc: number, s: any) => acc + (Number(s.totalAmount) || Number(s.nominal) || 0), 0);
+  const unpaidList = allSubmissions.filter((s: any) => s.statusPembayaran !== 'SUDAH DIBAYAR' && s.status !== 'PAID');
+  const paidList = allSubmissions.filter((s: any) => s.statusPembayaran === 'SUDAH DIBAYAR' || s.status === 'PAID');
+
+  res.json({
+    company: "PT Nusantara Mineral Sukses Abadi",
+    summary: {
+      totalVouchers: allSubmissions.length,
+      totalNominal,
+      unpaidVouchersCount: unpaidList.length,
+      unpaidNominal: unpaidList.reduce((acc: number, s: any) => acc + (Number(s.totalAmount) || Number(s.nominal) || 0), 0),
+      paidVouchersCount: paidList.length,
+      paidNominal: paidList.reduce((acc: number, s: any) => acc + (Number(s.totalAmount) || Number(s.nominal) || 0), 0),
+      totalWorkers: workers.length,
+      totalPettyCashReports: pettyCashReports.length
+    },
+    vouchers: allSubmissions.slice(0, 100).map((s: any) => ({
+      id: s.id,
+      kode: s.kode || s.noVoucher,
+      tanggal: s.tanggal,
+      perihal: s.perihal || s.keterangan,
+      kepada: s.kepada || s.namaPenerima,
+      totalAmount: s.totalAmount || s.nominal,
+      statusPembayaran: s.statusPembayaran || (s.isPaid ? 'SUDAH DIBAYAR' : 'BELUM DIBAYAR'),
+      metodePembayaran: s.metodePembayaran || s.metode,
+      kategori: s.kategori
+    })),
+    pettyCashReports: pettyCashReports.slice(0, 50),
+    workers
+  });
+});
+
+// POST /api/sync-submissions (Frontend syncs all submissions to backend memory)
+app.post("/api/sync-submissions", (req, res) => {
+  try {
+    const { submissions } = req.body;
+    if (Array.isArray(submissions)) {
+      const state = readState();
+      state.submissions = submissions;
+      writeState(state);
+      res.json({ success: true, count: submissions.length });
+    } else {
+      res.status(400).json({ error: "Payload submissions harus berupa array." });
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Helper to determine weekday in Jakarta timezone ("Sunday"=0, "Saturday"=6, etc.)

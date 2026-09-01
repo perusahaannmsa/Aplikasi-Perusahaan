@@ -486,24 +486,35 @@ export function AccuratePettyCashMapping({
         const uploadName = `PettyCash_${cleanKode}_${cleanFileName}`;
 
         setUploadModalProgress(`Mengunggah "${file.name}" ke Google Drive...`);
-        const uploadResult = await uploadFileToGoogleDrive(
-          token,
-          uploadName,
-          file.type || 'application/pdf',
-          file,
-          targetFolderId
-        );
+        try {
+          const uploadResult = await uploadFileToGoogleDrive(
+            token,
+            uploadName,
+            file.type || 'application/pdf',
+            file,
+            targetFolderId
+          );
 
-        finalUrl = uploadResult.url;
-        finalName = uploadResult.name;
+          finalUrl = uploadResult.url;
+          finalName = uploadResult.name;
+        } catch (driveErr: any) {
+          console.warn('Google Drive direct upload encountered issue, saving document directly to database:', driveErr);
+          setUploadModalProgress('Menyimpan lampiran dokumen ke sistem...');
+          finalUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.onerror = () => reject(new Error('Gagal membaca file lokal.'));
+            reader.readAsDataURL(file);
+          });
+        }
       } else {
         // If file is > 400KB and Google Drive is not connected
-        if (file.size > 400 * 1024) {
-          throw new Error(`Ukuran berkas (${(file.size / 1024 / 1024).toFixed(2)} MB) melebihi batas simpan langsung dokumen database (maks 1 MB). Silakan klik hubungkan akun Google Drive agar berkas terunggah ke Cloud Drive secara otomatis.`);
+        if (file.size > 2 * 1024 * 1024) {
+          throw new Error(`Ukuran berkas (${(file.size / 1024 / 1024).toFixed(2)} MB) melebihi batas database (maks 2 MB). Silakan klik hubungkan akun Google Drive agar berkas terunggah ke Cloud Drive secara otomatis.`);
         }
 
-        // Small file offline/local base64 fallback (< 400KB)
-        setUploadModalProgress('Menyimpan berkas secara lokal...');
+        // Local base64 fallback
+        setUploadModalProgress('Menyimpan berkas ke sistem...');
         finalUrl = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
           reader.onloadend = () => resolve(reader.result as string);

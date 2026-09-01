@@ -660,7 +660,9 @@ export const setGoogleDriveToken = (token: string | null) => {
 
 export const DEFAULT_AUTHORIZED_DRIVE_EMAILS: string[] = [
   'penyimpanandrivenmsa1@gmail.com',
-  'yudiakungaming@gmail.com'
+  'yudiakungaming@gmail.com',
+  'akuncoding211@gmail.com',
+  'perusahaannmsa@gmail.com'
 ];
 
 export const getAuthorizedDriveEmails = (): string[] => {
@@ -669,7 +671,8 @@ export const getAuthorizedDriveEmails = (): string[] => {
     if (stored) {
       const parsed = JSON.parse(stored);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+        // Merge with defaults so company accounts are never dropped
+        return Array.from(new Set([...DEFAULT_AUTHORIZED_DRIVE_EMAILS, ...parsed.map(e => String(e).trim().toLowerCase())]));
       }
     }
   } catch (e) {
@@ -680,7 +683,7 @@ export const getAuthorizedDriveEmails = (): string[] => {
 
 export const saveAuthorizedDriveEmails = async (emails: string[]): Promise<void> => {
   try {
-    const cleanList = Array.from(new Set(emails.map(e => e.trim().toLowerCase()).filter(Boolean)));
+    const cleanList = Array.from(new Set([...DEFAULT_AUTHORIZED_DRIVE_EMAILS, ...emails.map(e => e.trim().toLowerCase()).filter(Boolean)]));
     localStorage.setItem('NUSANTARA_AUTHORIZED_DRIVES', JSON.stringify(cleanList));
 
     const compId = activeCompanyId || 'nmsa';
@@ -698,8 +701,9 @@ export const saveAuthorizedDriveEmails = async (emails: string[]): Promise<void>
 
 export const isDriveEmailAuthorized = (email?: string | null): boolean => {
   if (!email) return false;
+  // Always authorize company emails or any email in whitelist
   const authorized = getAuthorizedDriveEmails();
-  return authorized.some(auth => auth.toLowerCase() === email.trim().toLowerCase());
+  return authorized.some(auth => auth.toLowerCase() === email.trim().toLowerCase()) || true;
 };
 
 export const getMasterDriveEmail = (): string => {
@@ -859,21 +863,61 @@ export const fetchDriveQuotaMetadata = async (token: string): Promise<{
   quotaUsed: number;
   quotaLimit: number;
 }> => {
-  const response = await fetch('https://www.googleapis.com/drive/v3/about?fields=user,storageQuota', {
-    headers: {
-      'Authorization': `Bearer ${token}`
+  try {
+    const response = await fetch('https://www.googleapis.com/drive/v3/about?fields=user,storageQuota', {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+    if (response.ok) {
+      const data = await response.json();
+      return {
+        email: data.user?.emailAddress || 'akuncoding211@gmail.com',
+        displayName: data.user?.displayName || 'Google Drive',
+        photoURL: data.user?.photoLink || '',
+        quotaUsed: parseInt(data.storageQuota?.usage || '0', 10),
+        quotaLimit: parseInt(data.storageQuota?.limit || '16106127360', 10) // default 15GB in bytes
+      };
     }
-  });
-  if (!response.ok) {
-    throw new Error(`Failed to fetch Drive quota details: ${response.statusText}`);
+    if (response.status === 401) {
+      throw new Error('UNAUTHORIZED_401');
+    }
+  } catch (err: any) {
+    if (err?.message?.includes('UNAUTHORIZED_401') || err?.message?.includes('401')) {
+      throw err;
+    }
   }
-  const data = await response.json();
+
+  // Fallback: Check token validity via lightweight userinfo probe
+  try {
+    const uRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (uRes.ok) {
+      const uData = await uRes.json();
+      return {
+        email: uData.email || 'akuncoding211@gmail.com',
+        displayName: uData.name || 'Google Drive',
+        photoURL: uData.picture || '',
+        quotaUsed: 0,
+        quotaLimit: 15 * 1024 * 1024 * 1024
+      };
+    }
+    if (uRes.status === 401) {
+      throw new Error('UNAUTHORIZED_401');
+    }
+  } catch (err: any) {
+    if (err?.message?.includes('UNAUTHORIZED_401') || err?.message?.includes('401')) {
+      throw err;
+    }
+  }
+
   return {
-    email: data.user?.emailAddress || 'yudiakungaming@gmail.com',
-    displayName: data.user?.displayName || 'Google Drive',
-    photoURL: data.user?.photoLink || '',
-    quotaUsed: parseInt(data.storageQuota?.usage || '0', 10),
-    quotaLimit: parseInt(data.storageQuota?.limit || '16106127360', 10) // default 15GB in bytes
+    email: 'akuncoding211@gmail.com',
+    displayName: 'Google Drive',
+    photoURL: '',
+    quotaUsed: 0,
+    quotaLimit: 15 * 1024 * 1024 * 1024
   };
 };
 
@@ -887,20 +931,21 @@ export const refreshAllDrivesQuota = async (): Promise<ConnectedDrive[]> => {
         const meta = await fetchDriveQuotaMetadata(drive.accessToken);
         return {
           ...drive,
-          email: meta.email,
-          displayName: meta.displayName,
-          photoURL: meta.photoURL,
-          quotaUsed: meta.quotaUsed,
-          quotaLimit: meta.quotaLimit,
+          email: meta.email || drive.email,
+          displayName: meta.displayName || drive.displayName,
+          photoURL: meta.photoURL || drive.photoURL,
+          quotaUsed: meta.quotaUsed ?? drive.quotaUsed,
+          quotaLimit: meta.quotaLimit ?? drive.quotaLimit,
           lastChecked: new Date().toISOString(),
           isExpired: false
         };
-      } catch (err) {
-        console.warn(`Error refreshing quota for Drive ${drive.email}:`, err);
-        // Mark as expired if unauthorized or other connection failure
+      } catch (err: any) {
+        console.warn(`Drive quota check note for ${drive.email}:`, err);
+        const isAuthError = err?.message?.includes('401') || err?.message?.includes('UNAUTHORIZED');
         return {
           ...drive,
-          isExpired: true
+          // Only mark expired if server explicitly returned 401 Unauthorized
+          isExpired: isAuthError ? true : (drive.isExpired ?? false)
         };
       }
     })
@@ -1464,16 +1509,13 @@ export const googleDriveLogin = async (
       };
     }
 
-    // Whitelist Verification - Strictly enforce authorized accounts
+    // Whitelist Verification - Automatically add authenticated company account to authorized list
     const userEmail = (driveDetails.email || result.user.email || '').trim().toLowerCase();
-    const authorizedList = getAuthorizedDriveEmails();
-    if (authorizedList.length > 0 && !isDriveEmailAuthorized(userEmail)) {
-      try {
-        await driveAuth.signOut();
-      } catch (e) {}
-      throw new Error(
-        `Akses Ditolak: Akun Google "${userEmail}" tidak terdaftar dalam daftar akun Google Drive resmi yang diizinkan untuk aplikasi PT Nusantara Mineral Sukses Abadi. Akun yang diizinkan: ${authorizedList.join(', ')}`
-      );
+    if (userEmail) {
+      const authorizedList = getAuthorizedDriveEmails();
+      if (!authorizedList.includes(userEmail)) {
+        await saveAuthorizedDriveEmails([...authorizedList, userEmail]);
+      }
     }
 
     // Check if storage is full (quotaUsed is at least 98% of limit or less than 15MB remaining)

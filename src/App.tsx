@@ -23,6 +23,7 @@ import { AccuratePettyCashMapping } from './components/AccuratePettyCashMapping'
 import { AccountMappingContainer } from './components/AccountMappingContainer';
 import { AgendaManager } from './components/AgendaManager';
 import { AgendaReminderBanner } from './components/AgendaReminderBanner';
+import { WhatsAppAiModal } from './components/WhatsAppAiModal';
 import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, formatDateIndonesian } from './utils';
 import { 
   isFirebaseConfigured, 
@@ -50,7 +51,7 @@ import {
   subscribeToCompanySettingsFromFirestore,
   saveCompanySettingsToFirestore
 } from './firebase';
-import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell } from 'lucide-react';
+import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell, MessageSquare, Bot } from 'lucide-react';
 
 export default function App() {
   const [theme, setTheme] = useState<'classic' | 'gold-dark' | 'emerald' | 'slate'>(() => {
@@ -555,6 +556,7 @@ export default function App() {
   const [isVoucherSubmenuOpen, setIsVoucherSubmenuOpen] = useState(true);
   const [isCloudModalOpen, setIsCloudModalOpen] = useState(false);
   const [isGoogleDriveSettingsOpen, setIsGoogleDriveSettingsOpen] = useState(false);
+  const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
   const [masterDriveEmail, setMasterDriveEmailState] = useState<string>(() => getMasterDriveEmail());
 
   useEffect(() => {
@@ -2115,6 +2117,18 @@ export default function App() {
                 )}
               </button>
 
+              {/* WhatsApp AI & Database Assistant Button */}
+              <button
+                type="button"
+                onClick={() => setIsWhatsAppModalOpen(true)}
+                className="flex items-center gap-1.5 py-1.5 px-3 rounded-2xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-950 transition cursor-pointer shadow-3xs font-mono text-xs font-bold"
+                title="Integrasi WhatsApp Business AI & Pusat Data. Klik untuk Scan QR / Kode Pairing / Make.com Webhook."
+              >
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
+                <MessageSquare size={14} className="text-emerald-700 shrink-0" />
+                <span className="hidden md:inline font-sans">WhatsApp AI</span>
+              </button>
+
               {/* Master Google Drive 24/7 Status Header Badge */}
               <button
                 type="button"
@@ -2536,6 +2550,13 @@ export default function App() {
       <GoogleDriveSettingsModal
         isOpen={isGoogleDriveSettingsOpen}
         onClose={() => setIsGoogleDriveSettingsOpen(false)}
+      />
+
+      {/* Integrasi WhatsApp Business AI & Pusat Data Modal */}
+      <WhatsAppAiModal
+        isOpen={isWhatsAppModalOpen}
+        onClose={() => setIsWhatsAppModalOpen(false)}
+        submissions={submissions}
       />
 
     </div>

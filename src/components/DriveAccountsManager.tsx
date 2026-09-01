@@ -64,7 +64,7 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({ onCo
     setErrorText('');
     setIsConnecting(true);
     try {
-      const result = await googleDriveLogin(email);
+      const result = await googleDriveLogin(email, true);
       if (result.accessToken) {
         loadDrives();
       }
