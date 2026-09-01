@@ -585,13 +585,60 @@ export function normalizePhoneNumber(phone: string): string {
   return clean;
 }
 
+// Helper to get Jakarta date string (YYYY-MM-DD)
+export function getJakartaDateStr(): string {
+  const d = new Date();
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(d);
+}
+
+// Indonesian Month Matching Map for fast multi-period resolution
+const MONTH_MAP: Record<string, { num: string; name: string; roman: string }> = {
+  "januari": { num: "01", name: "Januari", roman: "I" },
+  "jan": { num: "01", name: "Januari", roman: "I" },
+  "februari": { num: "02", name: "Februari", roman: "II" },
+  "feb": { num: "02", name: "Februari", roman: "II" },
+  "maret": { num: "03", name: "Maret", roman: "III" },
+  "mar": { num: "03", name: "Maret", roman: "III" },
+  "april": { num: "04", name: "April", roman: "IV" },
+  "apr": { num: "04", name: "April", roman: "IV" },
+  "mei": { num: "05", name: "Mei", roman: "V" },
+  "may": { num: "05", name: "Mei", roman: "V" },
+  "juni": { num: "06", name: "Juni", roman: "VI" },
+  "jun": { num: "06", name: "Juni", roman: "VI" },
+  "june": { num: "06", name: "Juni", roman: "VI" },
+  "juli": { num: "07", name: "Juli", roman: "VII" },
+  "jul": { num: "07", name: "Juli", roman: "VII" },
+  "july": { num: "07", name: "Juli", roman: "VII" },
+  "agustus": { num: "08", name: "Agustus", roman: "VIII" },
+  "ags": { num: "08", name: "Agustus", roman: "VIII" },
+  "agt": { num: "08", name: "Agustus", roman: "VIII" },
+  "august": { num: "08", name: "Agustus", roman: "VIII" },
+  "aug": { num: "08", name: "Agustus", roman: "VIII" },
+  "september": { num: "09", name: "September", roman: "IX" },
+  "sep": { num: "09", name: "September", roman: "IX" },
+  "sept": { num: "09", name: "September", roman: "IX" },
+  "oktober": { num: "10", name: "Oktober", roman: "X" },
+  "okt": { num: "10", name: "Oktober", roman: "X" },
+  "oct": { num: "10", name: "Oktober", roman: "X" },
+  "november": { num: "11", name: "November", roman: "XI" },
+  "nov": { num: "11", name: "November", roman: "XI" },
+  "desember": { num: "12", name: "Desember", roman: "XII" },
+  "des": { num: "12", name: "Desember", roman: "XII" },
+  "dec": { num: "12", name: "Desember", roman: "XII" }
+};
+
 /**
  * Core AI Business Knowledge engine powered by Gemini
  */
 export async function generateBusinessAiReply(userQuery: string, senderName?: string, senderPhoneOrJid?: string): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    return `🤖 *Asisten AI PT NMSA*\n\nTerima kasih atas pesan Anda: "${userQuery}".\n\nUntuk mengaktifkan fitur tanya-jawab otomatis seputar voucher dan transaksi bisnis secara langsung melalui WhatsApp, pastikan kunci API AI telah aktif di pengaturan server.`;
+    return `🤖 *Asisten AI PT NMSA*\n\nTerima kasih atas pesan Anda: "${userQuery}".\n\nUntuk mengaktifkan fitur tanya-jawab otomatis seputar voucher, data keuangan, dan absensi karyawan secara langsung melalui WhatsApp, pastikan kunci API AI telah aktif di pengaturan server.`;
   }
 
   // Load available data store
@@ -609,11 +656,12 @@ export async function generateBusinessAiReply(userQuery: string, senderName?: st
     allowedPhones: [],
     securityPin: "1234",
     enableDriveLinks: true,
-    unauthorizedMessage: "Nomor WhatsApp Anda belum terdaftar dalam otorisasi akses voucher keuangan PT NMSA. Silakan hubungi Finance/Admin untuk mendaftarkan nomor Anda."
+    unauthorizedMessage: "Nomor WhatsApp Anda belum terdaftar dalam otorisasi akses data keuangan PT NMSA. Silakan hubungi Finance/Admin untuk mendaftarkan nomor Anda."
   };
 
-  // Determine if query is requesting sensitive voucher or financial transaction data
   const qLower = userQuery.toLowerCase();
+
+  // Determine if query is requesting sensitive voucher or financial transaction data
   const isFinancialQuery = (
     qLower.includes("voucher") ||
     qLower.includes("bkk") ||
@@ -658,13 +706,13 @@ export async function generateBusinessAiReply(userQuery: string, senderName?: st
     if (!w.phoneNumber || !w.isActive) return false;
     const pNorm = normalizePhoneNumber(w.phoneNumber);
     const roleLower = (w.role || "").toLowerCase();
-    const isAdminRole = roleLower.includes("admin") || roleLower.includes("finance") || roleLower.includes("direktur") || roleLower.includes("manager") || roleLower.includes("keuangan");
+    const isAdminRole = roleLower.includes("admin") || roleLower.includes("finance") || roleLower.includes("direktur") || roleLower.includes("manager") || roleLower.includes("keuangan") || roleLower.includes("accounting");
     return pNorm === cleanSenderPhone && isAdminRole;
   });
 
   const isSenderAdmin = (
     senderPhoneOrJid === "admin_ui" ||
-    senderPhoneOrJid === "Pengguna WhatsApp" || // Sandbox
+    senderPhoneOrJid === "Pengguna WhatsApp" || // Sandbox / direct test
     (cleanSenderPhone && (cleanSenderPhone === connectedAdminId || allowedList.includes(cleanSenderPhone) || isWorkerAdmin))
   );
 
@@ -674,7 +722,7 @@ export async function generateBusinessAiReply(userQuery: string, senderName?: st
   const providedPin = pinMatch ? (pinMatch[1] || pinMatch[2]) : "";
   const isPinValid = providedPin && String(providedPin).trim() === String(secSettings.securityPin || "1234").trim();
 
-  // Access Control enforcement for financial queries
+  // Access Control enforcement for sensitive financial queries
   if (isFinancialQuery) {
     if (secSettings.privacyMode === "whitelist" && !isSenderAdmin) {
       return `🔒 *Akses Data Transaksi Terbatas (Privasi Terjaga)*\n\nHalo *${senderName || 'Bapak/Ibu'}*,\n\n${secSettings.unauthorizedMessage || 'Nomor WhatsApp Anda belum terdaftar dalam otorisasi akses voucher keuangan PT NMSA.'}\n\n📱 Nomor Anda: *+${cleanSenderPhone || 'Tidak terdeteksi'}*\n\n💡 *Untuk Mendaftarkan Nomor:* Hubungi Tim Finance / Admin PT NMSA untuk menambahkan nomor Anda ke daftar otorisasi WhatsApp AI.`;
@@ -693,75 +741,78 @@ export async function generateBusinessAiReply(userQuery: string, senderName?: st
     }
   });
 
-  const workersList = (stateData.workers || []).map((w: any) => ({
-    nama: w.name,
-    posisi: w.role,
-    noHp: w.phoneNumber,
-    aktif: w.isActive
-  }));
+  // Current Jakarta Date & Time (WIB)
+  const todayYMD = getJakartaDateStr();
+  const jktTimeNow = new Date().toLocaleTimeString("id-ID", { timeZone: "Asia/Jakarta" });
 
+  // 1. Process Workers & Attendance Data
+  const rawWorkers = stateData.workers || [];
+  const rawAttendance = stateData.attendanceRecords || [];
+
+  const todayPresentWorkerIds = new Set<string>();
+  const attendanceSummaries = rawWorkers.map((w: any) => {
+    const record = rawAttendance.find((r: any) => r.workerId === w.id);
+    const attMap: Record<string, boolean> = record?.attendance || {};
+    const dailyAllowance = Number(record?.dailyAllowance) || 25000;
+
+    // Filter dates where worker is present
+    const presentDates = Object.keys(attMap).filter(d => attMap[d] === true);
+    const totalPresentDays = presentDates.length;
+    const isPresentToday = attMap[todayYMD] === true;
+    if (isPresentToday) {
+      todayPresentWorkerIds.add(w.id);
+    }
+
+    // Monthly attendance breakdown (e.g. "2026-05": 10 days, "2026-06": 20 days, "2026-07": 22 days, "2026-08": 24 days)
+    const monthlyCount: Record<string, number> = {};
+    presentDates.forEach(d => {
+      const monthKey = d.substring(0, 7); // "YYYY-MM"
+      monthlyCount[monthKey] = (monthlyCount[monthKey] || 0) + 1;
+    });
+
+    const totalUangMakan = totalPresentDays * dailyAllowance;
+
+    return {
+      id: w.id,
+      nama: w.name,
+      posisi: w.role || "Karyawan Lapangan/HO",
+      noHp: w.phoneNumber || "-",
+      statusKaryawan: w.isActive ? "Aktif" : "Nonaktif",
+      hadirHariIni: isPresentToday ? "HADIR (Sudah Absen)" : "BELUM ABSEN",
+      totalHariHadirSemuaPeriode: totalPresentDays,
+      tarifUangMakanHarian: dailyAllowance,
+      totalUangMakanAkumulasi: totalUangMakan,
+      kehadiranPerBulan: monthlyCount,
+      tanggalHadirTerakhir: presentDates.sort().slice(-5)
+    };
+  });
+
+  const activeWorkersList = attendanceSummaries.filter((w: any) => w.statusKaryawan === "Aktif");
+  const workersPresentToday = activeWorkersList.filter((w: any) => todayPresentWorkerIds.has(w.id));
+  const workersAbsentToday = activeWorkersList.filter((w: any) => !todayPresentWorkerIds.has(w.id));
+
+  // 2. Process All Submissions and Petty Cash Reports Across All Months
   const allSubmissions = stateData.submissions || [];
   const pettyCashReports = stateData.pettyCashReports || [];
   const sppdRecords = stateData.sppdRecords || [];
   const npwpRecords = stateData.npwpRecords || [];
-  const attendanceRecords = stateData.attendanceRecords || [];
 
-  // Summary statistics for fast high-level queries
-  const totalSubmissionsCount = allSubmissions.length;
-  const totalNominalAll = allSubmissions.reduce((acc: number, s: any) => {
-    const nom = Number(s.totalAmount) || Number(s.nominal) || (s.items ? s.items.reduce((sum: number, it: any) => sum + (Number(it.total) || 0), 0) : 0);
-    return acc + nom;
-  }, 0);
-  
-  const unpaidSubmissions = allSubmissions.filter((s: any) => {
-    const st = (s.statusPembayaran || s.status || "").toUpperCase();
-    return st !== 'SUDAH DIBAYAR' && st !== 'PAID' && st !== 'LUNAS' && !s.isPaid;
-  });
-  
-  const totalUnpaidNominal = unpaidSubmissions.reduce((acc: number, s: any) => {
-    const nom = Number(s.totalAmount) || Number(s.nominal) || (s.items ? s.items.reduce((sum: number, it: any) => sum + (Number(it.total) || 0), 0) : 0);
-    return acc + nom;
-  }, 0);
+  // Integrate Petty Cash Reports into comprehensive transaction list
+  const consolidatedTransactions: any[] = [];
 
-  // Search relevant submissions
-  let relevantSubmissions = allSubmissions.slice(0, 30);
-  if (qLower.length > 1) {
-    const terms = qLower.split(/\s+/).filter((t: string) => t.length > 1);
-    const matched = allSubmissions.filter((s: any) => {
-      const codeStr = (s.kode || s.id || s.noVoucher || '').toLowerCase();
-      const descStr = (s.perihal || s.notes || s.jenisPengajuan || s.keterangan || '').toLowerCase();
-      const payeeStr = (s.dibayarkanKepada || s.kepada || s.namaPenerima || '').toLowerCase();
-      const catStr = (s.kategori || s.jenisPengajuan || '').toLowerCase();
-      const dateStr = (s.tanggal || '').toLowerCase();
-      const itemsStr = (s.items || []).map((it: any) => (it.item || '') + ' ' + (it.keterangan || '')).join(' ').toLowerCase();
-
-      return terms.some((t: string) => 
-        codeStr.includes(t) || 
-        descStr.includes(t) || 
-        payeeStr.includes(t) || 
-        catStr.includes(t) || 
-        dateStr.includes(t) || 
-        itemsStr.includes(t)
-      );
-    });
-    if (matched.length > 0) {
-      relevantSubmissions = matched.slice(0, 40);
-    }
-  }
-
-  const cleanSubmissions = relevantSubmissions.map((s: any) => {
+  // A. From submissions
+  allSubmissions.forEach((s: any) => {
     const items = (s.items || []).map((it: any) => ({
       no: it.no,
-      item: it.item,
-      volume: it.jumlahVolume,
-      total: it.total,
-      keterangan: it.keterangan
+      item: it.item || it.uraian || it.keterangan || "Item Pengeluaran",
+      volume: it.jumlahVolume || it.volume || it.qty || "1",
+      total: Number(it.total) || Number(it.nominal) || 0,
+      keterangan: it.keterangan || ""
     }));
-    const totalAmount = s.totalAmount || s.nominal || (items.length > 0 ? items.reduce((acc: number, cur: any) => acc + (Number(cur.total) || 0), 0) : 0);
+    const totalAmount = Number(s.totalAmount) || Number(s.nominal) || (items.length > 0 ? items.reduce((acc: number, cur: any) => acc + (Number(cur.total) || 0), 0) : 0);
     
-    // Google Drive Consolidated 1-File Link
     const driveUrl = s.googleDriveFileUrl || (s.googleDriveFiles && s.googleDriveFiles[0]?.url) || (s.buktiPembayaran?.url) || (s.pettyCashFile?.url) || null;
-    const driveFileName = s.googleDriveFileName || (s.googleDriveFiles && s.googleDriveFiles[0]?.name) || (s.buktiPembayaran?.name) || "Dokumen_Lengkap_Voucher.pdf";
+    const driveFileName = s.googleDriveFileName || (s.googleDriveFiles && s.googleDriveFiles[0]?.name) || (s.buktiPembayaran?.name) || "Dokumen_Voucher_Lengkap.pdf";
     const allDriveFiles = (s.googleDriveFiles || []).map((f: any) => ({ nama: f.name, link: f.url }));
 
     const isPaid = (
@@ -770,68 +821,214 @@ export async function generateBusinessAiReply(userQuery: string, senderName?: st
       s.isPaid === true
     );
 
-    return {
+    consolidatedTransactions.push({
+      source: "voucher_pengajuan",
       id: s.id,
-      kodeVoucher: s.kode || s.id || s.noVoucher,
-      tanggal: s.tanggal,
-      jenisPengajuan: s.jenisPengajuan || 'Operasional',
-      perihal: s.perihal || s.notes || s.keterangan || 'Biaya Operasional PT NMSA',
-      dibayarkanKepada: s.dibayarkanKepada || s.kepada || s.namaPenerima || 'Pihak Terkait',
-      dibayarkanDengan: s.dibayarkanDengan || s.metodePembayaran || 'Transfer Bank / Kas Tunai',
+      kodeVoucher: s.kode || s.id || s.noVoucher || "BKK-HO",
+      tanggal: s.tanggal || "2026-08-01",
+      bulan: s.tanggal ? s.tanggal.substring(0, 7) : "2026-08",
+      jenisPengajuan: s.jenisPengajuan || s.kategori || "Operasional Kantor",
+      perihal: s.perihal || s.notes || s.keterangan || "Pengeluaran Operasional PT NMSA",
+      dibayarkanKepada: s.dibayarkanKepada || s.kepada || s.namaPenerima || "Penerima Dana",
+      dibayarkanDengan: s.dibayarkanDengan || s.metodePembayaran || "Transfer Bank / Kas Tunai",
       totalNominal: totalAmount,
-      statusPembayaran: isPaid ? 'SUDAH DIBAYAR (LUNAS)' : 'BELUM DIBAYAR (PENDING)',
+      statusPembayaran: isPaid ? "SUDAH DIBAYAR (LUNAS)" : "BELUM DIBAYAR (PENDING)",
       isPaid: isPaid,
       rincianItems: items,
       linkDokumenGoogleDrive: driveUrl,
       namaFileGoogleDrive: driveFileName,
       daftarLampiranLengkap: allDriveFiles,
-      diajukanOleh: s.diajukanOleh || s.dibuatOleh || 'Staff Finance NMSA',
-      disetujuiOleh: s.disetujuiOleh || s.disetujuiOleh2 || 'Direktur Keuangan / Manajemen'
-    };
+      diajukanOleh: s.diajukanOleh || s.dibuatOleh || "Staff Finance NMSA",
+      disetujuiOleh: s.disetujuiOleh || s.disetujuiOleh2 || "Direktur Keuangan"
+    });
   });
 
-  const systemPrompt = `Anda adalah Asisten AI Senior Keuangan & Operasional Perusahaan PT Nusantara Mineral Sukses Abadi (NMSA).
-Anda bertugas seperti seorang rekan kerja keuangan senior yang ramah, sangat teliti, sigap, dan hafal seluruh data transaksi, voucher kas/bank, kas kecil, dan operasional tambang.
+  // B. From pettyCashReports (handles May 2026, June 2026, July 2026, August 2026 historical reports)
+  pettyCashReports.forEach((pcr: any) => {
+    const reportMonth = pcr.summary?.reportMonth || (pcr.uploadedAt ? pcr.uploadedAt.substring(0, 7) : "2026-07");
+    const custodian = pcr.summary?.workerName || "Pemegang Kas Kecil";
+    const totalExp = Number(pcr.summary?.totalExpense) || (pcr.transactions ? pcr.transactions.reduce((acc: number, t: any) => acc + (Number(t.amount) || 0), 0) : 0);
+    const subCode = pcr.submissionCode || pcr.id || "BKK-PC";
 
-RINGKASAN DATABASE KEUANGAN TERKINI:
-- Total Seluruh Voucher: ${totalSubmissionsCount} dokumen (Total Nilai: Rp ${totalNominalAll.toLocaleString('id-ID')})
-- Voucher Belum Bayar / Outstanding: ${unpaidSubmissions.length} dokumen (Total Nilai: Rp ${totalUnpaidNominal.toLocaleString('id-ID')})
-- Pemegang Petty Cash: ${JSON.stringify(stateData.pettyCashHolders || ['Suryo Pranoto', 'Deasy Anisa'])}
-- Rekap Laporan Kas Kecil: ${pettyCashReports.length} laporan
-- Total Karyawan Lapangan/HO: ${workersList.length} orang
+    const items = (pcr.transactions || []).map((tx: any, idx: number) => ({
+      no: idx + 1,
+      item: tx.description || tx.kategori || "Transaksi Kas Kecil",
+      volume: "1",
+      total: Number(tx.amount) || 0,
+      keterangan: `Tanggal: ${tx.date || pcr.uploadedAt || ''}, Kategori: ${tx.category || 'Kas Kecil'}, Oleh: ${tx.worker || custodian}`
+    }));
 
-DATA TRANSAKSI / VOUCHER YANG COCOK / TERSEDIA:
-${JSON.stringify(cleanSubmissions, null, 2)}
+    // If not already in consolidated list by submissionCode or submissionId
+    const exists = consolidatedTransactions.some(c => c.kodeVoucher === subCode || c.id === pcr.submissionId || c.id === pcr.id);
+    if (!exists) {
+      consolidatedTransactions.push({
+        source: "laporan_petty_cash",
+        id: pcr.id,
+        kodeVoucher: subCode,
+        tanggal: pcr.uploadedAt || `${reportMonth}-01`,
+        bulan: reportMonth,
+        jenisPengajuan: "Petty Cash Lapangan / Kantor",
+        perihal: pcr.fileName ? pcr.fileName.replace('.pdf', '') : `Petty Cash Periode ${reportMonth} (${custodian})`,
+        dibayarkanKepada: custodian,
+        dibayarkanDengan: "Kas Kecil / Petty Cash",
+        totalNominal: totalExp,
+        statusPembayaran: "SUDAH DIBAYAR (LUNAS)",
+        isPaid: true,
+        rincianItems: items,
+        linkDokumenGoogleDrive: pcr.driveUrl || null,
+        namaFileGoogleDrive: pcr.fileName || "Laporan_Petty_Cash.pdf",
+        daftarLampiranLengkap: pcr.driveUrl ? [{ nama: pcr.fileName, link: pcr.driveUrl }] : [],
+        diajukanOleh: custodian,
+        disetujuiOleh: "Finance HO NMSA"
+      });
+    }
+  });
 
-PANDUAN MENJAWAB (SANGAT PENTING):
-1. Ketika ditanya mengenai detail suatu transaksi / voucher (misal: status bayar, nomor voucher, perihal, nominal, penerima dana, atau minta file):
-   - Jelaskan dengan format rapi dan profesional WhatsApp:
+  // Calculate Monthly Statistics
+  const monthlyStats: Record<string, { count: number; totalNominal: number; custodians: Set<string>; paidCount: number; unpaidCount: number }> = {};
+  consolidatedTransactions.forEach(t => {
+    const m = t.bulan || (t.tanggal ? t.tanggal.substring(0, 7) : "Lainnya");
+    if (!monthlyStats[m]) {
+      monthlyStats[m] = { count: 0, totalNominal: 0, custodians: new Set(), paidCount: 0, unpaidCount: 0 };
+    }
+    monthlyStats[m].count += 1;
+    monthlyStats[m].totalNominal += Number(t.totalNominal) || 0;
+    if (t.dibayarkanKepada) monthlyStats[m].custodians.add(t.dibayarkanKepada);
+    if (t.isPaid) monthlyStats[m].paidCount += 1;
+    else monthlyStats[m].unpaidCount += 1;
+  });
+
+  const monthlyCatalogFormatted = Object.keys(monthlyStats).sort().map(m => ({
+    periode: m,
+    namaBulan: formatMonthKeyToName(m),
+    jumlahTransaksi: monthlyStats[m].count,
+    totalNominal: `Rp ${monthlyStats[m].totalNominal.toLocaleString('id-ID')}`,
+    lunas: monthlyStats[m].paidCount,
+    pending: monthlyStats[m].unpaidCount,
+    pihakTerkait: Array.from(monthlyStats[m].custodians).slice(0, 8)
+  }));
+
+  // Detect specific month requested by user in query (e.g. "Mei", "Juni", "Juli", "Agustus", "05", "2026-05", dsb.)
+  let requestedMonthCode: string | null = null;
+  for (const [mWord, mInfo] of Object.entries(MONTH_MAP)) {
+    // Check whole word or token
+    const regex = new RegExp(`\\b${mWord}\\b`, "i");
+    if (regex.test(qLower) || qLower.includes(mWord)) {
+      requestedMonthCode = mInfo.num;
+      break;
+    }
+  }
+
+  // Smart Filtering for Relevant Transactions
+  let relevantTransactions = consolidatedTransactions;
+  if (requestedMonthCode) {
+    // Filter transactions specifically belonging to this month (e.g. "-05-" or "2026-05")
+    const monthFiltered = consolidatedTransactions.filter(t => 
+      (t.bulan && t.bulan.endsWith(`-${requestedMonthCode}`)) || 
+      (t.tanggal && t.tanggal.includes(`-${requestedMonthCode}-`)) ||
+      (t.kodeVoucher && t.kodeVoucher.toLowerCase().includes(getMonthRoman(requestedMonthCode).toLowerCase()))
+    );
+    if (monthFiltered.length > 0) {
+      relevantTransactions = monthFiltered;
+    }
+  } else if (qLower.length > 1) {
+    const terms = qLower.split(/\s+/).filter((t: string) => t.length > 1);
+    const matched = consolidatedTransactions.filter((s: any) => {
+      const codeStr = (s.kodeVoucher || s.id || '').toLowerCase();
+      const descStr = (s.perihal || s.jenisPengajuan || '').toLowerCase();
+      const payeeStr = (s.dibayarkanKepada || '').toLowerCase();
+      const dateStr = (s.tanggal || s.bulan || '').toLowerCase();
+      const itemsStr = (s.rincianItems || []).map((it: any) => (it.item || '') + ' ' + (it.keterangan || '')).join(' ').toLowerCase();
+
+      return terms.some((t: string) => 
+        codeStr.includes(t) || 
+        descStr.includes(t) || 
+        payeeStr.includes(t) || 
+        dateStr.includes(t) || 
+        itemsStr.includes(t)
+      );
+    });
+    if (matched.length > 0) {
+      relevantTransactions = matched;
+    } else {
+      // Provide a wide diverse slice across months
+      relevantTransactions = consolidatedTransactions.slice(0, 60);
+    }
+  }
+
+  // Summary statistics for fast high-level queries
+  const totalTransactionsCount = consolidatedTransactions.length;
+  const totalNominalAll = consolidatedTransactions.reduce((acc, s) => acc + (Number(s.totalNominal) || 0), 0);
+  const unpaidList = consolidatedTransactions.filter(s => !s.isPaid);
+  const totalUnpaidNominal = unpaidList.reduce((acc, s) => acc + (Number(s.totalNominal) || 0), 0);
+
+  const systemPrompt = `Anda adalah Asisten AI Enterprise Resmi PT Nusantara Mineral Sukses Abadi (NMSA).
+Anda bertindak sebagai rekan kerja senior yang menguasai KESELURUHAN data operasional perusahaan, mencakup:
+1. 💰 DATA KEUANGAN, VOUCHER BKK, KAS KECIL / PETTY CASH, STATUS PEMBAYARAN, & FILE GOOGLE DRIVE LENGKAP SEMUA BULAN (Mei, Juni, Juli, Agustus, September, dst).
+2. 👥 DATA ABSENSI, KEHADIRAN KARYAWAN HARI INI & HISTORIS, SERTA UANG MAKAN / DAILY ALLOWANCE.
+3. 📑 DATA SURAT PERJALANAN DINAS (SPPD) & NPWP PERUSAHAAN.
+
+WAKTU SERVER SAAT INI (JAKARTA / WIB):
+- Hari & Tanggal Hari Ini: ${todayYMD} (Pukul ${jktTimeNow} WIB)
+
+RINGKASAN DATABASE TERKINI PERUSAHAAN:
+• Total Transaksi Keuangan / Voucher Tercatat: ${totalTransactionsCount} dokumen (Total Nilai: Rp ${totalNominalAll.toLocaleString('id-ID')})
+• Transaksi Belum Bayar / Pending: ${unpaidList.length} transaksi (Total: Rp ${totalUnpaidNominal.toLocaleString('id-ID')})
+• Daftar Bulan Data yang Tersedia Lengkap di Sistem:
+${JSON.stringify(monthlyCatalogFormatted, null, 2)}
+• Total Karyawan Terdaftar: ${rawWorkers.length} orang (${activeWorkersList.length} Aktif)
+• Status Kehadiran Hari Ini (${todayYMD}):
+  - Sudah Hadir / Absen: ${workersPresentToday.length} orang (${workersPresentToday.map(w => w.nama).join(', ') || 'Belum ada'})
+  - Belum Absen Hari Ini: ${workersAbsentToday.length} orang (${workersAbsentToday.map(w => w.nama).join(', ') || 'Semua sudah hadir'})
+
+DATA RINCIAN ABSENSI & KEHADIRAN KARYAWAN:
+${JSON.stringify(attendanceSummaries, null, 2)}
+
+DATA TRANSAKSI KEUANGAN / VOUCHER / KAS KECIL YANG SESUAI DENGAN PENCARIAN (${relevantTransactions.length} item):
+${JSON.stringify(relevantTransactions.slice(0, 75), null, 2)}
+
+PANDUAN MENJAWAB (SANGAT PENTING & TELITI):
+1. JIKA DITANYA MENGENAI BULAN MEI, JUNI, JULI, AGUSTUS, DST ATAU DATA LAMA:
+   - JANGAN PERNAH MENGATAKAN DATA TIDAK ADA jika data tersebut tercatat di database di atas!
+   - Data bulan Mei (2026-05), Juni (2026-06), Juli (2026-07), dan Agustus (2026-08) LENGKAP TERSEDIA di sistem (termasuk Petty Cash Pak Hasnawi, Pak Usmar, Suryo Pranoto, Deasy Anisa, Operasional PBM, dsb).
+   - Tampilkan rincian transaksi bulan yang diminta dengan jelas, nominalnya, penerimanya, dan tautan Google Drive-nya.
+
+2. JIKA DITANYA MENGENAI ABSENSI, KEHADIRAN, ATAU UANG MAKAN:
+   - Jawab secara lugas dan informatif! Anda BISA dan MEMILIKI akses penuh ke data absensi dan uang makan.
+   - Format jawaban untuk Absensi / Kehadiran:
+     📋 *REKAP KEHADIRAN & ABSENSI KARYAWAN PT NMSA*
+     • *Tanggal Hari Ini*: ${todayYMD} (Pukul ${jktTimeNow} WIB)
+     • *Status Hari Ini*:
+       ✅ *Sudah Absen*: [Sebutkan nama-nama yang sudah hadir]
+       ⏳ *Belum Absen*: [Sebutkan nama-nama yang belum hadir]
+     • *Detail Karyawan Yang Ditanyakan*:
+       - Total Kehadiran: [X] Hari Hadir
+       - Tarif Uang Makan: Rp [Tarif]/hari
+       - Akumulasi Uang Makan: Rp [Total Uang Makan]
+       - Riwayat Hadir per Bulan: [Mei: X hari, Juni: Y hari, Juli: Z hari, Agustus: W hari]
+
+3. JIKA DITANYA MENGENAI VOUCHER / TRANSAKSI / PEMBAYARAN / LINK FILE:
+   - Jelaskan detail voucher secara terstruktur:
      📋 *DETAIL VOUCHER [KODE VOUCHER]*
      • *Tanggal*: [Tanggal transaksi]
-     • *Penerima*: [Penerima / Vendor]
+     • *Penerima*: [Penerima / Vendor / Pemegang Kas]
      • *Perihal*: [Keperluan transaksi]
      • *Total Nominal*: *Rp [Nominal formatted]*
-     • *Status Pembayaran*: *[SUDAH DIBAYAR]* atau *[BELUM DIBAYAR / PENDING]*
-     • *Metode Bayar*: [Metode transfer/tunai]
-     • *Rincian Item*: [Sebutkan item-item transaksi jika ada]
-     • *Disetujui Oleh*: [Approver]
-   
-   - LAMPIRAN FILE GOOGLE DRIVE (1 FILE UTUH LENGKAP):
-     Jika voucher memiliki "linkDokumenGoogleDrive" atau "daftarLampiranLengkap", WAJIB sertakan link Google Drive langsung:
-     📎 *Lampiran Dokumen Lengkap (Google Drive):*
-     👉 [Buka / Download Dokumen Lengkap](LINK_URL)
+     • *Status Pembayaran*: *[SUDAH DIBAYAR (LUNAS)]* atau *[BELUM DIBAYAR (PENDING)]*
+     • *Metode Bayar*: [Metode transfer/kas kecil]
+     • *Rincian Item*: [Sebutkan item transaksi jika ada]
      
-     Jika belum memiliki link file Google Drive, sampaikan bahwa transaksi sudah valid terdata di pembukuan dan berkas fisik belum diunggah ke Google Drive.
+     📎 *Lampiran Dokumen Lengkap (Google Drive):*
+     👉 [Buka / Download Dokumen Lengkap](LINK_URL) (Sertakan jika ada link Google Drive)
 
-2. PANDUAN PANDUAN PENGGUNA BARU / KATA KUNCI / BANTUAN (JIKA PENGGUNA BINGUNG / TIDAK TAHU MAU CARI APA):
-   Jika pengguna hanya menyapa ("Halo", "P", "Hai"), mengetik "Menu", "Bantuan", "Help", "Kata Kunci", atau menyampaikan bahwa mereka bingung/tidak tahu apa yang harus dicari:
-   - Sambut dengan hangat dan jelaskan apa saja yang bisa ditanyakan.
-   - Berikan *Daftar Kata Kunci Populer* yang bisa langsung diketik (misal: nama vendor, nomor voucher terbaru, *Solar*, *Kas Kecil*, *Belum Bayar*, *Absensi*).
-   - Tampilkan 3 sampai 5 sampel voucher terbaru yang ada di database sebagai contoh nyata agar pengguna tinggal memilih.
-   - Tuliskan contoh kalimat tanya singkat siap pakai.
+4. JIKA PENGGUNA BINGUNG / MENGETIK MENU / BANTUAN / KATA KUNCI:
+   - Sambut dengan hangat dan jelaskan bahwa sistem siap melayani pertanyaan seputar:
+     1. *Voucher & Keuangan*: Pencarian nomor BKK, status lunas, link Google Drive, pengeluaran per bulan (Mei, Juni, Juli, Agustus, dsb).
+     2. *Absensi & Uang Makan*: Cek siapa yang sudah/belum absen hari ini, rekap absensi karyawan, perhitungan uang makan harian.
+     3. *Kas Kecil / Petty Cash*: Laporan kas kecil lapangan & kantor pusat.
+   - Berikan 4 contoh pertanyaan siap klik/ketik.
 
-3. Berikan jawaban dalam Bahasa Indonesia yang sopan, solutif, percaya diri, dan mudah dibaca di smartphone.
-4. Gunakan simbol WhatsApp (*tebal*, 👉, •, ✅, ⏳) agar mudah dipindai dengan mata.`;
+5. Gunakan gaya bahasa profesional, ramah, percaya diri, dan format Markdown WhatsApp (*tebal*, •, ✅, 📎, 👉) yang nyaman dibaca di smartphone.`;
 
   const modelsToTry = [
     "gemini-2.5-flash",
@@ -865,6 +1062,28 @@ PANDUAN MENJAWAB (SANGAT PENTING):
   }
 
   throw lastError || new Error("Gagal memproses pertanyaan dengan model AI.");
+}
+
+function formatMonthKeyToName(mKey: string): string {
+  const parts = mKey.split("-");
+  if (parts.length !== 2) return mKey;
+  const year = parts[0];
+  const monthNum = parts[1];
+  const monthNames: Record<string, string> = {
+    "01": "Januari", "02": "Februari", "03": "Maret", "04": "April",
+    "05": "Mei", "06": "Juni", "07": "Juli", "08": "Agustus",
+    "09": "September", "10": "Oktober", "11": "November", "12": "Desember"
+  };
+  return `${monthNames[monthNum] || monthNum} ${year}`;
+}
+
+function getMonthRoman(monthNum: string): string {
+  const romanMap: Record<string, string> = {
+    "01": "I", "02": "II", "03": "III", "04": "IV",
+    "05": "V", "06": "VI", "07": "VII", "08": "VIII",
+    "09": "IX", "10": "X", "11": "XI", "12": "XII"
+  };
+  return romanMap[monthNum] || monthNum;
 }
 
 /**

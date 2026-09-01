@@ -372,6 +372,17 @@ export default function App() {
     }
   }, [submissions]);
 
+  // Sync all submissions to backend memory & data-store for WhatsApp AI Bot
+  useEffect(() => {
+    if (submissions && submissions.length > 0) {
+      fetch('/api/sync-submissions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ submissions })
+      }).catch(err => console.warn('Sync submissions to server error:', err));
+    }
+  }, [submissions]);
+
   const handleSavePettyCashHolders = async (newHolders: string[]) => {
     setPettyCashHolders(newHolders);
     localStorage.setItem('petty_cash_holders_v2', JSON.stringify(newHolders));

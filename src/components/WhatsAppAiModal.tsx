@@ -26,6 +26,7 @@ import {
   SendHorizontal,
   FileText,
   FileCheck,
+  Database,
   X
 } from 'lucide-react';
 import { Submission } from '../types';
@@ -1057,9 +1058,11 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                 <span className="text-[11px] font-bold text-stone-500 self-center mr-1">Contoh Cepat:</span>
                 {[
                   'Cek voucher HO-2024-001 apakah sudah lunas?',
-                  'Berapa total voucher yang belum dibayar?',
+                  'Ada data transaksi apa saja di bulan Mei?',
+                  'Siapa saja karyawan yang sudah absen hari ini?',
+                  'Rekap absensi & uang makan karyawan',
                   'Minta file lampiran pengajuan solar pak suryo',
-                  'Siapa saja penanggung jawab petty cash?'
+                  'Berapa total voucher yang belum dibayar?'
                 ].map((prompt, i) => (
                   <button
                     key={i}

@@ -5260,7 +5260,7 @@ export function AbsensiHarianNmsa({
                   {chartMonthlyData.length === 0 ? (
                     <div className="w-full h-full flex flex-col items-center justify-center text-slate-400 text-xs text-center">
                       <p>Belum ada data bulanan dari PDF petty cash.</p>
-                      <button onClick={() => setActiveTab("pettycash")} className="text-indigo-600 font-bold hover:underline mt-1">Unggah PDF Petty Cash &rarr;</button>
+                      <button onClick={() => setActiveTab("absen")} className="text-indigo-600 font-bold hover:underline mt-1">Buka Absen &rarr;</button>
                     </div>
                   ) : (
                     <ResponsiveContainer width="100%" height="100%">
@@ -5304,7 +5304,7 @@ export function AbsensiHarianNmsa({
                   {chartCategoryData.length === 0 ? (
                     <div className="w-full h-full flex flex-col items-center justify-center text-slate-400 text-xs text-center">
                       <p>Belum ada data pengeluaran terdeteksi.</p>
-                      <button onClick={() => setActiveTab("pettycash")} className="text-indigo-600 font-bold hover:underline mt-1">Unggah PDF Petty Cash &rarr;</button>
+                      <button onClick={() => setActiveTab("absen")} className="text-indigo-600 font-bold hover:underline mt-1">Buka Absen &rarr;</button>
                     </div>
                   ) : (
                     <ResponsiveContainer width="100%" height="100%">
