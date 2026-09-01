@@ -1,3 +1,5 @@
+import { saveCompanySettingsToFirestore } from '../firebase';
+
 export type JabatanDinas = 'Direktur' | 'Wakil Direktur' | 'General Manager / Pim.Pro' | 'Manager' | 'Supervisor' | 'Staf';
 
 export interface RatePedoman {
@@ -96,6 +98,8 @@ export function getStoredPedomanMatrix(): RatePedoman[] {
 export function savePedomanMatrix(matrix: RatePedoman[]): void {
   try {
     localStorage.setItem('sppd_pedoman_rates', JSON.stringify(matrix));
+    // Automatically persist to Firestore and server shared state so all devices stay identical
+    saveCompanySettingsToFirestore({ sppdPedomanRates: matrix }).catch(() => {});
   } catch (e) {
     console.error('Failed to save pedoman rates', e);
   }

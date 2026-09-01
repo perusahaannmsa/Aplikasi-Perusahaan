@@ -1,3 +1,5 @@
+import { saveCompanySettingsToFirestore } from '../firebase';
+
 const ROMAN_MONTHS = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'];
 const INDO_MONTH_MAP: Record<string, number> = {
   januari: 1,
@@ -92,6 +94,7 @@ export function saveSppdNumberUsage(sppdNumber: string, dateStr?: string): void 
       if (seq > currentStored) {
         savedCounters[monthKey] = seq;
         localStorage.setItem('sppd_monthly_counters', JSON.stringify(savedCounters));
+        saveCompanySettingsToFirestore({ sppdMonthlyCounters: savedCounters }).catch(() => {});
       }
     }
   } catch (e) {

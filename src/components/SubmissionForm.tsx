@@ -11,6 +11,7 @@ import {
   executeDriveApiWithAutoRefresh
 } from '../firebase';
 import { DriveAccountsManager } from './DriveAccountsManager';
+import { GoogleDriveSettingsModal } from './GoogleDriveSettingsModal';
 import { SppdIntegration, SppdRecord } from './SppdIntegration';
 import { Trash2, Plus, ArrowLeft, Save, AlertCircle, Sparkles, Cloud, Loader2, FileText, Coins, FileUp, ExternalLink, GitBranch, X, Calculator, Percent, Tag, Receipt } from 'lucide-react';
 import { generateF1PdfBytes, generateF2PdfBytes, formatDateIndonesian, convertImageToPdf, formatRupiah, analyzeVolumeInput } from '../utils';
@@ -517,7 +518,30 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
   };
 
   const [validationError, setValidationError] = useState('');
+  const [isDriveTokenExpired, setIsDriveTokenExpired] = useState(false);
+  const [showDriveSettingsModal, setShowDriveSettingsModal] = useState(false);
+  const [isReconnectingDrive, setIsReconnectingDrive] = useState(false);
   const [showSppdModal, setShowSppdModal] = useState(false);
+
+  const handleQuickReconnectDrive = async () => {
+    setIsReconnectingDrive(true);
+    try {
+      const activeAcc = getActiveGoogleDriveAccount();
+      const lastEmail = localStorage.getItem('NUSANTARA_LAST_ACTIVE_EMAIL');
+      const emailToUse = activeAcc?.email || lastEmail || undefined;
+      const res = await googleDriveLogin(emailToUse, false);
+      if (res.accessToken) {
+        setIsDriveConnected(true);
+        setIsDriveTokenExpired(false);
+        setValidationError('');
+      }
+    } catch (err: any) {
+      console.warn('Quick reconnect failed:', err);
+      setValidationError(err.message || 'Gagal menyambungkan kembali Google Drive.');
+    } finally {
+      setIsReconnectingDrive(false);
+    }
+  };
 
   const handleImportSppdData = (sppd: any) => {
     setJenisPengajuan('Perjalanan Dinas');
@@ -1899,12 +1923,26 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
       setSaveProgress('Menyimpan data transaksi ke database Firestore...');
       await onSave(payload);
     } catch (err: any) {
-      console.error(err);
-      if (err.message === 'UNAUTHORIZED_DRIVE_TOKEN' || (err.message && err.message.includes('UNAUTHORIZED_DRIVE_TOKEN'))) {
+      console.error('[SubmissionForm Submit Error]', err);
+      const isAuthErr = 
+        err.message === 'UNAUTHORIZED_DRIVE_TOKEN' || 
+        err.message === 'UNAUTHORIZED_401' ||
+        err.message === 'TOKEN_EXPIRED_401' ||
+        (err.message && (
+          err.message.includes('UNAUTHORIZED') ||
+          err.message.includes('401') ||
+          err.message.includes('TOKEN_EXPIRED') ||
+          err.message.includes('invalid_grant') ||
+          err.message.includes('Invalid Credentials') ||
+          err.message.includes('popup')
+        ));
+
+      if (isAuthErr) {
         setIsDriveConnected(false);
-        setGoogleDriveToken(null);
-        setValidationError('Gagal menyinkronkan berkas ke Google Drive: Sesi Google Drive Anda telah kedaluwarsa atau tidak sah. Silakan hubungkan ulang Google Drive Anda melalui tombol "Hubungkan Google Drive Aman" di bagian bawah formulir ini, lalu klik Simpan kembali.');
+        setIsDriveTokenExpired(true);
+        setValidationError('Sesi token Google Drive perlu diperbarui karena aplikasi tidak digunakan beberapa saat. Klik tombol di bawah untuk menyambungkan kembali seketika.');
       } else {
+        setIsDriveTokenExpired(false);
         setValidationError(err.message || 'Sesuatu yang salah terjadi saat memproses dokumen.');
       }
     } finally {
@@ -1955,9 +1993,57 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
 
       <form onSubmit={handleSubmit} className="p-6 space-y-6">
         {validationError && (
-          <div className="p-4 bg-rose-50 text-rose-700 border border-rose-100 rounded-xl flex items-start gap-2 text-sm">
-            <AlertCircle size={18} className="shrink-0 mt-0.5" />
-            <span>{validationError}</span>
+          <div className={`p-4.5 rounded-2xl border flex flex-col gap-3 text-sm animate-fade-in ${
+            isDriveTokenExpired 
+              ? 'bg-amber-500/10 border-amber-500/30 text-amber-950 shadow-3xs' 
+              : 'bg-rose-50 border-rose-200 text-rose-800'
+          }`}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-2.5">
+                <AlertCircle size={20} className={isDriveTokenExpired ? "text-amber-600 shrink-0 mt-0.5" : "text-rose-600 shrink-0 mt-0.5"} />
+                <div>
+                  <h4 className="font-extrabold text-sm leading-tight text-stone-900">
+                    {isDriveTokenExpired ? 'Sesi Google Drive Perlu Disambungkan' : 'Perhatian Pengisian Form'}
+                  </h4>
+                  <p className="text-xs mt-1 text-stone-700 leading-relaxed">
+                    {validationError}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setValidationError('');
+                  setIsDriveTokenExpired(false);
+                }}
+                className="p-1 text-stone-400 hover:text-stone-700 rounded-lg transition cursor-pointer"
+                title="Tutup Pesan"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {isDriveTokenExpired && (
+              <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-amber-200/70">
+                <button
+                  type="button"
+                  onClick={handleQuickReconnectDrive}
+                  disabled={isReconnectingDrive}
+                  className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-3xs cursor-pointer disabled:opacity-50 transition"
+                >
+                  <Cloud size={14} className={isReconnectingDrive ? "animate-spin" : ""} />
+                  <span>{isReconnectingDrive ? 'Menghubungkan...' : '🔄 Sambungkan Ulang Google Drive (1-Klik)'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowDriveSettingsModal(true)}
+                  className="px-3.5 py-2 bg-stone-900 hover:bg-stone-800 text-amber-400 rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-3xs cursor-pointer transition"
+                >
+                  <span>☁️ Pengaturan Multi-Akun &amp; Kuota Drive</span>
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -3769,6 +3855,12 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
           </div>
         </div>
       )}
+
+      {/* MODAL PENGATURAN GOOGLE DRIVE & CLOUD STORAGE */}
+      <GoogleDriveSettingsModal
+        isOpen={showDriveSettingsModal}
+        onClose={() => setShowDriveSettingsModal(false)}
+      />
     </div>
   );
 };

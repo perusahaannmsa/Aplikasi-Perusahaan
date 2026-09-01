@@ -46,7 +46,9 @@ import {
   startGoogleDriveTokenAutoRefresh,
   ensureValidDriveToken,
   getMasterDriveEmail,
-  getActiveGoogleDriveAccount
+  getActiveGoogleDriveAccount,
+  subscribeToCompanySettingsFromFirestore,
+  saveCompanySettingsToFirestore
 } from './firebase';
 import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell } from 'lucide-react';
 
@@ -138,8 +140,41 @@ export default function App() {
 
   const [isHoldersModalOpen, setIsHoldersModalOpen] = useState(false);
 
-  // Sync petty cash holders, reports, npwp, and SPPD records from shared state & Firestore on load
+  // Real-time Cloud Firestore subscription & Shared State sync across all computers/devices
   useEffect(() => {
+    // 1. Subscribe to Firestore real-time snapshot for instant updates across devices
+    const unsubscribeCompany = subscribeToCompanySettingsFromFirestore((settings) => {
+      if (settings.pettyCashHolders && Array.isArray(settings.pettyCashHolders) && settings.pettyCashHolders.length > 0) {
+        setPettyCashHolders(settings.pettyCashHolders);
+      }
+      if (settings.pettyCashReports && Array.isArray(settings.pettyCashReports)) {
+        setPettyCashReports(settings.pettyCashReports);
+      }
+      if (settings.npwpRecords && Array.isArray(settings.npwpRecords) && settings.npwpRecords.length > 0) {
+        setNpwpRecords(prev => {
+          const map = new Map<string, NpwpRecord>();
+          prev.forEach(r => map.set(r.id, r));
+          settings.npwpRecords!.forEach((r: NpwpRecord) => map.set(r.id, r));
+          return Array.from(map.values());
+        });
+      }
+      if (settings.sppdRecords && Array.isArray(settings.sppdRecords) && settings.sppdRecords.length > 0) {
+        setSppdRecords(prev => {
+          const map = new Map<string, SPPDRecord>();
+          prev.forEach(r => map.set(r.id, r));
+          settings.sppdRecords!.forEach((r: SPPDRecord) => map.set(r.id, r));
+          return Array.from(map.values());
+        });
+      }
+      if (settings.agendaItems && Array.isArray(settings.agendaItems) && settings.agendaItems.length > 0) {
+        setAgendaItems(settings.agendaItems);
+      }
+      if (settings.theme && ['classic', 'gold-dark', 'emerald', 'slate'].includes(settings.theme)) {
+        setTheme(settings.theme as any);
+      }
+    });
+
+    // 2. Initial fallback fetch from server /api/shared-state
     fetch('/api/shared-state')
       .then(res => res.ok ? res.json() : null)
       .then(data => {
@@ -185,11 +220,6 @@ export default function App() {
             fsRecords.forEach(r => map.set(r.id, r));
             const merged = Array.from(map.values());
             localStorage.setItem('npwp_records_v1', JSON.stringify(merged));
-            fetch('/api/shared-state', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ npwpRecords: merged })
-            }).catch(() => {});
             return merged;
           });
         }
@@ -205,11 +235,6 @@ export default function App() {
             fsRecords.forEach(r => map.set(r.id, r));
             const merged = Array.from(map.values());
             localStorage.setItem('sppd_records_v1', JSON.stringify(merged));
-            fetch('/api/shared-state', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ sppdRecords: merged })
-            }).catch(() => {});
             return merged;
           });
         }
@@ -224,6 +249,14 @@ export default function App() {
         }
       })
       .catch(err => console.warn('Firestore Drive sync skipped:', err));
+
+    // Start background auto-keeper for Google Drive token
+    const stopAutoRefresh = startGoogleDriveTokenAutoRefresh(3);
+
+    return () => {
+      unsubscribeCompany();
+      stopAutoRefresh();
+    };
   }, []);
 
   // Auto-sync Petty Cash submissions into pettyCashReports & pettyCashHolders

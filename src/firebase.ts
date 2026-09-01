@@ -10,7 +10,8 @@ import {
   orderBy,
   Firestore,
   getDocFromServer,
-  getDoc
+  getDoc,
+  onSnapshot
 } from 'firebase/firestore';
 import { 
   getAuth, 
@@ -1019,86 +1020,154 @@ export const getStoredGoogleDriveToken = (strictFreshnessCheck = false): string 
   return googleDriveTokenMemory || localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
 };
 
-// ═════════ GOOGLE SERVICE ACCOUNT 24/7 API HELPERS ═════════
+// ═════════ CLOUD SETTINGS & MULTI-DEVICE SYNC ENGINE ═════════
 
-export interface ServiceAccountStatus {
-  configured: boolean;
-  clientEmail: string | null;
-  projectId: string | null;
-  source?: string | null;
-  hasPrivateKey?: boolean;
+export interface CompanyCloudSettings {
+  sppdPedomanRates?: any[];
+  sppdMonthlyCounters?: Record<string, number>;
+  authorizedDriveEmails?: string[];
+  masterDriveEmail?: string;
+  pettyCashHolders?: string[];
+  pettyCashReports?: any[];
+  npwpRecords?: any[];
+  sppdRecords?: any[];
+  agendaItems?: any[];
+  recipientHistory?: string[];
+  theme?: string;
+  accurateMappedReports?: any[];
+  googleDrives?: ConnectedDrive[];
+  updatedAt?: string;
 }
 
-export const getServiceAccountStatus = async (): Promise<ServiceAccountStatus> => {
-  try {
-    const res = await fetch('/api/service-account/status');
-    if (res.ok) {
-      return await res.json();
-    }
-  } catch (e) {
-    console.warn('Error checking Service Account status:', e);
-  }
-  return { configured: false, clientEmail: null, projectId: null };
-};
-
-export const saveServiceAccount = async (payload: { jsonKey?: string; clientEmail?: string; privateKey?: string; projectId?: string }) => {
-  const res = await fetch('/api/service-account/save', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data.error || data.details || 'Gagal menyimpan Google Service Account');
-  }
+export const saveCompanySettingsToFirestore = async (
+  partialSettings: Partial<CompanyCloudSettings>,
+  companyId: string = 'nmsa'
+): Promise<void> => {
+  const compId = companyId || activeCompanyId || 'nmsa';
   
-  // Also refresh token in memory & update connected drives
-  if (data.accessToken) {
-    setGoogleDriveToken(data.accessToken);
-    const saDrive: ConnectedDrive = {
-      email: data.clientEmail || 'service-account@google.com',
-      accessToken: data.accessToken,
-      displayName: `Service Account 24/7 (${data.projectId || 'Google Cloud'})`,
-      photoURL: '',
-      quotaUsed: 0,
-      quotaLimit: 15 * 1024 * 1024 * 1024,
-      lastChecked: new Date().toISOString(),
-      isExpired: false,
-      issuedAt: Date.now()
-    };
-    const current = getConnectedDrives();
-    const filtered = current.filter(d => !d.email.includes('iam.gserviceaccount.com'));
-    await saveConnectedDrives([saDrive, ...filtered]);
+  // 1. Sync to local memory / localStorage immediately for instantaneous responsiveness
+  if (partialSettings.sppdPedomanRates) {
+    localStorage.setItem('sppd_pedoman_rates', JSON.stringify(partialSettings.sppdPedomanRates));
+  }
+  if (partialSettings.sppdMonthlyCounters) {
+    localStorage.setItem('sppd_monthly_counters', JSON.stringify(partialSettings.sppdMonthlyCounters));
+  }
+  if (partialSettings.authorizedDriveEmails) {
+    localStorage.setItem('NUSANTARA_AUTHORIZED_DRIVES', JSON.stringify(partialSettings.authorizedDriveEmails));
+  }
+  if (partialSettings.masterDriveEmail) {
+    localStorage.setItem('NUSANTARA_MASTER_DRIVE_EMAIL', partialSettings.masterDriveEmail);
+    localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', partialSettings.masterDriveEmail);
+  }
+  if (partialSettings.pettyCashHolders) {
+    localStorage.setItem('petty_cash_holders_v2', JSON.stringify(partialSettings.pettyCashHolders));
+  }
+  if (partialSettings.pettyCashReports) {
+    localStorage.setItem('petty_cash_reports', JSON.stringify(partialSettings.pettyCashReports));
+  }
+  if (partialSettings.npwpRecords) {
+    localStorage.setItem('npwp_records_v1', JSON.stringify(partialSettings.npwpRecords));
+  }
+  if (partialSettings.sppdRecords) {
+    localStorage.setItem('sppd_records_v1', JSON.stringify(partialSettings.sppdRecords));
+  }
+  if (partialSettings.agendaItems) {
+    localStorage.setItem('nmsa_agenda_items_v1', JSON.stringify(partialSettings.agendaItems));
+  }
+  if (partialSettings.theme) {
+    localStorage.setItem('NUSANTARA_THEME', partialSettings.theme);
+  }
+  if (partialSettings.recipientHistory) {
+    localStorage.setItem('NUSANTARA_RECIPIENT_HISTORY', JSON.stringify(partialSettings.recipientHistory));
   }
 
-  return data;
+  // 2. Persist to Firestore under companies collection so ALL devices and computers sync automatically
+  if (firestoreDb && compId) {
+    try {
+      const companyRef = doc(firestoreDb, 'companies', compId);
+      const cleanPayload = cleanUndefined({
+        ...partialSettings,
+        updatedAt: new Date().toISOString()
+      });
+      await setDoc(companyRef, cleanPayload, { merge: true });
+      console.log(`☁️ [Cloud Sync] Pengaturan berhasil disimpan ke Firestore (${compId}):`, Object.keys(partialSettings));
+    } catch (fsErr) {
+      console.warn('Firestore company settings sync notice:', fsErr);
+    }
+  }
+
+  // 3. Persist to server /api/shared-state as secondary persistent backup
+  try {
+    fetch('/api/shared-state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(partialSettings)
+    }).catch(() => {});
+  } catch (apiErr) {}
 };
 
-export const testServiceAccount = async () => {
-  const res = await fetch('/api/service-account/test', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' }
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data.error || data.details || 'Uji coba Service Account gagal');
-  }
-  return data;
-};
+export const subscribeToCompanySettingsFromFirestore = (
+  onSettingsUpdate: (settings: CompanyCloudSettings) => void,
+  companyId: string = 'nmsa'
+): (() => void) => {
+  if (!isFirebaseConfigured() || !firestoreDb) return () => {};
+  const compId = companyId || activeCompanyId || 'nmsa';
 
-export const removeServiceAccount = async () => {
-  const res = await fetch('/api/service-account/remove', {
-    method: 'DELETE'
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data.error || 'Gagal menghapus Service Account');
+  try {
+    const companyRef = doc(firestoreDb, 'companies', compId);
+    const unsubscribe = onSnapshot(companyRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data() as CompanyCloudSettings;
+        if (data) {
+          // Sync to localStorage
+          if (data.sppdPedomanRates && Array.isArray(data.sppdPedomanRates)) {
+            localStorage.setItem('sppd_pedoman_rates', JSON.stringify(data.sppdPedomanRates));
+          }
+          if (data.sppdMonthlyCounters && typeof data.sppdMonthlyCounters === 'object') {
+            localStorage.setItem('sppd_monthly_counters', JSON.stringify(data.sppdMonthlyCounters));
+          }
+          if (data.authorizedDriveEmails && Array.isArray(data.authorizedDriveEmails)) {
+            localStorage.setItem('NUSANTARA_AUTHORIZED_DRIVES', JSON.stringify(data.authorizedDriveEmails));
+          }
+          if (data.masterDriveEmail) {
+            localStorage.setItem('NUSANTARA_MASTER_DRIVE_EMAIL', data.masterDriveEmail);
+          }
+          if (data.pettyCashHolders && Array.isArray(data.pettyCashHolders)) {
+            localStorage.setItem('petty_cash_holders_v2', JSON.stringify(data.pettyCashHolders));
+          }
+          if (data.pettyCashReports && Array.isArray(data.pettyCashReports)) {
+            localStorage.setItem('petty_cash_reports', JSON.stringify(data.pettyCashReports));
+          }
+          if (data.npwpRecords && Array.isArray(data.npwpRecords)) {
+            localStorage.setItem('npwp_records_v1', JSON.stringify(data.npwpRecords));
+          }
+          if (data.sppdRecords && Array.isArray(data.sppdRecords)) {
+            localStorage.setItem('sppd_records_v1', JSON.stringify(data.sppdRecords));
+          }
+          if (data.agendaItems && Array.isArray(data.agendaItems)) {
+            localStorage.setItem('nmsa_agenda_items_v1', JSON.stringify(data.agendaItems));
+          }
+          if (data.googleDrives && Array.isArray(data.googleDrives)) {
+            localStorage.setItem('NUSANTARA_CONNECTED_DRIVES', JSON.stringify(data.googleDrives));
+            const activeDrive = data.googleDrives.find((d: any) => !d.isExpired && (d.quotaLimit - d.quotaUsed > 10 * 1024 * 1024));
+            const bestToken = activeDrive ? activeDrive.accessToken : (data.googleDrives[0]?.accessToken || null);
+            if (bestToken) {
+              setGoogleDriveToken(bestToken);
+            }
+          }
+          
+          onSettingsUpdate(data);
+        }
+      }
+    }, (err) => {
+      console.warn('Firestore company settings snapshot warning:', err);
+    });
+
+    return unsubscribe;
+  } catch (err) {
+    console.warn('Failed to subscribe to company settings snapshot:', err);
+    return () => {};
   }
-  // Remove SA from connected drives
-  const current = getConnectedDrives();
-  const filtered = current.filter(d => !d.email.includes('iam.gserviceaccount.com'));
-  await saveConnectedDrives(filtered);
-  return data;
 };
 
 // Global Single-Flight Mutex to ensure simultaneous uploads NEVER collide or open duplicate popups
@@ -1106,60 +1175,32 @@ let activeDriveRenewalPromise: Promise<string> | null = null;
 
 // Helper function to silently auto-refresh token if it's expired or about to expire
 export const ensureValidDriveToken = async (forceRefresh = false): Promise<string | null> => {
-  // 1. Coba ambil token dari Service Account (Backend 24/7) terlebih dahulu
-  try {
-    const res = await fetch('/api/drive-token');
-    if (res.ok) {
-      const data = await res.json();
-      if (data.success && data.accessToken) {
-        setGoogleDriveToken(data.accessToken);
-        
-        // Auto-register in connected drives if not already present
-        const currentDrives = getConnectedDrives();
-        const saEmail = data.clientEmail || 'service-account@google.com';
-        const hasSa = currentDrives.some(d => d.email.toLowerCase() === saEmail.toLowerCase());
-        if (!hasSa) {
-          const saDrive: ConnectedDrive = {
-            email: saEmail,
-            accessToken: data.accessToken,
-            displayName: `Service Account 24/7 (${data.projectId || 'Google Cloud'})`,
-            photoURL: '',
-            quotaUsed: 0,
-            quotaLimit: 15 * 1024 * 1024 * 1024,
-            lastChecked: new Date().toISOString(),
-            isExpired: false,
-            issuedAt: Date.now()
-          };
-          saveConnectedDrives([saDrive, ...currentDrives]);
-        }
-        return data.accessToken;
-      }
-    }
-  } catch (err) {
-    // Service Account token tidak tersedia di backend
-  }
-
-  // 2. If force refresh is requested, sync latest cloud drives from Firestore first
+  // 1. If force refresh is requested, sync latest cloud drives from Firestore first
   if (forceRefresh) {
     try {
       await loadConnectedDrivesFromFirestore();
     } catch (e) {}
   }
 
-  // 3. Check if stored token is fresh (< 48 min old)
+  // 2. Check if stored token in memory or drive list is fresh (< 48 min old)
   let token = getStoredGoogleDriveToken(!forceRefresh);
   if (token && !forceRefresh) {
     return token;
   }
 
-  // 4. Check if a fresh token exists in Firestore company document (e.g. from another tab or previous login)
+  // 3. Check if a fresh token exists in Firestore company document (synced from any active device)
   try {
-    await loadConnectedDrivesFromFirestore();
-    token = getStoredGoogleDriveToken(true);
-    if (token) return token;
+    const cloudDrives = await loadConnectedDrivesFromFirestore();
+    if (cloudDrives && cloudDrives.length > 0) {
+      const activeDrive = cloudDrives.find(d => !d.isExpired && (d.quotaLimit - d.quotaUsed > 15 * 1024 * 1024));
+      if (activeDrive && activeDrive.accessToken) {
+        setGoogleDriveToken(activeDrive.accessToken);
+        return activeDrive.accessToken;
+      }
+    }
   } catch (e) {}
 
-  // 5. Fallback token in memory or localStorage
+  // 4. Fallback token in memory or localStorage
   return googleDriveTokenMemory || localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
 };
 
@@ -1170,41 +1211,31 @@ export const getOrRenewDriveToken = async (
 ): Promise<string> => {
   // If a renewal is already in-flight across the app, reuse the exact same promise!
   if (activeDriveRenewalPromise) {
-    console.log('⏳ [Google Drive Token] Menunggu proses pembaruan token yang sedang berlangsung (Anti-Bentrok)...');
+    console.log('⏳ [Google Drive Token] Menunggu proses pembaruan token yang sedang berlangsung...');
     return activeDriveRenewalPromise;
   }
 
   activeDriveRenewalPromise = (async () => {
     try {
-      // 1. Check if Service Account is available in backend
+      // 1. Check Firestore for latest synced cloud drive token from other tabs/devices
       try {
-        const res = await fetch('/api/drive-token');
-        if (res.ok) {
-          const data = await res.json();
-          if (data.success && data.accessToken) {
-            console.log('✅ [Google Drive Auto-Token] Token berhasil diperbarui dari Service Account 24/7');
-            setGoogleDriveToken(data.accessToken);
-            return data.accessToken;
+        const cloudDrives = await loadConnectedDrivesFromFirestore();
+        if (cloudDrives && cloudDrives.length > 0) {
+          const validDrive = cloudDrives.find(d => !d.isExpired && d.accessToken);
+          if (validDrive && validDrive.accessToken) {
+            console.log('✅ [Google Drive Auto-Token] Menggunakan token segar dari sinkronisasi Firestore:', validDrive.email);
+            setGoogleDriveToken(validDrive.accessToken);
+            return validDrive.accessToken;
           }
-        }
-      } catch (saErr) {}
-
-      // 2. Check Firestore for latest synced cloud drive token
-      try {
-        await loadConnectedDrivesFromFirestore();
-        const freshCloudToken = getStoredGoogleDriveToken(true);
-        if (freshCloudToken) {
-          console.log('✅ [Google Drive Auto-Token] Menggunakan token segar dari sinkronisasi Firestore');
-          return freshCloudToken;
         }
       } catch (fsErr) {}
 
-      // 3. Determine the exact Google Drive email to connect / reconnect
+      // 2. Determine the exact Google Drive email to connect / reconnect
       const activeAccount = getActiveGoogleDriveAccount();
       const lastEmail = localStorage.getItem('NUSANTARA_LAST_ACTIVE_EMAIL');
       const emailToUse = targetEmail || activeAccount?.email || lastEmail || getConnectedDrives()[0]?.email || undefined;
 
-      // 4. If interactive renewal is allowed, renew using login_hint with the SAME account
+      // 3. If interactive renewal is allowed, renew using login_hint with the SAME account
       if (interactiveIfRequired && emailToUse) {
         console.log(`🔄 [Google Drive Auto-Renew] Memperbarui sesi token otomatis untuk akun: ${emailToUse}`);
         try {
