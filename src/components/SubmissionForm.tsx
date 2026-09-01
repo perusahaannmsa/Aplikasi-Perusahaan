@@ -1294,7 +1294,8 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
       }
 
       if (token) {
-        setSaveProgress('Menghitung format tanggal pengajuan...');
+        try {
+          setSaveProgress('Menghitung format tanggal pengajuan...');
         // 1. Resolve Year/Month/Day folder structure parameters
         const parts = (tanggal || '').split('-');
         let yearStr = '';
@@ -1816,6 +1817,14 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
             });
           }
         }
+      } catch (driveErr: any) {
+        console.warn('[Drive Upload Warning] Upload file ke Google Drive gagal/ditunda:', driveErr);
+        if (initialSubmission) {
+          finalFiles = initialSubmission.googleDriveFiles || [];
+          finalBuktiPembayaran = initialSubmission.buktiPembayaran || undefined;
+          finalPettyCashFile = initialSubmission.pettyCashFile || undefined;
+        }
+      }
       } else {
         // If Google Drive is not connected or token is falsy, preserve existing files, payment proof and petty cash
         if (initialSubmission) {
@@ -2692,11 +2701,13 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
             </div>
           )}
 
-          {!isDriveConnected ? (
+          {/* Multi Google Drive Accounts Manager */}
+          <div className="mb-6">
             <DriveAccountsManager onConnectionChange={setIsDriveConnected} />
-          ) : (
-            <div className="space-y-6">
-              {isInvoice && (
+          </div>
+
+          <div className="space-y-6">
+            {isInvoice && (
                 <>
                   {/* Segmented control to choose between separate vs merged upload */}
                   <div className="bg-stone-50 p-3 rounded-xl border border-stone-200/85 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-xs">
@@ -2989,17 +3000,11 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                 </div>
               </div>
 
-              {/* Multi Google Drive Accounts Manager */}
-              <div className="border-t border-stone-200 pt-5 mt-6">
-                <DriveAccountsManager onConnectionChange={setIsDriveConnected} />
-              </div>
-            </div>
-          )}
+          </div>
 
           {/* Section: Dedicated Bukti Pembayaran */}
-          {isDriveConnected && (
-            <div className="mt-6 pt-5 border-t border-stone-200">
-              <div className="flex items-center justify-between mb-3">
+          <div className="mt-6 pt-5 border-t border-stone-200">
+            <div className="flex items-center justify-between mb-3">
                 <div className="space-y-0.5">
                   <h4 className="text-xs font-semibold uppercase font-mono tracking-wider text-[#917118] flex items-center gap-1.5">
                     <Sparkles size={13} className="text-[#D4AF37]" />
@@ -3091,8 +3096,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                 </div>
               </div>
             </div>
-          )}
-        </div>
+          </div>
 
         {/* SECTION 2: Dynamic Row Items */}
         <div className="border border-stone-200 rounded-2xl p-5 space-y-4">

@@ -373,7 +373,6 @@ Jika Anda tidak sengaja mengirimkan nomor/status ini, Anda dapat memperbaikinya 
             } else if (
               cleanMsg === "absen" || 
               cleanMsg === "hadir" || 
-              cleanMsg === "halo" || 
               cleanMsg === "pagi" || 
               cleanMsg === "siang" || 
               cleanMsg === "ping" || 
@@ -391,10 +390,17 @@ Silakan pilih cara melakukan absensi hari ini:
    👉 *Cuti*
    👉 *Meeting*
    👉 *Absen* (Alpa)
+3️⃣ 🤖 *Tanya AI Bisnis*: Anda juga dapat bertanya langsung seputar voucher transaksi, rekap petty cash, atau informasi operasional perusahaan!
 
 _Catatan: Jika Anda ingin melakukan absensi normal dengan tanda tangan & foto, silakan klik link absensi harian yang dikirim sebelumnya._`;
               await sock.sendMessage(senderJid, { text: responseText });
+            } else {
+              // Route to Gemini AI Knowledge for business/transaction queries
+              await handleBusinessAiQuery(messageText, senderJid, workerName);
             }
+          } else if (messageText && !worker) {
+            // General query from an unlisted number or admin
+            await handleBusinessAiQuery(messageText, senderJid);
           }
         }
       } catch (err) {
@@ -563,5 +569,101 @@ export async function requestWhatsAppPairingCode(phone: string): Promise<string>
   } catch (err: any) {
     console.error("Error requesting pairing code from Baileys:", err);
     throw new Error(err.message || "Gagal meminta kode pairing dari WhatsApp. Coba beberapa saat lagi atau putuskan koneksi dulu.");
+  }
+}
+
+/**
+ * AI Business Knowledge query handler powered by Gemini 2.5
+ */
+export async function handleBusinessAiQuery(userQuery: string, senderJid: string, senderName?: string) {
+  if (!sock) return;
+
+  try {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      console.warn("GEMINI_API_KEY is not set for WhatsApp Business AI queries.");
+      await sock.sendMessage(senderJid, {
+        text: `🤖 *Asisten AI PT NMSA*\n\nTerima kasih atas pesan Anda: "${userQuery}".\n\nUntuk mengaktifkan fitur tanya-jawab otomatis seputar voucher dan transaksi bisnis secara langsung melalui WhatsApp, pastikan kunci API AI telah aktif di pengaturan server.`
+      });
+      return;
+    }
+
+    // Send typing presence
+    try {
+      await sock.sendPresenceUpdate('composing', senderJid);
+    } catch (e) {}
+
+    const { GoogleGenAI } = await import("@google/genai");
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: { "User-Agent": "aistudio-build" }
+      }
+    });
+
+    // Load available data store
+    const DATA_FILE = path.join(process.cwd(), "data-store.json");
+    let stateData: any = {};
+    if (fs.existsSync(DATA_FILE)) {
+      try {
+        stateData = JSON.parse(fs.readFileSync(DATA_FILE, "utf-8"));
+      } catch (e) {}
+    }
+
+    const workersList = (stateData.workers || []).map((w: any) => ({
+      nama: w.name,
+      posisi: w.role,
+      noHp: w.phoneNumber,
+      aktif: w.isActive
+    }));
+
+    const attendanceSummary = (stateData.attendanceRecords || []).slice(0, 15);
+    const pettyCashSummary = (stateData.pettyCashReports || []).slice(0, 10);
+    const submissionsSummary = (stateData.submissions || []).slice(0, 20);
+
+    const systemPrompt = `Anda adalah Asisten Virtual Cerdas AI Bisnis & Keuangan untuk PT Nusantara Mineral Sukses Abadi (NMSA).
+Anda melayani pertanyaan bisnis, status voucher transaksi, pengeluaran solar / operasional, kas kecil (petty cash), daftar karyawan, dan presensi via WhatsApp.
+
+DATA PERUSAHAAN SAAT INI:
+- Perusahaan: PT Nusantara Mineral Sukses Abadi (NMSA)
+- Daftar Karyawan: ${JSON.stringify(workersList)}
+- Pemegang Kas Kecil: ${JSON.stringify(stateData.pettyCashHolders || ['Suryo Pranoto'])}
+- Data Presensi Karyawan: ${JSON.stringify(attendanceSummary)}
+- Laporan Kas Kecil Terakhir: ${JSON.stringify(pettyCashSummary)}
+- Transaksi / Voucher Terakhir: ${JSON.stringify(submissionsSummary)}
+
+FORMAT PESAN WHATSAPP:
+- Gunakan bahasa Indonesia yang ramah, sopan, dan profesional.
+- Gunakan format bold (*tebal*), list nomor/bullet point, dan emoji yang rapi agar nyaman dibaca di layar HP.
+- Jika ditanya seputar transaksi atau pengeluaran, sertakan nominal Rupiah yang jelas (contoh: *Rp 15.000.000*).
+- Jika data yang dicari belum ada, sampaikan dengan santun bahwa data belum terdaftar atau dapat dicek langsung di menu web aplikasi.`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { text: `${systemPrompt}\n\nPertanyaan dari ${senderName || 'Pengguna'} (${senderJid}):\n"${userQuery}"` }
+          ]
+        }
+      ]
+    });
+
+    const reply = response.text || "Mohon maaf, tidak ada respon dari sistem saat ini.";
+
+    // Clear typing presence
+    try {
+      await sock.sendPresenceUpdate('paused', senderJid);
+    } catch (e) {}
+
+    await sock.sendMessage(senderJid, { text: reply });
+  } catch (error: any) {
+    console.error("Error executing Gemini WhatsApp query:", error);
+    try {
+      await sock.sendMessage(senderJid, {
+        text: `🤖 *Asisten Bisnis NMSA*\n\nMaaf, terjadi kendala saat memproses pertanyaan Anda: ${error.message || 'Gangguan server'}`
+      });
+    } catch (e) {}
   }
 }

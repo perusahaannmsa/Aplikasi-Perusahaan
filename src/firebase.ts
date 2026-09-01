@@ -1417,16 +1417,21 @@ export const googleDriveLogin = async (
   // To prevent changing the currently logged-in portal user (which swaps user profiles,
   // causing data loss or falling back to default lists), we initialize a completely separate,
   // isolated secondary Firebase Auth instance solely for handling the Google Drive popup credentials!
-  let secondaryApp;
-  const secondaryAppName = 'drive-auth-temp-' + Math.random().toString(36).substring(2);
+  let driveAuthApp: FirebaseApp;
   try {
-    secondaryApp = initializeApp(config, secondaryAppName);
+    const existingApps = getApps();
+    const found = existingApps.find(a => a.name === 'nmsa-drive-auth');
+    if (found) {
+      driveAuthApp = found;
+    } else {
+      driveAuthApp = initializeApp(config, 'nmsa-drive-auth');
+    }
   } catch (err) {
-    console.error('Failed to init secondary app:', err);
-    throw new Error('Gagal menyiapkan otentikasi Google Drive terisolasi.');
+    console.warn('Fallback to default firebase app for drive auth:', err);
+    driveAuthApp = firebaseApp || (getApps().length > 0 ? getApps()[0] : initializeApp(config));
   }
 
-  const secondaryAuth = getAuth(secondaryApp);
+  const driveAuth = getAuth(driveAuthApp);
   const provider = new GoogleAuthProvider();
   // Request Google Drive File write/edit permissions - we use drive.file as full drive scope is restricted and blocked by Google without verification
   provider.addScope('https://www.googleapis.com/auth/drive.file');
@@ -1452,7 +1457,7 @@ export const googleDriveLogin = async (
   }
   
   try {
-    const result = await signInWithPopup(secondaryAuth, provider);
+    const result = await signInWithPopup(driveAuth, provider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {
       throw new Error('Sesi otentikasi Google gagal menyuplai kunci akses (Access Token).');
@@ -1478,7 +1483,7 @@ export const googleDriveLogin = async (
     const authorizedList = getAuthorizedDriveEmails();
     if (authorizedList.length > 0 && !isDriveEmailAuthorized(userEmail)) {
       try {
-        await secondaryAuth.signOut();
+        await driveAuth.signOut();
       } catch (e) {}
       throw new Error(
         `Akses Ditolak: Akun Google "${userEmail}" tidak terdaftar dalam daftar akun Google Drive resmi yang diizinkan untuk aplikasi PT Nusantara Mineral Sukses Abadi. Akun yang diizinkan: ${authorizedList.join(', ')}`
@@ -1498,9 +1503,9 @@ export const googleDriveLogin = async (
         `Penyimpanan Google Drive "${driveDetails.email}" telah penuh (Terisi: ${usedGB} GB dari ${limitGB} GB).\n\nSilakan pilih akun Google Drive cadangan atau akun Google ke-2 Anda untuk melanjutkan penyimpanan secara otomatis tanpa hambatan.`
       );
 
-      // Clean up secondary auth session before switching
+      // Clean up drive auth session before switching
       try {
-        await secondaryAuth.signOut();
+        await driveAuth.signOut();
       } catch (e) {}
 
       // Recursively connect backup/second account by forcing account selector
@@ -1534,11 +1539,11 @@ export const googleDriveLogin = async (
 
     await saveConnectedDrives(currentDrives);
 
-    // Completely dispose of secondary auth session to keep memory clean
+    // Dispose of secondary auth session to keep memory clean
     try {
-      await secondaryAuth.signOut();
+      await driveAuth.signOut();
     } catch (signoutErr) {
-      console.warn('Silent signout error for secondary instance:', signoutErr);
+      console.warn('Silent signout error for drive instance:', signoutErr);
     }
 
     return { user: result.user, accessToken: credential.accessToken, driveDetails };
