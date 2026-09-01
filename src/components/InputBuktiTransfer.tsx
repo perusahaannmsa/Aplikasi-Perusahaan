@@ -672,19 +672,13 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
 
           console.log('[Drive Upload] Upload Bukti Pembayaran berhasil:', uploadResult);
         } catch (driveErr: any) {
-          console.error('[Drive Upload] Error syncing to Google Drive:', driveErr);
-          if (driveErr.message === 'UNAUTHORIZED_DRIVE_TOKEN') {
-            setErrorText('Sesi Google Drive berakhir. Silakan hubungkan kembali Google Drive di bar status.');
-            setIsLoading(false);
-            return;
-          } else {
-            // Soft failure, add local fallback and log
-            finalDriveFiles.push({
-              url: uploadedFile.base64,
-              name: formattedFileName,
-              isBuktiPembayaran: true
-            });
-          }
+          console.warn('[Drive Upload] Error syncing to Google Drive, using local attachment fallback:', driveErr);
+          // Soft failure, add local fallback and log
+          finalDriveFiles.push({
+            url: uploadedFile.base64,
+            name: formattedFileName,
+            isBuktiPembayaran: true
+          });
         }
       } else {
         // Fallback or upload without Drive synced
