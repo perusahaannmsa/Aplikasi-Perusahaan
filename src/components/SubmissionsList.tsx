@@ -1,8 +1,9 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Submission, ActivityLog } from '../types';
 import { formatRupiah, formatDateIndonesian, isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, sortSubmissionsDescending } from '../utils';
-import { Search, Eye, Edit2, Trash2, Calendar, MapPin, DollarSign, Plus, Copy, RefreshCw, Cloud, FileText, Database, History, FileSpreadsheet, CheckCircle, AlertCircle, Printer, Check, ExternalLink, Coins, User, Bell, ChevronDown } from 'lucide-react';
+import { Search, Eye, Edit2, Trash2, Calendar, MapPin, DollarSign, Plus, Copy, RefreshCw, Cloud, FileText, Database, History, FileSpreadsheet, CheckCircle, AlertCircle, Printer, Check, ExternalLink, Coins, User, Bell, ChevronDown, Sparkles } from 'lucide-react';
 import { loadActivityLogsFromFirestore, isFirebaseConfigured } from '../firebase';
+import { LiveClock } from './LiveClock';
 
 interface SubmissionsListProps {
   submissions: Submission[];
@@ -952,16 +953,68 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
           </div>
         </div>
         
-        <div className="flex items-center gap-2 text-right pr-2 select-none">
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-          </span>
-          <span className="text-[10px] font-mono font-bold text-stone-400 uppercase tracking-widest">
-            Internal Ledger Database: <span className="text-emerald-600 font-sans font-black">Online / Sinkron</span>
-          </span>
+        <div className="flex items-center gap-3 text-right pr-2 select-none">
+          <LiveClock variant="compact" className="hidden md:inline-flex" />
+          <div className="flex items-center gap-2">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+            <span className="text-[10px] font-mono font-bold text-stone-400 uppercase tracking-widest">
+              Database: <span className="text-emerald-600 font-sans font-black">Online / Sinkron</span>
+            </span>
+          </div>
         </div>
       </div>
+
+      {/* Persistent Missing Drive Archive Banner */}
+      {(() => {
+        const missingCount = submissions.filter(sub => {
+          const driveFiles = sub.googleDriveFiles || [];
+          const hasF1 = driveFiles.some(f => 
+            (f.isF1 || (f.name && (f.name.startsWith('F1 -') || f.name.startsWith('F1-') || f.name.toUpperCase() === 'F1.PDF'))) &&
+            (!!f.url && f.url.includes('drive.google.com'))
+          );
+          const hasF2 = driveFiles.some(f => 
+            (f.isF2 || (f.name && (f.name.startsWith('F2 -') || f.name.startsWith('F2-') || f.name.toUpperCase() === 'F2.PDF'))) &&
+            (!!f.url && f.url.includes('drive.google.com'))
+          );
+          const rawFiles = sub.files || [];
+          const hasUnarchivedRawFiles = rawFiles.some(f => !f.isDrive && (!f.url || !f.url.includes('drive.google.com')));
+          const hasUnarchivedPayment = sub.buktiPembayaran && (!sub.buktiPembayaran.url || !sub.buktiPembayaran.url.includes('drive.google.com'));
+
+          return !hasF1 || !hasF2 || hasUnarchivedRawFiles || hasUnarchivedPayment || driveFiles.length === 0;
+        }).length;
+
+        if (missingCount === 0) return null;
+
+        return (
+          <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs animate-fade-in print:hidden">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-amber-500/10 text-amber-700 rounded-xl shrink-0">
+                <Cloud size={20} className="text-amber-600 animate-pulse" />
+              </div>
+              <div>
+                <p className="text-xs font-black text-amber-950 font-display">
+                  Pengarsipan Lampiran & Dokumen F1/F2 Otomatis
+                </p>
+                <p className="text-[11px] text-amber-850 mt-0.5">
+                  Terdapat <strong className="font-mono text-amber-950 font-bold">{missingCount} laporan</strong> yang belum memiliki F1, F2, atau lampirannya belum tersimpan di Google Drive.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+              }}
+              className="w-full sm:w-auto px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition shadow-xs flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+            >
+              <Sparkles size={13} />
+              <span>⚡ Buka Pengarsipan ({missingCount})</span>
+            </button>
+          </div>
+        );
+      })()}
 
       {/* KPI Cards */}
       {layoutMode === 'standard' && (

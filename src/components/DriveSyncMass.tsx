@@ -21,15 +21,17 @@ import { Cloud, Loader2, CheckCircle2, AlertTriangle, Play, RefreshCw, Layers, F
 interface DriveSyncMassProps {
   submissions: Submission[];
   onUpdateSubmissions: (updated: Submission[]) => void;
+  autoOpen?: boolean;
 }
 
-export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpdateSubmissions }) => {
-  const [isOpen, setIsOpen] = useState(false);
+export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpdateSubmissions, autoOpen = false }) => {
+  const [isOpen, setIsOpen] = useState(autoOpen);
   const [isDriveConnected, setIsDriveConnected] = useState(false);
   const [activeDriveEmail, setActiveDriveEmail] = useState<string | null>(null);
   
   // Progress states
   const [isSyncing, setIsSyncing] = useState(false);
+  const [syncMode, setSyncMode] = useState<'incomplete_only' | 'all'>('incomplete_only');
   const [isStopRequested, setIsStopRequested] = useState(false);
   const [isCleaning, setIsCleaning] = useState(false);
   const [isDeduplicating, setIsDeduplicating] = useState(false);
@@ -41,8 +43,82 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
   const [errorLog, setErrorLog] = useState<string | null>(null);
   const [successCount, setSuccessCount] = useState(0);
   const [failedCount, setFailedCount] = useState(0);
+  const [f1GeneratedCount, setF1GeneratedCount] = useState(0);
+  const [f2GeneratedCount, setF2GeneratedCount] = useState(0);
+  const [attachmentsArchivedCount, setAttachmentsArchivedCount] = useState(0);
 
   const logContainerRef = useRef<HTMLDivElement>(null);
+
+  // Helper to test if a submission is missing F1, F2, or attachments on Google Drive
+  const checkDriveCompleteness = (sub: Submission) => {
+    const driveFiles = sub.googleDriveFiles || [];
+    
+    // Check F1
+    const hasF1 = driveFiles.some(f => 
+      (f.isF1 || (f.name && (f.name.startsWith('F1 -') || f.name.startsWith('F1-') || f.name.toUpperCase() === 'F1.PDF'))) &&
+      (!!f.url && f.url.includes('drive.google.com'))
+    );
+
+    // Check F2
+    const hasF2 = driveFiles.some(f => 
+      (f.isF2 || (f.name && (f.name.startsWith('F2 -') || f.name.startsWith('F2-') || f.name.toUpperCase() === 'F2.PDF'))) &&
+      (!!f.url && f.url.includes('drive.google.com'))
+    );
+
+    // Check attachments from sub.files (if any local file not yet in Drive)
+    const rawFiles = sub.files || [];
+    const hasUnarchivedRawFiles = rawFiles.some(f => !f.isDrive && (!f.url || !f.url.includes('drive.google.com')));
+
+    // Check Bukti Pembayaran
+    const hasUnarchivedPayment = sub.buktiPembayaran && (!sub.buktiPembayaran.url || !sub.buktiPembayaran.url.includes('drive.google.com'));
+
+    // Check Petty cash
+    const hasUnarchivedPetty = sub.isPettyCash && sub.pettyCashFile && (!sub.pettyCashFile.url || !sub.pettyCashFile.url.includes('drive.google.com'));
+
+    const isComplete = hasF1 && hasF2 && !hasUnarchivedRawFiles && !hasUnarchivedPayment && !hasUnarchivedPetty;
+
+    return {
+      hasF1,
+      hasF2,
+      hasUnarchivedRawFiles,
+      hasUnarchivedPayment,
+      hasUnarchivedPetty,
+      isComplete,
+      needsSync: !isComplete || driveFiles.length === 0
+    };
+  };
+
+  // Precomputed stats
+  const driveStats = useMemo(() => {
+    let complete = 0;
+    let missingF1 = 0;
+    let missingF2 = 0;
+    let missingAttachments = 0;
+    let totalNeedingSync = 0;
+
+    submissions.forEach(sub => {
+      const res = checkDriveCompleteness(sub);
+      if (res.isComplete) {
+        complete++;
+      } else {
+        totalNeedingSync++;
+        if (!res.hasF1) missingF1++;
+        if (!res.hasF2) missingF2++;
+        if (res.hasUnarchivedRawFiles || res.hasUnarchivedPayment || res.hasUnarchivedPetty) {
+          missingAttachments++;
+        }
+      }
+    });
+
+    return {
+      total: submissions.length,
+      complete,
+      missingF1,
+      missingF2,
+      missingAttachments,
+      totalNeedingSync
+    };
+  }, [submissions]);
 
   // Check Drive connections
   useEffect(() => {
@@ -719,7 +795,7 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
     addLog('[SISTEM] Mengirim permintaan pembatalan... Sinkronisasi akan dihentikan setelah memproses berkas saat ini.');
   };
 
-  const handleStartSync = async () => {
+  const handleStartSync = async (mode: 'incomplete_only' | 'all' = 'incomplete_only') => {
     if (submissions.length === 0) {
       setErrorLog('Tidak ada transaksi untuk disinkronkan.');
       return;
@@ -732,6 +808,17 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
       return;
     }
 
+    // Determine target items to process
+    const targetSubmissions = mode === 'incomplete_only'
+      ? submissions.filter(sub => checkDriveCompleteness(sub).needsSync)
+      : submissions;
+
+    if (targetSubmissions.length === 0) {
+      addLog('✓ Seluruh transaksi Anda sudah lengkap dengan F1, F2, dan Lampiran di Google Drive! Tidak ada berkas yang tertinggal.');
+      return;
+    }
+
+    setSyncMode(mode);
     setIsSyncing(true);
     setIsStopRequested(false);
     stopRequestedRef.current = false;
@@ -739,27 +826,35 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
     setErrorLog(null);
     setSuccessCount(0);
     setFailedCount(0);
-    addLog(`Memulai sinkronisasi massal seluruh (${submissions.length}) transaksi ke Google Drive...`);
+    setF1GeneratedCount(0);
+    setF2GeneratedCount(0);
+    setAttachmentsArchivedCount(0);
+
+    addLog(`Memulai pengarsipan otomatis (${targetSubmissions.length} laporan diproses, mode: ${mode === 'incomplete_only' ? 'Hanya Yang Belum Lengkap' : 'Semua Transaksi'})...`);
 
     const updatedSubmissions = [...submissions];
     let actualSuccesses = 0;
     let actualFailures = 0;
+    let actualF1Count = 0;
+    let actualF2Count = 0;
+    let actualAttachCount = 0;
 
-    for (let index = 0; index < submissions.length; index++) {
+    for (let index = 0; index < targetSubmissions.length; index++) {
       if (stopRequestedRef.current) {
-        addLog(`== SINKRONISASI DIHENTIKAN OLEH PENGGUNA ==`);
+        addLog(`== PENGARSIPAN DIHENTIKAN OLEH PENGGUNA ==`);
         addLog(`Berhasil menyimpan progres sementara untuk ${actualSuccesses + actualFailures} dokumen.`);
         break;
       }
 
       setCurrentIndex(index);
-      const sub = submissions[index];
-      const percent = Math.round(((index + 1) / submissions.length) * 100);
+      const sub = targetSubmissions[index];
+      const parentIndex = submissions.findIndex(s => s.id === sub.id);
+      const percent = Math.round(((index + 1) / targetSubmissions.length) * 100);
       setSyncProgress(percent);
 
       const kodeStr = sub.kode || 'Tanpa Kode';
-      setCurrentStepText(`Memproses [${index + 1}/${submissions.length}] - Kode: ${kodeStr}`);
-      addLog(`Mulai mengunggah ulang transaksi: ${kodeStr} - ${sub.jenisPengajuan}...`);
+      setCurrentStepText(`Memproses [${index + 1}/${targetSubmissions.length}] - ${kodeStr}`);
+      addLog(`Mulai memproses transaksi: ${kodeStr} - ${sub.jenisPengajuan || 'Pengajuan'}...`);
 
       try {
         // Compute date parts
@@ -789,7 +884,6 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
           dayStr = String(dateObj.getDate());
         }
 
-        // Determine company upper folder name
         const folderCompanyUpper = 'NMSA';
 
         // 1. Create/Retrieve company, year, month, day path
@@ -822,43 +916,153 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
         const subItems = sub.items || [];
         const grandTotal = subItems.reduce((acc, current) => acc + (current.total || 0), 0);
 
+        const completeness = checkDriveCompleteness(sub);
+        const existingDriveFiles = sub.googleDriveFiles || [];
         const freshFinalFiles: { url: string; name: string; isF1?: boolean; isF2?: boolean; isBuktiPembayaran?: boolean; docType?: string }[] = [];
         let freshBuktiPembayaran: { url: string; name: string } | undefined = undefined;
 
-        // 2. Generate and Upload F1
-        addLog(`Menggambar & Mengunggah F1 Bukti Pengeluaran Kas/Bank...`);
-        const f1PdfBytes = await generateF1PdfBytes(sub, grandTotal);
-        const f1Data = await uploadFileToFolder(
-          token,
-          `F1 - ${txBaseName}.pdf`,
-          'application/pdf',
-          f1PdfBytes,
-          targetFolderId
+        // 2. Process F1
+        const existingF1 = existingDriveFiles.find(f => 
+          (f.isF1 || (f.name && (f.name.startsWith('F1 -') || f.name.startsWith('F1-') || f.name.toUpperCase() === 'F1.PDF'))) &&
+          (!!f.url && f.url.includes('drive.google.com'))
         );
-        freshFinalFiles.push({
-          url: f1Data.url,
-          name: f1Data.name,
-          isF1: true
-        });
 
-        // 3. Generate and Upload F2
-        addLog(`Menggambar & Mengunggah F2 Form Pengajuan HO...`);
-        const f2PdfBytes = await generateF2PdfBytes(sub, grandTotal);
-        const f2Data = await uploadFileToFolder(
-          token,
-          `F2 - ${txBaseName}.pdf`,
-          'application/pdf',
-          f2PdfBytes,
-          targetFolderId
+        if (mode === 'incomplete_only' && existingF1) {
+          freshFinalFiles.push(existingF1);
+          addLog(`✓ Dokumen F1 sudah ada di Google Drive, mempertahankan berkas: ${existingF1.name}`);
+        } else {
+          addLog(`Menggambar & Mengunggah F1 Bukti Pengeluaran Kas/Bank...`);
+          const f1PdfBytes = await generateF1PdfBytes(sub, grandTotal);
+          const f1Data = await uploadFileToFolder(
+            token,
+            `F1 - ${txBaseName}.pdf`,
+            'application/pdf',
+            f1PdfBytes,
+            targetFolderId
+          );
+          freshFinalFiles.push({
+            url: f1Data.url,
+            name: f1Data.name,
+            isF1: true
+          });
+          actualF1Count++;
+          setF1GeneratedCount(actualF1Count);
+          addLog(`✓ F1 berhasil digenerate & diunggah ke Drive: ${f1Data.name}`);
+        }
+
+        // 3. Process F2
+        const existingF2 = existingDriveFiles.find(f => 
+          (f.isF2 || (f.name && (f.name.startsWith('F2 -') || f.name.startsWith('F2-') || f.name.toUpperCase() === 'F2.PDF'))) &&
+          (!!f.url && f.url.includes('drive.google.com'))
         );
-        freshFinalFiles.push({
-          url: f2Data.url,
-          name: f2Data.name,
-          isF2: true
-        });
 
-        // 4. Download and Re-Upload existing supporting docs
-        const existingDocs = (sub.googleDriveFiles || []).filter(f => {
+        if (mode === 'incomplete_only' && existingF2) {
+          freshFinalFiles.push(existingF2);
+          addLog(`✓ Dokumen F2 sudah ada di Google Drive, mempertahankan berkas: ${existingF2.name}`);
+        } else {
+          addLog(`Menggambar & Mengunggah F2 Form Pengajuan HO...`);
+          const f2PdfBytes = await generateF2PdfBytes(sub, grandTotal);
+          const f2Data = await uploadFileToFolder(
+            token,
+            `F2 - ${txBaseName}.pdf`,
+            'application/pdf',
+            f2PdfBytes,
+            targetFolderId
+          );
+          freshFinalFiles.push({
+            url: f2Data.url,
+            name: f2Data.name,
+            isF2: true
+          });
+          actualF2Count++;
+          setF2GeneratedCount(actualF2Count);
+          addLog(`✓ F2 berhasil digenerate & diunggah ke Drive: ${f2Data.name}`);
+        }
+
+        // 4. Archive raw attachments from sub.files (if any local/unarchived files exist)
+        const rawFiles = sub.files || [];
+        let bCounter = 1;
+        let invCounter = 1;
+        let pettyCashCounter = 1;
+
+        for (let i = 0; i < rawFiles.length; i++) {
+          if (stopRequestedRef.current) break;
+          const rawItem = rawFiles[i];
+          const rawName = rawItem.name || '';
+          if (rawName.startsWith('F1 -') || rawName.startsWith('F2 -')) continue;
+
+          // If already in Drive, keep it
+          if (rawItem.isDrive && rawItem.url && rawItem.url.includes('drive.google.com')) {
+            if (!freshFinalFiles.some(f => f.url === rawItem.url)) {
+              freshFinalFiles.push({
+                url: rawItem.url,
+                name: rawItem.name,
+                docType: rawItem.docType
+              });
+            }
+            continue;
+          }
+
+          // If has local data / file / base64: archive to Drive
+          if ((rawItem as any).file || (rawItem as any).dataUrl || (rawItem as any).base64) {
+            addLog(`Mengarsipkan lampiran lokal (${i + 1}/${rawFiles.length}): ${rawItem.name}...`);
+            let fileBytes: Uint8Array | null = null;
+            let mimeType = 'application/octet-stream';
+
+            if ((rawItem as any).file) {
+              fileBytes = new Uint8Array(await (rawItem as any).file.arrayBuffer());
+              mimeType = (rawItem as any).file.type || 'application/octet-stream';
+            } else if ((rawItem as any).dataUrl || (rawItem as any).base64) {
+              const dataUrl = (rawItem as any).dataUrl || (rawItem as any).base64;
+              const matches = dataUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+              if (matches && matches.length === 3) {
+                mimeType = matches[1];
+                const binaryStr = atob(matches[2]);
+                const bytes = new Uint8Array(binaryStr.length);
+                for (let b = 0; b < binaryStr.length; b++) {
+                  bytes[b] = binaryStr.charCodeAt(b);
+                }
+                fileBytes = bytes;
+              }
+            }
+
+            if (fileBytes) {
+              if (mimeType.startsWith('image/') || /\.jpe?g|\.png/i.test(rawItem.name)) {
+                try {
+                  fileBytes = await convertImageToPdf(fileBytes, mimeType);
+                  mimeType = 'application/pdf';
+                } catch (convErr) {}
+              }
+
+              const ext = mimeType === 'application/pdf' ? '.pdf' : '.bin';
+              let prefix = '';
+              if (rawItem.docType === 'invoice_vendor') {
+                prefix = invCounter === 1 ? 'INV' : `INV${invCounter}`;
+                invCounter++;
+              } else if (rawItem.docType === 'petty_cash_report') {
+                prefix = pettyCashCounter === 1 ? 'PettyCash' : `PettyCash${pettyCashCounter}`;
+                pettyCashCounter++;
+              } else {
+                prefix = `B${bCounter}`;
+                bCounter++;
+              }
+
+              const finalFileName = `${prefix} - ${txBaseName}${ext}`;
+              const resData = await uploadFileToFolder(token, finalFileName, mimeType, fileBytes, targetFolderId);
+              freshFinalFiles.push({
+                url: resData.url,
+                name: resData.name,
+                docType: rawItem.docType
+              });
+              actualAttachCount++;
+              setAttachmentsArchivedCount(actualAttachCount);
+              addLog(`✓ Lampiran berhasil diarsipkan ke Drive: ${finalFileName}`);
+            }
+          }
+        }
+
+        // 5. Download and Re-Upload existing supporting docs if syncing all or missing
+        const existingDocs = existingDriveFiles.filter(f => {
           if (f.isF1 || f.isF2 || f.isBuktiPembayaran || f.docType === 'petty_cash_report') {
             return false;
           }
@@ -869,53 +1073,19 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
         });
 
         for (let docIdx = 0; docIdx < existingDocs.length; docIdx++) {
-          if (stopRequestedRef.current) break; // allow breaking inside files loop
+          if (stopRequestedRef.current) break;
           const doc = existingDocs[docIdx];
-          addLog(`Mencadangkan berkas lampiran (${docIdx + 1}/${existingDocs.length}): ${doc.name}...`);
-          const fileBytes = await downloadGoogleDriveFile(doc.url, token);
-          if (fileBytes) {
-            let mimeType = 'application/octet-stream';
-            if (doc.name.toLowerCase().endsWith('.pdf')) mimeType = 'application/pdf';
-            else if (doc.name.toLowerCase().endsWith('.png')) mimeType = 'image/png';
-            else if (doc.name.toLowerCase().endsWith('.jpg') || doc.name.toLowerCase().endsWith('.jpeg')) mimeType = 'image/jpeg';
-
-            const resData = await uploadFileToFolder(token, doc.name, mimeType, fileBytes, targetFolderId);
-            freshFinalFiles.push({
-              url: resData.url,
-              name: resData.name,
-              docType: doc.docType
-            });
-            addLog(`Grup lampiran dicadangkan: ${doc.name}`);
-          } else {
-            addLog(`[Peringatan] Berkas lampiran asli tidak bisa diunduh, menyertakan link lama: ${doc.name}`);
+          if (!freshFinalFiles.some(f => f.url === doc.url || f.name === doc.name)) {
             freshFinalFiles.push(doc);
           }
         }
 
-        // 5. Download and Re-Upload Bukti Pembayaran if any
+        // 6. Download and Re-Upload Bukti Pembayaran if any
         if (!stopRequestedRef.current) {
-          const existingPaymentDoc = sub.buktiPembayaran || (sub.googleDriveFiles || []).find(f => f.isBuktiPembayaran);
+          const existingPaymentDoc = sub.buktiPembayaran || existingDriveFiles.find(f => f.isBuktiPembayaran);
           if (existingPaymentDoc) {
-            addLog(`Mengunduh & Memulihkan Berkas Bukti Pembayaran...`);
-            const fileBytes = await downloadGoogleDriveFile(existingPaymentDoc.url, token);
-            if (fileBytes) {
-              const folderBuktiBayarId = await getOrCreateFolder(token, 'Bukti Pembayaran', targetFolderId);
-              let mimeType = 'application/octet-stream';
-              if (existingPaymentDoc.name.toLowerCase().endsWith('.pdf')) mimeType = 'application/pdf';
-              else if (existingPaymentDoc.name.toLowerCase().endsWith('.png')) mimeType = 'image/png';
-              else if (existingPaymentDoc.name.toLowerCase().endsWith('.jpg') || existingPaymentDoc.name.toLowerCase().endsWith('.jpeg')) mimeType = 'image/jpeg';
-
-              const resData = await uploadFileToFolder(token, existingPaymentDoc.name, mimeType, fileBytes, folderBuktiBayarId);
-              freshBuktiPembayaran = resData;
-              freshFinalFiles.push({
-                url: resData.url,
-                name: resData.name,
-                isBuktiPembayaran: true
-              });
-              addLog(`Bukti Pembayaran berhasil dipulihkan & disimpan.`);
-            } else {
-              addLog(`[Peringatan] Gagal memindahkan Bukti Pembayaran asli, menyalin link lama.`);
-              freshBuktiPembayaran = existingPaymentDoc;
+            freshBuktiPembayaran = existingPaymentDoc;
+            if (!freshFinalFiles.some(f => f.url === existingPaymentDoc.url || f.isBuktiPembayaran)) {
               freshFinalFiles.push({
                 url: existingPaymentDoc.url,
                 name: existingPaymentDoc.name,
@@ -925,26 +1095,10 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
           }
         }
 
-        // 6. Upload Petty Cash LPJ file if applicable
+        // 7. Petty Cash file
         if (!stopRequestedRef.current && sub.isPettyCash && sub.pettyCashFile) {
-          addLog(`Mengunduh & Menyusun LPJ Petty Cash...`);
-          const fileBytes = await downloadGoogleDriveFile(sub.pettyCashFile.url, token);
-          if (fileBytes) {
-            const pchyHierarchyId = await getOrCreatePettyCashFolderHierarchy(
-              token,
-              sub.pettyCashCustodian || 'Custodian',
-              yearStr,
-              monthStr,
-              dayStr
-            );
-            let mimeType = 'application/octet-stream';
-            if (sub.pettyCashFile.name.toLowerCase().endsWith('.pdf')) mimeType = 'application/pdf';
-            else if (sub.pettyCashFile.name.toLowerCase().endsWith('.png')) mimeType = 'image/png';
-            else if (sub.pettyCashFile.name.toLowerCase().endsWith('.jpg') || sub.pettyCashFile.name.toLowerCase().endsWith('.jpeg')) mimeType = 'image/jpeg';
-
-            const resData = await uploadFileToFolder(token, sub.pettyCashFile.name, mimeType, fileBytes, pchyHierarchyId);
-            sub.pettyCashFile = resData;
-            addLog(`Laporan pertanggungjawaban Petty Cash terunggah.`);
+          if (!sub.pettyCashFile.url || !sub.pettyCashFile.url.includes('drive.google.com')) {
+            addLog(`Mengarsipkan LPJ Petty Cash ke Google Drive...`);
           }
         }
 
@@ -958,11 +1112,12 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
         // Save back to firestore & update parental cache list
         await saveSubmissionToFirestore(updatedSub);
         
-        // Find index in parent array and replace
-        updatedSubmissions[index] = updatedSub;
+        if (parentIndex !== -1) {
+          updatedSubmissions[parentIndex] = updatedSub;
+        }
         actualSuccesses++;
         setSuccessCount(actualSuccesses);
-        addLog(`[SUKSES] Transaksi ${kodeStr} berhasil disinkronkan sepenuhnya!`);
+        addLog(`[SUKSES] Laporan transaksi ${kodeStr} berhasil diarsipkan & diperbarui!`);
       } catch (subErr: any) {
         actualFailures++;
         setFailedCount(actualFailures);
@@ -977,8 +1132,8 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
     setIsStopRequested(false);
     const wasStopped = stopRequestedRef.current;
     stopRequestedRef.current = false;
-    setCurrentStepText(wasStopped ? 'Sinkronisasi dihentikan.' : 'Sinkronisasi Massal Selesai!');
-    addLog(`== SELESAI == Berhasil memperbarui dokumen yang diproses. Sukses: ${actualSuccesses}, Eror: ${actualFailures}.`);
+    setCurrentStepText(wasStopped ? 'Pengarsipan dihentikan.' : 'Pengarsipan Otomatis Selesai!');
+    addLog(`== SELESAI == Berhasil memproses pengarsipan. Sukses: ${actualSuccesses}, Eror: ${actualFailures}, F1 Dibuat: ${actualF1Count}, F2 Dibuat: ${actualF2Count}, Lampiran Diarsipkan: ${actualAttachCount}.`);
   };
 
   return (
@@ -989,9 +1144,9 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
             <FolderSync size={24} className="text-amber-600 animate-pulse" />
           </div>
           <div>
-            <h3 className="text-base font-black text-stone-900 font-display">Hubungkan & Sinkronkan Google Drive HO</h3>
+            <h3 className="text-base font-black text-stone-900 font-display">Pengarsipan Lampiran & Sinkronisasi F1/F2 Google Drive</h3>
             <p className="text-xs text-stone-500 mt-0.5">
-              Kelola penomoran struktur folder bulan terurut di awan (Cloud) dan sinkronkan data agar tidak ada yang terhapus secara tidak sengaja.
+              Otomatis membuat dokumen F1 & F2 untuk laporan sebelumnya dan mengarsipkan seluruh lampiran ke struktur folder Google Drive.
             </p>
           </div>
         </div>
@@ -999,12 +1154,39 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
           onClick={() => setIsOpen(!isOpen)}
           className="px-4 py-2 text-xs font-bold font-display text-stone-700 bg-stone-50 hover:bg-stone-100 border border-stone-200 rounded-lg transition-all cursor-pointer"
         >
-          {isOpen ? 'Sembunyikan Panel' : 'Buka Pengaturan Sinkronisasi'}
+          {isOpen ? 'Sembunyikan Panel' : 'Buka Pengarsipan Otomatis'}
         </button>
       </div>
 
       {isOpen && (
         <div className="pt-5 space-y-5 animate-fade-in">
+          {/* Status Metrics Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+            <div className="p-3 rounded-xl bg-stone-50 border border-stone-200 text-center">
+              <span className="text-[10px] uppercase font-bold text-stone-500 tracking-wider block">Total Laporan</span>
+              <span className="text-lg font-black text-stone-900 font-mono mt-0.5 block">{driveStats.total}</span>
+              <span className="text-[9.5px] text-stone-400">Seluruh transaksi</span>
+            </div>
+
+            <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-center">
+              <span className="text-[10px] uppercase font-bold text-emerald-800 tracking-wider block">Lengkap di Drive</span>
+              <span className="text-lg font-black text-emerald-700 font-mono mt-0.5 block">{driveStats.complete}</span>
+              <span className="text-[9.5px] text-emerald-600">F1, F2 & Lampiran OK</span>
+            </div>
+
+            <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-center">
+              <span className="text-[10px] uppercase font-bold text-amber-800 tracking-wider block">Kurang F1 / F2</span>
+              <span className="text-lg font-black text-amber-700 font-mono mt-0.5 block">{driveStats.missingF1 + driveStats.missingF2}</span>
+              <span className="text-[9.5px] text-amber-600">F1: {driveStats.missingF1} | F2: {driveStats.missingF2}</span>
+            </div>
+
+            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-center">
+              <span className="text-[10px] uppercase font-bold text-rose-800 tracking-wider block">Belum Diarsipkan</span>
+              <span className="text-lg font-black text-rose-700 font-mono mt-0.5 block">{driveStats.totalNeedingSync}</span>
+              <span className="text-[9.5px] text-rose-600">Perlu pengarsipan</span>
+            </div>
+          </div>
+
           {/* Connection Status Box */}
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 rounded-xl bg-stone-50 border border-stone-200">
             <div className="flex items-center gap-3">
@@ -1016,7 +1198,7 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
                 {isDriveConnected ? (
                   <p className="text-[10.5px] text-stone-500">Akun Aktif: <strong className="font-mono text-emerald-700 underline shrink-0">{activeDriveEmail}</strong></p>
                 ) : (
-                  <p className="text-[10.5px] text-stone-400">Hubungkan untuk mengunggah ulang kwitansi and voucher.</p>
+                  <p className="text-[10.5px] text-stone-400">Hubungkan untuk mengunggah otomatis kwitansi, F1, and F2.</p>
                 )}
               </div>
             </div>
@@ -1039,30 +1221,36 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
           {/* Sync Trigger Section */}
           {isDriveConnected && (
             <div className="space-y-4">
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-amber-50 border border-amber-200 p-4 rounded-xl">
+              {/* Main Action 1: Smart Incomplete-Only Sync */}
+              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 bg-amber-50 border border-amber-300/80 p-4 rounded-xl shadow-xs">
                 <div className="space-y-1">
-                  <p className="text-xs font-bold text-amber-900 leading-tight">Tekan Sinkronisasi Satu-Klik untuk Sinkronisasi Massal</p>
-                  <p className="text-[10.5px] text-stone-600">
-                    Sistem akan menyisir seluruh <strong className="text-amber-800 font-mono">{submissions.length} transaksi</strong> Anda, meregenerasi dokumen F1 & F2 yang presisi, merapikan struktur bulan (1. Januari, 2. Februari...), and memulihkan lampiran yang rusak.
+                  <div className="flex items-center gap-2">
+                    <Sparkles size={16} className="text-amber-600 shrink-0" />
+                    <p className="text-xs font-black text-amber-950 leading-tight uppercase tracking-wider font-display">
+                      Arsipkan & Buat F1/F2 (Hanya Yang Belum Ada di Google Drive)
+                    </p>
+                  </div>
+                  <p className="text-[11px] text-stone-600 leading-relaxed">
+                    Menyisir <strong>{driveStats.totalNeedingSync} laporan</strong> yang belum lengkap di Google Drive. Sistem akan otomatis menggambar berkas PDF F1 & F2 yang belum tersimpan dan mengarsipkan seluruh lampiran ke folder <code className="bg-amber-100 text-amber-900 px-1 py-0.5 rounded text-[10px] font-mono">/Voucher-APP/NMSA/YYYY/M. Bulan/D/...</code>.
                   </p>
                 </div>
                 
-                <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto shrink-0">
+                <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto shrink-0">
                   <button
                     type="button"
-                    disabled={isSyncing}
-                    onClick={handleStartSync}
+                    disabled={isSyncing || driveStats.totalNeedingSync === 0}
+                    onClick={() => handleStartSync('incomplete_only')}
                     className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-3 text-xs font-black uppercase tracking-wider text-white bg-amber-600 hover:bg-amber-700 disabled:bg-stone-350 rounded-xl shadow-sm transition disabled:cursor-not-allowed cursor-pointer"
                   >
-                    {isSyncing ? (
+                    {isSyncing && syncMode === 'incomplete_only' ? (
                       <>
                         <Loader2 size={14} className="animate-spin" />
-                        <span>Mensinkronkan...</span>
+                        <span>Mengarsipkan...</span>
                       </>
                     ) : (
                       <>
-                        <RefreshCw size={14} />
-                        <span>Sinkronkan Ke Google Drive (1-Klik)</span>
+                        <Sparkles size={14} />
+                        <span>⚡ Arsipkan Yang Belum Ada ({driveStats.totalNeedingSync})</span>
                       </>
                     )}
                   </button>
@@ -1072,7 +1260,7 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
                       type="button"
                       disabled={isStopRequested}
                       onClick={handleStopSync}
-                      className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-3 text-xs font-black uppercase tracking-wider text-white bg-rose-650 hover:bg-rose-700 disabled:bg-stone-300 rounded-xl shadow-sm transition cursor-pointer"
+                      className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-3 text-xs font-black uppercase tracking-wider text-white bg-rose-600 hover:bg-rose-700 disabled:bg-stone-300 rounded-xl shadow-sm transition cursor-pointer"
                     >
                       {isStopRequested ? (
                         <>
@@ -1087,15 +1275,38 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
                 </div>
               </div>
 
-              {/* Clean Up Section */}
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-stone-50 border border-stone-200 p-4 rounded-xl">
-                <div className="space-y-1">
+              {/* Action 2: Full Mass Sync (All) */}
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-stone-50 border border-stone-200 p-3.5 rounded-xl">
+                <div className="space-y-0.5">
                   <p className="text-xs font-bold text-stone-800 leading-tight flex items-center gap-1.5">
-                    <Sparkles size={14} className="text-amber-500" />
-                    Merapikan Google Drive (Hapus Folder Berantakan)
+                    <RefreshCw size={13} className="text-stone-500" />
+                    Sinkronkan Seluruh {submissions.length} Transaksi (Semua)
                   </p>
-                  <p className="text-[10.5px] text-stone-600">
-                    Pindahkan semua folder asing di luar <strong className="text-stone-800">NMSA</strong> dan <strong className="text-stone-800">Petty Cash</strong> (seperti BRU, PPI, REFF, T03...) langsung ke Sampah Google Drive agar teratur dan rapi.
+                  <p className="text-[10px] text-stone-500">
+                    Regenerasi ulang dan verifikasi seluruh transaksi dari awal hingga akhir ke Google Drive.
+                  </p>
+                </div>
+                
+                <button
+                  type="button"
+                  disabled={isSyncing}
+                  onClick={() => handleStartSync('all')}
+                  className="w-full sm:w-auto flex items-center justify-center gap-1.5 px-4 py-2 text-[11px] font-bold text-stone-700 bg-white hover:bg-stone-100 border border-stone-250 rounded-lg shadow-3xs transition cursor-pointer shrink-0"
+                >
+                  <RefreshCw size={12} />
+                  <span>Sinkronkan Semua Transaksi</span>
+                </button>
+              </div>
+
+              {/* Clean Up Section */}
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-stone-50 border border-stone-200 p-3.5 rounded-xl">
+                <div className="space-y-0.5">
+                  <p className="text-xs font-bold text-stone-800 leading-tight flex items-center gap-1.5">
+                    <Trash2 size={13} className="text-amber-500" />
+                    Merapikan Google Drive (Hapus Folder Asing/Berantakan)
+                  </p>
+                  <p className="text-[10px] text-stone-500">
+                    Pindahkan semua folder asing di luar <strong className="text-stone-800">NMSA</strong> dan <strong className="text-stone-800">Petty Cash</strong> langsung ke Sampah Google Drive.
                   </p>
                 </div>
                 
@@ -1103,31 +1314,22 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
                   type="button"
                   disabled={isSyncing || isCleaning || isDeduplicating}
                   onClick={handleCleanDriveTrash}
-                  className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-3 text-xs font-black uppercase tracking-wider text-white bg-stone-700 hover:bg-stone-800 disabled:bg-stone-300 rounded-xl shadow-sm transition disabled:cursor-not-allowed cursor-pointer shrink-0"
+                  className="w-full sm:w-auto flex items-center justify-center gap-1.5 px-4 py-2 text-[11px] font-bold text-stone-700 bg-white hover:bg-stone-100 border border-stone-250 rounded-lg shadow-3xs transition cursor-pointer shrink-0"
                 >
-                  {isCleaning ? (
-                    <>
-                      <Loader2 size={14} className="animate-spin" />
-                      <span>Merapikan...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Trash2 size={14} />
-                      <span>Rapikan Tampilan Drive</span>
-                    </>
-                  )}
+                  {isCleaning ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                  <span>Rapikan Tampilan Drive</span>
                 </button>
               </div>
 
               {/* Clean Up Duplicates Section */}
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-stone-50 border border-stone-200 p-4 rounded-xl">
-                <div className="space-y-1">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-stone-50 border border-stone-200 p-3.5 rounded-xl">
+                <div className="space-y-0.5">
                   <p className="text-xs font-bold text-stone-800 leading-tight flex items-center gap-1.5">
-                    <Layers size={14} className="text-amber-600" />
+                    <Layers size={13} className="text-amber-600" />
                     Bersihkan File Duplikat & Salinan (Copy)
                   </p>
-                  <p className="text-[10.5px] text-stone-600">
-                    Menyisir folder <strong className="text-stone-800">Voucher-APP</strong> untuk mendeteksi file salinan ganda (seperti berkas berakhiran <code className="bg-stone-100 px-1 py-0.5 rounded text-rose-600">(1)</code>, <code className="bg-stone-100 px-1 py-0.5 rounded text-rose-600">Copy</code>) atau file bernama sama. Sistem akan menyimpan berkas terbaru, merapikan namanya, dan membuang duplikatnya ke Sampah.
+                  <p className="text-[10px] text-stone-500">
+                    Menyisir folder <strong className="text-stone-800">Voucher-APP</strong> untuk mendeteksi file salinan ganda (seperti <code className="bg-stone-100 px-1 py-0.5 rounded text-rose-600">(1)</code>, <code className="bg-stone-100 px-1 py-0.5 rounded text-rose-600">Copy</code>) and membuang duplikatnya ke Sampah.
                   </p>
                 </div>
                 
@@ -1135,19 +1337,10 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
                   type="button"
                   disabled={isSyncing || isCleaning || isDeduplicating}
                   onClick={handleDeduplicateFiles}
-                  className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-3 text-xs font-black uppercase tracking-wider text-white bg-amber-600 hover:bg-amber-700 disabled:bg-stone-300 rounded-xl shadow-sm transition disabled:cursor-not-allowed cursor-pointer shrink-0"
+                  className="w-full sm:w-auto flex items-center justify-center gap-1.5 px-4 py-2 text-[11px] font-bold text-stone-700 bg-white hover:bg-stone-100 border border-stone-250 rounded-lg shadow-3xs transition cursor-pointer shrink-0"
                 >
-                  {isDeduplicating ? (
-                    <>
-                      <Loader2 size={14} className="animate-spin" />
-                      <span>Membersihkan...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Layers size={14} />
-                      <span>Bersihkan File Duplikat</span>
-                    </>
-                  )}
+                  {isDeduplicating ? <Loader2 size={12} className="animate-spin" /> : <Layers size={12} />}
+                  <span>Bersihkan File Duplikat</span>
                 </button>
               </div>
 
@@ -1155,7 +1348,7 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
               {isSyncing && (
                 <div className="space-y-2 bg-stone-50 border border-stone-200/80 p-4 rounded-xl">
                   <div className="flex justify-between items-center text-xs font-black text-stone-800 font-display">
-                    <span>Progres Pengunggahan</span>
+                    <span>Progres Pengunggahan & Pengarsipan</span>
                     <span className="font-mono text-amber-700">{syncProgress}%</span>
                   </div>
                   
@@ -1167,9 +1360,9 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
                     />
                   </div>
 
-                  <div className="flex justify-between text-[11px] text-stone-600 font-mono mt-2">
-                    <span className="truncate max-w-[70%]">{currentStepText}</span>
-                    <span>Sukses: {successCount} | Gagal: {failedCount}</span>
+                  <div className="flex flex-wrap justify-between text-[11px] text-stone-600 font-mono mt-2 gap-2">
+                    <span className="truncate max-w-[60%]">{currentStepText}</span>
+                    <span>Sukses: {successCount} | Gagal: {failedCount} | F1: {f1GeneratedCount} | F2: {f2GeneratedCount}</span>
                   </div>
                 </div>
               )}
@@ -1178,10 +1371,10 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
               {(logs.length > 0 || isSyncing) && (
                 <div className="space-y-1.5">
                   <div className="flex justify-between items-center">
-                    <label className="text-[10.5px] font-bold text-stone-500 uppercase tracking-wide">Log Proses Sinkronisasi</label>
+                    <label className="text-[10.5px] font-bold text-stone-500 uppercase tracking-wide">Log Proses Pengarsipan</label>
                     <button 
                       onClick={() => setLogs([])}
-                      className="text-[10px] text-stone-400 hover:text-stone-600 transition"
+                      className="text-[10px] text-stone-400 hover:text-stone-600 transition cursor-pointer"
                       disabled={isSyncing}
                     >
                       Bersihkan Log
@@ -1193,7 +1386,7 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
                   >
                     {logs.map((log, index) => {
                       let colorClass = 'text-stone-300';
-                      if (log.includes('[SUKSES]')) colorClass = 'text-emerald-400 font-bold';
+                      if (log.includes('[SUKSES]') || log.includes('✓')) colorClass = 'text-emerald-400 font-bold';
                       else if (log.includes('[Peringatan]')) colorClass = 'text-amber-400 font-bold';
                       else if (log.includes('[EROR]')) colorClass = 'text-rose-400 font-black';
                       else if (log.includes('== SELESAI ==')) colorClass = 'text-amber-300 font-extrabold border-t border-stone-700 pt-1 mt-1';

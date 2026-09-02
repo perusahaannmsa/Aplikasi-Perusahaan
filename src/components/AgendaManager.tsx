@@ -30,6 +30,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { formatDateIndonesian } from '../utils';
+import { LiveClock } from './LiveClock';
 
 interface AgendaManagerProps {
   agendaItems: AgendaItem[];
@@ -355,6 +356,8 @@ export function AgendaManager({
 
         {/* Action Buttons */}
         <div className="flex items-center gap-2.5 flex-wrap">
+          <LiveClock variant="compact" className="hidden lg:inline-flex" />
+
           {/* View Toggle */}
           <div className="flex items-center bg-stone-100 p-1 rounded-xl border border-stone-200 text-xs font-bold">
             <button

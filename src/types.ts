@@ -72,6 +72,7 @@ export interface Submission {
   googleDriveFileUrl?: string;
   googleDriveFileName?: string;
   googleDriveFiles?: { url: string; name: string; pageCount?: number; isF1?: boolean; isF2?: boolean; isBuktiPembayaran?: boolean; docType?: string }[];
+  files?: { id?: string; name: string; url?: string; isDrive?: boolean; docType?: string; file?: File; dataUrl?: string; base64?: string }[];
   googleDriveFolderId?: string;
   buktiPembayaran?: { url: string; name: string };
   

@@ -24,6 +24,7 @@ import { AccountMappingContainer } from './components/AccountMappingContainer';
 import { AgendaManager } from './components/AgendaManager';
 import { AgendaReminderBanner } from './components/AgendaReminderBanner';
 import { WhatsAppAiModal } from './components/WhatsAppAiModal';
+import { LiveClock } from './components/LiveClock';
 import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, formatDateIndonesian } from './utils';
 import { 
   isFirebaseConfigured, 
@@ -2187,7 +2188,10 @@ export default function App() {
               </div>
             </div>
 
-            <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-2 sm:gap-2.5">
+              {/* Real-time System Clock (Hari, Tanggal & Jam WIB) */}
+              <LiveClock variant="badge" className="hidden lg:inline-flex" />
+
               {/* Quick Agenda & Reminder Header Button */}
               <button
                 type="button"
