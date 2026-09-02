@@ -817,8 +817,47 @@ function readState() {
       if (!parsed.npwpRecords) {
         parsed.npwpRecords = [];
       }
+      if (!parsed.workers) {
+        parsed.workers = defaultWorkers;
+      }
+      if (!parsed.attendanceRecords) {
+        parsed.attendanceRecords = [];
+      }
+      if (!parsed.weeklyReports) {
+        parsed.weeklyReports = [];
+      }
+      if (!parsed.pettyCashReports) {
+        parsed.pettyCashReports = [];
+      }
+      if (!parsed.pettyCashHolders) {
+        parsed.pettyCashHolders = ["Suryo Pranoto", "Hasnawi", "Usmar", "Deasy"];
+      }
+      if (!parsed.attendanceLogs) {
+        parsed.attendanceLogs = [];
+      }
+      if (!parsed.npwpRecords) {
+        parsed.npwpRecords = [];
+      }
       if (!parsed.sppdRecords) {
         parsed.sppdRecords = [];
+      }
+      if (!parsed.agendaItems) {
+        parsed.agendaItems = [];
+      }
+      if (!parsed.submissions) {
+        parsed.submissions = [];
+      }
+      if (!parsed.accurateAccounts) {
+        parsed.accurateAccounts = [];
+      }
+      if (!parsed.accurateMappedReports) {
+        parsed.accurateMappedReports = [];
+      }
+      if (!parsed.auditLogs) {
+        parsed.auditLogs = [];
+      }
+      if (!parsed.companySettings) {
+        parsed.companySettings = {};
       }
       if (parsed.waMethod === undefined) {
         parsed.waMethod = "desktop";
@@ -868,10 +907,16 @@ function readState() {
     attendancePin: autoPin,
     lastPinDate: todayDate,
     signatures: {},
-    pettyCashHolders: ["Suryo Pranoto"],
+    pettyCashHolders: ["Suryo Pranoto", "Hasnawi", "Usmar", "Deasy"],
     attendanceLogs: [],
     npwpRecords: [],
     sppdRecords: [],
+    agendaItems: [],
+    submissions: [],
+    accurateAccounts: [],
+    accurateMappedReports: [],
+    auditLogs: [],
+    companySettings: {},
     waMethod: "desktop",
     autoReminderHour: "09:00",
     lastCronPing: "",
@@ -987,6 +1032,13 @@ app.post("/api/shared-state", (req, res) => {
       attendanceLogs,
       npwpRecords,
       sppdRecords,
+      agendaItems,
+      submissions,
+      accurateAccounts,
+      accurateMappedReports,
+      auditLogs,
+      companySettings,
+      waSecuritySettings,
       waMethod,
       autoReminderHour,
       lastCronPing,
@@ -1024,6 +1076,13 @@ app.post("/api/shared-state", (req, res) => {
       attendanceLogs: attendanceLogs !== undefined ? attendanceLogs : currentState.attendanceLogs,
       npwpRecords: npwpRecords !== undefined ? npwpRecords : currentState.npwpRecords,
       sppdRecords: sppdRecords !== undefined ? sppdRecords : currentState.sppdRecords,
+      agendaItems: agendaItems !== undefined ? agendaItems : currentState.agendaItems,
+      submissions: submissions !== undefined ? submissions : currentState.submissions,
+      accurateAccounts: accurateAccounts !== undefined ? accurateAccounts : currentState.accurateAccounts,
+      accurateMappedReports: accurateMappedReports !== undefined ? accurateMappedReports : currentState.accurateMappedReports,
+      auditLogs: auditLogs !== undefined ? auditLogs : currentState.auditLogs,
+      companySettings: companySettings !== undefined ? companySettings : currentState.companySettings,
+      waSecuritySettings: waSecuritySettings !== undefined ? waSecuritySettings : currentState.waSecuritySettings,
       waMethod: waMethod !== undefined ? waMethod : currentState.waMethod,
       autoReminderHour: autoReminderHour !== undefined ? autoReminderHour : currentState.autoReminderHour,
       lastCronPing: lastCronPing !== undefined ? lastCronPing : currentState.lastCronPing,
@@ -1040,6 +1099,85 @@ app.post("/api/shared-state", (req, res) => {
     res.json({ success: true, message: "State synchronized successfully" });
   } catch (err: any) {
     res.status(500).json({ error: err.message || "Failed to synchronize state" });
+  }
+});
+
+// Master Unified Storage API - Guaranteed permanent single-source-of-truth for all 6 menus
+app.get("/api/unified-storage", (req, res) => {
+  try {
+    const state = readState();
+    res.json({
+      success: true,
+      timestamp: new Date().toISOString(),
+      menu1_vouchers: {
+        submissions: state.submissions || [],
+        pettyCashReports: state.pettyCashReports || [],
+        pettyCashHolders: state.pettyCashHolders || []
+      },
+      menu2_absensi: {
+        workers: state.workers || [],
+        attendanceRecords: state.attendanceRecords || [],
+        attendancePin: state.attendancePin,
+        attendanceLogs: state.attendanceLogs || []
+      },
+      menu3_master_npwp: {
+        npwpRecords: state.npwpRecords || []
+      },
+      menu4_pemetaan_akun: {
+        accurateAccounts: state.accurateAccounts || [],
+        accurateMappedReports: state.accurateMappedReports || []
+      },
+      menu5_sppd_dinas: {
+        sppdRecords: state.sppdRecords || []
+      },
+      menu6_agenda_kerja: {
+        agendaItems: state.agendaItems || []
+      },
+      riwayat_audit_log: state.auditLogs || [],
+      companySettings: state.companySettings || {},
+      raw: state
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post("/api/unified-storage", (req, res) => {
+  try {
+    const incoming = req.body || {};
+    const state = readState();
+    
+    // Selectively merge any provided collections from any menu
+    if (incoming.submissions !== undefined) state.submissions = incoming.submissions;
+    if (incoming.pettyCashReports !== undefined) state.pettyCashReports = incoming.pettyCashReports;
+    if (incoming.pettyCashHolders !== undefined) state.pettyCashHolders = incoming.pettyCashHolders;
+    if (incoming.workers !== undefined) state.workers = incoming.workers;
+    if (incoming.attendanceRecords !== undefined) state.attendanceRecords = incoming.attendanceRecords;
+    if (incoming.attendanceLogs !== undefined) state.attendanceLogs = incoming.attendanceLogs;
+    if (incoming.attendancePin !== undefined) state.attendancePin = incoming.attendancePin;
+    if (incoming.npwpRecords !== undefined) state.npwpRecords = incoming.npwpRecords;
+    if (incoming.sppdRecords !== undefined) state.sppdRecords = incoming.sppdRecords;
+    if (incoming.agendaItems !== undefined) state.agendaItems = incoming.agendaItems;
+    if (incoming.accurateAccounts !== undefined) state.accurateAccounts = incoming.accurateAccounts;
+    if (incoming.accurateMappedReports !== undefined) state.accurateMappedReports = incoming.accurateMappedReports;
+    if (incoming.auditLogs !== undefined) state.auditLogs = incoming.auditLogs;
+    if (incoming.companySettings !== undefined) state.companySettings = incoming.companySettings;
+
+    writeState(state);
+    res.json({
+      success: true,
+      message: "Seluruh data menu berhasil disimpan secara utuh ke server.",
+      counts: {
+        vouchers: (state.submissions || []).length,
+        pettyCash: (state.pettyCashReports || []).length,
+        workers: (state.workers || []).length,
+        npwp: (state.npwpRecords || []).length,
+        sppd: (state.sppdRecords || []).length,
+        agenda: (state.agendaItems || []).length
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 

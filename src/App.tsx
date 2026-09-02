@@ -175,42 +175,108 @@ export default function App() {
       }
     });
 
-    // 2. Initial fallback fetch from server /api/shared-state
-    fetch('/api/shared-state')
-      .then(res => res.ok ? res.json() : null)
-      .then(data => {
-        if (data) {
-          if (data.pettyCashHolders && Array.isArray(data.pettyCashHolders) && data.pettyCashHolders.length > 0) {
-            setPettyCashHolders(data.pettyCashHolders);
-            localStorage.setItem('petty_cash_holders_v2', JSON.stringify(data.pettyCashHolders));
+    // 2. Initial fallback fetch from server /api/unified-storage & /api/shared-state with resilient retry
+    const loadSharedState = async (retries = 3, delay = 800) => {
+      for (let i = 0; i < retries; i++) {
+        try {
+          const res = await fetch('/api/unified-storage');
+          if (!res.ok) {
+            // fallback to /api/shared-state if needed
+            const fbRes = await fetch('/api/shared-state');
+            if (!fbRes.ok) throw new Error(`HTTP ${fbRes.status}`);
+            const fbData = await fbRes.json();
+            if (fbData) {
+              if (fbData.pettyCashHolders && Array.isArray(fbData.pettyCashHolders) && fbData.pettyCashHolders.length > 0) {
+                setPettyCashHolders(fbData.pettyCashHolders);
+                localStorage.setItem('petty_cash_holders_v2', JSON.stringify(fbData.pettyCashHolders));
+              }
+              if (fbData.pettyCashReports && Array.isArray(fbData.pettyCashReports)) {
+                setPettyCashReports(fbData.pettyCashReports);
+                localStorage.setItem('petty_cash_reports', JSON.stringify(fbData.pettyCashReports));
+              }
+              if (fbData.npwpRecords && Array.isArray(fbData.npwpRecords) && fbData.npwpRecords.length > 0) {
+                setNpwpRecords(prev => {
+                  const map = new Map<string, NpwpRecord>();
+                  prev.forEach(r => map.set(r.id, r));
+                  fbData.npwpRecords.forEach((r: NpwpRecord) => map.set(r.id, r));
+                  const merged = Array.from(map.values());
+                  localStorage.setItem('npwp_records_v1', JSON.stringify(merged));
+                  return merged;
+                });
+              }
+              if (fbData.sppdRecords && Array.isArray(fbData.sppdRecords) && fbData.sppdRecords.length > 0) {
+                setSppdRecords(prev => {
+                  const map = new Map<string, SPPDRecord>();
+                  prev.forEach(r => map.set(r.id, r));
+                  fbData.sppdRecords.forEach((r: SPPDRecord) => map.set(r.id, r));
+                  const merged = Array.from(map.values());
+                  localStorage.setItem('sppd_records_v1', JSON.stringify(merged));
+                  return merged;
+                });
+              }
+              if (fbData.agendaItems && Array.isArray(fbData.agendaItems) && fbData.agendaItems.length > 0) {
+                setAgendaItems(fbData.agendaItems);
+                localStorage.setItem('nmsa_agenda_items_v1', JSON.stringify(fbData.agendaItems));
+              }
+            }
+            return;
           }
-          if (data.pettyCashReports && Array.isArray(data.pettyCashReports)) {
-            setPettyCashReports(data.pettyCashReports);
-            localStorage.setItem('petty_cash_reports', JSON.stringify(data.pettyCashReports));
+
+          const data = await res.json();
+          if (data && data.success) {
+            const raw = data.raw || {};
+            if (raw.pettyCashHolders && Array.isArray(raw.pettyCashHolders) && raw.pettyCashHolders.length > 0) {
+              setPettyCashHolders(raw.pettyCashHolders);
+              localStorage.setItem('petty_cash_holders_v2', JSON.stringify(raw.pettyCashHolders));
+            }
+            if (raw.pettyCashReports && Array.isArray(raw.pettyCashReports) && raw.pettyCashReports.length > 0) {
+              setPettyCashReports(raw.pettyCashReports);
+              localStorage.setItem('petty_cash_reports', JSON.stringify(raw.pettyCashReports));
+            }
+            if (raw.npwpRecords && Array.isArray(raw.npwpRecords) && raw.npwpRecords.length > 0) {
+              setNpwpRecords(prev => {
+                const map = new Map<string, NpwpRecord>();
+                prev.forEach(r => map.set(r.id, r));
+                raw.npwpRecords.forEach((r: NpwpRecord) => map.set(r.id, r));
+                const merged = Array.from(map.values());
+                localStorage.setItem('npwp_records_v1', JSON.stringify(merged));
+                return merged;
+              });
+            }
+            if (raw.sppdRecords && Array.isArray(raw.sppdRecords) && raw.sppdRecords.length > 0) {
+              setSppdRecords(prev => {
+                const map = new Map<string, SPPDRecord>();
+                prev.forEach(r => map.set(r.id, r));
+                raw.sppdRecords.forEach((r: SPPDRecord) => map.set(r.id, r));
+                const merged = Array.from(map.values());
+                localStorage.setItem('sppd_records_v1', JSON.stringify(merged));
+                return merged;
+              });
+            }
+            if (raw.agendaItems && Array.isArray(raw.agendaItems) && raw.agendaItems.length > 0) {
+              setAgendaItems(raw.agendaItems);
+              localStorage.setItem('nmsa_agenda_items_v1', JSON.stringify(raw.agendaItems));
+            }
+            if (raw.submissions && Array.isArray(raw.submissions) && raw.submissions.length > 0) {
+              setSubmissions(prev => {
+                const map = new Map<string, Submission>();
+                prev.forEach(s => map.set(s.id, s));
+                raw.submissions.forEach((s: Submission) => map.set(s.id, s));
+                return Array.from(map.values());
+              });
+            }
           }
-          if (data.npwpRecords && Array.isArray(data.npwpRecords) && data.npwpRecords.length > 0) {
-            setNpwpRecords(prev => {
-              const map = new Map<string, NpwpRecord>();
-              prev.forEach(r => map.set(r.id, r));
-              data.npwpRecords.forEach((r: NpwpRecord) => map.set(r.id, r));
-              const merged = Array.from(map.values());
-              localStorage.setItem('npwp_records_v1', JSON.stringify(merged));
-              return merged;
-            });
-          }
-          if (data.sppdRecords && Array.isArray(data.sppdRecords) && data.sppdRecords.length > 0) {
-            setSppdRecords(prev => {
-              const map = new Map<string, SPPDRecord>();
-              prev.forEach(r => map.set(r.id, r));
-              data.sppdRecords.forEach((r: SPPDRecord) => map.set(r.id, r));
-              const merged = Array.from(map.values());
-              localStorage.setItem('sppd_records_v1', JSON.stringify(merged));
-              return merged;
-            });
+          return;
+        } catch (err) {
+          if (i < retries - 1) {
+            await new Promise(res => setTimeout(res, delay * (i + 1)));
+          } else {
+            console.warn('Sinkronisasi shared state server offline atau tertunda, menggunakan cache lokal:', err);
           }
         }
-      })
-      .catch(err => console.error('Gagal memuat shared state:', err));
+      }
+    };
+    loadSharedState();
 
     loadNpwpRecordsFromFirestore()
       .then(fsRecords => {
@@ -436,12 +502,28 @@ export default function App() {
     }
   };
 
-  const handleSaveAgendaItems = (newItems: AgendaItem[]) => {
+  const handleSaveAgendaItems = async (newItems: AgendaItem[]) => {
     setAgendaItems(newItems);
     try {
       localStorage.setItem('nmsa_agenda_items_v1', JSON.stringify(newItems));
     } catch (e) {
       console.error('Gagal menyimpan agenda ke localStorage:', e);
+    }
+
+    try {
+      await fetch('/api/unified-storage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agendaItems: newItems })
+      });
+    } catch (err) {
+      console.warn('Gagal sinkronisasi agenda ke unified storage:', err);
+    }
+
+    try {
+      await saveCompanySettingsToFirestore({ agendaItems: newItems });
+    } catch (err) {
+      console.warn('Gagal sinkronisasi agenda ke Firestore:', err);
     }
   };
 

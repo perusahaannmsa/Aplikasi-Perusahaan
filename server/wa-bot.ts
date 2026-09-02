@@ -796,6 +796,10 @@ export async function generateBusinessAiReply(userQuery: string, senderName?: st
   const pettyCashReports = stateData.pettyCashReports || [];
   const sppdRecords = stateData.sppdRecords || [];
   const npwpRecords = stateData.npwpRecords || [];
+  const agendaItems = stateData.agendaItems || [];
+  const accurateAccounts = stateData.accurateAccounts || [];
+  const accurateMappedReports = stateData.accurateMappedReports || [];
+  const auditLogs = stateData.auditLogs || [];
 
   // Integrate Petty Cash Reports into comprehensive transaction list
   const consolidatedTransactions: any[] = [];
@@ -956,6 +960,69 @@ export async function generateBusinessAiReply(userQuery: string, senderName?: st
     }
   }
 
+  // Process 3. Master NPWP & Vendor
+  const npwpSummary = (npwpRecords || []).map((n: any) => ({
+    id: n.id,
+    namaPerusahaanOrVendor: n.nama || n.namaPerusahaan || n.name || "Vendor",
+    npwp: n.npwp || "-",
+    namaBank: n.bank || n.namaBank || "-",
+    nomorRekening: n.noRekening || n.rekening || "-",
+    atasNamaRekening: n.atasNama || n.namaPemilikRekening || "-",
+    alamat: n.alamat || "-",
+    kategori: n.kategori || "Supplier / Rekanan",
+    statusPKP: n.pkp ? "PKP" : "Non-PKP",
+    catatan: n.catatan || ""
+  }));
+
+  // Process 4. Pemetaan Akun Accurate ERP
+  const accurateAccountsSummary = (accurateAccounts && accurateAccounts.length > 0 ? accurateAccounts : [
+    { code: "5-1100", name: "Biaya Bahan Bakar Minyak (BBM)", category: "Biaya Operasional", keywords: "solar, bbm, pertalite, dexlite, bensin, spbu" },
+    { code: "5-1200", name: "Biaya Perjalanan Dinas & SPPD", category: "Biaya Operasional", keywords: "sppd, tiket, pesawat, hotel, penginapan, uang saku dinas, travel" },
+    { code: "5-1300", name: "Biaya Konsumsi & Dapur", category: "Biaya Operasional", keywords: "makan, beras, galon, dapur, kopi, gula, snack, konsumsi, aqua" },
+    { code: "5-1400", name: "Biaya ATK & Fotocopy", category: "Biaya Operasional", keywords: "atk, kertas, pulpen, materai, cetak, fotocopy, jilid, binder" },
+    { code: "5-1500", name: "Biaya Service Kendaraan & Tambang", category: "Biaya Operasional", keywords: "service, oli, ban, bengkel, sparepart, cuci mobil" },
+    { code: "5-1600", name: "Biaya Parkir & Tol", category: "Biaya Operasional", keywords: "parkir, tol, e-toll" },
+    { code: "5-1700", name: "Biaya Listrik, Air & Internet", category: "Biaya Operasional", keywords: "listrik, pln, token, air, pdam, wifi, indihome, internet, pulsa" },
+    { code: "5-1800", name: "Biaya Kebersihan & Keamanan", category: "Biaya Operasional", keywords: "kebersihan, sampah, sapu, security, keamanan" },
+    { code: "5-1900", name: "Biaya Operasional Lain-lain", category: "Biaya Operasional", keywords: "lain-lain, operasional, unmapped" },
+    { code: "1-1102", name: "Kas Kecil (Petty Cash Lapangan)", category: "Kas & Bank", keywords: "petty cash, kas kecil, kas lapangan" }
+  ]).slice(0, 30);
+
+  // Process 5. SPPD Dinas Records
+  const sppdSummary = (sppdRecords || []).map((sp: any) => ({
+    id: sp.id,
+    noSppd: sp.noSppd || sp.nomorSppd || `SPPD/NMSA/${sp.id}`,
+    namaPetugas: sp.namaPetugas || sp.namaKaryawan || sp.nama || "Petugas Lapangan",
+    jabatan: sp.jabatan || "-",
+    kotaAsal: sp.kotaAsal || "Kantor Pusat HO / Kendari",
+    kotaTujuan: sp.kotaTujuan || sp.tujuan || "Site Tambang",
+    tanggalBerangkat: sp.tanggalBerangkat || sp.tglBerangkat || "-",
+    tanggalKembali: sp.tanggalKembali || sp.tglKembali || "-",
+    durasiHari: sp.durasiHari || sp.jumlahHari || "1",
+    maksudPerjalananDinas: sp.maksudPerjalanan || sp.tujuanTugas || sp.perihal || "Tugas Operasional",
+    rincianBiaya: {
+      tiketTransport: Number(sp.biayaTiket || sp.tiket || 0),
+      penginapanHotel: Number(sp.biayaHotel || sp.hotel || 0),
+      uangHarianSaku: Number(sp.uangHarian || sp.uangSaku || 0),
+      transportLokal: Number(sp.transportLokal || 0),
+      biayaLainnya: Number(sp.biayaLainnya || 0),
+      totalBiayaSppd: Number(sp.totalBiaya || sp.totalNominal || 0)
+    },
+    statusApproval: sp.status || sp.statusApproval || "Disetujui Direksi",
+    pejabatPemberiPerintah: sp.pemberiPerintah || "Direktur Utama / Operasional"
+  }));
+
+  // Process 6. Agenda & Pengingat Kerja
+  const agendaSummary = (agendaItems || []).map((ag: any) => ({
+    id: ag.id,
+    judulAgenda: ag.title || ag.judul || "Agenda Kerja",
+    kategori: ag.category || ag.kategori || "umum",
+    tanggalJatuhTempo: ag.dueDate || ag.tanggal || "-",
+    prioritas: ag.priority || ag.prioritas || "sedang",
+    status: ag.completed ? "Selesai" : "Pending / Akan Datang",
+    catatan: ag.notes || ag.deskripsi || ""
+  }));
+
   // Summary statistics for fast high-level queries
   const totalTransactionsCount = consolidatedTransactions.length;
   const totalNominalAll = consolidatedTransactions.reduce((acc, s) => acc + (Number(s.totalNominal) || 0), 0);
@@ -963,72 +1030,90 @@ export async function generateBusinessAiReply(userQuery: string, senderName?: st
   const totalUnpaidNominal = unpaidList.reduce((acc, s) => acc + (Number(s.totalNominal) || 0), 0);
 
   const systemPrompt = `Anda adalah Asisten AI Enterprise Resmi PT Nusantara Mineral Sukses Abadi (NMSA).
-Anda bertindak sebagai rekan kerja senior yang menguasai KESELURUHAN data operasional perusahaan, mencakup:
-1. 💰 DATA KEUANGAN, VOUCHER BKK, KAS KECIL / PETTY CASH, STATUS PEMBAYARAN, & FILE GOOGLE DRIVE LENGKAP SEMUA BULAN (Mei, Juni, Juli, Agustus, September, dst).
-2. 👥 DATA ABSENSI, KEHADIRAN KARYAWAN HARI INI & HISTORIS, SERTA UANG MAKAN / DAILY ALLOWANCE.
-3. 📑 DATA SURAT PERJALANAN DINAS (SPPD) & NPWP PERUSAHAAN.
+Anda bertindak sebagai rekan kerja senior yang menguasai LENGKAP KESELURUHAN DATA dari 6 (ENAM) MENU APLIKASI PERUSAHAAN:
+
+1. 💰 MENU 1: VOUCHER HO & MODE REKAP
+   - Seluruh Voucher BKK (BKK-HO, BKK-SITE, BKK-PC), transaksi operasional, BBM solar tambang, perkapalan/PBM, gaji, tagihan vendor, & link Google Drive lengkap semua bulan (Mei, Juni, Juli, Agustus, September, dst).
+   - Mode Rekap: Tampilan Standar, Spreadsheet, Riwayat Audit Log, Rekap & Bukti Invoice, Kewajiban Belum Bayar (Pending), dan Petty Cash Lapangan (Hasnawi, Usmar, Suryo Pranoto, Deasy Anisa).
+
+2. 👥 MENU 2: ABSEN HARIAN NMSA
+   - Kehadiran & presensi seluruh karyawan HO dan Lapangan Tambang.
+   - Siapa yang HADIR (Sudah Absen) vs BELUM ABSEN hari ini (${todayYMD}).
+   - Riwayat kehadiran bulanan dan perhitungan akumulasi uang makan / daily allowance (Rp 25.000/hari atau tarif khusus).
+   - PIN harian absensi.
+
+3. 🏢 MENU 3: MASTER NPWP & VENDOR
+   - Database lengkap vendor/rekanan/supplier (Nomor NPWP, Nama Bank, Nomor Rekening, Atas Nama Rekening, Alamat, Kategori Usaha, Status PKP).
+
+4. 📊 MENU 4: PEMETAAN AKUN (ACCURATE ERP)
+   - Master Chart of Accounts (COA) Accurate ERP (5-1100 BBM, 5-1200 SPPD, 5-1300 Konsumsi/Dapur, 5-1400 ATK, 5-1500 Service Kendaraan, 5-1600 Parkir/Tol, 5-1700 Listrik/Air/Internet, 1-1102 Kas Kecil) dan hasil mapping transaksi.
+
+5. 📑 MENU 5: FORMULIR & SPPD DINAS
+   - Surat Perintah Perjalanan Dinas (Nomor SPPD, Nama Petugas, Jabatan, Kota Asal & Tujuan, Tanggal Dinas, Maksud Tugas, Rincian Biaya Tiket/Hotel/Uang Saku/Transport, Status Approval Direksi).
+
+6. ⏰ MENU 6: PENGINGAT & AGENDA KERJA
+   - Agenda & jadwal rutin perusahaan (Jadwal Lapor & Setor Pajak PPh 21 tgl 20, PPh 23 / PPN, Jadwal Penggajian Karyawan akhir bulan, Jadwal Jatuh Tempo Invoice Vendor, Rapat Direksi, Tugas Operasional).
 
 WAKTU SERVER SAAT INI (JAKARTA / WIB):
 - Hari & Tanggal Hari Ini: ${todayYMD} (Pukul ${jktTimeNow} WIB)
 
-RINGKASAN DATABASE TERKINI PERUSAHAAN:
-• Total Transaksi Keuangan / Voucher Tercatat: ${totalTransactionsCount} dokumen (Total Nilai: Rp ${totalNominalAll.toLocaleString('id-ID')})
-• Transaksi Belum Bayar / Pending: ${unpaidList.length} transaksi (Total: Rp ${totalUnpaidNominal.toLocaleString('id-ID')})
-• Daftar Bulan Data yang Tersedia Lengkap di Sistem:
+RINGKASAN DATABASE 6 MENU TERKINI PERUSAHAAN:
+• Menu 1 (Voucher & Keuangan): ${totalTransactionsCount} voucher tercatat (Total Nilai: Rp ${totalNominalAll.toLocaleString('id-ID')}), ${unpaidList.length} Belum Bayar/Pending (Rp ${totalUnpaidNominal.toLocaleString('id-ID')}).
+• Menu 1 (Katalog Bulan Tersedia):
 ${JSON.stringify(monthlyCatalogFormatted, null, 2)}
-• Total Karyawan Terdaftar: ${rawWorkers.length} orang (${activeWorkersList.length} Aktif)
-• Status Kehadiran Hari Ini (${todayYMD}):
-  - Sudah Hadir / Absen: ${workersPresentToday.length} orang (${workersPresentToday.map(w => w.nama).join(', ') || 'Belum ada'})
-  - Belum Absen Hari Ini: ${workersAbsentToday.length} orang (${workersAbsentToday.map(w => w.nama).join(', ') || 'Semua sudah hadir'})
+• Menu 2 (Karyawan & Absensi): ${rawWorkers.length} karyawan terdaftar (${activeWorkersList.length} Aktif).
+  - Sudah Hadir / Absen Hari Ini: ${workersPresentToday.length} orang (${workersPresentToday.map(w => w.nama).join(', ') || 'Belum ada'})
+  - Belum Hadir / Absen Hari Ini: ${workersAbsentToday.length} orang (${workersAbsentToday.map(w => w.nama).join(', ') || 'Semua sudah hadir'})
+• Menu 3 (Master NPWP & Rekening Vendor): ${npwpSummary.length} data rekanan tersimpan.
+• Menu 4 (COA Accurate ERP): ${accurateAccountsSummary.length} pos akun Accurate aktif.
+• Menu 5 (SPPD Dinas): ${sppdSummary.length} dokumen perjalanan dinas tercatat.
+• Menu 6 (Agenda & Pengingat): ${agendaSummary.length} agenda/jadwal kerja terdaftar.
 
-DATA RINCIAN ABSENSI & KEHADIRAN KARYAWAN:
+--- DETAIL DATABASE TERKAIT PERTANYAAN ---
+
+[DATA MENU 2 - ABSENSI & KARYAWAN]:
 ${JSON.stringify(attendanceSummaries, null, 2)}
 
-DATA TRANSAKSI KEUANGAN / VOUCHER / KAS KECIL YANG SESUAI DENGAN PENCARIAN (${relevantTransactions.length} item):
+[DATA MENU 1 - TRANSAKSI VOUCHER / KAS KECIL (${relevantTransactions.length} item)]:
 ${JSON.stringify(relevantTransactions.slice(0, 75), null, 2)}
 
-PANDUAN MENJAWAB (SANGAT PENTING & TELITI):
-1. JIKA DITANYA MENGENAI BULAN MEI, JUNI, JULI, AGUSTUS, DST ATAU DATA LAMA:
-   - JANGAN PERNAH MENGATAKAN DATA TIDAK ADA jika data tersebut tercatat di database di atas!
-   - Data bulan Mei (2026-05), Juni (2026-06), Juli (2026-07), dan Agustus (2026-08) LENGKAP TERSEDIA di sistem (termasuk Petty Cash Pak Hasnawi, Pak Usmar, Suryo Pranoto, Deasy Anisa, Operasional PBM, dsb).
-   - Tampilkan rincian transaksi bulan yang diminta dengan jelas, nominalnya, penerimanya, dan tautan Google Drive-nya.
+[DATA MENU 3 - MASTER NPWP & REKENING VENDOR]:
+${JSON.stringify(npwpSummary.slice(0, 30), null, 2)}
+
+[DATA MENU 4 - CHART OF ACCOUNTS ACCURATE ERP]:
+${JSON.stringify(accurateAccountsSummary.slice(0, 20), null, 2)}
+
+[DATA MENU 5 - SURAT PERJALANAN DINAS (SPPD)]:
+${JSON.stringify(sppdSummary.slice(0, 20), null, 2)}
+
+[DATA MENU 6 - AGENDA & PENGINGAT KERJA]:
+${JSON.stringify(agendaSummary.slice(0, 25), null, 2)}
+
+PANDUAN MENJAWAB (SANGAT PENTING, LENGKAP & CERDAS):
+1. JIKA DITANYA MENGENAI VOUCHER / KEUANGAN SEMUA BULAN (MEI, JUNI, JULI, AGUSTUS, DST):
+   - JANGAN PERNAH MENGATAKAN DATA TIDAK ADA jika data tercatat di database!
+   - Data bulan Mei (2026-05), Juni (2026-06), Juli (2026-07), dan Agustus (2026-08) LENGKAP TERSEDIA di sistem (termasuk Kas Kecil Pak Hasnawi, Pak Usmar, Suryo Pranoto, Deasy Anisa, Operasional PBM, dsb).
+   - Tampilkan rincian transaksi dengan jelas: Kode Voucher, Tanggal, Penerima, Perihal, Nominal, Status Lunas/Pending, dan Link Google Drive.
 
 2. JIKA DITANYA MENGENAI ABSENSI, KEHADIRAN, ATAU UANG MAKAN:
-   - Jawab secara lugas dan informatif! Anda BISA dan MEMILIKI akses penuh ke data absensi dan uang makan.
-   - Format jawaban untuk Absensi / Kehadiran:
-     📋 *REKAP KEHADIRAN & ABSENSI KARYAWAN PT NMSA*
-     • *Tanggal Hari Ini*: ${todayYMD} (Pukul ${jktTimeNow} WIB)
-     • *Status Hari Ini*:
-       ✅ *Sudah Absen*: [Sebutkan nama-nama yang sudah hadir]
-       ⏳ *Belum Absen*: [Sebutkan nama-nama yang belum hadir]
-     • *Detail Karyawan Yang Ditanyakan*:
-       - Total Kehadiran: [X] Hari Hadir
-       - Tarif Uang Makan: Rp [Tarif]/hari
-       - Akumulasi Uang Makan: Rp [Total Uang Makan]
-       - Riwayat Hadir per Bulan: [Mei: X hari, Juni: Y hari, Juli: Z hari, Agustus: W hari]
+   - Jawab langsung dengan data real: siapa yang sudah absen hari ini, siapa yang belum, akumulasi hari hadir, tarif uang makan, dan total uang makan.
 
-3. JIKA DITANYA MENGENAI VOUCHER / TRANSAKSI / PEMBAYARAN / LINK FILE:
-   - Jelaskan detail voucher secara terstruktur:
-     📋 *DETAIL VOUCHER [KODE VOUCHER]*
-     • *Tanggal*: [Tanggal transaksi]
-     • *Penerima*: [Penerima / Vendor / Pemegang Kas]
-     • *Perihal*: [Keperluan transaksi]
-     • *Total Nominal*: *Rp [Nominal formatted]*
-     • *Status Pembayaran*: *[SUDAH DIBAYAR (LUNAS)]* atau *[BELUM DIBAYAR (PENDING)]*
-     • *Metode Bayar*: [Metode transfer/kas kecil]
-     • *Rincian Item*: [Sebutkan item transaksi jika ada]
-     
-     📎 *Lampiran Dokumen Lengkap (Google Drive):*
-     👉 [Buka / Download Dokumen Lengkap](LINK_URL) (Sertakan jika ada link Google Drive)
+3. JIKA DITANYA MENGENAI MASTER NPWP & VENDOR / REKENING BANK:
+   - Berikan informasi akurat: Nama Perusahaan/Vendor, Nomor NPWP, Nama Bank, Nomor Rekening, Atas Nama, Kategori, dan Alamat.
 
-4. JIKA PENGGUNA BINGUNG / MENGETIK MENU / BANTUAN / KATA KUNCI:
-   - Sambut dengan hangat dan jelaskan bahwa sistem siap melayani pertanyaan seputar:
-     1. *Voucher & Keuangan*: Pencarian nomor BKK, status lunas, link Google Drive, pengeluaran per bulan (Mei, Juni, Juli, Agustus, dsb).
-     2. *Absensi & Uang Makan*: Cek siapa yang sudah/belum absen hari ini, rekap absensi karyawan, perhitungan uang makan harian.
-     3. *Kas Kecil / Petty Cash*: Laporan kas kecil lapangan & kantor pusat.
-   - Berikan 4 contoh pertanyaan siap klik/ketik.
+4. JIKA DITANYA MENGENAI PEMETAAN AKUN ACCURATE (COA):
+   - Jelaskan kode akun Accurate yang sesuai (misal BBM -> 5-1100, SPPD -> 5-1200, Dapur/Konsumsi -> 5-1300, ATK -> 5-1400, Kas Kecil -> 1-1102 / 110102).
 
-5. Gunakan gaya bahasa profesional, ramah, percaya diri, dan format Markdown WhatsApp (*tebal*, •, ✅, 📎, 👉) yang nyaman dibaca di smartphone.`;
+5. JIKA DITANYA MENGENAI SPPD & PERJALANAN DINAS:
+   - Jelaskan nomor SPPD, siapa petugas yang berangkat, kota asal & tujuan, tanggal, maksud dinas, dan rincian anggarannya.
+
+6. JIKA DITANYA MENGENAI AGENDA KERJA & PENGINGAT:
+   - Tampilkan agenda kerja terdekat, jadwal rutin pajak (PPh 21, PPh 23, PPN), penggajian, atau reminder jatuh tempo.
+
+7. JIKA PENGGUNA BINGUNG / INGIN TAHU KATA KUNCI ATAU MENU:
+   - Jelaskan ke-6 menu aplikasi dan berikan contoh kata kunci pertanyaan siap pakai untuk masing-masing menu.
+
+Gunakan format Markdown WhatsApp yang rapi (*tebal*, •, ✅, 📎, 👉, 📋) yang profesional dan mudah dibaca di smartphone.`;
 
   const modelsToTry = [
     "gemini-2.5-flash",

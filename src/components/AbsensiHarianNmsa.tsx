@@ -1649,7 +1649,7 @@ export function AbsensiHarianNmsa({
         }
       }
     } catch (err) {
-      console.error("Gagal memuat shared-state dari server:", err);
+      console.warn("Gagal memuat shared-state dari server (menggunakan cache lokal):", err);
     } finally {
       if (!quiet) setServerSyncing(false);
       setInitialFetchDone(true);
