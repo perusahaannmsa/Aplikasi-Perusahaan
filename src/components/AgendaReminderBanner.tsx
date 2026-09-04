@@ -13,26 +13,50 @@ import {
   ArrowRight,
   Flame,
   Layers,
-  Sparkles
+  Sparkles,
+  Volume2,
+  VolumeX,
+  Play
 } from 'lucide-react';
 import { formatDateIndonesian } from '../utils';
+import { agendaSound } from '../utils/agendaAudioAlert';
 
 interface AgendaReminderBannerProps {
   agendaItems: AgendaItem[];
   onToggleComplete: (id: string) => void;
   onOpenAgendaView: () => void;
   onPostponeOneDay: (id: string) => void;
+  onTriggerAlarmItem?: (item: AgendaItem) => void;
 }
 
 export function AgendaReminderBanner({
   agendaItems,
   onToggleComplete,
   onOpenAgendaView,
-  onPostponeOneDay
+  onPostponeOneDay,
+  onTriggerAlarmItem
 }: AgendaReminderBannerProps) {
   const [isExpanded, setIsExpanded] = useState(true);
+  const [soundActive, setSoundActive] = useState(() => agendaSound.isEnabled());
 
   const todayStr = new Date().toISOString().split('T')[0];
+
+  const handleToggleSound = () => {
+    const next = !soundActive;
+    setSoundActive(next);
+    agendaSound.setEnabled(next);
+    if (next) {
+      agendaSound.playMelody();
+    }
+  };
+
+  const handleTestSound = () => {
+    if (!agendaSound.isEnabled()) {
+      agendaSound.setEnabled(true);
+      setSoundActive(true);
+    }
+    agendaSound.playMelody();
+  };
 
   // Pending tasks that are due today or overdue
   const dueItems = agendaItems.filter(item => {
@@ -91,6 +115,26 @@ export function AgendaReminderBanner({
 
           {/* Quick Action Buttons */}
           <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={handleToggleSound}
+              className={`px-2.5 py-1.5 rounded-xl transition cursor-pointer flex items-center gap-1.5 text-xs font-bold ${
+                soundActive ? 'bg-white/20 hover:bg-white/30 text-white' : 'bg-rose-900/60 hover:bg-rose-900/80 text-rose-200'
+              }`}
+              title={soundActive ? 'Suara Musik Pengingat Aktif (Klik untuk Membisukan)' : 'Suara Musik Dibisukan (Klik untuk Mengaktifkan)'}
+            >
+              {soundActive ? <Volume2 size={14} className="animate-pulse text-amber-200" /> : <VolumeX size={14} />}
+              <span className="hidden md:inline text-[11px]">{soundActive ? 'Musik Aktif' : 'Musik Bisu'}</span>
+            </button>
+
+            <button
+              onClick={handleTestSound}
+              className="px-2.5 py-1.5 bg-white/15 hover:bg-white/25 rounded-xl text-white transition cursor-pointer text-xs font-bold flex items-center gap-1.5"
+              title="Uji Putar Melodi / Musik Pengingat"
+            >
+              <Play size={12} className="text-amber-200 fill-amber-200" />
+              <span className="hidden sm:inline text-[11px]">Tes Nada</span>
+            </button>
+
             <button
               onClick={onOpenAgendaView}
               className="flex items-center gap-1.5 bg-white text-stone-900 hover:bg-amber-50 font-bold px-3 py-1.5 rounded-xl text-xs transition cursor-pointer shadow-xs active:scale-95"
@@ -170,6 +214,15 @@ export function AgendaReminderBanner({
 
                     {/* Action buttons on card */}
                     <div className="flex items-center gap-1 shrink-0">
+                      {onTriggerAlarmItem && (
+                        <button
+                          onClick={() => onTriggerAlarmItem(item)}
+                          className="p-1.5 bg-white/20 hover:bg-white/35 text-white rounded-lg transition cursor-pointer"
+                          title="Bunyikan Alarm & Buka Pengingat Agenda"
+                        >
+                          <Bell size={12} className="text-amber-200" />
+                        </button>
+                      )}
                       <button
                         onClick={() => onPostponeOneDay(item.id)}
                         className="px-2 py-1 text-[10px] font-semibold bg-white/10 hover:bg-white/20 rounded-lg text-amber-100 transition cursor-pointer"

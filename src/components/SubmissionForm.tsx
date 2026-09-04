@@ -11,7 +11,6 @@ import {
   executeDriveApiWithAutoRefresh
 } from '../firebase';
 import { DriveAccountsManager } from './DriveAccountsManager';
-import { GoogleDriveSettingsModal } from './GoogleDriveSettingsModal';
 import { SppdIntegration, SppdRecord } from './SppdIntegration';
 import { Trash2, Plus, ArrowLeft, Save, AlertCircle, Sparkles, Cloud, Loader2, FileText, Coins, FileUp, ExternalLink, GitBranch, X, Calculator, Percent, Tag, Receipt } from 'lucide-react';
 import { generateF1PdfBytes, generateF2PdfBytes, formatDateIndonesian, convertImageToPdf, formatRupiah, analyzeVolumeInput } from '../utils';
@@ -518,7 +517,6 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
   };
 
   const [validationError, setValidationError] = useState('');
-  const [showDriveSettingsModal, setShowDriveSettingsModal] = useState(false);
   const [showSppdModal, setShowSppdModal] = useState(false);
 
   const handleImportSppdData = (sppd: any) => {
@@ -705,7 +703,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
   const [googleDriveFileUrl, setGoogleDriveFileUrl] = useState('');
   const [googleDriveFileName, setGoogleDriveFileName] = useState('');
   const [googleDriveFiles, setGoogleDriveFiles] = useState<{ url: string; name: string }[]>([]);
-  const [isDriveConnected, setIsDriveConnected] = useState(false);
+  const [isDriveConnected, setIsDriveConnected] = useState(() => getConnectedDrives().length > 0);
   const [isUploading, setIsUploading] = useState(false); // keep for display if needed
   const [isSaving, setIsSaving] = useState(false);
   const [saveProgress, setSaveProgress] = useState('');
@@ -2630,7 +2628,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
 
           {/* Multi Google Drive Accounts Manager */}
           <div className="mb-6">
-            <DriveAccountsManager onConnectionChange={setIsDriveConnected} />
+            <DriveAccountsManager onConnectionChange={setIsDriveConnected} hideMasterSettings={true} />
           </div>
 
           <div className="space-y-6">
@@ -3786,12 +3784,6 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
           </div>
         </div>
       )}
-
-      {/* MODAL PENGATURAN GOOGLE DRIVE & CLOUD STORAGE */}
-      <GoogleDriveSettingsModal
-        isOpen={showDriveSettingsModal}
-        onClose={() => setShowDriveSettingsModal(false)}
-      />
     </div>
   );
 };

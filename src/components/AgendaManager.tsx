@@ -27,10 +27,16 @@ import {
   FileText, 
   X,
   Repeat,
-  AlertCircle
+  AlertCircle,
+  Bell,
+  Volume2,
+  VolumeX,
+  Play,
+  Sliders
 } from 'lucide-react';
 import { formatDateIndonesian } from '../utils';
 import { LiveClock } from './LiveClock';
+import { agendaSound, SoundMelodyType, requestAgendaNotificationPermission } from '../utils/agendaAudioAlert';
 
 interface AgendaManagerProps {
   agendaItems: AgendaItem[];
@@ -75,6 +81,13 @@ export function AgendaManager({
   // Calendar State
   const [calendarDate, setCalendarDate] = useState(() => new Date());
   const [selectedDateFilter, setSelectedDateFilter] = useState<string | null>(() => new Date().toISOString().split('T')[0]);
+
+  // Sound & Notification Alert States
+  const [showSoundSettingsModal, setShowSoundSettingsModal] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(() => agendaSound.isEnabled());
+  const [soundVolume, setSoundVolume] = useState(() => agendaSound.getVolume());
+  const [soundMelody, setSoundMelody] = useState<SoundMelodyType>(() => agendaSound.getMelody());
+  const [isPlayingTest, setIsPlayingTest] = useState(false);
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -379,6 +392,16 @@ export function AgendaManager({
               <span>Kalender</span>
             </button>
           </div>
+
+          <button
+            onClick={() => setShowSoundSettingsModal(true)}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 text-xs font-bold transition cursor-pointer shadow-3xs"
+            title="Pengaturan Notifikasi Bunyi & Musik Pengingat"
+          >
+            {soundEnabled ? <Volume2 size={14} className="text-amber-600 animate-pulse" /> : <VolumeX size={14} className="text-stone-400" />}
+            <span className="hidden md:inline">Pengaturan Notifikasi &amp; Musik</span>
+            <span className="md:hidden">Musik</span>
+          </button>
 
           <button
             onClick={() => window.print()}
@@ -779,6 +802,18 @@ export function AgendaManager({
                         </button>
                       )}
 
+                      {!isCompleted && (
+                        <button
+                          onClick={() => {
+                            agendaSound.playMelody();
+                          }}
+                          className="p-2 text-amber-600 hover:text-amber-800 hover:bg-amber-100/70 rounded-xl transition cursor-pointer"
+                          title="Uji Putar Musik Pengingat untuk Agenda Ini"
+                        >
+                          <Bell size={14} />
+                        </button>
+                      )}
+
                       <button
                         onClick={() => handleOpenEditModal(item)}
                         className="p-2 text-stone-500 hover:text-stone-800 hover:bg-stone-100 rounded-xl transition cursor-pointer"
@@ -1015,6 +1050,171 @@ export function AgendaManager({
 
           </div>
 
+        </div>
+      )}
+
+      {/* MODAL PENGATURAN SUARA & MUSIK PENGINGAT */}
+      {showSoundSettingsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-950/70 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl border border-stone-200 overflow-hidden flex flex-col font-sans">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-amber-600 to-amber-700 text-white">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-white/20 rounded-xl text-white">
+                  <Bell size={18} className="animate-bounce" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold font-display">
+                    Pengaturan Notifikasi &amp; Musik Agenda
+                  </h3>
+                  <p className="text-xs text-amber-100">
+                    Kustomisasi nada, melodi, dan volume pengingat
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowSoundSettingsModal(false);
+                  agendaSound.stopAlert();
+                }}
+                className="p-1.5 rounded-xl hover:bg-white/20 text-white transition cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-5 text-sm">
+              {/* Toggle Switch */}
+              <div className="flex items-center justify-between p-3.5 rounded-2xl bg-amber-50/70 border border-amber-200/80">
+                <div className="space-y-0.5">
+                  <p className="font-bold text-stone-900 flex items-center gap-1.5">
+                    {soundEnabled ? <Volume2 size={16} className="text-amber-600" /> : <VolumeX size={16} className="text-stone-400" />}
+                    Aktifkan Musik Pengingat
+                  </p>
+                  <p className="text-xs text-stone-500">
+                    Mainkan melodi saat agenda tiba waktunya atau dimulai
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !soundEnabled;
+                    setSoundEnabled(next);
+                    agendaSound.setEnabled(next);
+                  }}
+                  className={`w-12 h-6 flex items-center rounded-full p-1 transition-colors cursor-pointer ${
+                    soundEnabled ? 'bg-amber-600 justify-end' : 'bg-stone-300 justify-start'
+                  }`}
+                >
+                  <div className="w-4 h-4 rounded-full bg-white shadow-md"></div>
+                </button>
+              </div>
+
+              {/* Melody Selection */}
+              <div className="space-y-2">
+                <label className="font-bold text-stone-800 text-xs uppercase tracking-wider block">
+                  Pilihan Melodi / Musik
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { id: 'melodi_lembut', label: 'Melodi Lembut', desc: 'Harmonik lembut & tenang' },
+                    { id: 'lonceng_agenda', label: 'Lonceng Kristal', desc: 'Dual bell bergema hangat' },
+                    { id: 'alarm_ringkas', label: 'Alarm Dinamis', desc: 'Alert tegas & berirama' },
+                    { id: 'marimba', label: 'Marimba Arpeggio', desc: 'Petikan kayu alami' }
+                  ].map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => {
+                        setSoundMelody(m.id as SoundMelodyType);
+                        agendaSound.setMelody(m.id as SoundMelodyType);
+                        agendaSound.playMelody(m.id as SoundMelodyType);
+                      }}
+                      className={`p-3 rounded-2xl border text-left transition cursor-pointer ${
+                        soundMelody === m.id
+                          ? 'bg-amber-50 border-amber-500 ring-2 ring-amber-400/40'
+                          : 'bg-white border-stone-200 hover:border-amber-300 hover:bg-stone-50'
+                      }`}
+                    >
+                      <p className={`font-bold text-xs ${soundMelody === m.id ? 'text-amber-900' : 'text-stone-800'}`}>
+                        {m.label}
+                      </p>
+                      <p className="text-[10px] text-stone-500 mt-0.5">{m.desc}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Volume Slider */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-stone-700">Tingkat Volume:</span>
+                  <span className="font-mono font-bold text-amber-700">{Math.round(soundVolume * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="1.0"
+                  step="0.05"
+                  value={soundVolume}
+                  onChange={(e) => {
+                    const v = parseFloat(e.target.value);
+                    setSoundVolume(v);
+                    agendaSound.setVolume(v);
+                  }}
+                  className="w-full accent-amber-600 cursor-pointer"
+                />
+              </div>
+
+              {/* Browser Desktop Notification Request */}
+              <div className="p-3 bg-stone-50 rounded-xl border border-stone-200 text-xs space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-stone-800">Notifikasi Pop-up Desktop</span>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const perm = await requestAgendaNotificationPermission();
+                      if (perm === 'granted') {
+                        alert('Izin notifikasi desktop berhasil diaktifkan!');
+                      } else {
+                        alert('Izin notifikasi belum diizinkan oleh peramban browser.');
+                      }
+                    }}
+                    className="text-[11px] font-bold text-amber-700 hover:underline cursor-pointer"
+                  >
+                    Izinkan Browser &rarr;
+                  </button>
+                </div>
+                <p className="text-[11px] text-stone-500 leading-relaxed">
+                  Memberikan notifikasi visual di layar komputer Anda meskipun tab aplikasi sedang diminimalkan.
+                </p>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 bg-stone-50 border-t border-stone-200 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => agendaSound.playMelody(soundMelody)}
+                className="px-3.5 py-2 rounded-xl bg-white hover:bg-stone-100 border border-stone-300 text-stone-700 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+              >
+                <Play size={13} className="text-amber-600 fill-amber-600" />
+                <span>Uji Suara Sekarang</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSoundSettingsModal(false);
+                  agendaSound.stopAlert();
+                }}
+                className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-black text-xs transition cursor-pointer shadow-xs"
+              >
+                Simpan &amp; Tutup
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

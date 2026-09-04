@@ -425,9 +425,10 @@ export const getCompanyProfileFromFirestore = async (companyId: string): Promise
       // Auto-load shared Google Drive settings from Firestore to achieve zero-friction default connection!
       if (Array.isArray(data.googleDrives) && data.googleDrives.length > 0) {
         console.log('🔄 Auto-loaded company-shared Google Drive settings from Firestore:', data.googleDrives.length, 'drives');
-        localStorage.setItem('NUSANTARA_CONNECTED_DRIVES', JSON.stringify(data.googleDrives));
-        const activeDrive = data.googleDrives.find((d: any) => !d.isExpired && (d.quotaLimit - d.quotaUsed > 10 * 1024 * 1024));
-        const bestToken = activeDrive ? activeDrive.accessToken : (data.googleDrives[0]?.accessToken || null);
+        const mergedDrives = mergeDrivesWithLocal(data.googleDrives);
+        localStorage.setItem('NUSANTARA_CONNECTED_DRIVES', JSON.stringify(mergedDrives));
+        const activeDrive = mergedDrives.find((d: any) => isDriveTokenValid(d) && (d.quotaLimit - d.quotaUsed > 10 * 1024 * 1024));
+        const bestToken = activeDrive ? activeDrive.accessToken : (mergedDrives[0]?.accessToken || null);
         if (bestToken) {
           localStorage.setItem('NUSANTARA_GOOGLE_DRIVE_TOKEN', bestToken);
         }
@@ -645,7 +646,97 @@ export interface ConnectedDrive {
   lastChecked: string; // ISO String
   isExpired?: boolean;
   issuedAt?: number;   // Epoch timestamp of token issue
+  expiresAt?: number;  // Epoch timestamp of token expiration
 }
+
+// Google OAuth token standard lifetime is 3600 seconds (60 mins).
+// We set token lifespan to 55 minutes to allow a safe 5-minute buffer.
+export const TOKEN_LIFESPAN_MS = 55 * 60 * 1000;
+
+/**
+ * Checks whether a Google Drive token is still valid within its official time window.
+ * This guarantees a token is NEVER falsely marked as expired immediately after connection.
+ */
+export const isDriveTokenValid = (drive: ConnectedDrive | null | undefined): boolean => {
+  if (!drive || !drive.accessToken) return false;
+  const now = Date.now();
+  if (drive.expiresAt && typeof drive.expiresAt === 'number') {
+    return now < drive.expiresAt;
+  }
+  if (drive.issuedAt && typeof drive.issuedAt === 'number') {
+    return (now - drive.issuedAt) < TOKEN_LIFESPAN_MS;
+  }
+  if (drive.lastChecked) {
+    const lastCheckedMs = new Date(drive.lastChecked).getTime();
+    if (!isNaN(lastCheckedMs)) {
+      return (now - lastCheckedMs) < TOKEN_LIFESPAN_MS && !drive.isExpired;
+    }
+  }
+  return !drive.isExpired;
+};
+
+/**
+ * Computes remaining minutes of validity for a given connected drive token.
+ */
+export const getDriveRemainingMinutes = (drive: ConnectedDrive): number => {
+  const now = Date.now();
+  if (drive.expiresAt && typeof drive.expiresAt === 'number') {
+    return Math.max(0, Math.round((drive.expiresAt - now) / 60000));
+  }
+  if (drive.issuedAt && typeof drive.issuedAt === 'number') {
+    const remaining = TOKEN_LIFESPAN_MS - (now - drive.issuedAt);
+    return Math.max(0, Math.round(remaining / 60000));
+  }
+  if (drive.lastChecked) {
+    const lastCheckedMs = new Date(drive.lastChecked).getTime();
+    if (!isNaN(lastCheckedMs)) {
+      const remaining = TOKEN_LIFESPAN_MS - (now - lastCheckedMs);
+      return Math.max(0, Math.round(remaining / 60000));
+    }
+  }
+  return drive.isExpired ? 0 : 55;
+};
+
+/**
+ * Merges remote Firestore drives with local drives, ensuring fresh valid local tokens
+ * are NEVER overwritten by stale or expired records stored in the cloud.
+ */
+export const mergeDrivesWithLocal = (remoteDrives: ConnectedDrive[]): ConnectedDrive[] => {
+  let localDrives: ConnectedDrive[] = [];
+  try {
+    const raw = localStorage.getItem('NUSANTARA_CONNECTED_DRIVES');
+    if (raw) localDrives = JSON.parse(raw);
+  } catch (e) {}
+
+  if (!Array.isArray(remoteDrives) || remoteDrives.length === 0) return localDrives;
+  if (!Array.isArray(localDrives) || localDrives.length === 0) return remoteDrives;
+
+  const result: ConnectedDrive[] = [...remoteDrives];
+
+  for (const local of localDrives) {
+    const idx = result.findIndex(r => r.email.toLowerCase() === local.email.toLowerCase());
+    if (idx === -1) {
+      result.push(local);
+    } else {
+      const remote = result[idx];
+      const localIssued = local.issuedAt || 0;
+      const remoteIssued = remote.issuedAt || 0;
+      const localValid = isDriveTokenValid(local);
+      const remoteValid = isDriveTokenValid(remote);
+
+      // Preserve local if local is valid and remote expired, OR local issuedAt is more recent
+      if ((localValid && !remoteValid) || (localIssued >= remoteIssued && local.accessToken)) {
+        result[idx] = {
+          ...remote,
+          ...local,
+          isExpired: !localValid ? remote.isExpired : false
+        };
+      }
+    }
+  }
+
+  return result;
+};
 
 let googleDriveTokenMemory: string | null = null;
 
@@ -747,7 +838,28 @@ export const getConnectedDrives = (): ConnectedDrive[] => {
   try {
     const raw = localStorage.getItem('NUSANTARA_CONNECTED_DRIVES');
     if (raw) {
-      return JSON.parse(raw);
+      const parsed: ConnectedDrive[] = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        let changed = false;
+        const normalized = parsed.map(d => {
+          const isValidTime = isDriveTokenValid(d);
+          // If token was issued recently and is within valid window, it is ACTIVE
+          if (isValidTime && d.isExpired) {
+            d.isExpired = false;
+            changed = true;
+          } else if (!isValidTime && !d.isExpired) {
+            d.isExpired = true;
+            changed = true;
+          }
+          return d;
+        });
+        if (changed) {
+          try {
+            localStorage.setItem('NUSANTARA_CONNECTED_DRIVES', JSON.stringify(normalized));
+          } catch (e) {}
+        }
+        return normalized;
+      }
     }
   } catch (e) {
     console.error('Failed to parse connected drives list', e);
@@ -756,13 +868,17 @@ export const getConnectedDrives = (): ConnectedDrive[] => {
   // Fallback / migration for legacy single token
   const legacyToken = localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
   if (legacyToken) {
+    const now = Date.now();
     const initialDrive: ConnectedDrive = {
       email: 'penyimpanandrivenmsa1@gmail.com', // master account
       accessToken: legacyToken,
       displayName: 'Master Drive NMSA',
       quotaUsed: 0,
       quotaLimit: 15 * 1024 * 1024 * 1024, // 15 GB
-      lastChecked: new Date().toISOString()
+      lastChecked: new Date().toISOString(),
+      issuedAt: now,
+      expiresAt: now + TOKEN_LIFESPAN_MS,
+      isExpired: false
     };
     return [initialDrive];
   }
@@ -780,15 +896,15 @@ export const loadConnectedDrivesFromFirestore = async (companyId: string = 'nmsa
     if (snap.exists()) {
       const data = snap.data();
       if (data && Array.isArray(data.googleDrives) && data.googleDrives.length > 0) {
-        const cloudDrives: ConnectedDrive[] = data.googleDrives;
-        localStorage.setItem('NUSANTARA_CONNECTED_DRIVES', JSON.stringify(cloudDrives));
-        const activeDrive = cloudDrives.find(d => !d.isExpired && (d.quotaLimit - d.quotaUsed > 10 * 1024 * 1024));
-        const bestToken = activeDrive ? activeDrive.accessToken : (cloudDrives[0]?.accessToken || null);
+        const mergedDrives = mergeDrivesWithLocal(data.googleDrives);
+        localStorage.setItem('NUSANTARA_CONNECTED_DRIVES', JSON.stringify(mergedDrives));
+        const activeDrive = mergedDrives.find(d => isDriveTokenValid(d) && (d.quotaLimit - d.quotaUsed > 10 * 1024 * 1024));
+        const bestToken = activeDrive ? activeDrive.accessToken : (mergedDrives[0]?.accessToken || null);
         setGoogleDriveToken(bestToken);
         if (activeDrive) {
           localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', activeDrive.email);
         }
-        return cloudDrives;
+        return mergedDrives;
       }
     }
   } catch (err) {
@@ -927,6 +1043,7 @@ export const refreshAllDrivesQuota = async (): Promise<ConnectedDrive[]> => {
 
   const updatedDrives = await Promise.all(
     drives.map(async (drive) => {
+      const isWithinWindow = isDriveTokenValid(drive);
       try {
         const meta = await fetchDriveQuotaMetadata(drive.accessToken);
         return {
@@ -942,9 +1059,19 @@ export const refreshAllDrivesQuota = async (): Promise<ConnectedDrive[]> => {
       } catch (err: any) {
         console.warn(`Drive quota check note for ${drive.email}:`, err);
         const isAuthError = err?.message?.includes('401') || err?.message?.includes('UNAUTHORIZED');
+        
+        // If token is still within its 55-minute lifetime, ignore transient 401 from quota API
+        if (isAuthError && isWithinWindow) {
+          console.log(`🛡️ Token for ${drive.email} is within valid lifetime (${getDriveRemainingMinutes(drive)}m left). Retaining active status.`);
+          return {
+            ...drive,
+            lastChecked: new Date().toISOString(),
+            isExpired: false
+          };
+        }
+
         return {
           ...drive,
-          // Only mark expired if server explicitly returned 401 Unauthorized
           isExpired: isAuthError ? true : (drive.isExpired ?? false)
         };
       }
@@ -996,12 +1123,17 @@ export const deleteGoogleDriveFile = async (fileId: string): Promise<void> => {
 export const invalidateDriveToken = (badToken?: string | null): void => {
   const currentDrives = getConnectedDrives();
   let changed = false;
+  const now = Date.now();
 
   if (badToken) {
     currentDrives.forEach(d => {
       if (d.accessToken === badToken) {
-        d.isExpired = true;
-        changed = true;
+        // Do not prematurely invalidate tokens issued less than 3 minutes ago
+        const isFresh = d.issuedAt && (now - d.issuedAt < 3 * 60 * 1000);
+        if (!isFresh) {
+          d.isExpired = true;
+          changed = true;
+        }
       }
     });
     if (googleDriveTokenMemory === badToken) {
@@ -1010,11 +1142,14 @@ export const invalidateDriveToken = (badToken?: string | null): void => {
       changed = true;
     }
   } else {
-    // Invalidate active one
+    // Invalidate active one if not very fresh
     const active = currentDrives.find(d => !d.isExpired);
     if (active) {
-      active.isExpired = true;
-      changed = true;
+      const isFresh = active.issuedAt && (now - active.issuedAt < 3 * 60 * 1000);
+      if (!isFresh) {
+        active.isExpired = true;
+        changed = true;
+      }
     }
     googleDriveTokenMemory = null;
     localStorage.removeItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
@@ -1025,7 +1160,7 @@ export const invalidateDriveToken = (badToken?: string | null): void => {
   }
 };
 
-export const getStoredGoogleDriveToken = (_strictFreshnessCheck = false): string | null => {
+export const getStoredGoogleDriveToken = (strictFreshnessCheck = false): string | null => {
   const drives = getConnectedDrives();
   if (drives.length === 0) {
     if (googleDriveTokenMemory) return googleDriveTokenMemory;
@@ -1036,9 +1171,10 @@ export const getStoredGoogleDriveToken = (_strictFreshnessCheck = false): string
     }
   }
 
-  // Find first active drive with available storage space
+  // Find first active drive with available storage space and valid lifetime
   const availableDrive = drives.find(d => {
-    if (d.isExpired) return false;
+    if (strictFreshnessCheck && !isDriveTokenValid(d)) return false;
+    if (!strictFreshnessCheck && d.isExpired) return false;
     const remainingBytes = d.quotaLimit - d.quotaUsed;
     return remainingBytes > 10 * 1024 * 1024; // 10MB
   });
@@ -1047,8 +1183,12 @@ export const getStoredGoogleDriveToken = (_strictFreshnessCheck = false): string
     return availableDrive.accessToken;
   }
 
-  // Fallback to any drive with an access token
-  const fallbackDrive = drives.find(d => !!d.accessToken);
+  if (strictFreshnessCheck) {
+    return null;
+  }
+
+  // Fallback to any drive with an access token if not strict
+  const fallbackDrive = drives.find(d => !!d.accessToken && !d.isExpired);
   if (fallbackDrive) {
     return fallbackDrive.accessToken;
   }
@@ -1184,9 +1324,10 @@ export const subscribeToCompanySettingsFromFirestore = (
             localStorage.setItem('nmsa_agenda_items_v1', JSON.stringify(data.agendaItems));
           }
           if (data.googleDrives && Array.isArray(data.googleDrives)) {
-            localStorage.setItem('NUSANTARA_CONNECTED_DRIVES', JSON.stringify(data.googleDrives));
-            const activeDrive = data.googleDrives.find((d: any) => !d.isExpired && (d.quotaLimit - d.quotaUsed > 10 * 1024 * 1024));
-            const bestToken = activeDrive ? activeDrive.accessToken : (data.googleDrives[0]?.accessToken || null);
+            const mergedDrives = mergeDrivesWithLocal(data.googleDrives);
+            localStorage.setItem('NUSANTARA_CONNECTED_DRIVES', JSON.stringify(mergedDrives));
+            const activeDrive = mergedDrives.find((d: any) => isDriveTokenValid(d) && (d.quotaLimit - d.quotaUsed > 10 * 1024 * 1024));
+            const bestToken = activeDrive ? activeDrive.accessToken : (mergedDrives[0]?.accessToken || null);
             if (bestToken) {
               setGoogleDriveToken(bestToken);
             }
@@ -1218,7 +1359,7 @@ export const ensureValidDriveToken = async (forceRefresh = false): Promise<strin
     } catch (e) {}
   }
 
-  // 2. Check if stored token in memory or drive list is fresh (< 48 min old)
+  // 2. Check if stored token in memory or drive list is fresh
   let token = getStoredGoogleDriveToken(!forceRefresh);
   if (token && !forceRefresh) {
     return token;
@@ -1228,7 +1369,7 @@ export const ensureValidDriveToken = async (forceRefresh = false): Promise<strin
   try {
     const cloudDrives = await loadConnectedDrivesFromFirestore();
     if (cloudDrives && cloudDrives.length > 0) {
-      const activeDrive = cloudDrives.find(d => !d.isExpired && (d.quotaLimit - d.quotaUsed > 15 * 1024 * 1024));
+      const activeDrive = cloudDrives.find(d => isDriveTokenValid(d) && (d.quotaLimit - d.quotaUsed > 15 * 1024 * 1024));
       if (activeDrive && activeDrive.accessToken) {
         setGoogleDriveToken(activeDrive.accessToken);
         return activeDrive.accessToken;
@@ -1252,11 +1393,19 @@ export const getOrRenewDriveToken = async (
 
   activeDriveRenewalPromise = (async () => {
     try {
-      // 1. Check Firestore for latest synced cloud drive token from other tabs/devices
+      // 1. Check local drives first - if we have a currently valid token, return it immediately without popup!
+      const currentDrives = getConnectedDrives();
+      const currentValid = currentDrives.find(d => isDriveTokenValid(d) && (d.quotaLimit - d.quotaUsed > 10 * 1024 * 1024));
+      if (currentValid && currentValid.accessToken) {
+        setGoogleDriveToken(currentValid.accessToken);
+        return currentValid.accessToken;
+      }
+
+      // 2. Check Firestore for latest synced cloud drive token from other tabs/devices
       try {
         const cloudDrives = await loadConnectedDrivesFromFirestore();
         if (cloudDrives && cloudDrives.length > 0) {
-          const validDrive = cloudDrives.find(d => !d.isExpired && d.accessToken);
+          const validDrive = cloudDrives.find(d => isDriveTokenValid(d) && d.accessToken);
           if (validDrive && validDrive.accessToken) {
             setGoogleDriveToken(validDrive.accessToken);
             return validDrive.accessToken;
@@ -1264,12 +1413,12 @@ export const getOrRenewDriveToken = async (
         }
       } catch (fsErr) {}
 
-      // 2. Determine the exact Google Drive email to connect / reconnect
+      // 3. Determine the exact Google Drive email to connect / reconnect
       const activeAccount = getActiveGoogleDriveAccount();
       const lastEmail = localStorage.getItem('NUSANTARA_LAST_ACTIVE_EMAIL');
       const emailToUse = targetEmail || activeAccount?.email || lastEmail || getConnectedDrives()[0]?.email || undefined;
 
-      // 3. If interactive renewal is allowed (e.g. user explicitly clicked Connect), perform login
+      // 4. If interactive renewal is allowed (e.g. user clicked or is submitting a voucher), perform login
       if (interactiveIfRequired && emailToUse) {
         try {
           const loginRes = await googleDriveLogin(emailToUse, false);
@@ -1281,7 +1430,7 @@ export const getOrRenewDriveToken = async (
         }
       }
 
-      // 4. Fallback to any memory or localStorage token
+      // 5. Fallback to any memory or localStorage token
       const fallback = googleDriveTokenMemory || localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
       if (fallback) return fallback;
 
@@ -1545,6 +1694,7 @@ export const googleDriveLogin = async (
 
     // Load existing connected drives list
     const currentDrives = getConnectedDrives();
+    const now = Date.now();
     const newDrive: ConnectedDrive = {
       email: driveDetails.email,
       accessToken: credential.accessToken,
@@ -1554,7 +1704,8 @@ export const googleDriveLogin = async (
       quotaLimit: driveDetails.quotaLimit,
       lastChecked: new Date().toISOString(),
       isExpired: false,
-      issuedAt: Date.now()
+      issuedAt: now,
+      expiresAt: now + TOKEN_LIFESPAN_MS
     };
 
     // Replace if email exists, otherwise index appends
@@ -1566,13 +1717,6 @@ export const googleDriveLogin = async (
     }
 
     await saveConnectedDrives(currentDrives);
-
-    // Dispose of secondary auth session to keep memory clean
-    try {
-      await driveAuth.signOut();
-    } catch (signoutErr) {
-      console.warn('Silent signout error for drive instance:', signoutErr);
-    }
 
     return { user: result.user, accessToken: credential.accessToken, driveDetails };
   } catch (error: any) {

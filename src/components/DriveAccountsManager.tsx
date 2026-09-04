@@ -7,16 +7,22 @@ import {
   refreshAllDrivesQuota,
   getMasterDriveEmail,
   setMasterDriveEmail,
-  getAuthorizedDriveEmails
+  getAuthorizedDriveEmails,
+  isDriveTokenValid,
+  getDriveRemainingMinutes
 } from '../firebase';
 import { Cloud, Plus, Trash2, ShieldCheck, RefreshCw, AlertTriangle, HardDrive, Star, Settings } from 'lucide-react';
 import { GoogleDriveSettingsModal } from './GoogleDriveSettingsModal';
 
 interface DriveAccountsManagerProps {
   onConnectionChange?: (isConnected: boolean) => void;
+  hideMasterSettings?: boolean;
 }
 
-export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({ onConnectionChange }) => {
+export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({ 
+  onConnectionChange,
+  hideMasterSettings = false
+}) => {
   const [drives, setDrives] = useState<ConnectedDrive[]>([]);
   const [masterEmail, setMasterEmail] = useState<string>('penyimpanandrivenmsa1@gmail.com');
   const [isConnecting, setIsConnecting] = useState(false);
@@ -39,8 +45,15 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({ onCo
       loadDrives();
     };
     window.addEventListener('nusantara-drive-updated', onDriveUpdated);
+
+    // Refresh remaining minutes every 60 seconds
+    const interval = setInterval(() => {
+      loadDrives();
+    }, 60000);
+
     return () => {
       window.removeEventListener('nusantara-drive-updated', onDriveUpdated);
+      clearInterval(interval);
     };
   }, []);
 
@@ -118,15 +131,17 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({ onCo
           </h4>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setIsSettingsModalOpen(true)}
-          className="inline-flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100/80 border border-amber-300 text-amber-900 text-xs font-bold px-3 py-1.5 rounded-xl transition cursor-pointer shadow-3xs"
-          title="Buka Pengaturan Master Google Drive & Whitelist"
-        >
-          <Settings size={13} className="text-amber-700" />
-          <span>Pengaturan Master & Whitelist</span>
-        </button>
+        {!hideMasterSettings && (
+          <button
+            type="button"
+            onClick={() => setIsSettingsModalOpen(true)}
+            className="inline-flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100/80 border border-amber-300 text-amber-900 text-xs font-bold px-3 py-1.5 rounded-xl transition cursor-pointer shadow-3xs"
+            title="Buka Pengaturan Master Google Drive & Whitelist"
+          >
+            <Settings size={13} className="text-amber-700" />
+            <span>Pengaturan Master & Whitelist</span>
+          </button>
+        )}
       </div>
 
       <p className="text-[11px] text-stone-500 leading-relaxed">
@@ -229,46 +244,56 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({ onCo
 
                   {/* Actions & Status */}
                   <div className="flex sm:flex-col items-end sm:justify-center justify-between gap-2 shrink-0 border-t sm:border-t-0 pt-2.5 sm:pt-0 border-stone-100">
-                    <div className="flex items-center gap-1.5">
-                      {drive.isExpired ? (
-                        <span className="bg-rose-50 border border-rose-200 text-rose-700 px-2 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider font-mono">
-                          Token Mati
-                        </span>
-                      ) : isFull ? (
-                        <span className="bg-amber-100 text-amber-800 px-2 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider font-mono">
-                          Penuh
-                        </span>
-                      ) : (
-                        <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider font-mono flex items-center gap-0.5">
-                          <ShieldCheck size={9} />
-                          Aktif
-                        </span>
-                      )}
-                    </div>
+                    {(() => {
+                      const isValid = isDriveTokenValid(drive);
+                      const remainingMins = getDriveRemainingMinutes(drive);
+                      const isDead = drive.isExpired && !isValid;
 
-                    <div className="flex items-center gap-1.5 self-end">
-                      {drive.isExpired && (
-                        <button
-                          type="button"
-                          onClick={() => handleReconnectDrive(drive.email)}
-                          disabled={isConnecting}
-                          className="p-1.5 text-amber-600 hover:text-amber-800 rounded-lg hover:bg-amber-100/50 border border-amber-200 flex items-center gap-1 transition cursor-pointer shadow-4xs font-sans"
-                          title="Sambungkan Ulang Sesi Token Google Drive Anda"
-                        >
-                          <RefreshCw size={11} className={isConnecting ? 'animate-spin' : ''} />
-                          <span className="text-[10px] font-bold">Sambungkan Ulang</span>
-                        </button>
-                      )}
+                      return (
+                        <>
+                          <div className="flex items-center gap-1.5">
+                            {isDead ? (
+                              <span className="bg-rose-50 border border-rose-200 text-rose-700 px-2 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider font-mono">
+                                Kedaluwarsa
+                              </span>
+                            ) : isFull ? (
+                              <span className="bg-amber-100 text-amber-800 px-2 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider font-mono">
+                                Penuh
+                              </span>
+                            ) : (
+                              <span className="bg-emerald-50 border border-emerald-200 text-emerald-850 px-2 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider font-mono flex items-center gap-1">
+                                <ShieldCheck size={9} className="text-emerald-600" />
+                                Aktif {remainingMins > 0 ? `(~${remainingMins} mnt)` : ''}
+                              </span>
+                            )}
+                          </div>
 
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveDrive(drive.email)}
-                        className="p-1.5 text-stone-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition cursor-pointer"
-                        title="Putus Hubungan Akun Ini"
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
+                          <div className="flex items-center gap-1.5 self-end">
+                            {isDead && (
+                              <button
+                                type="button"
+                                onClick={() => handleReconnectDrive(drive.email)}
+                                disabled={isConnecting}
+                                className="p-1.5 text-amber-800 hover:text-amber-950 rounded-lg bg-amber-50 hover:bg-amber-100/80 border border-amber-300 flex items-center gap-1 transition cursor-pointer shadow-4xs font-sans"
+                                title="Sambungkan Ulang Sesi Token Google Drive Anda"
+                              >
+                                <RefreshCw size={11} className={isConnecting ? 'animate-spin' : ''} />
+                                <span className="text-[10px] font-bold">Sambungkan Ulang</span>
+                              </button>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveDrive(drive.email)}
+                              className="p-1.5 text-stone-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition cursor-pointer"
+                              title="Putus Hubungan Akun Ini"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
               );
