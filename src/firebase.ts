@@ -11,7 +11,8 @@ import {
   Firestore,
   getDocFromServer,
   getDoc,
-  onSnapshot
+  onSnapshot,
+  writeBatch
 } from 'firebase/firestore';
 import { 
   getAuth, 
@@ -1802,6 +1803,48 @@ export const saveSubmissionToFirestore = async (
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `${path}/${submission.id}`);
   }
+};
+
+// Batch save/update multiple submissions in Firestore (e.g. after name consolidation)
+export const saveSubmissionsBatchToFirestore = async (
+  submissions: Submission[],
+  userCompanyId: string = 'nmsa',
+  userCompanyName: string = 'PT Nusantara Mineral Sukses Abadi'
+): Promise<{ success: boolean; count: number }> => {
+  if (!isFirebaseConfigured() || !firestoreDb || submissions.length === 0) {
+    return { success: false, count: 0 };
+  }
+
+  const BATCH_SIZE = 450; // Firestore limit is 500 operations per batch
+  let totalSaved = 0;
+
+  for (let i = 0; i < submissions.length; i += BATCH_SIZE) {
+    const chunk = submissions.slice(i, i + BATCH_SIZE);
+    const batch = writeBatch(firestoreDb);
+
+    for (const sub of chunk) {
+      const fPayload = mapSubmissionToFirestore(
+        sub,
+        currentUser?.email || 'admin@nmsa.com',
+        currentUser?.uid || 'pwsDJv3bKHQamy89PDaAeCoZQcU2',
+        userCompanyId,
+        userCompanyName
+      );
+      const cleaned = cleanUndefined(fPayload);
+      const subRef = doc(firestoreDb, 'submissions', sub.id);
+      batch.set(subRef, cleaned);
+    }
+
+    try {
+      await batch.commit();
+      totalSaved += chunk.length;
+      console.log(`☁️ Batch saved ${chunk.length} submissions to Firestore.`);
+    } catch (err) {
+      console.warn('Batch write error in Firestore:', err);
+    }
+  }
+
+  return { success: totalSaved > 0, count: totalSaved };
 };
 
 // Delete single submission from Firestore

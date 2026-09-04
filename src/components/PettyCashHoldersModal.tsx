@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { Users, Plus, Trash2, Edit2, Check, X, ShieldCheck, AlertCircle } from 'lucide-react';
+import { Users, Plus, Trash2, Edit2, Check, X, ShieldCheck, AlertCircle, Sparkles } from 'lucide-react';
+import { areNamesSimilar, toTitleCase } from '../utils/nameConsolidation';
 
 interface PettyCashHoldersModalProps {
   isOpen: boolean;
   onClose: () => void;
   holders: string[];
   onSaveHolders: (newHolders: string[]) => Promise<void> | void;
+  onOpenConsolidation?: () => void;
 }
 
 export const PettyCashHoldersModal: React.FC<PettyCashHoldersModalProps> = ({
@@ -13,30 +15,49 @@ export const PettyCashHoldersModal: React.FC<PettyCashHoldersModalProps> = ({
   onClose,
   holders,
   onSaveHolders,
+  onOpenConsolidation,
 }) => {
   const [newHolderName, setNewHolderName] = useState('');
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editingName, setEditingName] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [warningMsg, setWarningMsg] = useState<{ text: string; matchedName: string } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
   if (!isOpen) return null;
 
-  const handleAddHolder = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleAddHolder = async (e: React.FormEvent, force = false) => {
+    if (e) e.preventDefault();
     const trimmed = newHolderName.trim();
     if (!trimmed) {
       setErrorMsg('Nama pemegang petty cash tidak boleh kosong.');
       return;
     }
 
-    if (holders.some((h) => h.toLowerCase() === trimmed.toLowerCase())) {
-      setErrorMsg(`Nama "${trimmed}" sudah ada dalam daftar pemegang petty cash.`);
+    const titleCased = toTitleCase(trimmed);
+
+    // Exact match check (case-insensitive)
+    if (holders.some((h) => h.toLowerCase() === titleCased.toLowerCase())) {
+      setErrorMsg(`Nama "${titleCased}" sudah ada dalam daftar pemegang petty cash.`);
       return;
     }
 
+    // Similarity / duplicate check (incomplete name or slight typo)
+    if (!force) {
+      const similarHolder = holders.find(h => areNamesSimilar(h, titleCased).isMatch);
+      if (similarHolder) {
+        const similarity = areNamesSimilar(similarHolder, titleCased);
+        setWarningMsg({
+          text: `Nama "${titleCased}" mendekati pemegang terdaftar "${similarHolder}" (${similarity.reason}). Disarankan menyamakan nama agar tidak ada duplikasi pemegang kas.`,
+          matchedName: similarHolder
+        });
+        return;
+      }
+    }
+
     setErrorMsg('');
-    const updated = [...holders, trimmed];
+    setWarningMsg(null);
+    const updated = [...holders, titleCased];
     setIsSaving(true);
     try {
       await onSaveHolders(updated);
@@ -52,6 +73,7 @@ export const PettyCashHoldersModal: React.FC<PettyCashHoldersModalProps> = ({
     setEditingIndex(index);
     setEditingName(holders[index]);
     setErrorMsg('');
+    setWarningMsg(null);
   };
 
   const handleSaveEdit = async (index: number) => {
@@ -61,17 +83,19 @@ export const PettyCashHoldersModal: React.FC<PettyCashHoldersModalProps> = ({
       return;
     }
 
+    const titleCased = toTitleCase(trimmed);
     const exists = holders.some(
-      (h, idx) => idx !== index && h.toLowerCase() === trimmed.toLowerCase()
+      (h, idx) => idx !== index && h.toLowerCase() === titleCased.toLowerCase()
     );
     if (exists) {
-      setErrorMsg(`Nama "${trimmed}" sudah ada dalam daftar.`);
+      setErrorMsg(`Nama "${titleCased}" sudah ada dalam daftar.`);
       return;
     }
 
     setErrorMsg('');
+    setWarningMsg(null);
     const updated = [...holders];
-    updated[index] = trimmed;
+    updated[index] = titleCased;
 
     setIsSaving(true);
     try {
@@ -134,10 +158,63 @@ export const PettyCashHoldersModal: React.FC<PettyCashHoldersModalProps> = ({
 
         {/* Content Body */}
         <div className="p-6 space-y-5 overflow-y-auto flex-1">
+          {/* Quick Consolidation Banner */}
+          {onOpenConsolidation && (
+            <div className="p-3.5 bg-linear-to-r from-amber-500/10 via-stone-50 to-amber-50 border border-amber-300/60 rounded-xl flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-8 h-8 rounded-lg bg-amber-500 text-stone-950 flex items-center justify-center shrink-0">
+                  <Sparkles size={16} />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xs font-black text-stone-900">Satukan Variasi Nama dari Seluruh Voucher</div>
+                  <div className="text-[10px] text-stone-500 truncate">Deteksi nama tidak lengkap, huruf kapital/kecil, atau typo otomatis</div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenConsolidation();
+                }}
+                className="px-3 py-1.5 bg-stone-900 hover:bg-stone-800 text-amber-400 font-bold text-xs rounded-lg transition shrink-0 cursor-pointer shadow-3xs flex items-center gap-1.5"
+              >
+                <span>Periksa Sekarang</span>
+              </button>
+            </div>
+          )}
+
           {errorMsg && (
             <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs flex items-center gap-2">
               <AlertCircle size={15} className="shrink-0 text-rose-600" />
               <span>{errorMsg}</span>
+            </div>
+          )}
+
+          {warningMsg && (
+            <div className="p-3.5 bg-amber-50 border border-amber-300 text-amber-900 rounded-xl text-xs space-y-2">
+              <div className="flex items-start gap-2">
+                <AlertCircle size={16} className="shrink-0 text-amber-600 mt-0.5" />
+                <span className="leading-relaxed">{warningMsg.text}</span>
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-1 border-t border-amber-200/60">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewHolderName('');
+                    setWarningMsg(null);
+                  }}
+                  className="px-2.5 py-1 bg-stone-200 hover:bg-stone-300 text-stone-800 rounded-lg text-[11px] font-bold cursor-pointer transition"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => handleAddHolder(e, true)}
+                  className="px-2.5 py-1 bg-amber-700 hover:bg-amber-800 text-white rounded-lg text-[11px] font-bold cursor-pointer transition"
+                >
+                  Tetap Tambahkan Nama Ini
+                </button>
+              </div>
             </div>
           )}
 

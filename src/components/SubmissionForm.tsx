@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Submission, SubmissionItem, PaymentMethod, REQUIRED_TRANSACTION_DOCS } from '../types';
 import { 
   googleDriveLogin, 
@@ -12,8 +12,9 @@ import {
 } from '../firebase';
 import { DriveAccountsManager } from './DriveAccountsManager';
 import { SppdIntegration, SppdRecord } from './SppdIntegration';
-import { Trash2, Plus, ArrowLeft, Save, AlertCircle, Sparkles, Cloud, Loader2, FileText, Coins, FileUp, ExternalLink, GitBranch, X, Calculator, Percent, Tag, Receipt } from 'lucide-react';
-import { generateF1PdfBytes, generateF2PdfBytes, formatDateIndonesian, convertImageToPdf, formatRupiah, analyzeVolumeInput } from '../utils';
+import { Trash2, Plus, ArrowLeft, Save, AlertCircle, Sparkles, Cloud, Loader2, FileText, Coins, FileUp, ExternalLink, GitBranch, X, Calculator, Percent, Tag, Receipt, CalendarX, CalendarCheck, AlertTriangle } from 'lucide-react';
+import { generateF1PdfBytes, generateF2PdfBytes, formatDateIndonesian, convertImageToPdf, formatRupiah, analyzeVolumeInput, checkIsHolidayOrWeekend, getNextWorkday, getPreviousWorkday, formatDateWithDayIndonesian, getDefaultTransactionDate, HolidayCheckResult } from '../utils';
+import { areNamesSimilar, toTitleCase } from '../utils/nameConsolidation';
 
 interface SubmissionFormProps {
   initialSubmission?: Submission | null;
@@ -23,6 +24,7 @@ interface SubmissionFormProps {
   onCancel: () => void;
   pettyCashHolders?: string[];
   onOpenManageHolders?: () => void;
+  onOpenConsolidateModal?: () => void;
 }
 
 const COMMON_NAMES = {
@@ -294,6 +296,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
   onCancel,
   pettyCashHolders = [],
   onOpenManageHolders,
+  onOpenConsolidateModal,
 }) => {
   // Local states
   const [id, setId] = useState('');
@@ -301,6 +304,15 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
   const [lokasi, setLokasi] = useState('Lt. 1');
   const [tanggal, setTanggal] = useState('');
   const [jenisPengajuan, setJenisPengajuan] = useState('Biaya Gaji');
+
+  // Evaluasi hari libur nasional, tanggal merah, atau akhir pekan secara reaktif
+  const holidayInfo = useMemo(() => {
+    return checkIsHolidayOrWeekend(tanggal);
+  }, [tanggal]);
+
+  // Modal konfirmasi peringatan tanggal merah saat simpan
+  const [isHolidayConfirmModalOpen, setIsHolidayConfirmModalOpen] = useState(false);
+  const [acknowledgedHolidayDates, setAcknowledgedHolidayDates] = useState<string[]>([]);
   const [kode, setKode] = useState('HO');
   const [dibayarkanKepada, setDibayarkanKepada] = useState('');
   const [dibayarkanDengan, setDibayarkanDengan] = useState<PaymentMethod>('Cek/Transfer');
@@ -338,45 +350,62 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
     return Array.from(set);
   }, [submissions]);
 
-  // Dynamic recipient history compiled from previous submissions, master holders, and presets
+  // Dynamic recipient history compiled from master holders and past submissions (normalized & deduplicated)
   const recipientHistory = React.useMemo(() => {
-    const set = new Set<string>();
-    if (isPettyCash) {
-      // In Petty Cash mode, suggest uppercase names
-      effectiveHolders.forEach(h => { if (h && h.trim()) set.add(h.trim().toUpperCase()); });
-      COMMON_NAMES.penerima.forEach(p => { if (p && p.trim()) set.add(p.trim().toUpperCase()); });
-      submissions.forEach(s => {
-        if (s.dibayarkanKepada && s.dibayarkanKepada.trim()) {
-          set.add(s.dibayarkanKepada.trim().toUpperCase());
+    const map = new Map<string, string>(); // lowerKey -> Canonical Title Case Name
+
+    // Priority 1: Master petty cash holders
+    effectiveHolders.forEach(h => {
+      if (h && h.trim()) {
+        const clean = toTitleCase(h.trim());
+        map.set(clean.toLowerCase(), clean);
+      }
+    });
+
+    // Priority 2: Common preset names
+    COMMON_NAMES.penerima.forEach(p => {
+      if (p && p.trim()) {
+        const clean = toTitleCase(p.trim());
+        if (!map.has(clean.toLowerCase())) {
+          map.set(clean.toLowerCase(), clean);
         }
-        if (s.pettyCashCustodian && s.pettyCashCustodian.trim()) {
-          set.add(s.pettyCashCustodian.trim().toUpperCase());
+      }
+    });
+
+    // Priority 3: Previous submissions
+    submissions.forEach(s => {
+      const p = s.dibayarkanKepada?.trim();
+      if (p) {
+        const clean = toTitleCase(p);
+        if (!map.has(clean.toLowerCase())) {
+          map.set(clean.toLowerCase(), clean);
         }
-      });
-      try {
-        const saved = JSON.parse(localStorage.getItem('NUSANTARA_RECIPIENT_HISTORY') || '[]');
-        if (Array.isArray(saved)) {
-          saved.forEach((s: string) => { if (s && s.trim()) set.add(s.trim().toUpperCase()); });
+      }
+      const c = s.pettyCashCustodian?.trim();
+      if (c) {
+        const clean = toTitleCase(c);
+        if (!map.has(clean.toLowerCase())) {
+          map.set(clean.toLowerCase(), clean);
         }
-      } catch (e) {}
-    } else {
-      // In Standard mode, suggest historical names with their original casing
-      COMMON_NAMES.penerima.forEach(p => { if (p && p.trim()) set.add(p.trim()); });
-      effectiveHolders.forEach(h => { if (h && h.trim()) set.add(h.trim()); });
-      submissions.forEach(s => {
-        if (s.dibayarkanKepada && s.dibayarkanKepada.trim()) {
-          set.add(s.dibayarkanKepada.trim());
-        }
-      });
-      try {
-        const saved = JSON.parse(localStorage.getItem('NUSANTARA_RECIPIENT_HISTORY') || '[]');
-        if (Array.isArray(saved)) {
-          saved.forEach((s: string) => { if (s && s.trim()) set.add(s.trim()); });
-        }
-      } catch (e) {}
-    }
-    return Array.from(set).sort();
-  }, [submissions, effectiveHolders, isPettyCash]);
+      }
+    });
+
+    try {
+      const saved = JSON.parse(localStorage.getItem('NUSANTARA_RECIPIENT_HISTORY') || '[]');
+      if (Array.isArray(saved)) {
+        saved.forEach((s: string) => {
+          if (s && s.trim()) {
+            const clean = toTitleCase(s.trim());
+            if (!map.has(clean.toLowerCase())) {
+              map.set(clean.toLowerCase(), clean);
+            }
+          }
+        });
+      }
+    } catch (e) {}
+
+    return Array.from(map.values()).sort((a, b) => a.localeCompare(b));
+  }, [submissions, effectiveHolders]);
 
   // Auto-detect transaction classification (Petty Cash, SPPD, Invoice, Salary, or Standard)
   useEffect(() => {
@@ -393,7 +422,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
       const defHolder = effectiveHolders[0] || 'Suryo Pranoto';
       setPettyCashCustodian(defHolder);
       if (!dibayarkanKepada) {
-        setDibayarkanKepada(defHolder.toUpperCase());
+        setDibayarkanKepada(defHolder);
       }
     }
 
@@ -1111,12 +1140,9 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
 
       setItems(initialSubmission.items.map(item => ({ ...item })));
     } else {
-      // Setup default current date
-      const today = new Date();
-      const yr = today.getFullYear();
-      const mo = String(today.getMonth() + 1).padStart(2, '0');
-      const dy = String(today.getDate()).padStart(2, '0');
-      setTanggal(`${yr}-${mo}-${dy}`);
+      // Setup default current date (otomatis pilih hari kerja terdekat jika hari ini adalah tanggal merah/akhir pekan)
+      const defaultDateInfo = getDefaultTransactionDate();
+      setTanggal(defaultDateInfo.dateYMD);
       
       const details = userProfile?.companyDetails;
 
@@ -1213,10 +1239,8 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
   // Run calculation
   const calculatedGrandTotal = items.reduce((sum, item) => sum + (Number(item.total) || 0), 0);
 
-  // Form Submission
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
+  // Form Submission Execution Logic
+  const executeSave = async () => {
     if (isSubmittingRef.current) return;
 
     // Validation
@@ -1828,13 +1852,23 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         buktiPembayaranDrive
       ) || (initialSubmission?.status === 'Lunas');
 
+      // Normalize dibayarkanKepada: match against registered holders first (case-insensitive / incomplete), fallback to clean Title Case
+      const rawPenerima = (dibayarkanKepada || '').trim();
+      const matchedHolderForPenerima = effectiveHolders.find(h => areNamesSimilar(h, rawPenerima).isMatch);
+      const normalizedPenerima = matchedHolderForPenerima || (rawPenerima ? toTitleCase(rawPenerima) : '');
+
+      // Normalize custodian for Petty Cash
+      const rawCustodian = (pettyCashCustodian || '').trim();
+      const matchedHolderForCustodian = effectiveHolders.find(h => areNamesSimilar(h, rawCustodian).isMatch);
+      const normalizedCustodian = matchedHolderForCustodian || (rawCustodian ? toTitleCase(rawCustodian) : (effectiveHolders[0] || 'Suryo Pranoto'));
+
       const payload: Submission = {
         id: id || `sub-${Date.now()}`,
         lokasi,
         tanggal,
         jenisPengajuan,
         kode,
-        dibayarkanKepada,
+        dibayarkanKepada: normalizedPenerima,
         dibayarkanDengan,
         status: isLunas ? 'Lunas' : 'Belum Lunas',
         notes,
@@ -1873,7 +1907,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
 
         // Save Petty Cash properties
         isPettyCash,
-        pettyCashCustodian: isPettyCash ? (pettyCashCustodian.trim() || (effectiveHolders.length > 0 ? effectiveHolders[0] : 'Suryo Pranoto')) : undefined,
+        pettyCashCustodian: isPettyCash ? normalizedCustodian : undefined,
         pettyCashFile: isPettyCash ? finalPettyCashFile : undefined,
 
         googleDriveFileUrl: finalFileUrl,
@@ -1914,6 +1948,29 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
       setIsSaving(false);
       isSubmittingRef.current = false;
     }
+  };
+
+  // Form Submission Handler dengan Peringatan Hari Libur & Tanggal Merah
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    // Validasi cepat awal
+    if (!dibayarkanKepada.trim()) {
+      setValidationError('Penerima pembayaran (Dibayarkan Kepada) wajib diisi.');
+      return;
+    }
+    if (!tanggal) {
+      setValidationError('Tanggal pengajuan wajib ditentukan.');
+      return;
+    }
+
+    // Intersepsi Hari Libur / Tanggal Merah / Akhir Pekan (Sabtu & Minggu)
+    if (holidayInfo.isHolidayOrWeekend && !acknowledgedHolidayDates.includes(tanggal)) {
+      setIsHolidayConfirmModalOpen(true);
+      return;
+    }
+
+    await executeSave();
   };
 
   return (
@@ -2004,13 +2061,33 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
 
           {/* Tanggal */}
           <div>
-            <label className="block text-xs font-medium text-stone-500 mb-1">Tanggal Pengajuan</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-medium text-stone-500">Tanggal Pengajuan</label>
+              {holidayInfo.isHolidayOrWeekend && (
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-200 shadow-3xs animate-pulse">
+                  <AlertTriangle size={10} className="text-rose-600 shrink-0" />
+                  Tanggal Merah
+                </span>
+              )}
+            </div>
             <input
               type="date"
-              className="w-full bg-white border border-stone-200 rounded-lg py-2 px-3 text-sm focus:outline-none focus:ring-1 focus:ring-stone-400"
+              className={`w-full bg-white border rounded-lg py-2 px-3 text-sm focus:outline-none transition ${
+                holidayInfo.isHolidayOrWeekend
+                  ? 'border-rose-400 focus:ring-2 focus:ring-rose-300 bg-rose-50/40 text-rose-950 font-medium'
+                  : 'border-stone-200 focus:ring-1 focus:ring-stone-400'
+              }`}
               value={tanggal}
               onChange={(e) => setTanggal(e.target.value)}
             />
+            {holidayInfo.dayName && (
+              <div className="mt-1 flex items-center justify-between text-[11px] font-mono">
+                <span className={holidayInfo.isHolidayOrWeekend ? 'text-rose-700 font-bold' : 'text-stone-500'}>
+                  {holidayInfo.dayName}
+                  {holidayInfo.reason ? ` • ${holidayInfo.reason}` : ''}
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Jenis Pengajuan */}
@@ -2062,35 +2139,133 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
             />
           </div>
 
+          {/* Holiday / Weekend Banner Reminder */}
+          {holidayInfo.isHolidayOrWeekend && (
+            <div className="lg:col-span-4 bg-rose-50 border-2 border-rose-300 rounded-xl p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3.5 shadow-xs animate-in fade-in slide-in-from-top-2 duration-200">
+              <div className="flex items-start gap-3">
+                <div className="p-2 rounded-xl bg-rose-100 text-rose-700 shrink-0 border border-rose-200 mt-0.5 md:mt-0 shadow-3xs">
+                  <CalendarX size={20} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-black text-rose-950 uppercase tracking-wide">
+                      Peringatan Hari Libur / Tanggal Merah Terdeteksi
+                    </span>
+                    <span className="text-[10px] font-mono font-bold bg-rose-200 text-rose-900 px-2 py-0.5 rounded-full border border-rose-300">
+                      {holidayInfo.reason}
+                    </span>
+                  </div>
+                  <p className="text-xs text-rose-800 mt-1 leading-relaxed">
+                    Tanggal yang Anda pilih (<strong className="text-rose-950">{holidayInfo.formattedDateIndonesian}</strong>) terdeteksi sebagai <strong>{holidayInfo.reason}</strong>. Kebijakan operasional & SOP kantor: <span className="underline decoration-rose-400 font-bold">tidak ada pembuatan transaksi atau pengeluaran kas di hari libur resmi / akhir pekan</span>. Disarankan untuk memindahkan tanggal ke hari kerja.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0 w-full md:w-auto pt-2 md:pt-0 border-t md:border-t-0 border-rose-200">
+                {holidayInfo.suggestedNextWorkday && (
+                  <button
+                    type="button"
+                    onClick={() => setTanggal(holidayInfo.suggestedNextWorkday)}
+                    className="flex-1 md:flex-none inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-xs transition cursor-pointer"
+                    title={`Pindahkan tanggal ke: ${formatDateIndonesian(holidayInfo.suggestedNextWorkday)}`}
+                  >
+                    <CalendarCheck size={14} />
+                    <span>Ganti ke Hari Kerja Berikutnya ({holidayInfo.suggestedNextWorkday})</span>
+                  </button>
+                )}
+                {holidayInfo.suggestedPrevWorkday && (
+                  <button
+                    type="button"
+                    onClick={() => setTanggal(holidayInfo.suggestedPrevWorkday)}
+                    className="flex-1 md:flex-none inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-lg bg-white hover:bg-rose-100 text-rose-800 border border-rose-300 text-xs font-bold transition cursor-pointer"
+                    title={`Pindahkan tanggal ke: ${formatDateIndonesian(holidayInfo.suggestedPrevWorkday)}`}
+                  >
+                    <span>Hari Kerja Kemarin</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Dibayarkan Kepada */}
           <div className="lg:col-span-2">
             <div className="flex items-center justify-between mb-1">
               <label className="block text-xs font-medium text-stone-500">
                 Dibayarkan Kepada (Penerima)
               </label>
-              {isPettyCash && (
-                <span className="text-[10px] text-amber-700 font-mono font-bold bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
-                  Otomatis Huruf Kapital (Petty Cash)
-                </span>
-              )}
+              <div className="flex items-center gap-2">
+                {onOpenConsolidateModal && (
+                  <button
+                    type="button"
+                    onClick={onOpenConsolidateModal}
+                    className="text-[10px] text-amber-700 hover:text-amber-800 font-extrabold flex items-center gap-1 cursor-pointer hover:underline"
+                    title="Periksa nama-nama serupa yang belum distandarisasi"
+                  >
+                    <Sparkles size={10} />
+                    <span>Satukan Variasi Nama</span>
+                  </button>
+                )}
+                {isPettyCash && (
+                  <span className="text-[10px] text-amber-700 font-mono font-bold bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                    Pemegang Petty Cash
+                  </span>
+                )}
+              </div>
             </div>
             
             <input
               type="text"
               list="preset-penerima"
-              className={`w-full bg-white border border-stone-200 rounded-lg py-2 px-3 text-sm focus:outline-none focus:ring-1 focus:ring-stone-400 font-semibold text-stone-900 ${
-                isPettyCash ? 'uppercase tracking-wide' : ''
-              }`}
-              placeholder={isPettyCash ? "MASUKKAN NAMA PENERIMA / PEMEGANG KAS..." : "Masukkan nama penerima..."}
+              className="w-full bg-white border border-stone-200 rounded-lg py-2 px-3 text-sm focus:outline-none focus:ring-1 focus:ring-stone-400 font-semibold text-stone-900"
+              placeholder={isPettyCash ? "Masukkan nama penerima / pemegang kas..." : "Masukkan nama penerima..."}
               value={dibayarkanKepada}
               onChange={(e) => {
-                const val = isPettyCash ? e.target.value.toUpperCase() : e.target.value;
-                setDibayarkanKepada(val);
+                setDibayarkanKepada(e.target.value);
+              }}
+              onBlur={() => {
+                const trimmed = dibayarkanKepada.trim();
+                if (!trimmed) return;
+                // Auto-snap to exact case-insensitive match
+                const exact = recipientHistory.find(r => r.toLowerCase() === trimmed.toLowerCase());
+                if (exact && exact !== dibayarkanKepada) {
+                  setDibayarkanKepada(exact);
+                  if (isPettyCash && effectiveHolders.some(h => h.toLowerCase() === exact.toLowerCase())) {
+                    setPettyCashCustodian(exact);
+                  }
+                }
               }}
             />
             <datalist id="preset-penerima">
               {recipientHistory.map(p => <option key={p} value={p} />)}
             </datalist>
+
+            {/* Smart detection suggestion for incomplete name */}
+            {(() => {
+              const trimmed = (dibayarkanKepada || '').trim();
+              if (!trimmed || trimmed.length < 3) return null;
+              if (effectiveHolders.some(h => h.toLowerCase() === trimmed.toLowerCase())) return null;
+              const matchedSimilar = effectiveHolders.find(h => areNamesSimilar(h, trimmed).isMatch);
+              if (!matchedSimilar) return null;
+              return (
+                <div className="mt-1.5 p-2 bg-amber-50 border border-amber-200 rounded-lg flex items-center justify-between gap-2 text-xs text-amber-900 animate-fade-in">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <Sparkles size={13} className="text-amber-600 shrink-0" />
+                    <span className="truncate">
+                      Nama mendekati pemegang resmi: <strong>{matchedSimilar}</strong>
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDibayarkanKepada(matchedSimilar);
+                      if (isPettyCash) setPettyCashCustodian(matchedSimilar);
+                    }}
+                    className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded text-[11px] font-bold cursor-pointer shrink-0 transition"
+                  >
+                    Gunakan {matchedSimilar}
+                  </button>
+                </div>
+              );
+            })()}
           </div>
 
           {/* Dibayarkan Dengan */}
@@ -2286,7 +2461,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                         onChange={(e) => {
                           const selected = e.target.value;
                           setPettyCashCustodian(selected);
-                          setDibayarkanKepada(selected.toUpperCase());
+                          setDibayarkanKepada(selected);
                         }}
                       >
                         {/* Preserve older/legacy custodian names if not present in master list */}
@@ -2310,6 +2485,17 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                           <span className="hidden sm:inline">Kelola List</span>
                         </button>
                       )}
+                      {onOpenConsolidateModal && (
+                        <button
+                          type="button"
+                          onClick={onOpenConsolidateModal}
+                          className="px-2.5 py-2 bg-stone-900 hover:bg-stone-800 text-amber-400 rounded-lg text-xs font-bold transition flex items-center gap-1 shrink-0 cursor-pointer shadow-3xs"
+                          title="Satukan nama yang serupa/berbeda penulisan"
+                        >
+                          <Sparkles size={12} />
+                          <span className="hidden sm:inline">Satukan Nama</span>
+                        </button>
+                      )}
                     </div>
 
                     {/* Quick-select chips for Petty Cash Custodians: Clicking automatically updates both custodian and recipient */}
@@ -2321,7 +2507,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                           type="button"
                           onClick={() => {
                             setPettyCashCustodian(holder);
-                            setDibayarkanKepada(holder.toUpperCase());
+                            setDibayarkanKepada(holder);
                           }}
                           className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1 ${
                             pettyCashCustodian === holder
@@ -3780,6 +3966,144 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                 onImportSppdToSubmission={(sppd) => handleImportSppdData(sppd)}
                 onClose={() => setShowSppdModal(false)}
               />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL PERINGATAN & KONFIRMASI TANGGAL MERAH / HARI LIBUR */}
+      {isHolidayConfirmModalOpen && (
+        <div className="fixed inset-0 z-50 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
+          <div className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl border border-stone-200 overflow-hidden flex flex-col font-sans animate-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="bg-rose-50 border-b border-rose-100 p-5 flex items-start gap-3.5">
+              <div className="p-2.5 rounded-2xl bg-rose-100 text-rose-700 shrink-0 border border-rose-200 shadow-3xs">
+                <CalendarX size={24} />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-rose-700 bg-rose-200/70 px-2 py-0.5 rounded-full inline-block mb-1">
+                    SOP Kalender Operasional
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsHolidayConfirmModalOpen(false)}
+                    className="p-1 text-stone-400 hover:text-stone-700 rounded-lg transition"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+                <h3 className="text-base font-black text-rose-950">
+                  Tanggal Pengajuan Adalah Hari Libur / Tanggal Merah
+                </h3>
+              </div>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-4 text-sm text-stone-700">
+              <div className="bg-rose-50/70 border border-rose-200 rounded-2xl p-4">
+                <div className="flex items-center justify-between text-xs font-mono text-rose-800 mb-1">
+                  <span>Tanggal Terpilih:</span>
+                  <span className="font-bold text-rose-950">{holidayInfo.formattedDateIndonesian}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs font-mono text-rose-800">
+                  <span>Status Kalender:</span>
+                  <span className="font-black text-rose-700 bg-rose-200/80 px-2 py-0.5 rounded-md">{holidayInfo.reason}</span>
+                </div>
+              </div>
+
+              <div className="text-xs leading-relaxed text-stone-600 bg-stone-50 rounded-xl p-3.5 border border-stone-200">
+                <p className="font-semibold text-stone-900 mb-1">
+                  Kebijakan Administrasi & Kas Kantor:
+                </p>
+                <p>
+                  Sesuai ketentuan, <strong className="text-rose-900">tidak ada pengeluaran kas atau pembuatan voucher transaksi di hari libur resmi, tanggal merah, atau akhir pekan (Sabtu/Minggu)</strong>.
+                </p>
+                <p className="mt-2 text-stone-500">
+                  Disarankan untuk mengalihkan tanggal voucher ke <strong>hari kerja resmi terdekat</strong> agar administrasi dan pencatatan kas tetap tertib.
+                </p>
+              </div>
+
+              {/* Recommended Workday Actions */}
+              <div className="space-y-2 pt-1">
+                <span className="text-[11px] font-mono font-bold text-stone-500 uppercase tracking-wide block">
+                  Pilihan Tindakan yang Direkomendasikan:
+                </span>
+
+                {holidayInfo.suggestedNextWorkday && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTanggal(holidayInfo.suggestedNextWorkday);
+                      setIsHolidayConfirmModalOpen(false);
+                    }}
+                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-3 rounded-xl text-xs transition cursor-pointer flex items-center justify-between shadow-xs"
+                  >
+                    <div className="flex items-center gap-2.5 text-left">
+                      <CalendarCheck size={18} className="text-emerald-200 shrink-0" />
+                      <div>
+                        <div className="font-black">Ganti ke Hari Kerja Berikutnya</div>
+                        <div className="text-[11px] font-normal text-emerald-100 font-mono">
+                          {formatDateWithDayIndonesian(holidayInfo.suggestedNextWorkday)}
+                        </div>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-mono bg-emerald-800/60 text-white px-2.5 py-1 rounded font-bold">
+                      Disarankan
+                    </span>
+                  </button>
+                )}
+
+                {holidayInfo.suggestedPrevWorkday && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTanggal(holidayInfo.suggestedPrevWorkday);
+                      setIsHolidayConfirmModalOpen(false);
+                    }}
+                    className="w-full bg-stone-100 hover:bg-stone-200 text-stone-800 border border-stone-300 font-bold px-4 py-2.5 rounded-xl text-xs transition cursor-pointer flex items-center justify-between"
+                  >
+                    <div className="flex items-center gap-2.5 text-left">
+                      <CalendarCheck size={18} className="text-stone-500 shrink-0" />
+                      <div>
+                        <div className="font-bold">Ganti ke Hari Kerja Kemarin</div>
+                        <div className="text-[11px] font-normal text-stone-500 font-mono">
+                          {formatDateWithDayIndonesian(holidayInfo.suggestedPrevWorkday)}
+                        </div>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-mono bg-stone-200 text-stone-700 px-2 py-0.5 rounded">
+                      Sebelum Libur
+                    </span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 bg-stone-50 border-t border-stone-200 flex flex-col sm:flex-row items-center justify-between gap-2.5">
+              <button
+                type="button"
+                onClick={() => setIsHolidayConfirmModalOpen(false)}
+                className="w-full sm:w-auto px-4 py-2 text-xs font-semibold text-stone-600 hover:text-stone-900 transition cursor-pointer"
+              >
+                Batal & Periksa Tanggal
+              </button>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  setAcknowledgedHolidayDates(prev => [...prev, tanggal]);
+                  setIsHolidayConfirmModalOpen(false);
+                  setTimeout(() => {
+                    executeSave();
+                  }, 50);
+                }}
+                className="w-full sm:w-auto px-3.5 py-2 text-xs font-bold text-rose-800 hover:text-rose-950 hover:bg-rose-100 border border-rose-300 rounded-xl transition cursor-pointer"
+                title="Hanya jika pengeluaran benar-benar darurat di hari libur"
+              >
+                Tetap Simpan (Pengecualian Khusus)
+              </button>
             </div>
           </div>
         </div>

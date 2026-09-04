@@ -19,6 +19,8 @@ interface SubmissionsListProps {
   onMarkAsPaid?: (id: string) => void;
   layoutMode?: 'standard' | 'spreadsheet' | 'audit_logs' | 'invoice_recap' | 'unpaid_outstanding' | 'petty_cash_recap';
   onLayoutModeChange?: (mode: 'standard' | 'spreadsheet' | 'audit_logs' | 'invoice_recap' | 'unpaid_outstanding' | 'petty_cash_recap') => void;
+  pettyCashHolders?: string[];
+  onOpenConsolidateModal?: () => void;
 }
 
 export const SubmissionsList: React.FC<SubmissionsListProps> = ({
@@ -35,6 +37,8 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   onMarkAsPaid,
   layoutMode: propLayoutMode,
   onLayoutModeChange,
+  pettyCashHolders = [],
+  onOpenConsolidateModal,
 }) => {
   const [searchTerm, setSearchTerm] = useState(() => {
     try { return sessionStorage.getItem('sublist_searchTerm') || ''; } catch (e) { return ''; }
@@ -540,13 +544,13 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   const availablePettyCashCustodians = useMemo(() => {
     const custodians = new Set<string>();
     pettyCashSubmissions.forEach(sub => {
-      const custodian = getPettyCashCustodian(sub);
+      const custodian = getPettyCashCustodian(sub, pettyCashHolders);
       if (custodian) {
         custodians.add(custodian);
       }
     });
     return Array.from(custodians).sort();
-  }, [pettyCashSubmissions]);
+  }, [pettyCashSubmissions, pettyCashHolders]);
 
   const availablePettyCashMonths = useMemo(() => {
     const months = new Set<string>();
@@ -565,7 +569,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
     const list = pettyCashSubmissions.filter(sub => {
       // 1. Custodian Filter
       if (pettyCashCustodianFilter !== 'All') {
-        const custodianName = getPettyCashCustodian(sub).toLowerCase();
+        const custodianName = getPettyCashCustodian(sub, pettyCashHolders).toLowerCase();
         const target = pettyCashCustodianFilter.trim().toLowerCase();
         if (custodianName !== target && !custodianName.includes(target)) {
           return false;
@@ -584,7 +588,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
         const query = pettyCashSearchQuery.toLowerCase();
         const textToSearch = [
           sub.kode || '',
-          getPettyCashCustodian(sub),
+          getPettyCashCustodian(sub, pettyCashHolders),
           sub.pettyCashCustodian || '',
           sub.jenisPengajuan || '',
           sub.notes || '',
@@ -597,7 +601,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
     });
 
     return sortSubmissionsDescending(list);
-  }, [pettyCashSubmissions, pettyCashCustodianFilter, pettyCashMonthFilter, pettyCashSearchQuery]);
+  }, [pettyCashSubmissions, pettyCashCustodianFilter, pettyCashMonthFilter, pettyCashSearchQuery, pettyCashHolders]);
 
   // Dynamic invoice month list
   const availableInvoiceMonths = useMemo(() => {
@@ -1229,7 +1233,18 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
             </div>
 
             {/* Print and Export Buttons */}
-            <div className="flex items-center gap-2 self-stretch lg:self-end">
+            <div className="flex flex-wrap items-center gap-2 self-stretch lg:self-end">
+              {onOpenConsolidateModal && (
+                <button
+                  onClick={onOpenConsolidateModal}
+                  className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 bg-amber-500 hover:bg-amber-600 border border-amber-600 text-stone-950 font-black rounded-xl transition duration-150 text-xs shadow-3xs cursor-pointer select-none"
+                  title="Satukan & Rapikan Variasi Nama Penerima atau Pemegang Petty Cash yang Mirip"
+                >
+                  <Sparkles size={13} className="text-stone-950" />
+                  <span>Satukan Nama</span>
+                </button>
+              )}
+
               <button
                 onClick={handleDownloadCSV}
                 className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-4.5 py-2.5 bg-emerald-800 hover:bg-emerald-900 border border-emerald-950 text-white font-extrabold rounded-xl transition duration-150 text-xs shadow-3xs cursor-pointer select-none"
@@ -2854,6 +2869,16 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 <div className="text-2xl font-black text-stone-900 font-display">
                   {availablePettyCashCustodians.length} <span className="text-xs font-medium text-stone-400">Personil</span>
                 </div>
+                {onOpenConsolidateModal && (
+                  <button
+                    onClick={onOpenConsolidateModal}
+                    className="text-[11px] text-amber-800 hover:text-amber-900 font-extrabold flex items-center gap-1 hover:underline cursor-pointer pt-0.5"
+                    title="Satukan nama yang berbeda huruf atau tidak lengkap"
+                  >
+                    <Sparkles size={12} className="text-amber-600" />
+                    <span>Satukan Nama Serupa</span>
+                  </button>
+                )}
               </div>
               <div className="p-3 bg-amber-50 text-amber-700 rounded-2xl">
                 <User size={20} />

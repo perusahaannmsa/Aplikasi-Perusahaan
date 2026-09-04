@@ -18,6 +18,7 @@ import { UserProfileModal } from './components/UserProfileModal';
 import { GoogleDriveSettingsModal } from './components/GoogleDriveSettingsModal';
 import { AbsensiHarianNmsa } from './components/AbsensiHarianNmsa';
 import { PettyCashHoldersModal } from './components/PettyCashHoldersModal';
+import { ConsolidateNamesModal } from './components/ConsolidateNamesModal';
 import { NpwpManager } from './components/NpwpManager';
 import { AccuratePettyCashMapping } from './components/AccuratePettyCashMapping';
 import { AccountMappingContainer } from './components/AccountMappingContainer';
@@ -26,9 +27,11 @@ import { AgendaReminderBanner } from './components/AgendaReminderBanner';
 import { WhatsAppAiModal } from './components/WhatsAppAiModal';
 import { LiveClock } from './components/LiveClock';
 import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, formatDateIndonesian } from './utils';
+import { areNamesSimilar, toTitleCase } from './utils/nameConsolidation';
 import { 
   isFirebaseConfigured, 
   saveSubmissionToFirestore, 
+  saveSubmissionsBatchToFirestore,
   deleteSubmissionFromFirestore,
   deleteGoogleDriveFile,
   registerAuthChangeListener,
@@ -52,7 +55,7 @@ import {
   subscribeToCompanySettingsFromFirestore,
   saveCompanySettingsToFirestore
 } from './firebase';
-import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell, MessageSquare, Bot } from 'lucide-react';
+import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell, MessageSquare, Bot, Sparkles } from 'lucide-react';
 
 export default function App() {
   const [theme, setTheme] = useState<'classic' | 'gold-dark' | 'emerald' | 'slate'>(() => {
@@ -141,6 +144,7 @@ export default function App() {
   });
 
   const [isHoldersModalOpen, setIsHoldersModalOpen] = useState(false);
+  const [isConsolidateNamesModalOpen, setIsConsolidateNamesModalOpen] = useState(false);
 
   // Real-time Cloud Firestore subscription & Shared State sync across all computers/devices
   useEffect(() => {
@@ -341,11 +345,12 @@ export default function App() {
       const isPC = isPettyCashSubmission(sub);
 
       if (isPC) {
-        const custodianName = getPettyCashCustodian(sub) || 'Suryo Pranoto';
+        const custodianName = getPettyCashCustodian(sub, newHoldersList) || 'Suryo Pranoto';
         
-        // 1. Ensure custodian is registered in pettyCashHolders
-        if (custodianName && !newHoldersList.some(h => h.trim().toLowerCase() === custodianName.toLowerCase())) {
-          newHoldersList.push(custodianName);
+        // 1. Ensure custodian is registered in pettyCashHolders - avoid adding duplicates or similar variations
+        const alreadyRegisteredOrSimilar = newHoldersList.some(h => areNamesSimilar(h, custodianName).isMatch);
+        if (custodianName && !alreadyRegisteredOrSimilar) {
+          newHoldersList.push(toTitleCase(custodianName));
           holdersChanged = true;
         }
 
@@ -459,8 +464,67 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pettyCashHolders: newHolders, pettyCashReports })
       });
+      await fetch('/api/unified-storage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pettyCashHolders: newHolders })
+      });
+      await saveCompanySettingsToFirestore({ pettyCashHolders: newHolders });
     } catch (err) {
       console.error('Gagal sinkronisasi master list pemegang petty cash:', err);
+    }
+  };
+
+  const handleApplyConsolidation = async (
+    consolidatedSubmissions: Submission[],
+    consolidatedHolders: string[]
+  ) => {
+    // 1. Update React state immediately
+    setSubmissions(consolidatedSubmissions);
+    setPettyCashHolders(consolidatedHolders);
+
+    // 2. Persist locally to browser
+    try {
+      localStorage.setItem('NUSANTARA_HO_SUBMISSIONS', JSON.stringify(consolidatedSubmissions));
+      localStorage.setItem('petty_cash_holders_v2', JSON.stringify(consolidatedHolders));
+    } catch (e) {
+      console.error('Gagal menyimpan konsolidasi ke localStorage:', e);
+    }
+
+    // 3. Batch update all modified submissions into Firestore
+    try {
+      await saveSubmissionsBatchToFirestore(consolidatedSubmissions);
+    } catch (err) {
+      console.warn('Gagal batch update submissions ke Firestore:', err);
+    }
+
+    // 4. Save updated pettyCashHolders to Firestore
+    try {
+      await saveCompanySettingsToFirestore({ pettyCashHolders: consolidatedHolders });
+    } catch (err) {
+      console.warn('Gagal simpan pettyCashHolders ke Firestore:', err);
+    }
+
+    // 5. Sync to unified storage & shared state servers
+    try {
+      await fetch('/api/unified-storage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pettyCashHolders: consolidatedHolders,
+          submissions: consolidatedSubmissions
+        })
+      });
+      await fetch('/api/shared-state', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pettyCashHolders: consolidatedHolders,
+          pettyCashReports
+        })
+      });
+    } catch (err) {
+      console.warn('Gagal sync backend servers setelah konsolidasi:', err);
     }
   };
 
@@ -2174,6 +2238,25 @@ export default function App() {
                       )}
                     </button>
 
+                    {/* 7. STANDARISASI & SATUKAN VARIASI NAMA */}
+                    <button
+                      onClick={() => { setIsConsolidateNamesModalOpen(true); setIsDashboardNavOpen(false); }}
+                      className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer text-left mb-1 text-stone-700 hover:bg-amber-50 hover:text-amber-950 border border-transparent hover:border-amber-200"
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <Sparkles size={15} className="text-amber-600" />
+                        <div className="flex flex-col">
+                          <span>Satukan Variasi Nama</span>
+                          <span className="text-[10px] font-normal text-stone-400">
+                            Deduplikasi Penerima & Pemegang Kas
+                          </span>
+                        </div>
+                      </div>
+                      <span className="text-[9px] font-mono bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded font-bold">
+                        Smart
+                      </span>
+                    </button>
+
                     {(view === 'form' || view === 'print' || view === 'sppd' || view === 'agenda') && (
                       <button
                         onClick={() => { setView('list'); setIsDashboardNavOpen(false); }}
@@ -2319,6 +2402,23 @@ export default function App() {
                           </span>
                         </button>
 
+                        {/* SATUKAN & STANDARISASI NAMA PENERIMA / PEMEGANG KAS */}
+                        <button
+                          onClick={() => {
+                            setIsUserMenuOpen(false);
+                            setIsConsolidateNamesModalOpen(true);
+                          }}
+                          className="w-full bg-stone-100 hover:bg-amber-50 hover:border-amber-300 text-stone-800 hover:text-amber-950 border border-stone-250 font-bold px-3 py-2 rounded-xl text-xs transition cursor-pointer flex items-center justify-between font-sans shadow-3xs"
+                        >
+                          <div className="flex items-center gap-2 truncate">
+                            <Sparkles size={15} className="text-amber-600 shrink-0" />
+                            <span className="truncate">Satukan Nama Serupa</span>
+                          </div>
+                          <span className="text-[9px] font-mono bg-amber-200 text-amber-900 px-1.5 py-0.5 rounded font-bold shrink-0">
+                            Auto
+                          </span>
+                        </button>
+
                         <button
                           onClick={() => {
                             setIsUserMenuOpen(false);
@@ -2418,6 +2518,8 @@ export default function App() {
             layoutMode={layoutMode}
             onLayoutModeChange={setLayoutMode}
             userProfile={userProfile}
+            pettyCashHolders={pettyCashHolders}
+            onOpenConsolidateModal={() => setIsConsolidateNamesModalOpen(true)}
             onSelect={(sub, initialTab) => {
               try { sessionStorage.setItem('sublist_scrollPos', window.scrollY.toString()); } catch (e) {}
               setActiveSubmission(sub);
@@ -2466,6 +2568,7 @@ export default function App() {
             submissions={submissions}
             pettyCashHolders={pettyCashHolders}
             onOpenManageHolders={() => setIsHoldersModalOpen(true)}
+            onOpenConsolidateModal={() => setIsConsolidateNamesModalOpen(true)}
             onSave={handleSaveSubmission}
             onCancel={() => {
               setEditingSubmission(null);
@@ -2604,6 +2707,16 @@ export default function App() {
         onClose={() => setIsHoldersModalOpen(false)}
         holders={pettyCashHolders}
         onSaveHolders={handleSavePettyCashHolders}
+        onOpenConsolidation={() => setIsConsolidateNamesModalOpen(true)}
+      />
+
+      {/* Satukan Variasi Nama & Deduplikasi Modal */}
+      <ConsolidateNamesModal
+        isOpen={isConsolidateNamesModalOpen}
+        onClose={() => setIsConsolidateNamesModalOpen(false)}
+        submissions={submissions}
+        pettyCashHolders={pettyCashHolders}
+        onApplyConsolidation={handleApplyConsolidation}
       />
 
       {/* Pusat Layanan Awan & Integrasi Modal */}

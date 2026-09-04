@@ -1,5 +1,15 @@
 // Utility functions for formatting and calculations
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import { areNamesSimilar } from './utils/nameConsolidation';
+export { areNamesSimilar, toTitleCase, findDuplicateNameClusters, applyNameConsolidation } from './utils/nameConsolidation';
+export { 
+  checkIsHolidayOrWeekend, 
+  formatDateWithDayIndonesian, 
+  getNextWorkday, 
+  getPreviousWorkday, 
+  getDefaultTransactionDate,
+  type HolidayCheckResult 
+} from './utils/holidayUtils';
 
 export interface PdfInputSource {
   bytes: Uint8Array;
@@ -902,17 +912,24 @@ export function getSppdEmployeeName(sub: any): string {
 }
 
 /**
- * Retrieve custodian name safely with fallback to recipient
+ * Retrieve custodian name safely with fallback to recipient and optional normalization against known holders
  */
-export function getPettyCashCustodian(sub: any): string {
+export function getPettyCashCustodian(sub: any, knownHolders?: string[]): string {
   if (!sub) return '';
+  let raw = '';
   if (sub.pettyCashCustodian && typeof sub.pettyCashCustodian === 'string' && sub.pettyCashCustodian.trim()) {
-    return sub.pettyCashCustodian.trim();
+    raw = sub.pettyCashCustodian.trim();
+  } else if (sub.dibayarkanKepada && typeof sub.dibayarkanKepada === 'string' && sub.dibayarkanKepada.trim()) {
+    raw = sub.dibayarkanKepada.trim();
   }
-  if (sub.dibayarkanKepada && typeof sub.dibayarkanKepada === 'string' && sub.dibayarkanKepada.trim()) {
-    return sub.dibayarkanKepada.trim();
+  if (!raw) return '';
+
+  // If known registered holders provided, resolve to the canonical registered holder if similar
+  if (knownHolders && knownHolders.length > 0) {
+    const matched = knownHolders.find(h => areNamesSimilar(h, raw).isMatch);
+    if (matched) return matched;
   }
-  return '';
+  return raw;
 }
 
 /**
