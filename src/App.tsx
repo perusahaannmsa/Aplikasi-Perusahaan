@@ -85,7 +85,22 @@ export default function App() {
   const [submissions, setSubmissions] = useState<Submission[]>(() => {
     try {
       const stored = localStorage.getItem('NUSANTARA_HO_SUBMISSIONS');
-      return stored ? JSON.parse(stored) : [];
+      if (!stored) return [];
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed)) return parsed.filter(Boolean);
+      // Auto-recovery jika sebelumnya tersimpan objek dari bug konsolidasi
+      if (parsed && typeof parsed === 'object') {
+        if (Array.isArray(parsed.updatedSubmissions)) {
+          console.warn('Memperbaiki data submissions dari objek konsolidasi di localStorage...');
+          localStorage.setItem('NUSANTARA_HO_SUBMISSIONS', JSON.stringify(parsed.updatedSubmissions));
+          return parsed.updatedSubmissions.filter(Boolean);
+        }
+        if (Array.isArray(parsed.submissions)) {
+          localStorage.setItem('NUSANTARA_HO_SUBMISSIONS', JSON.stringify(parsed.submissions));
+          return parsed.submissions.filter(Boolean);
+        }
+      }
+      return [];
     } catch (e) {
       console.error('Error loading cached submissions on init:', e);
       return [];
@@ -94,18 +109,33 @@ export default function App() {
 
   // Petty Cash master state
   const [pettyCashHolders, setPettyCashHolders] = useState<string[]>(() => {
+    const defaultHolders = ['Suryo Pranoto', 'Muhammad Akbar', 'Nurul Izza', 'Andi Dhiya Salsabila'];
     try {
       const stored = localStorage.getItem('petty_cash_holders_v2');
-      return stored ? JSON.parse(stored) : ['Suryo Pranoto', 'Muhammad Akbar', 'Nurul Izza', 'Andi Dhiya Salsabila'];
+      if (!stored || stored === 'undefined' || stored === 'null') return defaultHolders;
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed)) return parsed.filter(Boolean);
+      if (parsed && typeof parsed === 'object' && Array.isArray(parsed.updatedPettyCashHolders)) {
+        localStorage.setItem('petty_cash_holders_v2', JSON.stringify(parsed.updatedPettyCashHolders));
+        return parsed.updatedPettyCashHolders.filter(Boolean);
+      }
+      return defaultHolders;
     } catch (e) {
-      return ['Suryo Pranoto', 'Muhammad Akbar', 'Nurul Izza', 'Andi Dhiya Salsabila'];
+      return defaultHolders;
     }
   });
 
   const [pettyCashReports, setPettyCashReports] = useState<PettyCashReport[]>(() => {
     try {
       const stored = localStorage.getItem('petty_cash_reports');
-      return stored ? JSON.parse(stored) : [];
+      if (!stored || stored === 'undefined' || stored === 'null') return [];
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed)) return parsed.filter(Boolean);
+      if (parsed && typeof parsed === 'object' && Array.isArray(parsed.updatedPettyCashReports)) {
+        localStorage.setItem('petty_cash_reports', JSON.stringify(parsed.updatedPettyCashReports));
+        return parsed.updatedPettyCashReports.filter(Boolean);
+      }
+      return [];
     } catch (e) {
       return [];
     }
@@ -476,17 +506,55 @@ export default function App() {
   };
 
   const handleApplyConsolidation = async (
-    consolidatedSubmissions: Submission[],
-    consolidatedHolders: string[]
+    payload: any,
+    secondParam?: any
   ) => {
+    let consolidatedSubmissions: Submission[] = [];
+    let consolidatedHolders: string[] = pettyCashHolders;
+    let consolidatedReports: PettyCashReport[] = pettyCashReports;
+
+    // Check if called with result object { updatedSubmissions, updatedPettyCashHolders, updatedPettyCashReports }
+    if (payload && typeof payload === 'object' && !Array.isArray(payload) && Array.isArray(payload.updatedSubmissions)) {
+      consolidatedSubmissions = payload.updatedSubmissions;
+      if (Array.isArray(payload.updatedPettyCashHolders)) {
+        consolidatedHolders = payload.updatedPettyCashHolders;
+      }
+      if (Array.isArray(payload.updatedPettyCashReports)) {
+        consolidatedReports = payload.updatedPettyCashReports;
+      }
+    } else if (Array.isArray(payload)) {
+      consolidatedSubmissions = payload;
+      if (Array.isArray(secondParam)) {
+        consolidatedHolders = secondParam;
+      }
+    } else {
+      console.error('Payload konsolidasi tidak valid:', payload);
+      return;
+    }
+
+    // Defensive check: pastikan selalu berupa array
+    if (!Array.isArray(consolidatedSubmissions)) {
+      console.error('consolidatedSubmissions bukan array:', consolidatedSubmissions);
+      return;
+    }
+    if (!Array.isArray(consolidatedHolders)) {
+      consolidatedHolders = pettyCashHolders;
+    }
+
     // 1. Update React state immediately
     setSubmissions(consolidatedSubmissions);
     setPettyCashHolders(consolidatedHolders);
+    if (Array.isArray(consolidatedReports)) {
+      setPettyCashReports(consolidatedReports);
+    }
 
     // 2. Persist locally to browser
     try {
       localStorage.setItem('NUSANTARA_HO_SUBMISSIONS', JSON.stringify(consolidatedSubmissions));
       localStorage.setItem('petty_cash_holders_v2', JSON.stringify(consolidatedHolders));
+      if (Array.isArray(consolidatedReports)) {
+        localStorage.setItem('petty_cash_reports', JSON.stringify(consolidatedReports));
+      }
     } catch (e) {
       console.error('Gagal menyimpan konsolidasi ke localStorage:', e);
     }
@@ -520,7 +588,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           pettyCashHolders: consolidatedHolders,
-          pettyCashReports
+          pettyCashReports: consolidatedReports
         })
       });
     } catch (err) {
@@ -963,7 +1031,12 @@ export default function App() {
           } else {
             const stored = localStorage.getItem('NUSANTARA_HO_SUBMISSIONS');
             if (stored) {
-              setSubmissions(JSON.parse(stored));
+              try {
+                const parsed = JSON.parse(stored);
+                setSubmissions(Array.isArray(parsed) ? parsed : (parsed?.updatedSubmissions || []));
+              } catch {
+                setSubmissions([]);
+              }
             } else {
               setSubmissions([]);
             }
@@ -973,7 +1046,8 @@ export default function App() {
           try {
             const stored = localStorage.getItem('NUSANTARA_HO_SUBMISSIONS');
             if (stored) {
-              setSubmissions(JSON.parse(stored));
+              const parsed = JSON.parse(stored);
+              setSubmissions(Array.isArray(parsed) ? parsed : (parsed?.updatedSubmissions || []));
             } else {
               setSubmissions([]);
             }
@@ -989,6 +1063,10 @@ export default function App() {
 
   // Sync state changes with localStorage
   const saveSubmissionsToStorage = (updatedList: Submission[]) => {
+    if (!Array.isArray(updatedList)) {
+      console.error('saveSubmissionsToStorage dipanggil dengan data non-array:', updatedList);
+      return;
+    }
     setSubmissions(updatedList);
     try {
       localStorage.setItem('NUSANTARA_HO_SUBMISSIONS', JSON.stringify(updatedList));
@@ -1727,7 +1805,8 @@ export default function App() {
             try {
               const stored = localStorage.getItem('NUSANTARA_HO_SUBMISSIONS');
               if (stored) {
-                setSubmissions(JSON.parse(stored));
+                const parsed = JSON.parse(stored);
+                setSubmissions(Array.isArray(parsed) ? parsed : (parsed?.updatedSubmissions || []));
               }
             } catch (e) {
               console.error('Error loading data from localStorage:', e);
@@ -2716,6 +2795,7 @@ export default function App() {
         onClose={() => setIsConsolidateNamesModalOpen(false)}
         submissions={submissions}
         pettyCashHolders={pettyCashHolders}
+        pettyCashReports={pettyCashReports}
         onApplyConsolidation={handleApplyConsolidation}
       />
 

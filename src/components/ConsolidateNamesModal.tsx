@@ -61,28 +61,33 @@ export const ConsolidateNamesModal: React.FC<ConsolidateNamesModalProps> = ({
   const [manualSelectedVariants, setManualSelectedVariants] = useState<string[]>([]);
   const [manualIsHolder, setManualIsHolder] = useState(false);
 
+  // Safe arrays in case corrupted state was passed
+  const safeSubmissions = useMemo(() => (Array.isArray(submissions) ? submissions.filter(Boolean) : []), [submissions]);
+  const safeHolders = useMemo(() => (Array.isArray(pettyCashHolders) ? pettyCashHolders.filter(Boolean) : []), [pettyCashHolders]);
+  const safeReports = useMemo(() => (Array.isArray(pettyCashReports) ? pettyCashReports.filter(Boolean) : []), [pettyCashReports]);
+
   // Analyze clusters
   const detectedClusters = useMemo(() => {
-    return findDuplicateNameClusters(submissions, pettyCashHolders);
-  }, [submissions, pettyCashHolders]);
+    return findDuplicateNameClusters(safeSubmissions, safeHolders);
+  }, [safeSubmissions, safeHolders]);
 
   // All unique names present across submissions and holders
   const allUniqueNames = useMemo(() => {
     const map = new Map<string, number>();
-    submissions.forEach(s => {
+    safeSubmissions.forEach(s => {
       const p = s.dibayarkanKepada?.trim();
       if (p) map.set(p, (map.get(p) || 0) + 1);
       const c = s.pettyCashCustodian?.trim();
       if (c && c !== p) map.set(c, (map.get(c) || 0) + 1);
     });
-    pettyCashHolders.forEach(h => {
+    safeHolders.forEach(h => {
       const trimmed = h.trim();
       if (trimmed && !map.has(trimmed)) map.set(trimmed, 0);
     });
     return Array.from(map.entries())
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
-  }, [submissions, pettyCashHolders]);
+  }, [safeSubmissions, safeHolders]);
 
   // Filtered clusters based on search query
   const filteredClusters = useMemo(() => {
@@ -109,9 +114,9 @@ export const ConsolidateNamesModal: React.FC<ConsolidateNamesModalProps> = ({
 
     try {
       const res = applyNameConsolidation({
-        submissions,
-        pettyCashHolders,
-        pettyCashReports,
+        submissions: safeSubmissions,
+        pettyCashHolders: safeHolders,
+        pettyCashReports: safeReports,
         clustersToMerge: [{
           canonicalName,
           variants,
@@ -158,9 +163,9 @@ export const ConsolidateNamesModal: React.FC<ConsolidateNamesModalProps> = ({
       });
 
       const res = applyNameConsolidation({
-        submissions,
-        pettyCashHolders,
-        pettyCashReports,
+        submissions: safeSubmissions,
+        pettyCashHolders: safeHolders,
+        pettyCashReports: safeReports,
         clustersToMerge
       });
 
@@ -195,9 +200,9 @@ export const ConsolidateNamesModal: React.FC<ConsolidateNamesModalProps> = ({
 
     try {
       const res = applyNameConsolidation({
-        submissions,
-        pettyCashHolders,
-        pettyCashReports,
+        submissions: safeSubmissions,
+        pettyCashHolders: safeHolders,
+        pettyCashReports: safeReports,
         clustersToMerge: [{
           canonicalName: target,
           variants: manualSelectedVariants,

@@ -232,9 +232,12 @@ export function areNamesSimilar(
  * Scans all submissions and pettyCashHolders to detect duplicate or near-duplicate name clusters.
  */
 export function findDuplicateNameClusters(
-  submissions: Submission[],
-  pettyCashHolders: string[]
+  rawSubmissions: Submission[],
+  rawPettyCashHolders: string[]
 ): NameCluster[] {
+  const submissions = Array.isArray(rawSubmissions) ? rawSubmissions.filter(Boolean) : [];
+  const pettyCashHolders = Array.isArray(rawPettyCashHolders) ? rawPettyCashHolders.filter(Boolean) : [];
+
   // 1. Gather all names with frequency and source
   const nameMap = new Map<string, { count: number; isHolder: boolean; sampleCodes: Set<string> }>();
 
@@ -342,8 +345,8 @@ export function findDuplicateNameClusters(
     } else {
       // Find one that is Title Case and longest
       members.sort((a, b) => {
-        const infoA = nameMap.get(a)!;
-        const infoB = nameMap.get(b)!;
+        const infoA = nameMap.get(a) || { count: 0, isHolder: false, sampleCodes: new Set<string>() };
+        const infoB = nameMap.get(b) || { count: 0, isHolder: false, sampleCodes: new Set<string>() };
         // Prefer Title Case over ALL-CAPS or all-lower
         const aIsTitle = a !== a.toUpperCase() && a !== a.toLowerCase();
         const bIsTitle = b !== b.toUpperCase() && b !== b.toLowerCase();
@@ -367,13 +370,13 @@ export function findDuplicateNameClusters(
     // Collect variations details
     let totalVouchers = 0;
     const variations: NameVariation[] = members.map(name => {
-      const data = nameMap.get(name)!;
+      const data = nameMap.get(name) || { count: 0, isHolder: false, sampleCodes: new Set<string>() };
       totalVouchers += data.count;
       return {
         name,
         count: data.count,
-        isHolder: data.isHolder || pettyCashHolders.includes(name),
-        sampleCodes: Array.from(data.sampleCodes)
+        isHolder: data.isHolder || (Array.isArray(pettyCashHolders) && pettyCashHolders.includes(name)),
+        sampleCodes: Array.from(data.sampleCodes || [])
       };
     });
 
@@ -418,7 +421,10 @@ export function applyNameConsolidation(params: {
   updatedPettyCashReports: any[];
   modifiedSubmissionsCount: number;
 } {
-  const { submissions, pettyCashHolders, pettyCashReports = [], clustersToMerge } = params;
+  const submissions = Array.isArray(params?.submissions) ? params.submissions.filter(Boolean) : [];
+  const pettyCashHolders = Array.isArray(params?.pettyCashHolders) ? params.pettyCashHolders.filter(Boolean) : [];
+  const pettyCashReports = Array.isArray(params?.pettyCashReports) ? params.pettyCashReports.filter(Boolean) : [];
+  const clustersToMerge = Array.isArray(params?.clustersToMerge) ? params.clustersToMerge.filter(Boolean) : [];
 
   // Build replacement map: variant.toLowerCase() -> canonicalName
   const replaceMap = new Map<string, string>();
