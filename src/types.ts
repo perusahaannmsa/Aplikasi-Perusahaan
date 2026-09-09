@@ -44,6 +44,8 @@ export interface Submission {
   invoiceNumber?: string;
   invoiceDate?: string;
   invoiceAmount?: number;
+  sendToAgenda?: boolean; // Jadwalkan pengingat lapor PPh ke Agenda (Coretax DJP)
+  agendaItemId?: string; // ID agenda terkait jika ada
   
   // Salary Slip details
   salaryDetails?: SalaryDetails;
@@ -317,6 +319,8 @@ export interface AgendaItem {
   completedBy?: string;
   recurrence?: AgendaRecurrence;
   voucherCode?: string;
+  linkedVoucherCodes?: string[]; // Daftar kode voucher yang terhubung ke agenda ini
+  taxPeriod?: string; // Masa Pajak format YYYY-MM (misal: 2026-08)
   assignedTo?: string;
   createdAt: string;
   updatedAt?: string;

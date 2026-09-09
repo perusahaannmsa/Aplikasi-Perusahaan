@@ -24,9 +24,10 @@ import { AccuratePettyCashMapping } from './components/AccuratePettyCashMapping'
 import { AccountMappingContainer } from './components/AccountMappingContainer';
 import { AgendaManager } from './components/AgendaManager';
 import { AgendaReminderBanner } from './components/AgendaReminderBanner';
+import { GeneralLedger } from './components/GeneralLedger';
 import { WhatsAppAiModal } from './components/WhatsAppAiModal';
 import { LiveClock } from './components/LiveClock';
-import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, formatDateIndonesian } from './utils';
+import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, syncInvoiceSubmissionToAgenda, formatDateIndonesian } from './utils';
 import { areNamesSimilar, toTitleCase } from './utils/nameConsolidation';
 import { 
   isFirebaseConfigured, 
@@ -55,7 +56,7 @@ import {
   subscribeToCompanySettingsFromFirestore,
   saveCompanySettingsToFirestore
 } from './firebase';
-import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell, MessageSquare, Bot, Sparkles } from 'lucide-react';
+import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell, MessageSquare, Bot, Sparkles, BookOpen } from 'lucide-react';
 
 export default function App() {
   const [theme, setTheme] = useState<'classic' | 'gold-dark' | 'emerald' | 'slate'>(() => {
@@ -701,20 +702,20 @@ export default function App() {
     };
   }, []);
 
-  const [view, setViewInternal] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda'>(() => {
+  const [view, setViewInternal] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger'>(() => {
     try {
       const stored = sessionStorage.getItem('NUSANTARA_ACTIVE_VIEW') || localStorage.getItem('NUSANTARA_ACTIVE_VIEW');
-      if (stored && ['list', 'form', 'print', 'sppd', 'absen', 'npwp', 'accurate', 'agenda'].includes(stored)) {
+      if (stored && ['list', 'form', 'print', 'sppd', 'absen', 'npwp', 'accurate', 'agenda', 'ledger'].includes(stored)) {
         return stored as any;
       }
     } catch (e) {}
     return 'list';
   });
 
-  const [previousView, setPreviousView] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda'>(() => {
+  const [previousView, setPreviousView] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger'>(() => {
     try {
       const stored = sessionStorage.getItem('NUSANTARA_PREVIOUS_VIEW');
-      if (stored && ['list', 'form', 'print', 'sppd', 'absen', 'npwp', 'accurate', 'agenda'].includes(stored)) {
+      if (stored && ['list', 'form', 'print', 'sppd', 'absen', 'npwp', 'accurate', 'agenda', 'ledger'].includes(stored)) {
         return stored as any;
       }
     } catch (e) {}
@@ -722,7 +723,7 @@ export default function App() {
   });
 
   const setView = (
-    newView: 'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda',
+    newView: 'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger',
     options?: { preservePrevious?: boolean }
   ) => {
     setViewInternal((current) => {
@@ -796,7 +797,13 @@ export default function App() {
   }, []);
   
   const [layoutMode, setLayoutMode] = useState<'standard' | 'spreadsheet' | 'audit_logs' | 'invoice_recap' | 'unpaid_outstanding' | 'petty_cash_recap'>(() => {
-    try { return (sessionStorage.getItem('sublist_layoutMode') as any) || 'standard'; } catch (e) { return 'standard'; }
+    try {
+      const saved = sessionStorage.getItem('sublist_layoutMode');
+      if (saved === 'spreadsheet' || saved === 'audit_logs' || saved === 'unpaid_outstanding') return 'standard';
+      return (saved as any) || 'standard';
+    } catch (e) {
+      return 'standard';
+    }
   });
 
   const unpaidCount = useMemo(() => {
@@ -1332,6 +1339,22 @@ export default function App() {
         localStorage.setItem('sppd_records_v1', JSON.stringify(sppdList));
       } catch (err) {
         console.warn('Gagal sinkronisasi data SPPD:', err);
+      }
+    }
+
+    // If this submission is an Invoice, automatically sync/create reminder in Agenda Manager for Coretax DJP (due 20th of next month)
+    const isInv = isInvoiceSubmission(savedSub) || savedSub.isInvoice || savedSub.sendToAgenda;
+    if (isInv && savedSub.sendToAgenda !== false) {
+      try {
+        const { updatedAgendaItems, affectedAgendaId, isNew, dueDateFormatted } = syncInvoiceSubmissionToAgenda(
+          savedSub,
+          agendaItems,
+          userProfile?.fullName
+        );
+        await handleSaveAgendaItems(updatedAgendaItems);
+        console.log(`[Agenda Tax Sync] Berhasil ${isNew ? 'membuat' : 'memperbarui'} pengingat PPh Coretax DJP jatuh tempo ${dueDateFormatted} (ID: ${affectedAgendaId})`);
+      } catch (agendaErr) {
+        console.warn('Gagal sinkronisasi pengingat PPh invoice ke agenda:', agendaErr);
       }
     }
 
@@ -2056,11 +2079,9 @@ export default function App() {
                     <span>
                       {view === 'list' && (
                         layoutMode === 'standard' ? 'Voucher HO (Standar)' :
-                        layoutMode === 'spreadsheet' ? 'Voucher HO (Spreadsheet)' :
-                        layoutMode === 'audit_logs' ? 'Voucher HO (Audit Log)' :
                         layoutMode === 'invoice_recap' ? 'Voucher HO (Rekap Invoice)' :
-                        layoutMode === 'unpaid_outstanding' ? 'Voucher HO (Kewajiban)' :
-                        'Voucher HO (Petty Cash)'
+                        layoutMode === 'petty_cash_recap' ? 'Voucher HO (Petty Cash)' :
+                        'Voucher HO'
                       )}
                       {view === 'absen' && 'Absen Harian NMSA'}
                       {view === 'npwp' && 'Master NPWP & Vendor'}
@@ -2125,44 +2146,6 @@ export default function App() {
                           <button
                             onClick={() => {
                               setView('list');
-                              setLayoutMode('spreadsheet');
-                              setIsDashboardNavOpen(false);
-                            }}
-                            className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-                              view === 'list' && layoutMode === 'spreadsheet'
-                                ? 'bg-emerald-700 text-white font-black'
-                                : 'text-stone-700 hover:bg-emerald-50'
-                            }`}
-                          >
-                            <div className="flex items-center gap-2">
-                              <FileText size={13} className={view === 'list' && layoutMode === 'spreadsheet' ? 'text-white' : 'text-emerald-600'} />
-                              <span>Tampilan Spreadsheet</span>
-                            </div>
-                            <span className="text-[9px] font-mono opacity-80">Sheets</span>
-                          </button>
-
-                          <button
-                            onClick={() => {
-                              setView('list');
-                              setLayoutMode('audit_logs');
-                              setIsDashboardNavOpen(false);
-                            }}
-                            className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-                              view === 'list' && layoutMode === 'audit_logs'
-                                ? 'bg-[#917118] text-white font-black'
-                                : 'text-stone-700 hover:bg-amber-50'
-                            }`}
-                          >
-                            <div className="flex items-center gap-2">
-                              <History size={13} className={view === 'list' && layoutMode === 'audit_logs' ? 'text-white' : 'text-[#917118]'} />
-                              <span>Riwayat Audit Log</span>
-                            </div>
-                            <span className="text-[9px] font-mono opacity-80">Logs</span>
-                          </button>
-
-                          <button
-                            onClick={() => {
-                              setView('list');
                               setLayoutMode('invoice_recap');
                               setIsDashboardNavOpen(false);
                             }}
@@ -2177,29 +2160,6 @@ export default function App() {
                               <span>Rekap & Bukti Invoice</span>
                             </div>
                             <span className="text-[9px] font-mono opacity-80">Vendor</span>
-                          </button>
-
-                          <button
-                            onClick={() => {
-                              setView('list');
-                              setLayoutMode('unpaid_outstanding');
-                              setIsDashboardNavOpen(false);
-                            }}
-                            className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-                              view === 'list' && layoutMode === 'unpaid_outstanding'
-                                ? 'bg-rose-700 text-white font-black'
-                                : 'text-rose-900 hover:bg-rose-50'
-                            }`}
-                          >
-                            <div className="flex items-center gap-2">
-                              <AlertCircle size={13} className={view === 'list' && layoutMode === 'unpaid_outstanding' ? 'text-white' : 'text-rose-600'} />
-                              <span>Kewajiban Belum Bayar</span>
-                            </div>
-                            <span className={`text-[9px] font-mono px-1.5 py-0.2 rounded font-bold ${
-                              view === 'list' && layoutMode === 'unpaid_outstanding' ? 'bg-white text-rose-900' : 'bg-rose-100 text-rose-800'
-                            }`}>
-                              {unpaidCount}
-                            </span>
                           </button>
 
                           <button
@@ -2317,26 +2277,28 @@ export default function App() {
                       )}
                     </button>
 
-                    {/* 7. STANDARISASI & SATUKAN VARIASI NAMA */}
+                    {/* 7. BUKU BESAR DARI SUB-JENIS PENGAJUAN */}
                     <button
-                      onClick={() => { setIsConsolidateNamesModalOpen(true); setIsDashboardNavOpen(false); }}
-                      className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer text-left mb-1 text-stone-700 hover:bg-amber-50 hover:text-amber-950 border border-transparent hover:border-amber-200"
+                      onClick={() => { setView('ledger'); setIsDashboardNavOpen(false); }}
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer text-left mb-1 ${
+                        view === 'ledger' ? 'bg-amber-500 text-stone-950 font-black' : 'text-stone-700 hover:bg-stone-100'
+                      }`}
                     >
                       <div className="flex items-center gap-2.5">
-                        <Sparkles size={15} className="text-amber-600" />
+                        <BookOpen size={15} className={view === 'ledger' ? 'text-stone-950' : 'text-amber-600'} />
                         <div className="flex flex-col">
-                          <span>Satukan Variasi Nama</span>
-                          <span className="text-[10px] font-normal text-stone-400">
-                            Deduplikasi Penerima & Pemegang Kas
+                          <span>Buku Besar Sub-Jenis</span>
+                          <span className={`text-[10px] font-normal ${view === 'ledger' ? 'text-stone-900' : 'text-stone-400'}`}>
+                            Mutasi &amp; Rekap per Akun / Uraian
                           </span>
                         </div>
                       </div>
-                      <span className="text-[9px] font-mono bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded font-bold">
-                        Smart
+                      <span className="text-[9px] font-mono bg-stone-100 text-stone-700 px-1.5 py-0.5 rounded font-bold">
+                        Akuntansi
                       </span>
                     </button>
 
-                    {(view === 'form' || view === 'print' || view === 'sppd' || view === 'agenda') && (
+                    {(view === 'form' || view === 'print' || view === 'sppd' || view === 'agenda' || view === 'ledger') && (
                       <button
                         onClick={() => { setView('list'); setIsDashboardNavOpen(false); }}
                         className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer text-left text-amber-700 bg-amber-50 hover:bg-amber-100 mt-1 border border-amber-200"
@@ -2353,6 +2315,21 @@ export default function App() {
             <div className="flex items-center gap-2 sm:gap-2.5">
               {/* Real-time System Clock (Hari, Tanggal & Jam WIB) */}
               <LiveClock variant="badge" className="hidden lg:inline-flex" />
+
+              {/* Quick Buku Besar Header Button */}
+              <button
+                type="button"
+                onClick={() => setView('ledger')}
+                className={`flex items-center gap-1.5 py-1.5 px-3 rounded-2xl border transition cursor-pointer shadow-3xs font-mono text-xs font-bold ${
+                  view === 'ledger'
+                    ? 'bg-amber-500 text-stone-950 border-amber-600 font-black'
+                    : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
+                }`}
+                title="Buku Besar Sub-Jenis Pengajuan (General Ledger)"
+              >
+                <BookOpen size={14} className={view === 'ledger' ? 'text-stone-950' : 'text-amber-600'} />
+                <span className="hidden md:inline font-sans">Buku Besar</span>
+              </button>
 
               {/* Quick Agenda & Reminder Header Button */}
               <button
@@ -2478,23 +2455,6 @@ export default function App() {
                           </div>
                           <span className="text-[9px] font-mono bg-stone-300 text-stone-900 px-1.5 py-0.5 rounded font-bold">
                             Ready
-                          </span>
-                        </button>
-
-                        {/* SATUKAN & STANDARISASI NAMA PENERIMA / PEMEGANG KAS */}
-                        <button
-                          onClick={() => {
-                            setIsUserMenuOpen(false);
-                            setIsConsolidateNamesModalOpen(true);
-                          }}
-                          className="w-full bg-stone-100 hover:bg-amber-50 hover:border-amber-300 text-stone-800 hover:text-amber-950 border border-stone-250 font-bold px-3 py-2 rounded-xl text-xs transition cursor-pointer flex items-center justify-between font-sans shadow-3xs"
-                        >
-                          <div className="flex items-center gap-2 truncate">
-                            <Sparkles size={15} className="text-amber-600 shrink-0" />
-                            <span className="truncate">Satukan Nama Serupa</span>
-                          </div>
-                          <span className="text-[9px] font-mono bg-amber-200 text-amber-900 px-1.5 py-0.5 rounded font-bold shrink-0">
-                            Auto
                           </span>
                         </button>
 
@@ -2753,6 +2713,24 @@ export default function App() {
               setActiveSubmission(sub);
               setPrintInitialTab('both');
               setView('print');
+            }}
+            onClose={() => setView(previousView || 'list')}
+          />
+        )}
+
+        {/* VIEW 9: Modul Buku Besar Sub-Jenis Pengajuan (General Ledger) */}
+        {view === 'ledger' && (
+          <GeneralLedger
+            submissions={submissions}
+            userProfile={userProfile}
+            onOpenSubmissionForPrint={(sub) => {
+              setActiveSubmission(sub);
+              setPrintInitialTab('both');
+              setView('print');
+            }}
+            onEditSubmissionNote={(sub) => {
+              setEditingSubmission(sub);
+              setView('form');
             }}
             onClose={() => setView(previousView || 'list')}
           />

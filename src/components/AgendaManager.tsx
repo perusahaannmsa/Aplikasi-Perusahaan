@@ -32,9 +32,16 @@ import {
   Volume2,
   VolumeX,
   Play,
-  Sliders
+  Sliders,
+  Receipt,
+  CheckSquare,
+  Square,
+  Copy,
+  MessageSquare,
+  StickyNote,
+  ExternalLink
 } from 'lucide-react';
-import { formatDateIndonesian } from '../utils';
+import { formatDateIndonesian, formatRupiah, isInvoiceSubmission, formatTransactionsSummaryNote } from '../utils';
 import { LiveClock } from './LiveClock';
 import { agendaSound, SoundMelodyType, requestAgendaNotificationPermission } from '../utils/agendaAudioAlert';
 
@@ -102,9 +109,55 @@ export function AgendaManager({
   const [formDueTime, setFormDueTime] = useState('09:00');
   const [formRecurrence, setFormRecurrence] = useState<AgendaRecurrence>('none');
   const [formVoucherCode, setFormVoucherCode] = useState('');
+  const [formLinkedVoucherCodes, setFormLinkedVoucherCodes] = useState<string[]>([]);
+  const [voucherFilterMode, setVoucherFilterMode] = useState<'invoice_only' | 'all'>('invoice_only');
+  const [voucherSearchQuery, setVoucherSearchQuery] = useState('');
+  const [selectedSubmissionNoteView, setSelectedSubmissionNoteView] = useState<Submission | null>(null);
   const [formAssignedTo, setFormAssignedTo] = useState(userProfile?.fullName || 'Nur Wahyudi');
 
   const todayStr = new Date().toISOString().split('T')[0];
+
+  // Daftar transaksi invoice vs semua
+  const invoiceSubmissions = useMemo(() => {
+    return submissions.filter(s => isInvoiceSubmission(s));
+  }, [submissions]);
+
+  const filteredModalSubmissions = useMemo(() => {
+    const baseList = voucherFilterMode === 'invoice_only' ? invoiceSubmissions : submissions;
+    if (!voucherSearchQuery.trim()) return baseList.slice(0, 50);
+    const q = voucherSearchQuery.toLowerCase();
+    return baseList.filter(s => 
+      (s.kode || '').toLowerCase().includes(q) ||
+      (s.dibayarkanKepada || '').toLowerCase().includes(q) ||
+      (s.jenisPengajuan || '').toLowerCase().includes(q) ||
+      (s.invoiceNumber || '').toLowerCase().includes(q) ||
+      (s.notes || '').toLowerCase().includes(q)
+    ).slice(0, 50);
+  }, [submissions, invoiceSubmissions, voucherFilterMode, voucherSearchQuery]);
+
+  const handleToggleLinkVoucher = (kode: string) => {
+    if (!kode) return;
+    setFormLinkedVoucherCodes(prev => {
+      if (prev.includes(kode)) {
+        return prev.filter(k => k !== kode);
+      } else {
+        return [...prev, kode];
+      }
+    });
+  };
+
+  const handleAppendSelectedVouchersToNote = () => {
+    const selectedSubs = submissions.filter(s => formLinkedVoucherCodes.includes(s.kode) || formLinkedVoucherCodes.includes(s.id));
+    if (selectedSubs.length === 0) return;
+    const summary = formatTransactionsSummaryNote(selectedSubs);
+    setFormDescription(prev => {
+      if (prev.includes('📌 Rincian Transaksi Terhubung:')) {
+        const before = prev.split('📌 Rincian Transaksi Terhubung:')[0].trim();
+        return `${before}${summary}`;
+      }
+      return `${prev.trim()}${summary}`;
+    });
+  };
 
   const handleOpenAddModal = (presetDate?: string) => {
     setEditingItem(null);
@@ -116,6 +169,9 @@ export function AgendaManager({
     setFormDueTime('09:00');
     setFormRecurrence('none');
     setFormVoucherCode('');
+    setFormLinkedVoucherCodes([]);
+    setVoucherFilterMode('invoice_only');
+    setVoucherSearchQuery('');
     setFormAssignedTo(userProfile?.fullName || 'Nur Wahyudi');
     setIsModalOpen(true);
   };
@@ -129,7 +185,13 @@ export function AgendaManager({
     setFormDueDate(item.dueDate);
     setFormDueTime(item.dueTime || '');
     setFormRecurrence(item.recurrence || 'none');
-    setFormVoucherCode(item.voucherCode || '');
+    const initialLinked = item.linkedVoucherCodes && item.linkedVoucherCodes.length > 0
+      ? item.linkedVoucherCodes
+      : (item.voucherCode ? item.voucherCode.split(',').map(s => s.trim()).filter(Boolean) : []);
+    setFormLinkedVoucherCodes(initialLinked);
+    setFormVoucherCode(item.voucherCode || (initialLinked[0] || ''));
+    setVoucherFilterMode(item.category === 'Pajak' || item.title.toLowerCase().includes('invoice') ? 'invoice_only' : 'all');
+    setVoucherSearchQuery('');
     setFormAssignedTo(item.assignedTo || userProfile?.fullName || 'Nur Wahyudi');
     setIsModalOpen(true);
   };
@@ -137,6 +199,12 @@ export function AgendaManager({
   const handleSaveItem = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formTitle.trim() || !formDueDate) return;
+
+    const finalCodes = Array.from(new Set(formLinkedVoucherCodes.filter(Boolean)));
+    if (formVoucherCode.trim() && !finalCodes.includes(formVoucherCode.trim())) {
+      finalCodes.unshift(formVoucherCode.trim());
+    }
+    const finalVoucherString = finalCodes.join(', ');
 
     if (editingItem) {
       // Update existing
@@ -149,7 +217,8 @@ export function AgendaManager({
         dueDate: formDueDate,
         dueTime: formDueTime.trim() || undefined,
         recurrence: formRecurrence,
-        voucherCode: formVoucherCode.trim() || undefined,
+        voucherCode: finalVoucherString || undefined,
+        linkedVoucherCodes: finalCodes.length > 0 ? finalCodes : undefined,
         assignedTo: formAssignedTo.trim() || undefined,
         updatedAt: new Date().toISOString()
       };
@@ -167,7 +236,8 @@ export function AgendaManager({
         dueTime: formDueTime.trim() || undefined,
         status: 'pending',
         recurrence: formRecurrence,
-        voucherCode: formVoucherCode.trim() || undefined,
+        voucherCode: finalVoucherString || undefined,
+        linkedVoucherCodes: finalCodes.length > 0 ? finalCodes : undefined,
         assignedTo: formAssignedTo.trim() || undefined,
         createdAt: new Date().toISOString()
       };
@@ -655,10 +725,14 @@ export function AgendaManager({
                 const catStyle = CATEGORY_COLORS[item.category] || CATEGORY_COLORS['Lainnya'];
                 const priorityBadge = PRIORITY_BADGES[item.priority] || PRIORITY_BADGES['normal'];
 
-                // Check if matching submission exists for voucher code link
-                const linkedSub = item.voucherCode 
-                  ? submissions.find(s => s.kode === item.voucherCode || s.id === item.voucherCode)
-                  : null;
+                // Check if matching submissions exist for voucher code link
+                const linkedCodes = item.linkedVoucherCodes && item.linkedVoucherCodes.length > 0
+                  ? item.linkedVoucherCodes
+                  : (item.voucherCode ? item.voucherCode.split(',').map(s => s.trim()).filter(Boolean) : []);
+                const linkedSubs = linkedCodes
+                  .map(c => submissions.find(s => s.kode === c || s.id === c))
+                  .filter((s): s is Submission => Boolean(s));
+                const linkedSub = linkedSubs[0] || null;
 
                 return (
                   <div
@@ -687,7 +761,7 @@ export function AgendaManager({
                         <Check size={14} className={isCompleted ? 'opacity-100' : 'opacity-0 hover:opacity-100'} />
                       </button>
 
-                      <div className="min-w-0 flex-1 space-y-1">
+                      <div className="min-w-0 flex-1 space-y-1.5">
                         {/* Badges row */}
                         <div className="flex items-center gap-1.5 flex-wrap">
                           {/* Status / Timing Badge */}
@@ -726,12 +800,49 @@ export function AgendaManager({
                             </span>
                           )}
 
-                          {/* Linked Voucher Code */}
-                          {item.voucherCode && (
-                            <span className="text-[10px] font-mono bg-stone-100 text-stone-800 border border-stone-200 px-1.5 py-0.5 rounded flex items-center gap-1">
-                              <FileText size={10} className="text-amber-600" />
-                              {item.voucherCode}
-                            </span>
+                          {/* Linked Voucher Badges */}
+                          {linkedCodes.length > 0 && (
+                            <div className="flex items-center gap-1 flex-wrap">
+                              {linkedCodes.map(code => {
+                                const subMatch = submissions.find(s => s.kode === code || s.id === code);
+                                const isInv = subMatch ? isInvoiceSubmission(subMatch) : false;
+                                const hasNote = Boolean(subMatch?.notes?.trim());
+                                return (
+                                  <span
+                                    key={code}
+                                    className={`inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded border shadow-3xs ${
+                                      isInv 
+                                        ? 'bg-amber-50 text-amber-900 border-amber-300 font-bold' 
+                                        : 'bg-stone-100 text-stone-800 border-stone-250'
+                                    }`}
+                                  >
+                                    {isInv ? <Receipt size={10} className="text-amber-600 shrink-0" /> : <FileText size={10} className="text-stone-500 shrink-0" />}
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (subMatch && onOpenSubmissionForPrint) {
+                                          onOpenSubmissionForPrint(subMatch);
+                                        }
+                                      }}
+                                      className="hover:underline cursor-pointer"
+                                      title={subMatch ? `Buka voucher ${code} (${subMatch.dibayarkanKepada})` : code}
+                                    >
+                                      {code}
+                                    </button>
+                                    {hasNote && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setSelectedSubmissionNoteView(subMatch!)}
+                                        className="text-amber-600 hover:text-amber-900 p-0.5 transition cursor-pointer"
+                                        title={`Lihat Catatan Voucher: "${subMatch!.notes}"`}
+                                      >
+                                        <StickyNote size={10} className="fill-amber-400" />
+                                      </button>
+                                    )}
+                                  </span>
+                                );
+                              })}
+                            </div>
                           )}
                         </div>
 
@@ -742,9 +853,20 @@ export function AgendaManager({
 
                         {/* Description */}
                         {item.description && (
-                          <p className={`text-xs text-stone-600 font-sans leading-relaxed ${isCompleted ? 'text-stone-400' : ''}`}>
+                          <div className={`text-xs text-stone-600 font-sans leading-relaxed whitespace-pre-line ${isCompleted ? 'text-stone-400' : ''}`}>
                             {item.description}
-                          </p>
+                          </div>
+                        )}
+
+                        {/* Quick transaction notes indicator if not in description */}
+                        {linkedSubs.some(s => s.notes?.trim()) && !item.description?.includes('📌 Rincian Transaksi Terhubung') && (
+                          <div className="flex items-center gap-1.5 text-[11px] text-amber-900 bg-amber-50/70 px-2 py-1 rounded-lg border border-amber-200 font-sans">
+                            <StickyNote size={12} className="text-amber-600 shrink-0 fill-amber-300" />
+                            <div className="truncate flex-1">
+                              <span className="font-bold">Catatan Transaksi: </span>
+                              {linkedSubs.filter(s => s.notes?.trim()).map(s => `${s.kode} ("${s.notes}")`).join(' • ')}
+                            </div>
+                          </div>
                         )}
 
                         {/* Meta info: Due date, Assigned to, Completion info */}
@@ -791,14 +913,14 @@ export function AgendaManager({
                         </>
                       )}
 
-                      {linkedSub && onOpenSubmissionForPrint && (
+                      {linkedSubs.length > 0 && onOpenSubmissionForPrint && (
                         <button
-                          onClick={() => onOpenSubmissionForPrint(linkedSub)}
+                          onClick={() => onOpenSubmissionForPrint(linkedSubs[0])}
                           className="px-2.5 py-1.5 text-xs font-bold bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-xl transition cursor-pointer flex items-center gap-1 shadow-3xs"
-                          title="Lihat Voucher Transaksi Terkait"
+                          title={linkedSubs.length > 1 ? `Buka voucher transaksi (${linkedSubs.length} terhubung)` : 'Lihat Voucher Transaksi Terkait'}
                         >
                           <FileText size={12} className="text-amber-600" />
-                          <span>Voucher</span>
+                          <span>{linkedSubs.length > 1 ? `${linkedSubs.length} Voucher` : 'Voucher'}</span>
                         </button>
                       )}
 
@@ -1376,26 +1498,186 @@ export function AgendaManager({
                 </div>
               </div>
 
-              {/* Hubungkan ke Kode Voucher HO */}
-              <div>
-                <label className="block text-xs font-bold text-stone-700 uppercase tracking-wider mb-1.5">
-                  Hubungkan ke Kode Transaksi Voucher HO (Opsional)
-                </label>
-                <input
-                  type="text"
-                  placeholder="Ketik kode voucher, misal: BKK-001/HO/2026 atau pilih..."
-                  value={formVoucherCode}
-                  onChange={(e) => setFormVoucherCode(e.target.value)}
-                  list="voucher-code-suggestions"
-                  className="w-full px-3.5 py-2 text-xs bg-stone-50 border border-stone-250 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500 font-mono"
-                />
-                <datalist id="voucher-code-suggestions">
-                  {submissions.slice(0, 30).map(s => (
-                    <option key={s.id} value={s.kode}>
-                      {s.kode} - {s.dibayarkanKepada} ({s.jenisPengajuan})
-                    </option>
-                  ))}
-                </datalist>
+              {/* Hubungkan ke Transaksi / Invoice & Sinkronisasi Catatan */}
+              <div className="space-y-3 pt-3 border-t border-stone-200">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <label className="block text-xs font-bold text-stone-900 uppercase tracking-wider">
+                      Hubungkan Transaksi / Invoice ke Agenda
+                    </label>
+                    <p className="text-[11px] text-stone-500 font-sans">
+                      Pilih invoice pemotongan PPh atau voucher pengeluaran terkait
+                    </p>
+                  </div>
+
+                  {/* Filter Mode Toggle */}
+                  <div className="flex items-center gap-1 bg-stone-100 p-0.5 rounded-xl border border-stone-200 text-xs self-start sm:self-auto">
+                    <button
+                      type="button"
+                      onClick={() => setVoucherFilterMode('invoice_only')}
+                      className={`px-2.5 py-1 rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer text-[11px] ${
+                        voucherFilterMode === 'invoice_only'
+                          ? 'bg-amber-500 text-stone-950 shadow-3xs'
+                          : 'text-stone-600 hover:text-stone-900'
+                      }`}
+                    >
+                      <Receipt size={12} />
+                      <span>Tagihan / Invoice ({invoiceSubmissions.length})</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setVoucherFilterMode('all')}
+                      className={`px-2.5 py-1 rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer text-[11px] ${
+                        voucherFilterMode === 'all'
+                          ? 'bg-white text-stone-900 shadow-3xs border border-stone-200'
+                          : 'text-stone-600 hover:text-stone-900'
+                      }`}
+                    >
+                      <FileText size={12} />
+                      <span>Semua Voucher ({submissions.length})</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Selected Vouchers Badges & Sync Note Button */}
+                {formLinkedVoucherCodes.length > 0 && (
+                  <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-amber-950 flex items-center gap-1">
+                        <CheckSquare size={13} className="text-amber-700" />
+                        {formLinkedVoucherCodes.length} Transaksi Terhubung:
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleAppendSelectedVouchersToNote}
+                        className="px-2.5 py-1 text-[11px] font-bold bg-amber-500 hover:bg-amber-600 text-stone-950 rounded-lg transition cursor-pointer flex items-center gap-1 shadow-3xs active:scale-95"
+                        title="Salin rincian nomor voucher, invoice, dan catatan transaksi ke deskripsi agenda"
+                      >
+                        <Copy size={11} />
+                        <span>📋 Salin ke Note Agenda</span>
+                      </button>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+                      {formLinkedVoucherCodes.map(kode => {
+                        const sMatch = submissions.find(s => s.kode === kode || s.id === kode);
+                        return (
+                          <span
+                            key={kode}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-white border border-amber-300 text-stone-900 text-xs font-mono font-bold shadow-3xs"
+                          >
+                            <span>{kode}</span>
+                            {sMatch?.dibayarkanKepada && (
+                              <span className="text-[10px] text-stone-500 font-sans font-normal truncate max-w-[120px]">
+                                {sMatch.dibayarkanKepada}
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleToggleLinkVoucher(kode)}
+                              className="text-stone-400 hover:text-rose-600 transition p-0.5"
+                            >
+                              <X size={12} />
+                            </button>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Search input for transactions */}
+                <div className="relative">
+                  <Search size={14} className="absolute left-3 top-2.5 text-stone-400" />
+                  <input
+                    type="text"
+                    placeholder="Cari nomor voucher, nama penerima, nomor invoice, atau isi note..."
+                    value={voucherSearchQuery}
+                    onChange={(e) => setVoucherSearchQuery(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 text-xs bg-stone-50 border border-stone-250 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500 font-sans"
+                  />
+                  {voucherSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setVoucherSearchQuery('')}
+                      className="absolute right-2.5 top-2 text-stone-400 hover:text-stone-600 p-1"
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+
+                {/* List of transactions to pick from */}
+                <div className="border border-stone-200 rounded-xl max-h-44 overflow-y-auto divide-y divide-stone-100 bg-white shadow-inner">
+                  {filteredModalSubmissions.length === 0 ? (
+                    <div className="p-4 text-center text-xs text-stone-400">
+                      Tidak ada transaksi {voucherFilterMode === 'invoice_only' ? 'tagihan/invoice' : ''} yang cocok.
+                    </div>
+                  ) : (
+                    filteredModalSubmissions.map(sub => {
+                      const isSelected = formLinkedVoucherCodes.includes(sub.kode) || formLinkedVoucherCodes.includes(sub.id);
+                      const isInv = isInvoiceSubmission(sub);
+                      let totalVal = 0;
+                      if (typeof sub.invoiceAmount === 'number' && sub.invoiceAmount > 0) {
+                        totalVal = sub.invoiceAmount;
+                      } else if (sub.items && sub.items.length > 0) {
+                        totalVal = sub.items.reduce((s, it) => s + (Number(it.total) || 0), 0);
+                      }
+
+                      return (
+                        <div
+                          key={sub.id}
+                          onClick={() => handleToggleLinkVoucher(sub.kode || sub.id)}
+                          className={`p-2.5 flex items-start justify-between gap-2.5 cursor-pointer transition text-xs ${
+                            isSelected ? 'bg-amber-50/80 text-stone-950 font-medium' : 'hover:bg-stone-50 text-stone-700'
+                          }`}
+                        >
+                          <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => {}}
+                              className="mt-0.5 rounded text-amber-500 focus:ring-amber-400 pointer-events-none"
+                            />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-mono font-bold text-stone-900">{sub.kode}</span>
+                                {isInv && (
+                                  <span className="text-[9px] font-bold bg-amber-100 text-amber-900 px-1.5 py-0.2 rounded border border-amber-200">
+                                    Invoice/Tagihan
+                                  </span>
+                                )}
+                                {sub.invoiceNumber && (
+                                  <span className="text-[10px] font-mono text-stone-500">
+                                    Inv #{sub.invoiceNumber}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-stone-800 font-semibold truncate mt-0.5">
+                                {sub.dibayarkanKepada} &bull; <span className="text-stone-500 font-normal">{sub.jenisPengajuan}</span>
+                              </div>
+                              {sub.notes && (
+                                <div className="text-[10.5px] text-stone-500 italic mt-0.5 truncate flex items-center gap-1">
+                                  <StickyNote size={10} className="text-amber-600 shrink-0" />
+                                  <span>"{sub.notes}"</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="text-right shrink-0">
+                            <div className="font-mono font-bold text-stone-900">
+                              Rp {formatRupiah(totalVal)}
+                            </div>
+                            <div className="text-[10px] font-mono text-stone-400">
+                              {formatDateIndonesian(sub.tanggal)}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
               </div>
 
               {/* Action Buttons */}
@@ -1417,6 +1699,94 @@ export function AgendaManager({
 
             </form>
 
+          </div>
+        </div>
+      )}
+
+      {/* Modal Detail Catatan Transaksi (Note Viewer Modal) */}
+      {selectedSubmissionNoteView && (
+        <div className="fixed inset-0 z-50 bg-stone-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-stone-250 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-stone-200">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-amber-100 text-amber-900 rounded-xl">
+                  <StickyNote size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-stone-900">
+                    Catatan Transaksi {selectedSubmissionNoteView.kode}
+                  </h3>
+                  <p className="text-[11px] text-stone-500 font-mono">
+                    {formatDateIndonesian(selectedSubmissionNoteView.tanggal)} &bull; {selectedSubmissionNoteView.jenisPengajuan}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedSubmissionNoteView(null)}
+                className="p-1.5 text-stone-400 hover:text-stone-700 hover:bg-stone-100 rounded-xl transition cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="py-4 space-y-3">
+              <div className="bg-stone-50 border border-stone-200 rounded-xl p-3 text-xs space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-stone-500">Penerima / Vendor:</span>
+                  <span className="font-bold text-stone-900">{selectedSubmissionNoteView.dibayarkanKepada}</span>
+                </div>
+                {selectedSubmissionNoteView.invoiceNumber && (
+                  <div className="flex justify-between">
+                    <span className="text-stone-500">Nomor Tagihan/Inv:</span>
+                    <span className="font-mono font-bold text-amber-900">#{selectedSubmissionNoteView.invoiceNumber}</span>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span className="text-stone-500">Nominal:</span>
+                  <span className="font-mono font-bold text-stone-900">
+                    Rp {formatRupiah(
+                      selectedSubmissionNoteView.invoiceAmount ||
+                      selectedSubmissionNoteView.items?.reduce((s, it) => s + (Number(it.total) || 0), 0) || 0
+                    )}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-stone-500 uppercase tracking-wider mb-1.5">
+                  Isi Catatan Transaksi:
+                </label>
+                <div className="p-3.5 bg-amber-50/70 border border-amber-200 rounded-xl text-xs font-sans text-stone-900 leading-relaxed whitespace-pre-wrap">
+                  {selectedSubmissionNoteView.notes || '(Tidak ada catatan)'}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-3 border-t border-stone-200">
+              {onOpenSubmissionForPrint ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const sub = selectedSubmissionNoteView;
+                    setSelectedSubmissionNoteView(null);
+                    onOpenSubmissionForPrint(sub);
+                  }}
+                  className="px-3.5 py-2 text-xs font-bold bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-xl transition cursor-pointer flex items-center gap-1.5 shadow-3xs"
+                >
+                  <FileText size={13} className="text-amber-700" />
+                  <span>Buka Voucher</span>
+                </button>
+              ) : <div />}
+
+              <button
+                type="button"
+                onClick={() => setSelectedSubmissionNoteView(null)}
+                className="px-4 py-2 text-xs font-bold bg-stone-900 hover:bg-stone-800 text-white rounded-xl transition cursor-pointer shadow-3xs"
+              >
+                Tutup
+              </button>
+            </div>
           </div>
         </div>
       )}

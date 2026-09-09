@@ -80,7 +80,13 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   ];
   
   const [internalLayoutMode, setInternalLayoutMode] = useState<'standard' | 'spreadsheet' | 'audit_logs' | 'invoice_recap' | 'unpaid_outstanding' | 'petty_cash_recap'>(() => {
-    try { return (sessionStorage.getItem('sublist_layoutMode') as any) || 'standard'; } catch (e) { return 'standard'; }
+    try {
+      const saved = sessionStorage.getItem('sublist_layoutMode');
+      if (saved === 'spreadsheet' || saved === 'audit_logs' || saved === 'unpaid_outstanding') return 'standard';
+      return (saved as any) || 'standard';
+    } catch (e) {
+      return 'standard';
+    }
   });
 
   const layoutMode = propLayoutMode !== undefined ? propLayoutMode : internalLayoutMode;
@@ -838,20 +844,14 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
               className="flex items-center gap-2.5 px-4 py-2 bg-stone-900 hover:bg-stone-850 text-white rounded-xl text-xs font-bold transition cursor-pointer shadow-3xs select-none"
             >
               {layoutMode === 'standard' && <Database size={15} className="text-amber-400" />}
-              {layoutMode === 'spreadsheet' && <FileText size={15} className="text-emerald-400" />}
-              {layoutMode === 'audit_logs' && <History size={15} className="text-amber-300" />}
               {layoutMode === 'invoice_recap' && <FileSpreadsheet size={15} className="text-amber-400" />}
-              {layoutMode === 'unpaid_outstanding' && <AlertCircle size={15} className="text-rose-400" />}
               {layoutMode === 'petty_cash_recap' && <Coins size={15} className="text-violet-400" />}
 
               <span className="font-extrabold font-display">
                 Mode Tampilan: {
-                  layoutMode === 'standard' ? 'Tampilan Standar' :
-                  layoutMode === 'spreadsheet' ? 'Tampilan Spreadsheet' :
-                  layoutMode === 'audit_logs' ? 'Riwayat Audit Log' :
                   layoutMode === 'invoice_recap' ? 'Rekap & Bukti Invoice' :
-                  layoutMode === 'unpaid_outstanding' ? 'Kewajiban Belum Bayar' :
-                  'Petty Cash Lapangan'
+                  layoutMode === 'petty_cash_recap' ? 'Petty Cash Lapangan' :
+                  'Tampilan Standar'
                 }
               </span>
               <ChevronDown size={14} className={`text-stone-300 transition-transform duration-200 ${isModeDropdownOpen ? 'rotate-180' : ''}`} />
@@ -874,32 +874,6 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 </button>
 
                 <button
-                  onClick={() => { handleSetLayoutMode('spreadsheet'); setActiveSheetTab('Data Sinkron'); setIsModeDropdownOpen(false); }}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
-                    layoutMode === 'spreadsheet' ? 'bg-emerald-800 text-white font-black' : 'text-stone-700 hover:bg-emerald-50'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <FileText size={14} className={layoutMode === 'spreadsheet' ? 'text-white' : 'text-emerald-600'} />
-                    <span>Tampilan Spreadsheet</span>
-                  </div>
-                  <span className="text-[10px] font-mono text-emerald-600 font-bold">Sheets</span>
-                </button>
-
-                <button
-                  onClick={() => { handleSetLayoutMode('audit_logs'); setIsModeDropdownOpen(false); }}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
-                    layoutMode === 'audit_logs' ? 'bg-[#917118] text-white font-black' : 'text-stone-700 hover:bg-amber-50'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <History size={14} className={layoutMode === 'audit_logs' ? 'text-white' : 'text-[#917118]'} />
-                    <span>Riwayat Audit Log</span>
-                  </div>
-                  <span className="text-[10px] font-mono text-stone-400">Logs</span>
-                </button>
-
-                <button
                   onClick={() => { handleSetLayoutMode('invoice_recap'); setIsModeDropdownOpen(false); }}
                   className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
                     layoutMode === 'invoice_recap' ? 'bg-amber-600 text-white font-black' : 'text-stone-700 hover:bg-amber-50'
@@ -910,23 +884,6 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                     <span>Rekap & Bukti Invoice</span>
                   </div>
                   <span className="text-[10px] font-mono text-amber-600 font-bold">Vendor</span>
-                </button>
-
-                <button
-                  onClick={() => { handleSetLayoutMode('unpaid_outstanding'); setIsModeDropdownOpen(false); }}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
-                    layoutMode === 'unpaid_outstanding' ? 'bg-rose-700 text-white font-black' : 'text-stone-700 hover:bg-rose-50'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <AlertCircle size={14} className={layoutMode === 'unpaid_outstanding' ? 'text-white' : 'text-rose-500'} />
-                    <span>Kewajiban Belum Bayar</span>
-                  </div>
-                  <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded font-bold ${
-                    layoutMode === 'unpaid_outstanding' ? 'bg-white text-rose-800' : 'bg-rose-100 text-rose-800'
-                  }`}>
-                    {allUnpaidSubmissionsAllTime.length}
-                  </span>
                 </button>
 
                 <button

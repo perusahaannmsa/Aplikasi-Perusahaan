@@ -10,6 +10,12 @@ export {
   getDefaultTransactionDate,
   type HolidayCheckResult 
 } from './utils/holidayUtils';
+export {
+  calculateTaxDueDate,
+  syncInvoiceSubmissionToAgenda,
+  formatTransactionsSummaryNote,
+  INDONESIAN_MONTHS
+} from './utils/agendaTaxSync';
 
 export interface PdfInputSource {
   bytes: Uint8Array;
