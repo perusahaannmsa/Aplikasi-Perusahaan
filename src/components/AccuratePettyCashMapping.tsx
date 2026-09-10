@@ -22,8 +22,10 @@ import {
   saveSubmissionToFirestore,
   getActiveGoogleDriveAccount,
   getConnectedDrives,
-  executeDriveApiWithAutoRefresh
+  executeDriveApiWithAutoRefresh,
+  getOrRenewDriveToken
 } from '../firebase';
+import { getOrCreateNestedFolder, uploadFileToDrive } from '../lib/googleWorkspaceAbsen';
 
 interface AccuratePettyCashMappingProps {
   pettyCashReports?: PettyCashReport[];
@@ -1093,65 +1095,41 @@ export function AccuratePettyCashMapping({
     setSuccessMessage('');
 
     try {
-      // 1. Check or authenticate Google Drive
-      let token = await ensureValidDriveToken();
-      if (!token) {
-        const authed = await googleDriveLogin();
-        if (!authed) {
-          throw new Error('Google Drive belum terhubung. Silakan login ke Google Drive pada menu pengaturan.');
-        }
-        token = await ensureValidDriveToken();
-      }
-
-      if (!token) {
-        throw new Error('Token Google Drive tidak tersedia.');
-      }
-
-      // 2. Prepare JSON backup blob
+      // 1. Prepare JSON backup blob
       const jsonContent = JSON.stringify(mapToSave, null, 2);
       const jsonBlob = new Blob([jsonContent], { type: 'application/json' });
       const safeTitle = (mapToSave.title || 'Pemetaan_Accurate_PettyCash').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const currentYear = new Date().getFullYear().toString();
       const backupFileName = `Backup_Accurate_${safeTitle}_${new Date().toISOString().substring(0, 10)}.json`;
 
-      // 3. Upload directly to Google Drive
-      const metadata = {
-        name: backupFileName,
-        mimeType: 'application/json',
-        description: `Cadangan Pemetaan Akun Accurate Petty Cash: ${mapToSave.title} (${mapToSave.transactions.length} baris, Total Rp ${mapToSave.totalExpense?.toLocaleString('id-ID')})`
-      };
-
-      const form = new FormData();
-      form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
-      form.append('file', jsonBlob);
-
-      const driveRes = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`
-        },
-        body: form
+      // 2. Upload to dedicated Google Drive folder with automatic token renewal
+      const uploadRes = await executeDriveApiWithAutoRefresh(async (token) => {
+        const folderId = await getOrCreateNestedFolder(token, [
+          'ACCURATE-PETTY-CASH-NMSA',
+          'Mapping-Rekap',
+          currentYear
+        ]);
+        return await uploadFileToDrive(token, folderId, backupFileName, jsonBlob);
+      }, {
+        actionName: 'Backup Accurate Petty Cash',
+        interactiveIfRequired: true,
+        targetEmail: driveAccount?.email
       });
 
-      if (!driveRes.ok) {
-        const errText = await driveRes.text();
-        throw new Error(`Google Drive API error: ${errText}`);
-      }
-
-      const driveData = await driveRes.json();
-      const driveUrl = driveData.webViewLink || `https://drive.google.com/file/d/${driveData.id}/view`;
+      const driveUrl = uploadRes.webViewLink || `https://drive.google.com/file/d/${uploadRes.id}/view`;
 
       // Update mapping record with drive backup info
       const updatedMapping: AccurateMappingReport = {
         ...mapToSave,
         driveBackupUrl: driveUrl,
-        driveBackupFileId: driveData.id,
+        driveBackupFileId: uploadRes.id,
         updatedAt: new Date().toISOString()
       };
 
       await saveAccurateMappingToFirestore(updatedMapping);
       setSavedMappings(prev => [updatedMapping, ...prev.filter(m => m.id !== updatedMapping.id)]);
 
-      setSuccessMessage(`Berhasil mencadangkan pemetaan ke Google Drive! Berkas: "${backupFileName}". Anda dapat mengaksesnya kapan saja.`);
+      setSuccessMessage(`✓ Berhasil mencadangkan pemetaan ke Google Drive! Disimpan di folder: "ACCURATE-PETTY-CASH-NMSA > Mapping-Rekap > ${currentYear}" (Berkas: "${backupFileName}").`);
     } catch (err: any) {
       console.error('Error backing up to Google Drive:', err);
       setErrorMessage(err.message || 'Gagal mencadangkan ke Google Drive.');

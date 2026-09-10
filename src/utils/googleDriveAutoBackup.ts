@@ -13,7 +13,8 @@ import {
   getActiveGoogleDriveAccount, 
   getConnectedDrives, 
   executeDriveApiWithAutoRefresh,
-  getStoredGoogleDriveToken
+  getStoredGoogleDriveToken,
+  getOrRenewDriveToken
 } from '../firebase';
 
 export interface BackupSyncLog {
@@ -138,22 +139,36 @@ class GoogleDriveAutoBackupService {
   }
 
   /**
-   * Helper to ensure token is valid and execute drive operation
+   * Helper to ensure token is valid and execute drive operation with automatic renewal
    */
   private async withDriveToken<T>(fn: (token: string) => Promise<T>): Promise<T> {
-    return executeDriveApiWithAutoRefresh(async (token) => {
-      return await fn(token);
-    }, { actionName: 'Auto Backup to Google Drive' });
+    const activeAccount = getActiveGoogleDriveAccount();
+    const lastEmail = localStorage.getItem('NUSANTARA_LAST_ACTIVE_EMAIL');
+    const targetEmail = activeAccount?.email || lastEmail || undefined;
+
+    // Ensure valid token or refresh interactively with account hint
+    let token = await getOrRenewDriveToken(targetEmail, true);
+    if (!token) {
+      token = await ensureValidDriveToken(true);
+    }
+
+    return executeDriveApiWithAutoRefresh(async (tok) => {
+      return await fn(tok);
+    }, { 
+      actionName: 'Auto Backup to Google Drive',
+      interactiveIfRequired: true,
+      targetEmail
+    });
   }
 
   /**
-   * 1. Backup Absensi Karyawan to Google Drive
+   * 1. Backup Absensi Karyawan to Google Drive (Separate Dedicated Folder: ABSENSI-NMSA-APP)
    */
   public async backupAbsensi(customData?: any): Promise<{ success: boolean; url?: string; error?: string }> {
     const today = new Date().toISOString().split('T')[0];
     const currentYear = new Date().getFullYear().toString();
     const fileName = `Absensi_Karyawan_NMSA_${today}.json`;
-    const folderPath = `Voucher-APP/NMSA/CADANGAN_DATABASE_HARIAN/${currentYear}/Absensi_Karyawan`;
+    const folderPath = `ABSENSI-NMSA-APP/Cadangan-Data-Absensi/${currentYear}`;
 
     try {
       // Gather attendance data from localStorage or passed object
@@ -182,11 +197,9 @@ class GoogleDriveAutoBackupService {
 
       const result = await this.withDriveToken(async (token) => {
         const folderId = await getOrCreateNestedFolder(token, [
-          'Voucher-APP',
-          'NMSA',
-          'CADANGAN_DATABASE_HARIAN',
-          currentYear,
-          'Absensi_Karyawan'
+          'ABSENSI-NMSA-APP',
+          'Cadangan-Data-Absensi',
+          currentYear
         ]);
 
         return await uploadFileToDrive(token, folderId, fileName, jsonBlob);
@@ -223,12 +236,12 @@ class GoogleDriveAutoBackupService {
   }
 
   /**
-   * 2. Backup Voucher Submissions to Google Drive
+   * 2. Backup Voucher Submissions to Google Drive (Separate Dedicated Folder: Voucher-APP)
    */
   public async backupSubmissions(submissions?: any[]): Promise<{ success: boolean; url?: string; error?: string }> {
     const today = new Date().toISOString().split('T')[0];
     const currentYear = new Date().getFullYear().toString();
-    const folderPath = `Voucher-APP/NMSA/CADANGAN_DATABASE_HARIAN/${currentYear}/Voucher_Keuangan`;
+    const folderPath = `Voucher-APP/CADANGAN_VOUCHER/${currentYear}`;
 
     try {
       let data = submissions;
@@ -250,10 +263,8 @@ class GoogleDriveAutoBackupService {
       const result = await this.withDriveToken(async (token) => {
         const folderId = await getOrCreateNestedFolder(token, [
           'Voucher-APP',
-          'NMSA',
-          'CADANGAN_DATABASE_HARIAN',
-          currentYear,
-          'Voucher_Keuangan'
+          'CADANGAN_VOUCHER',
+          currentYear
         ]);
         return await uploadFileToDrive(token, folderId, fileName, jsonBlob);
       });
@@ -280,11 +291,12 @@ class GoogleDriveAutoBackupService {
   }
 
   /**
-   * 3. Backup Master NPWP Vendor
+   * 3. Backup Master NPWP Vendor (Separate Dedicated Folder: NPWP-VENDOR-NMSA-APP)
    */
   public async backupNpwp(): Promise<{ success: boolean; url?: string }> {
     const today = new Date().toISOString().split('T')[0];
     const currentYear = new Date().getFullYear().toString();
+    const folderPath = `NPWP-VENDOR-NMSA-APP/Cadangan-Data-NPWP/${currentYear}`;
     try {
       const stored = localStorage.getItem('npwp_records_v1');
       const records = stored ? JSON.parse(stored) : [];
@@ -298,11 +310,9 @@ class GoogleDriveAutoBackupService {
 
       const result = await this.withDriveToken(async (token) => {
         const folderId = await getOrCreateNestedFolder(token, [
-          'Voucher-APP',
-          'NMSA',
-          'CADANGAN_DATABASE_HARIAN',
-          currentYear,
-          'Master_NPWP'
+          'NPWP-VENDOR-NMSA-APP',
+          'Cadangan-Data-NPWP',
+          currentYear
         ]);
         return await uploadFileToDrive(token, folderId, fileName, jsonBlob);
       });
@@ -313,7 +323,7 @@ class GoogleDriveAutoBackupService {
         module: 'NPWP',
         fileName,
         fileUrl: result.webViewLink,
-        folderPath: `Voucher-APP/NMSA/CADANGAN_DATABASE_HARIAN/${currentYear}/Master_NPWP`,
+        folderPath,
         status: 'success',
         recordCount: records.length
       });
@@ -325,11 +335,12 @@ class GoogleDriveAutoBackupService {
   }
 
   /**
-   * 4. Backup SPPD Dinas
+   * 4. Backup SPPD Dinas (Separate Dedicated Folder: SPPD-NMSA-APP)
    */
   public async backupSppd(): Promise<{ success: boolean; url?: string }> {
     const today = new Date().toISOString().split('T')[0];
     const currentYear = new Date().getFullYear().toString();
+    const folderPath = `SPPD-NMSA-APP/Cadangan-Data-SPPD/${currentYear}`;
     try {
       const stored = localStorage.getItem('sppd_records_v1');
       const records = stored ? JSON.parse(stored) : [];
@@ -343,11 +354,9 @@ class GoogleDriveAutoBackupService {
 
       const result = await this.withDriveToken(async (token) => {
         const folderId = await getOrCreateNestedFolder(token, [
-          'Voucher-APP',
-          'NMSA',
-          'CADANGAN_DATABASE_HARIAN',
-          currentYear,
-          'SPPD_Dinas'
+          'SPPD-NMSA-APP',
+          'Cadangan-Data-SPPD',
+          currentYear
         ]);
         return await uploadFileToDrive(token, folderId, fileName, jsonBlob);
       });
@@ -358,7 +367,7 @@ class GoogleDriveAutoBackupService {
         module: 'SPPD',
         fileName,
         fileUrl: result.webViewLink,
-        folderPath: `Voucher-APP/NMSA/CADANGAN_DATABASE_HARIAN/${currentYear}/SPPD_Dinas`,
+        folderPath,
         status: 'success',
         recordCount: records.length
       });
@@ -370,11 +379,12 @@ class GoogleDriveAutoBackupService {
   }
 
   /**
-   * 5. Backup Agenda & Pengingat Kerja
+   * 5. Backup Agenda & Pengingat Kerja (Separate Dedicated Folder: AGENDA-MEETING-NMSA)
    */
   public async backupAgenda(): Promise<{ success: boolean; url?: string }> {
     const today = new Date().toISOString().split('T')[0];
     const currentYear = new Date().getFullYear().toString();
+    const folderPath = `AGENDA-MEETING-NMSA/Cadangan-Data-Agenda/${currentYear}`;
     try {
       const stored = localStorage.getItem('nmsa_agenda_items_v1');
       const records = stored ? JSON.parse(stored) : [];
@@ -388,11 +398,9 @@ class GoogleDriveAutoBackupService {
 
       const result = await this.withDriveToken(async (token) => {
         const folderId = await getOrCreateNestedFolder(token, [
-          'Voucher-APP',
-          'NMSA',
-          'CADANGAN_DATABASE_HARIAN',
-          currentYear,
-          'Agenda_Kerja'
+          'AGENDA-MEETING-NMSA',
+          'Cadangan-Data-Agenda',
+          currentYear
         ]);
         return await uploadFileToDrive(token, folderId, fileName, jsonBlob);
       });
@@ -403,7 +411,7 @@ class GoogleDriveAutoBackupService {
         module: 'Agenda',
         fileName,
         fileUrl: result.webViewLink,
-        folderPath: `Voucher-APP/NMSA/CADANGAN_DATABASE_HARIAN/${currentYear}/Agenda_Kerja`,
+        folderPath,
         status: 'success',
         recordCount: records.length
       });
@@ -415,11 +423,12 @@ class GoogleDriveAutoBackupService {
   }
 
   /**
-   * 6. Master Full Database Backup (All-in-One)
+   * 6. Master Full Database Backup (All-in-One: CADANGAN-SISTEM-NMSA)
    */
   public async backupFullDatabase(customPayload?: any): Promise<{ success: boolean; url?: string; error?: string }> {
     const today = new Date().toISOString().split('T')[0];
     const currentYear = new Date().getFullYear().toString();
+    const folderPath = `CADANGAN-SISTEM-NMSA/Master-Full-Backup/${currentYear}`;
 
     try {
       // Gather all keys
@@ -443,15 +452,12 @@ class GoogleDriveAutoBackupService {
 
       const jsonBlob = new Blob([JSON.stringify(fullPayload, null, 2)], { type: 'application/json' });
       const fileName = `NMSA_Full_Database_Backup_${today}.json`;
-      const folderPath = `Voucher-APP/NMSA/CADANGAN_DATABASE_HARIAN/${currentYear}/Master_Full_Backup`;
 
       const result = await this.withDriveToken(async (token) => {
         const folderId = await getOrCreateNestedFolder(token, [
-          'Voucher-APP',
-          'NMSA',
-          'CADANGAN_DATABASE_HARIAN',
-          currentYear,
-          'Master_Full_Backup'
+          'CADANGAN-SISTEM-NMSA',
+          'Master-Full-Backup',
+          currentYear
         ]);
         return await uploadFileToDrive(token, folderId, fileName, jsonBlob);
       });

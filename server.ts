@@ -2835,7 +2835,189 @@ app.get("/api/cron-reminder", async (req, res) => {
   }
 });
 
+// ==========================================
+// DYNAMIC SHARE IMAGE & OPEN GRAPH PREVIEW
+// ==========================================
+function escapeXml(unsafe: string): string {
+  return String(unsafe || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
 
+app.get("/api/share-image", async (req, res) => {
+  try {
+    const id = String(req.query.id || "");
+    const state = readState();
+    const sub = (state.submissions || []).find((s: any) => s.id === id);
+
+    const jenis = (sub?.jenisPengajuan || req.query.transaksi || "Dokumen Transaksi").toString();
+    const kode = (sub?.kode || req.query.kode || (id ? `DOC-${id.slice(0, 8).toUpperCase()}` : "DOC-TX")).toString();
+    const kepada = (sub?.dibayarkanKepada || req.query.kepada || "Penerima").toString();
+    const rawNominal = sub ? ((sub.items || []).reduce((acc: number, it: any) => acc + (Number(it.nominal) || 0), 0) || sub.total || 0) : (Number(req.query.nominal) || 0);
+    const nominalStr = "Rp " + (Number(rawNominal) || 0).toLocaleString("id-ID");
+    const isLunas = (sub?.status || req.query.status || "").toString().toLowerCase() === "lunas" || (sub?.dibayarkanDengan === "Cek/Transfer");
+    const statusText = isLunas ? "LUNAS" : "BELUM LUNAS";
+    const statusBg = isLunas ? "#059669" : "#DC2626";
+    const tanggal = (sub?.tanggal || req.query.tanggal || new Date().toISOString().split("T")[0]).toString();
+
+    const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+      <defs>
+        <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#0c0e14" />
+          <stop offset="50%" stop-color="#141923" />
+          <stop offset="100%" stop-color="#1b212f" />
+        </linearGradient>
+        <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stop-color="#F59E0B" />
+          <stop offset="100%" stop-color="#FCD34D" />
+        </linearGradient>
+      </defs>
+
+      <!-- Background -->
+      <rect width="1200" height="630" fill="url(#bgGrad)" />
+
+      <!-- Geometric Accent Borders -->
+      <rect x="24" y="24" width="1152" height="582" rx="28" fill="none" stroke="#2a3346" stroke-width="2" />
+      <rect x="30" y="30" width="1140" height="570" rx="24" fill="none" stroke="#F59E0B" stroke-width="1" stroke-opacity="0.25" />
+
+      <!-- Top Company Brand Bar -->
+      <g transform="translate(60, 65)">
+        <rect x="0" y="0" width="56" height="56" rx="14" fill="#D97706" fill-opacity="0.15" stroke="#D97706" stroke-width="1.5" />
+        <text x="28" y="37" font-family="system-ui, -apple-system, sans-serif" font-size="28" font-weight="900" fill="#F59E0B" text-anchor="middle">N</text>
+        
+        <text x="74" y="26" font-family="system-ui, -apple-system, sans-serif" font-size="16" font-weight="900" fill="#F59E0B" letter-spacing="2">PT NUSANTARA MINERAL SUKSES ABADI</text>
+        <text x="74" y="48" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#94A3B8" letter-spacing="1">SISTEM KEUANGAN &amp; PENGELUARAN KAS / BANK</text>
+      </g>
+
+      <!-- Top Right Badges -->
+      <g transform="translate(860, 68)">
+        <!-- Status Badge -->
+        <rect x="180" y="0" width="120" height="42" rx="10" fill="${statusBg}" />
+        <text x="240" y="27" font-family="system-ui, -apple-system, monospace" font-size="14" font-weight="800" fill="#FFFFFF" text-anchor="middle" letter-spacing="1.5">${escapeXml(statusText)}</text>
+        
+        <!-- Kode Badge -->
+        <rect x="0" y="0" width="168" height="42" rx="10" fill="#1E293B" stroke="#475569" stroke-width="1.5" />
+        <text x="84" y="26" font-family="system-ui, -apple-system, monospace" font-size="13" font-weight="700" fill="#E2E8F0" text-anchor="middle">${escapeXml(kode)}</text>
+      </g>
+
+      <!-- Divider line -->
+      <line x1="60" y1="150" x2="1140" y2="150" stroke="#334155" stroke-width="1.5" />
+
+      <!-- Center Content Card -->
+      <g transform="translate(60, 180)">
+        <!-- Label Voucher Pengeluaran -->
+        <rect x="0" y="0" width="180" height="28" rx="8" fill="#F59E0B" fill-opacity="0.15" />
+        <text x="12" y="19" font-family="system-ui, -apple-system, monospace" font-size="11" font-weight="800" fill="#FBBF24" letter-spacing="1.5">BUKTI TRANSAKSI VOUCHER</text>
+
+        <!-- Transaction Title -->
+        <text x="0" y="78" font-family="system-ui, -apple-system, sans-serif" font-size="38" font-weight="900" fill="#FFFFFF" letter-spacing="-0.5">
+          ${escapeXml(jenis)}
+        </text>
+
+        <!-- Dibayarkan Kepada Info -->
+        <text x="0" y="125" font-family="system-ui, -apple-system, sans-serif" font-size="20" font-weight="600" fill="#94A3B8">
+          Dibayarkan Kepada: <tspan fill="#F1F5F9" font-weight="800">${escapeXml(kepada)}</tspan>
+        </text>
+
+        <!-- Big Nominal Box -->
+        <g transform="translate(0, 160)">
+          <rect x="0" y="0" width="1080" height="130" rx="20" fill="#0F172A" stroke="#334155" stroke-width="1.5" />
+          <text x="32" y="44" font-family="system-ui, -apple-system, monospace" font-size="13" font-weight="700" fill="#64748B" letter-spacing="2">TOTAL NOMINAL PEMBAYARAN:</text>
+          <text x="32" y="104" font-family="system-ui, -apple-system, sans-serif" font-size="54" font-weight="900" fill="url(#goldGrad)" letter-spacing="-1">${escapeXml(nominalStr)}</text>
+          
+          <rect x="910" y="45" width="138" height="40" rx="10" fill="#1E293B" stroke="#F59E0B" stroke-width="1" />
+          <text x="979" y="70" font-family="system-ui, -apple-system, monospace" font-size="12" font-weight="700" fill="#F59E0B" text-anchor="middle">TERVERIFIKASI</text>
+        </g>
+      </g>
+
+      <!-- Bottom Footer Info -->
+      <g transform="translate(60, 560)">
+        <text x="0" y="0" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="500" fill="#64748B">
+          Tanggal: <tspan fill="#94A3B8" font-weight="700">${escapeXml(tanggal)}</tspan>  •  Tersinkronisasi Cloud &amp; Google Drive PT Nusantara Mineral Sukses Abadi
+        </text>
+        <text x="1080" y="0" font-family="system-ui, -apple-system, monospace" font-size="12" font-weight="700" fill="#F59E0B" text-anchor="end">
+          NUSANTARA FINANCIAL SYSTEM
+        </text>
+      </g>
+    </svg>
+    `;
+
+    try {
+      const { Resvg } = await import("@resvg/resvg-js");
+      const resvg = new Resvg(svg, {
+        fitTo: { mode: "width", value: 1200 }
+      });
+      const pngData = resvg.render();
+      const pngBuffer = pngData.asPng();
+      res.setHeader("Content-Type", "image/png");
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      return res.send(pngBuffer);
+    } catch (renderErr) {
+      console.warn("Resvg PNG render fallback to SVG:", renderErr);
+      res.setHeader("Content-Type", "image/svg+xml");
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      return res.send(svg);
+    }
+  } catch (err: any) {
+    console.error("Error generating share image:", err);
+    res.status(500).json({ error: "Gagal membuat gambar share transaksi." });
+  }
+});
+
+// Public Share Link HTML Pre-renderer with Open Graph tags
+app.get(["/shared-view*", "/voucher/:id*"], async (req, res, next) => {
+  try {
+    const id = (req.params as any)?.id || String(req.query.id || "");
+    const state = readState();
+    const sub = (state.submissions || []).find((s: any) => s.id === id);
+
+    const jenis = (sub?.jenisPengajuan || req.query.transaksi || "Dokumen Transaksi").toString();
+    const kode = (sub?.kode || req.query.kode || "DOC").toString();
+    const kepada = (sub?.dibayarkanKepada || req.query.kepada || "").toString();
+    const rawNominal = sub ? ((sub.items || []).reduce((acc: number, it: any) => acc + (Number(it.nominal) || 0), 0) || sub.total || 0) : (Number(req.query.nominal) || 0);
+    const nominalStr = "Rp " + (Number(rawNominal) || 0).toLocaleString("id-ID");
+
+    const pageTitle = `${jenis} - ${nominalStr} | PT. Nusantara Mineral Sukses Abadi`;
+    const pageDesc = `Voucher: ${kode}${kepada ? ` • Kepada: ${kepada}` : ""} • Total: ${nominalStr}. Klik untuk melihat rincian transaksi & lampiran voucher resmi.`;
+    const host = req.get("host") || "localhost:3000";
+    const protocol = req.protocol || "http";
+    const imageUrl = `${protocol}://${host}/api/share-image?id=${encodeURIComponent(id)}&transaksi=${encodeURIComponent(jenis)}&nominal=${encodeURIComponent(rawNominal)}`;
+
+    const indexPath = process.env.NODE_ENV === "production" 
+      ? path.join(process.cwd(), "dist", "index.html")
+      : path.join(process.cwd(), "index.html");
+
+    if (fs.existsSync(indexPath)) {
+      let html = fs.readFileSync(indexPath, "utf-8");
+
+      // Inject / Replace Open Graph & Twitter meta tags
+      const ogMetaTags = `
+    <title>${escapeXml(pageTitle)}</title>
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="${escapeXml(pageTitle)}" />
+    <meta property="og:description" content="${escapeXml(pageDesc)}" />
+    <meta property="og:image" content="${imageUrl}" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="${escapeXml(pageTitle)}" />
+    <meta name="twitter:description" content="${escapeXml(pageDesc)}" />
+    <meta name="twitter:image" content="${imageUrl}" />
+      `;
+
+      html = html.replace(/<title>.*?<\/title>/i, ogMetaTags);
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      return res.send(html);
+    }
+  } catch (err) {
+    console.error("Error in shared-view SSR handler:", err);
+  }
+  next();
+});
 
 async function bootstrap() {
   if (process.env.NODE_ENV !== "production") {

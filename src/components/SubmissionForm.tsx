@@ -329,6 +329,8 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [invoiceDate, setInvoiceDate] = useState('');
   const [invoiceAmount, setInvoiceAmount] = useState<number | string>('');
+  const [isInvoiceNumberCustom, setIsInvoiceNumberCustom] = useState(false);
+  const [isInvoiceAmountCustom, setIsInvoiceAmountCustom] = useState(false);
   const [sendToAgenda, setSendToAgenda] = useState(true);
 
   // Petty Cash & SPPD fields
@@ -1062,10 +1064,15 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
       setDibayarkanDengan(initialSubmission.dibayarkanDengan);
       setStatus(initialSubmission.status || 'Belum Lunas');
       setNotes(initialSubmission.notes);
-      setIsInvoice(initialSubmission.isInvoice || false);
-      setInvoiceNumber(initialSubmission.invoiceNumber || '');
+      const initIsInv = initialSubmission.isInvoice || false;
+      setIsInvoice(initIsInv);
+      const initInvNum = initialSubmission.invoiceNumber || (initIsInv ? (initialSubmission.kode || '') : '');
+      setInvoiceNumber(initInvNum);
+      setIsInvoiceNumberCustom(Boolean(initialSubmission.invoiceNumber && initialSubmission.invoiceNumber !== initialSubmission.kode));
       setInvoiceDate(initialSubmission.invoiceDate || '');
-      setInvoiceAmount(initialSubmission.invoiceAmount !== undefined ? initialSubmission.invoiceAmount : '');
+      const initInvAmt = initialSubmission.invoiceAmount !== undefined ? initialSubmission.invoiceAmount : '';
+      setInvoiceAmount(initInvAmt);
+      setIsInvoiceAmountCustom(Boolean(initialSubmission.invoiceAmount !== undefined && initialSubmission.invoiceAmount !== ''));
       setSendToAgenda(initialSubmission.sendToAgenda !== false);
       setIsPettyCash(initialSubmission.isPettyCash || false);
       setPettyCashCustodian(initialSubmission.pettyCashCustodian || '');
@@ -1240,6 +1247,20 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
 
   // Run calculation
   const calculatedGrandTotal = items.reduce((sum, item) => sum + (Number(item.total) || 0), 0);
+
+  // Otomatis sesuaikan Nomor Invoice Vendor dengan Kode Dokumen
+  useEffect(() => {
+    if (isInvoice && !isInvoiceNumberCustom && kode) {
+      setInvoiceNumber(kode);
+    }
+  }, [kode, isInvoice, isInvoiceNumberCustom]);
+
+  // Otomatis sesuaikan Nominal Faktur dengan Total Pembayaran Tagihan
+  useEffect(() => {
+    if (isInvoice && !isInvoiceAmountCustom) {
+      setInvoiceAmount(calculatedGrandTotal > 0 ? calculatedGrandTotal : '');
+    }
+  }, [calculatedGrandTotal, isInvoice, isInvoiceAmountCustom]);
 
   // Form Submission Execution Logic
   const executeSave = async () => {
@@ -1877,9 +1898,11 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         
         // Save Invoice properties
         isInvoice,
-        invoiceNumber,
+        invoiceNumber: isInvoice ? (invoiceNumber.trim() || kode) : invoiceNumber,
         invoiceDate,
-        invoiceAmount: invoiceAmount !== '' ? Number(invoiceAmount) : undefined,
+        invoiceAmount: isInvoice
+          ? (invoiceAmount !== '' && !isNaN(Number(invoiceAmount)) ? Number(invoiceAmount) : calculatedGrandTotal)
+          : (invoiceAmount !== '' ? Number(invoiceAmount) : undefined),
         sendToAgenda: isInvoice ? sendToAgenda : false,
 
         // Save Salary Slip properties
@@ -2367,16 +2390,42 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                 {/* Grid Rincian Nomor & Tanggal Invoice */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-white p-4 rounded-xl border border-stone-200 shadow-3xs">
                   <div>
-                    <label className="block text-xs font-bold text-stone-700 uppercase tracking-wider mb-1">
-                      Nomor Invoice Vendor
-                    </label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-bold text-stone-700 uppercase tracking-wider">
+                        Nomor Invoice Vendor
+                      </label>
+                      {isInvoiceNumberCustom ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsInvoiceNumberCustom(false);
+                            setInvoiceNumber(kode);
+                          }}
+                          className="text-[10px] text-amber-700 hover:text-amber-900 font-bold underline cursor-pointer"
+                          title="Kembalikan agar terisi otomatis sesuai Kode Dokumen"
+                        >
+                          Sinkronkan Kode
+                        </button>
+                      ) : (
+                        <span className="text-[10px] text-teal-700 font-mono font-bold bg-teal-50 px-1.5 py-0.5 rounded border border-teal-200">
+                          ⚡ Otomatis Kode
+                        </span>
+                      )}
+                    </div>
                     <input
                       type="text"
-                      placeholder="Contoh: INV-2026/09/001"
+                      placeholder="Sesuai Kode Dokumen"
                       value={invoiceNumber}
-                      onChange={(e) => setInvoiceNumber(e.target.value)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setInvoiceNumber(val);
+                        setIsInvoiceNumberCustom(val !== kode);
+                      }}
                       className="w-full px-3 py-2 text-xs bg-stone-50 border border-stone-200 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500 font-mono font-medium"
                     />
+                    <p className="text-[10px] text-stone-400 mt-1 font-mono">
+                      Sesuai Kode Dokumen: <strong className="text-stone-700">{kode || '-'}</strong>
+                    </p>
                   </div>
 
                   <div>
@@ -2389,19 +2438,48 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                       onChange={(e) => setInvoiceDate(e.target.value)}
                       className="w-full px-3 py-2 text-xs bg-stone-50 border border-stone-200 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500 font-mono"
                     />
+                    <p className="text-[10px] text-stone-400 mt-1 font-mono">
+                      Default: Tanggal Pengajuan
+                    </p>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-stone-700 uppercase tracking-wider mb-1">
-                      Nominal Faktur (Opsional)
-                    </label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-bold text-stone-700 uppercase tracking-wider">
+                        Nominal Faktur
+                      </label>
+                      {isInvoiceAmountCustom ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsInvoiceAmountCustom(false);
+                            setInvoiceAmount(calculatedGrandTotal > 0 ? calculatedGrandTotal : '');
+                          }}
+                          className="text-[10px] text-amber-700 hover:text-amber-900 font-bold underline cursor-pointer"
+                          title="Kembalikan agar terisi otomatis mengikuti total pembayaran"
+                        >
+                          Sinkronkan Total
+                        </button>
+                      ) : (
+                        <span className="text-[10px] text-teal-700 font-mono font-bold bg-teal-50 px-1.5 py-0.5 rounded border border-teal-200">
+                          ⚡ Otomatis Total
+                        </span>
+                      )}
+                    </div>
                     <input
                       type="number"
                       placeholder="Sesuai total pengajuan"
                       value={invoiceAmount}
-                      onChange={(e) => setInvoiceAmount(e.target.value)}
-                      className="w-full px-3 py-2 text-xs bg-stone-50 border border-stone-200 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500 font-mono"
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setInvoiceAmount(val);
+                        setIsInvoiceAmountCustom(Number(val) !== Number(calculatedGrandTotal));
+                      }}
+                      className="w-full px-3 py-2 text-xs bg-stone-50 border border-stone-200 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500 font-mono font-bold text-stone-900"
                     />
+                    <p className="text-[10px] text-stone-400 mt-1 font-mono">
+                      Total Tagihan: <strong className="text-stone-700">Rp {formatRupiah(calculatedGrandTotal)}</strong>
+                    </p>
                   </div>
                 </div>
 

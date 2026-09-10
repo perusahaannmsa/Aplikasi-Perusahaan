@@ -77,7 +77,7 @@ import { triggerExcelDownload } from "../lib/excelGenerator";
 import { triggerAttendanceExcelDownload, printWeeklyReportPDF, generateAttendanceExcelBlob } from "../lib/attendanceSheetGenerator";
 import { getOrCreateFolder, getOrCreateNestedFolder, uploadFileToDrive, exportAttendanceToGoogleSheet } from "../lib/googleWorkspaceAbsen";
 import { initAuth, googleSignIn, googleSignOut, getFreshGoogleToken, saveGoogleToken } from "../lib/firebaseAbsen";
-import { saveSubmissionToFirestore, saveAbsenDataToFirestore, ensureValidDriveToken, getActiveGoogleDriveAccount, getConnectedDrives, executeDriveApiWithAutoRefresh } from "../firebase";
+import { saveSubmissionToFirestore, saveAbsenDataToFirestore, ensureValidDriveToken, getActiveGoogleDriveAccount, getConnectedDrives, executeDriveApiWithAutoRefresh, getOrRenewDriveToken } from "../firebase";
 import { googleDriveAutoBackup, BackupSyncLog, DriveAutoBackupSettings } from "../utils/googleDriveAutoBackup";
 import { SignaturePad } from "./SignaturePad";
 
@@ -1342,45 +1342,18 @@ export function AbsensiHarianNmsa({
 
   // Helper to execute Google Drive / Sheets operations with active unified token & auto-renewal
   const executeWithAutoRefreshToken = async <T,>(actionFn: (activeToken: string) => Promise<T>): Promise<T> => {
-    let token = await ensureValidDriveToken(false);
-    if (!token) {
-      token = localStorage.getItem("g_access_token") || googleToken;
-    }
+    const activeAccount = getActiveGoogleDriveAccount();
+    const targetEmail = activeAccount?.email || googleUserEmail || localStorage.getItem("g_user_email") || undefined;
 
-    if (!token) {
-      token = await ensureValidDriveToken(true);
-    }
-
-    if (!token) {
-      throw new Error("Gagal mendapatkan akses token Google Drive dari server. Silakan hubungkan akun Google Drive di bilah atas.");
-    }
-
-    try {
+    return executeDriveApiWithAutoRefresh(async (token) => {
+      setGoogleToken(token);
+      setIsDriveConnected(true);
       return await actionFn(token);
-    } catch (err: any) {
-      const errMsg = err?.message || String(err);
-      if (
-        errMsg.includes("TOKEN_EXPIRED_401") ||
-        errMsg.includes("401") ||
-        errMsg.includes("UNAUTHENTICATED") ||
-        errMsg.includes("Invalid Credentials") ||
-        errMsg.includes("invalid_grant") ||
-        errMsg.includes("invalid authentication credentials")
-      ) {
-        try {
-          const freshToken = await ensureValidDriveToken(true);
-          if (freshToken) {
-            localStorage.setItem("g_access_token", freshToken);
-            setGoogleToken(freshToken);
-            setIsDriveConnected(true);
-            return await actionFn(freshToken);
-          }
-        } catch (retryErr) {
-          console.error("Retry drive token fetch failed:", retryErr);
-        }
-      }
-      throw err;
-    }
+    }, {
+      actionName: "Google Drive Absensi",
+      interactiveIfRequired: true,
+      targetEmail
+    });
   };
 
   // Listen for PWA installation prompt
@@ -1525,7 +1498,8 @@ export function AbsensiHarianNmsa({
                 const periodFolderName = `Periode ${monday} s.d. ${friday}`;
                 
                 const folderId = await getOrCreateNestedFolder(tok, [
-                  "Laporan-Absensi-NMSA",
+                  "ABSENSI-NMSA-APP",
+                  "Laporan-Absensi-Uang-Makan",
                   folderYear,
                   monthName,
                   periodFolderName
@@ -2359,7 +2333,8 @@ export function AbsensiHarianNmsa({
           const periodFolderName = `Periode ${weekStart} s.d. ${weekEnd}`;
 
           const folderId = await getOrCreateNestedFolder(tok, [
-            "Laporan-Absensi-NMSA",
+            "ABSENSI-NMSA-APP",
+            "Laporan-Absensi-Uang-Makan",
             folderYear,
             monthName,
             periodFolderName
@@ -3376,6 +3351,20 @@ export function AbsensiHarianNmsa({
       errMsg.includes("Invalid Credentials") ||
       errMsg.includes("invalid authentication credentials")
     ) {
+      try {
+        const activeAccount = getActiveGoogleDriveAccount();
+        const targetEmail = activeAccount?.email || googleUserEmail || localStorage.getItem("g_user_email") || undefined;
+        const freshToken = await getOrRenewDriveToken(targetEmail, true);
+        if (freshToken) {
+          localStorage.setItem("g_access_token", freshToken);
+          setGoogleToken(freshToken);
+          setIsDriveConnected(true);
+          return;
+        }
+      } catch (renewErr) {
+        console.warn("Auto renewal in handleDriveError error:", renewErr);
+      }
+
       localStorage.removeItem("g_access_token");
       localStorage.removeItem("g_access_token_time");
       setGoogleToken("");
@@ -3384,7 +3373,7 @@ export function AbsensiHarianNmsa({
       alert(
         "🔑 SESI GOOGLE DRIVE PERLU DIPERBARUI\n\n" +
         "Sesi/token akses Google Drive Anda telah kedaluwarsa demi keamanan.\n\n" +
-        "Silakan klik tombol 'Login Google Drive' atau 'Ganti Akun' pada bilah atas aplikasi untuk terhubung kembali."
+        "Silakan klik tombol 'Hubungkan Google Drive' pada bilah atas aplikasi untuk memperbarui akses."
       );
     } else {
       setCloudSyncStatus({ status: "error", msg: errMsg });

@@ -1378,8 +1378,11 @@ export const ensureValidDriveToken = async (forceRefresh = false): Promise<strin
     }
   } catch (e) {}
 
-  // 4. Fallback token in memory or localStorage
-  return googleDriveTokenMemory || localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
+  // 4. Fallback token in memory or localStorage ONLY IF NOT forceRefresh
+  if (!forceRefresh) {
+    return googleDriveTokenMemory || localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
+  }
+  return null;
 };
 
 // Auto-Renew Token with Anti-Collision Mutex Protection
@@ -1399,6 +1402,8 @@ export const getOrRenewDriveToken = async (
       const currentValid = currentDrives.find(d => isDriveTokenValid(d) && (d.quotaLimit - d.quotaUsed > 10 * 1024 * 1024));
       if (currentValid && currentValid.accessToken) {
         setGoogleDriveToken(currentValid.accessToken);
+        localStorage.setItem('g_access_token', currentValid.accessToken);
+        localStorage.setItem('g_access_token_time', Date.now().toString());
         return currentValid.accessToken;
       }
 
@@ -1409,6 +1414,8 @@ export const getOrRenewDriveToken = async (
           const validDrive = cloudDrives.find(d => isDriveTokenValid(d) && d.accessToken);
           if (validDrive && validDrive.accessToken) {
             setGoogleDriveToken(validDrive.accessToken);
+            localStorage.setItem('g_access_token', validDrive.accessToken);
+            localStorage.setItem('g_access_token_time', Date.now().toString());
             return validDrive.accessToken;
           }
         }
@@ -1419,15 +1426,20 @@ export const getOrRenewDriveToken = async (
       const lastEmail = localStorage.getItem('NUSANTARA_LAST_ACTIVE_EMAIL');
       const emailToUse = targetEmail || activeAccount?.email || lastEmail || getConnectedDrives()[0]?.email || undefined;
 
-      // 4. If interactive renewal is allowed (e.g. user clicked or is submitting a voucher), perform login
+      // 4. If interactive renewal is allowed (e.g. user clicked save, backup, or submitting voucher), perform login
       if (interactiveIfRequired && emailToUse) {
         try {
           const loginRes = await googleDriveLogin(emailToUse, false);
           if (loginRes.accessToken) {
+            localStorage.setItem('g_access_token', loginRes.accessToken);
+            localStorage.setItem('g_access_token_time', Date.now().toString());
             return loginRes.accessToken;
           }
         } catch (err: any) {
-          console.warn('Silent drive token renewal notice:', err);
+          console.warn('Drive token renewal notice:', err);
+          if (interactiveIfRequired) {
+            throw err;
+          }
         }
       }
 
@@ -1453,9 +1465,12 @@ export const executeDriveApiWithAutoRefresh = async <T>(
   options?: {
     actionName?: string;
     maxRetries?: number;
+    interactiveIfRequired?: boolean;
+    targetEmail?: string;
   }
 ): Promise<T> => {
   const maxRetries = options?.maxRetries ?? 2;
+  const allowInteractive = options?.interactiveIfRequired ?? true;
   let attempts = 0;
 
   while (attempts <= maxRetries) {
@@ -1464,7 +1479,9 @@ export const executeDriveApiWithAutoRefresh = async <T>(
     // Obtain valid token (forces fresh sync on retry)
     let token = await ensureValidDriveToken(attempts > 1);
     if (!token) {
-      token = await getOrRenewDriveToken(undefined, false);
+      const activeAccount = getActiveGoogleDriveAccount();
+      const targetEmail = options?.targetEmail || activeAccount?.email;
+      token = await getOrRenewDriveToken(targetEmail, allowInteractive);
     }
     if (!token) {
       token = googleDriveTokenMemory || localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN') || '';
@@ -1478,7 +1495,9 @@ export const executeDriveApiWithAutoRefresh = async <T>(
         console.warn(`⚠️ [Google Drive Auto-Check] Mendeteksi respons 401 pada ${options?.actionName || 'Drive API'}. Memperbarui token otomatis di latar belakang (Percobaan ${attempts}/${maxRetries + 1})...`);
         if (attempts <= maxRetries) {
           invalidateDriveToken(token);
-          const freshToken = await getOrRenewDriveToken(undefined, false);
+          const activeAccount = getActiveGoogleDriveAccount();
+          const targetEmail = options?.targetEmail || activeAccount?.email;
+          const freshToken = await getOrRenewDriveToken(targetEmail, true);
           token = freshToken;
           continue; // Retry loop with fresh token
         }
@@ -1486,19 +1505,31 @@ export const executeDriveApiWithAutoRefresh = async <T>(
 
       return result;
     } catch (err: any) {
+      const errMsg = String(err?.message || err);
       const isAuthErr = 
-        err?.message?.includes('401') || 
-        err?.message?.includes('UNAUTHORIZED') ||
-        err?.message?.includes('UNAUTHENTICATED') ||
-        err?.message?.includes('Invalid Credentials') ||
-        err?.message?.includes('invalid_grant') ||
+        errMsg.includes('401') || 
+        errMsg.includes('UNAUTHORIZED') ||
+        errMsg.includes('UNAUTHENTICATED') ||
+        errMsg.includes('Invalid Credentials') ||
+        errMsg.includes('invalid_grant') ||
+        errMsg.includes('TOKEN_EXPIRED') ||
         err?.status === 401;
 
       if (isAuthErr && attempts <= maxRetries) {
-        console.warn(`⚠️ [Google Drive Auto-Check] Token kedaluwarsa (${err.message}). Memperbarui otomatis di latar belakang (Percobaan ${attempts}/${maxRetries + 1})...`);
+        console.warn(`⚠️ [Google Drive Auto-Check] Token kedaluwarsa (${errMsg}). Memperbarui token Google Drive secara otomatis (Percobaan ${attempts}/${maxRetries + 1})...`);
         invalidateDriveToken(token);
-        await getOrRenewDriveToken(undefined, false);
-        continue;
+        const activeAccount = getActiveGoogleDriveAccount();
+        const targetEmail = options?.targetEmail || activeAccount?.email;
+        try {
+          const freshToken = await getOrRenewDriveToken(targetEmail, true);
+          if (freshToken) {
+            token = freshToken;
+            localStorage.setItem('g_access_token', freshToken);
+            continue; // Retry loop with fresh token
+          }
+        } catch (renewErr) {
+          console.warn('Auto renewal attempt error:', renewErr);
+        }
       }
       throw err;
     }
@@ -1718,6 +1749,11 @@ export const googleDriveLogin = async (
     }
 
     await saveConnectedDrives(currentDrives);
+    localStorage.setItem('g_access_token', credential.accessToken);
+    localStorage.setItem('g_access_token_time', Date.now().toString());
+    if (driveDetails?.email) {
+      localStorage.setItem('g_user_email', driveDetails.email);
+    }
 
     return { user: result.user, accessToken: credential.accessToken, driveDetails };
   } catch (error: any) {

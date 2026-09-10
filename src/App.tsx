@@ -845,9 +845,17 @@ export default function App() {
   const [isLoadingShared, setIsLoadingShared] = useState(false);
   const [sharedError, setSharedError] = useState('');
 
-  const getSharedIdFromHash = (hash: string) => {
-    if (hash.includes('shared-view')) {
-      const idMatch = hash.match(/[?&]id=([a-zA-Z0-9_-]+)/) || hash.match(/shared-view\/([a-zA-Z0-9_-]+)/);
+  const getSharedId = (hash: string, path: string) => {
+    // 1. From URL search params ?id=...
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      const qId = sp.get('id');
+      if (qId) return qId;
+    } catch (e) {}
+
+    // 2. From hash (e.g. #/shared-view?id=... or #shared-view/...)
+    if (hash.includes('shared-view') || hash.includes('voucher') || hash.includes('transaksi')) {
+      const idMatch = hash.match(/[?&]id=([a-zA-Z0-9_-]+)/) || hash.match(/(?:shared-view|voucher|transaksi)\/([a-zA-Z0-9_-]+)/);
       if (idMatch && idMatch[1]) {
         return idMatch[1];
       }
@@ -856,11 +864,18 @@ export default function App() {
         return parts[1].split('?')[0];
       }
     }
+
+    // 3. From path (e.g. /shared-view/:id or /voucher/:id)
+    const pathMatch = path.match(/\/(?:shared-view|voucher|shared|transaksi)\/([a-zA-Z0-9_-]+)/);
+    if (pathMatch && pathMatch[1]) {
+      return pathMatch[1];
+    }
+
     return null;
   };
 
   useEffect(() => {
-    const sharedId = getSharedIdFromHash(currentHash);
+    const sharedId = getSharedId(currentHash, currentPath);
     if (sharedId) {
       setIsLoadingShared(true);
       setSharedError('');
@@ -881,7 +896,7 @@ export default function App() {
     } else {
       setSharedSubmission(null);
     }
-  }, [currentHash]);
+  }, [currentHash, currentPath]);
 
   // Synchronous route popstate and hashchange tracking
   useEffect(() => {
@@ -1713,7 +1728,14 @@ export default function App() {
   }
 
   // Route 2: Public Share View Route before AuthGate
-  const isSharedViewRoute = currentHash.includes('shared-view');
+  const isSharedViewRoute = Boolean(
+    currentHash.includes('shared-view') ||
+    currentPath.includes('shared-view') ||
+    currentPath.includes('/voucher') ||
+    currentPath.includes('/transaksi') ||
+    currentPath.includes('/shared') ||
+    (new URLSearchParams(window.location.search).has('id') && (currentHash.includes('shared') || currentPath.includes('shared') || window.location.pathname.includes('shared-view')))
+  );
 
   if (isSharedViewRoute) {
     return (

@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Submission, ActivityLog } from '../types';
 import { formatRupiah, formatDateIndonesian, isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, sortSubmissionsDescending } from '../utils';
-import { Search, Eye, Edit2, Trash2, Calendar, MapPin, DollarSign, Plus, Copy, RefreshCw, Cloud, FileText, Database, History, FileSpreadsheet, CheckCircle, AlertCircle, Printer, Check, ExternalLink, Coins, User, Bell, ChevronDown, Sparkles } from 'lucide-react';
+import { Search, Eye, Edit2, Trash2, Calendar, MapPin, DollarSign, Plus, Copy, RefreshCw, Cloud, FileText, Database, History, FileSpreadsheet, CheckCircle, AlertCircle, Printer, Check, ExternalLink, Coins, User, Bell, ChevronDown, Sparkles, Share2, Send } from 'lucide-react';
 import { loadActivityLogsFromFirestore, isFirebaseConfigured } from '../firebase';
 import { LiveClock } from './LiveClock';
 
@@ -53,15 +53,40 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
     try { return sessionStorage.getItem('sublist_jenisFilter') || ''; } catch (e) { return ''; }
   });
   
+  const currentNow = new Date();
+  const currentMonthDefault = String(currentNow.getMonth() + 1).padStart(2, '0');
+  const currentYearDefault = String(currentNow.getFullYear());
+
   const [yearFilter, setYearFilter] = useState<string>(() => {
-    try { return sessionStorage.getItem('sublist_yearFilter') || 'All'; } catch (e) { return 'All'; }
+    try {
+      const hasCustom = sessionStorage.getItem('sublist_hasCustomPeriodFilter');
+      if (hasCustom === 'true') {
+        return sessionStorage.getItem('sublist_yearFilter') || currentYearDefault;
+      }
+      return currentYearDefault;
+    } catch (e) {
+      return currentYearDefault;
+    }
   });
+
   const [monthFilter, setMonthFilter] = useState<string>(() => {
-    try { return sessionStorage.getItem('sublist_monthFilter') || 'All'; } catch (e) { return 'All'; }
+    try {
+      const hasCustom = sessionStorage.getItem('sublist_hasCustomPeriodFilter');
+      if (hasCustom === 'true') {
+        return sessionStorage.getItem('sublist_monthFilter') || currentMonthDefault;
+      }
+      return currentMonthDefault;
+    } catch (e) {
+      return currentMonthDefault;
+    }
   });
+
   const [dateFilter, setDateFilter] = useState<string>(() => {
     try { return sessionStorage.getItem('sublist_dateFilter') || ''; } catch (e) { return ''; }
   });
+
+  const [shareModalSub, setShareModalSub] = useState<Submission | null>(null);
+  const [isCopiedShare, setIsCopiedShare] = useState(false);
 
   const MONTHS_LIST = [
     { value: 'All', label: 'Semua Bulan' },
@@ -273,6 +298,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   // Dynamic list of years from submissions
   const availableYears = useMemo(() => {
     const years = new Set<string>();
+    years.add(currentYearDefault);
     submissions.forEach(sub => {
       if (sub.tanggal) {
         const parts = sub.tanggal.split('-');
@@ -282,7 +308,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
       }
     });
     return Array.from(years).sort((a, b) => b.localeCompare(a));
-  }, [submissions]);
+  }, [submissions, currentYearDefault]);
 
   // Filter logic
   const filteredSubmissions = useMemo(() => {
@@ -1127,7 +1153,14 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 <select
                   className="px-3.5 py-2 bg-white border border-stone-250 rounded-xl text-xs focus:ring-2 focus:ring-stone-400 focus:outline-none text-stone-850 min-w-[130px] font-medium"
                   value={yearFilter}
-                  onChange={(e) => setYearFilter(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setYearFilter(val);
+                    try {
+                      sessionStorage.setItem('sublist_yearFilter', val);
+                      sessionStorage.setItem('sublist_hasCustomPeriodFilter', 'true');
+                    } catch (err) {}
+                  }}
                 >
                   <option value="All">Semua Tahun</option>
                   {availableYears.map(year => (
@@ -1142,12 +1175,47 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 <select
                   className="px-3.5 py-2 bg-white border border-stone-250 rounded-xl text-xs focus:ring-2 focus:ring-stone-400 focus:outline-none text-stone-850 min-w-[150px] font-medium"
                   value={monthFilter}
-                  onChange={(e) => setMonthFilter(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setMonthFilter(val);
+                    try {
+                      sessionStorage.setItem('sublist_monthFilter', val);
+                      sessionStorage.setItem('sublist_hasCustomPeriodFilter', 'true');
+                    } catch (err) {}
+                  }}
                 >
                   {MONTHS_LIST.map(m => (
-                    <option key={m.value} value={m.value}>{m.label}</option>
+                    <option key={m.value} value={m.value}>
+                      {m.label} {m.value === currentMonthDefault ? '★ (Bulan Ini)' : ''}
+                    </option>
                   ))}
                 </select>
+              </div>
+
+              {/* Quick Jump to Current Month Button */}
+              <div className="self-end pb-0.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setYearFilter(currentYearDefault);
+                    setMonthFilter(currentMonthDefault);
+                    setDateFilter('');
+                    try {
+                      sessionStorage.setItem('sublist_yearFilter', currentYearDefault);
+                      sessionStorage.setItem('sublist_monthFilter', currentMonthDefault);
+                      sessionStorage.setItem('sublist_hasCustomPeriodFilter', 'true');
+                    } catch (err) {}
+                  }}
+                  title={`Tampilkan default bulan ini (${MONTHS_LIST.find(m => m.value === currentMonthDefault)?.label || ''} ${currentYearDefault})`}
+                  className={`px-3 py-2 text-xs font-bold font-mono rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-3xs ${
+                    monthFilter === currentMonthDefault && yearFilter === currentYearDefault && !dateFilter
+                      ? 'bg-amber-600 text-white shadow-xs font-bold'
+                      : 'bg-white hover:bg-amber-50 text-amber-800 border border-amber-300'
+                  }`}
+                >
+                  <Calendar size={13} />
+                  <span>Bulan Ini ({MONTHS_LIST.find(m => m.value === currentMonthDefault)?.label})</span>
+                </button>
               </div>
 
               {/* Specific Date Picker Input */}
@@ -1180,10 +1248,15 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                       setYearFilter('All');
                       setMonthFilter('All');
                       setDateFilter('');
+                      try {
+                        sessionStorage.setItem('sublist_yearFilter', 'All');
+                        sessionStorage.setItem('sublist_monthFilter', 'All');
+                        sessionStorage.setItem('sublist_hasCustomPeriodFilter', 'true');
+                      } catch (err) {}
                     }}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-850 border border-amber-200 text-[10px] font-bold font-mono rounded-lg transition"
                   >
-                    Reset Filter Periode ×
+                    Tampilkan Semua Periode ×
                   </button>
                 </div>
               )}
@@ -1334,6 +1407,18 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                               className="p-2 hover:bg-stone-50 border border-transparent hover:border-stone-200 text-[#D4AF37] hover:text-[#Bca031] rounded-xl transition cursor-pointer shadow-3xs"
                             >
                               <Eye size={17} />
+                            </button>
+
+                            <button
+                              title="Bagikan Tautan Transaksi & Gambar Voucher (WhatsApp / Publik)"
+                              onClick={() => {
+                                setShareModalSub(sub);
+                                setIsCopiedShare(false);
+                              }}
+                              id={`btn-share-${sub.id}`}
+                              className="p-2 hover:bg-emerald-50 border border-transparent hover:border-emerald-200 text-emerald-600 hover:text-emerald-800 rounded-xl transition cursor-pointer shadow-3xs"
+                            >
+                              <Share2 size={16} />
                             </button>
                             
                             <button
@@ -3520,6 +3605,136 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
           </div>
         </div>
       )}
+
+      {/* Quick Share Modal for Selected Submission */}
+      {shareModalSub && (() => {
+        const grandTotal = shareModalSub.items.reduce((sum, item) => sum + item.total, 0);
+        const cleanSlug = (text: string) => (text || 'transaksi').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+        const shareSlug = cleanSlug(shareModalSub.jenisPengajuan);
+        const shareUrl = `${window.location.origin}/shared-view?id=${shareModalSub.id}&transaksi=${encodeURIComponent(shareSlug)}&nominal=${grandTotal}`;
+        const shareImageUrl = `/api/share-image?id=${shareModalSub.id}`;
+        const isLunas = (shareModalSub.status || '').toLowerCase() === 'lunas' || shareModalSub.dibayarkanDengan === 'Cek/Transfer';
+        const waText = `*${shareModalSub.jenisPengajuan || 'Dokumen Transaksi'} - Rp ${grandTotal.toLocaleString('id-ID')}*\n` +
+          `*Nomor Voucher:* ${shareModalSub.kode}\n` +
+          `*Dibayarkan Kepada:* ${shareModalSub.dibayarkanKepada}\n` +
+          `*Tanggal:* ${formatDateIndonesian(shareModalSub.tanggal)}\n` +
+          `*Status:* ${isLunas ? 'Lunas' : 'Belum Lunas'}\n\n` +
+          `Silakan klik tautan di bawah ini untuk melihat detail lengkap transaksi beserta gambar voucher & bukti bayar:\n` +
+          `${shareUrl}`;
+
+        return (
+          <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 print:hidden animate-fade-in">
+            <div className="bg-white rounded-3xl max-w-lg w-full border border-stone-200 shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+              {/* Modal Header */}
+              <div className="p-5 bg-stone-900 text-white flex items-center justify-between border-b border-stone-800">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-xl">
+                    <Share2 size={18} />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black font-display tracking-tight text-white">
+                      Bagikan Tautan Transaksi & Gambar
+                    </h3>
+                    <p className="text-[11px] text-stone-400 font-mono">
+                      Pratinjau otomatis di WhatsApp & Medsos
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShareModalSub(null)}
+                  className="p-1.5 hover:bg-stone-800 text-stone-400 hover:text-white rounded-lg transition cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="p-5 overflow-y-auto space-y-4">
+                {/* Visual Card Preview */}
+                <div className="rounded-2xl border border-stone-200 bg-stone-50 overflow-hidden shadow-xs">
+                  <div className="aspect-[1200/630] w-full bg-stone-900 relative overflow-hidden flex items-center justify-center">
+                    <img
+                      src={shareImageUrl}
+                      alt={shareModalSub.jenisPengajuan}
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        (e.target as HTMLElement).style.display = 'none';
+                      }}
+                    />
+                    <div className="absolute top-2 left-2 px-2.5 py-1 bg-stone-900/80 backdrop-blur-xs border border-stone-700 text-[#D4AF37] text-[10px] font-mono font-bold rounded-lg">
+                      {shareModalSub.kode}
+                    </div>
+                  </div>
+                  <div className="p-3.5 space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-mono font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                        {shareModalSub.jenisPengajuan || 'Transaksi'}
+                      </span>
+                      <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${isLunas ? 'bg-teal-50 text-teal-700 border border-teal-200' : 'bg-rose-50 text-rose-700 border border-rose-200'}`}>
+                        {isLunas ? 'LUNAS' : 'BELUM LUNAS'}
+                      </span>
+                    </div>
+                    <p className="text-xs font-bold text-stone-850 truncate">
+                      {shareModalSub.dibayarkanKepada}
+                    </p>
+                    <p className="text-base font-black font-mono text-stone-900">
+                      Rp {formatRupiah(grandTotal)}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Share URL Box */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-stone-500 uppercase font-mono tracking-wider">
+                    Tautan Publik Berisi Judul & Nominal
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={shareUrl}
+                      className="flex-1 px-3 py-2 bg-stone-100 border border-stone-300 rounded-xl text-xs font-mono text-stone-800 select-all"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(shareUrl);
+                        setIsCopiedShare(true);
+                        setTimeout(() => setIsCopiedShare(false), 2500);
+                      }}
+                      className="px-3.5 py-2 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-bold font-mono transition flex items-center gap-1.5 shrink-0 cursor-pointer"
+                    >
+                      {isCopiedShare ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
+                      <span>{isCopiedShare ? 'Tersalin' : 'Salin'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="pt-2 flex flex-col sm:flex-row gap-2.5">
+                  <a
+                    href={`https://api.whatsapp.com/send?text=${encodeURIComponent(waText)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-xs font-bold uppercase tracking-wider transition flex items-center justify-center gap-2 shadow-xs cursor-pointer"
+                  >
+                    <Send size={15} />
+                    <span>Bagikan via WhatsApp</span>
+                  </a>
+                  <a
+                    href={shareUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="py-3 px-4 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-2xl text-xs font-bold transition flex items-center justify-center gap-1.5 border border-stone-250 cursor-pointer"
+                  >
+                    <ExternalLink size={15} />
+                    <span>Buka Tautan</span>
+                  </a>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

@@ -8,7 +8,7 @@ import {
   User,
   signOut
 } from "firebase/auth";
-import { ensureValidDriveToken, setGoogleDriveToken, getStoredGoogleDriveToken, getActiveGoogleDriveAccount } from "../firebase";
+import { ensureValidDriveToken, setGoogleDriveToken, getStoredGoogleDriveToken, getActiveGoogleDriveAccount, getOrRenewDriveToken } from "../firebase";
 
 // Your web app's Firebase configuration
 const firebaseConfig = {
@@ -47,7 +47,11 @@ export const saveGoogleToken = (token: string, email?: string) => {
 export const getFreshGoogleToken = async (forceRefresh = false): Promise<string> => {
   // 1. Try unified system drive token first to ensure identical Google Drive account
   try {
-    const unifiedToken = await ensureValidDriveToken(forceRefresh);
+    const activeAccount = getActiveGoogleDriveAccount();
+    const emailToUse = activeAccount?.email || localStorage.getItem("g_user_email") || undefined;
+    
+    // Proactively get or renew drive token
+    const unifiedToken = await getOrRenewDriveToken(emailToUse, forceRefresh);
     if (unifiedToken) {
       cachedAccessToken = unifiedToken;
       localStorage.setItem("g_access_token", unifiedToken);
@@ -70,6 +74,21 @@ export const getFreshGoogleToken = async (forceRefresh = false): Promise<string>
   // If token is less than 45 minutes old and forceRefresh is false, return active token
   if (currentToken && tokenAgeMs < 45 * 60 * 1000 && !forceRefresh) {
     return currentToken;
+  }
+
+  // Attempt interactive renewal if token is old or forceRefresh
+  try {
+    const activeAccount = getActiveGoogleDriveAccount();
+    const emailToUse = activeAccount?.email || localStorage.getItem("g_user_email") || undefined;
+    const renewed = await getOrRenewDriveToken(emailToUse, true);
+    if (renewed) {
+      cachedAccessToken = renewed;
+      localStorage.setItem("g_access_token", renewed);
+      localStorage.setItem("g_access_token_time", Date.now().toString());
+      return renewed;
+    }
+  } catch (err) {
+    console.warn("Failed interactive renewal in getFreshGoogleToken:", err);
   }
 
   if (currentToken && !forceRefresh) {

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Submission } from '../types';
 import { formatRupiah, formatDateIndonesian, numberToTerbilang } from '../utils';
 import { NusantaraLogo } from './NusantaraLogo';
-import { Printer, ArrowLeft, Layers, FileText, CheckCircle, Cloud, Loader2, Lock, ShieldAlert, RefreshCw, Share2, Copy, Check, Send, Edit2, Trash, Trash2, RotateCw, Coins } from 'lucide-react';
+import { Printer, ArrowLeft, Layers, FileText, CheckCircle, Cloud, Loader2, Lock, ShieldAlert, RefreshCw, Share2, Copy, Check, Send, Edit2, Trash, Trash2, RotateCw, Coins, ExternalLink } from 'lucide-react';
 import { getStoredGoogleDriveToken, googleDriveLogin, saveSubmissionToFirestore } from '../firebase';
 import { SppdSheetContent } from './PrintSppdDocument';
 import { SPPDRecord } from './SppdManager';
@@ -1800,52 +1800,81 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
 
       {/* Share Modal Dialog Box */}
       {isShareModalOpen && (() => {
-        const shareUrl = `${window.location.origin}${window.location.pathname}#/shared-view?id=${submission.id}`;
-        const waText = `Halo, berikut adalah bukti dokumen pengeluaran kas/bank yang sudah tersinkronisasi sebagai 1 kesatuan:\n\n` +
+        const cleanSlug = (text: string) => (text || 'transaksi').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+        const shareSlug = cleanSlug(submission.jenisPengajuan);
+        const shareUrl = `${window.location.origin}/shared-view?id=${submission.id}&transaksi=${encodeURIComponent(shareSlug)}&nominal=${grandTotal}`;
+        const shareImageUrl = `/api/share-image?id=${submission.id}`;
+        const isLunas = (submission.status || '').toLowerCase() === 'lunas' || submission.dibayarkanDengan === 'Cek/Transfer';
+        const waText = `*${submission.jenisPengajuan || 'Dokumen Transaksi'} - Rp ${grandTotal.toLocaleString('id-ID')}*\n` +
           `*Nomor Voucher:* ${submission.kode}\n` +
           `*Dibayarkan Kepada:* ${submission.dibayarkanKepada}\n` +
           `*Tanggal:* ${formatDateIndonesian(submission.tanggal)}\n` +
-          `*Kategori:* ${submission.jenisPengajuan || '-'}\n` +
-          `*Total Nominal:* Rp ${grandTotal.toLocaleString('id-ID')}\n\n` +
-          `Silakan klik tautan di bawah ini untuk melihat detail lengkap transaksi beserta seluruh lampiran asli yang sudah di-upload:\n` +
+          `*Status:* ${isLunas ? 'Lunas' : 'Belum Lunas'}\n\n` +
+          `Silakan klik tautan di bawah ini untuk melihat detail lengkap transaksi beserta gambar voucher & bukti bayar:\n` +
           `${shareUrl}`;
         const waUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(waText)}`;
 
         return (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-[9999] print:hidden">
-            <div className="bg-white rounded-2xl max-w-lg w-full border border-stone-200 shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-left">
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-[9999] print:hidden animate-fade-in">
+            <div className="bg-white rounded-3xl max-w-lg w-full border border-stone-200 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-left max-h-[92vh] flex flex-col">
               {/* Header */}
-              <div className="p-5 border-b border-stone-100 flex items-center justify-between bg-stone-50">
-                <div className="flex items-center gap-2.5">
-                  <div className="p-2 bg-amber-100 rounded-xl text-amber-700">
-                    <Share2 size={20} />
+              <div className="p-5 border-b border-stone-800 flex items-center justify-between bg-stone-900 text-white">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-xl">
+                    <Share2 size={18} />
                   </div>
                   <div>
-                    <h3 className="font-sans font-black text-stone-900 text-sm">Bagikan Dokumen Transaksi</h3>
-                    <p className="text-[11px] text-stone-500 font-mono">Kode Voucher: {submission.kode}</p>
+                    <h3 className="font-sans font-black text-white text-sm tracking-tight">Bagikan Dokumen Transaksi</h3>
+                    <p className="text-[11px] text-stone-400 font-mono">Kode Voucher: {submission.kode}</p>
                   </div>
                 </div>
                 <button
                   onClick={() => setIsShareModalOpen(false)}
-                  className="text-stone-400 hover:text-stone-700 p-1.5 rounded-lg hover:bg-stone-100 transition font-mono font-bold cursor-pointer"
+                  className="text-stone-400 hover:text-white p-1.5 rounded-lg hover:bg-stone-800 transition font-mono font-bold cursor-pointer"
                 >
                   ✕
                 </button>
               </div>
 
               {/* Content */}
-              <div className="p-6 space-y-5 font-sans">
-                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs text-amber-900 leading-relaxed flex gap-2.5">
-                  <CheckCircle size={16} className="text-amber-600 shrink-0 mt-0.5" />
-                  <p>
-                    Sistem secara otomatis mengunggah dokumen dengan izin <strong>"Akses Publik" (Anyone with link can view)</strong> di Google Drive Anda. Siapapun yang memiliki tautan di bawah ini dapat mengakses visualisasi voucher, rincian pengeluaran, dan lampiran aslinya sekaligus sebagai 1 kesatuan!
-                  </p>
+              <div className="p-5 space-y-4 font-sans overflow-y-auto">
+                {/* Visual Card Preview */}
+                <div className="rounded-2xl border border-stone-200 bg-stone-50 overflow-hidden shadow-xs">
+                  <div className="aspect-[1200/630] w-full bg-stone-900 relative overflow-hidden flex items-center justify-center">
+                    <img
+                      src={shareImageUrl}
+                      alt={submission.jenisPengajuan}
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        (e.target as HTMLElement).style.display = 'none';
+                      }}
+                    />
+                    <div className="absolute top-2 left-2 px-2.5 py-1 bg-stone-900/80 backdrop-blur-xs border border-stone-700 text-[#D4AF37] text-[10px] font-mono font-bold rounded-lg">
+                      {submission.kode}
+                    </div>
+                  </div>
+                  <div className="p-3.5 space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-mono font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                        {submission.jenisPengajuan || 'Transaksi'}
+                      </span>
+                      <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${isLunas ? 'bg-teal-50 text-teal-700 border border-teal-200' : 'bg-rose-50 text-rose-700 border border-rose-200'}`}>
+                        {isLunas ? 'LUNAS' : 'BELUM LUNAS'}
+                      </span>
+                    </div>
+                    <p className="text-xs font-bold text-stone-850 truncate">
+                      {submission.dibayarkanKepada}
+                    </p>
+                    <p className="text-base font-black font-mono text-stone-900">
+                      Rp {formatRupiah(grandTotal)}
+                    </p>
+                  </div>
                 </div>
 
                 {/* Shareable Link Input */}
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <label className="block text-[10px] font-mono font-bold text-stone-500 uppercase tracking-wider">
-                    Link Publik Transaksi (Satu Kesatuan):
+                    Link Publik Transaksi (Memuat Gambar, Judul & Nominal):
                   </label>
                   <div className="flex gap-2">
                     <input
@@ -1879,7 +1908,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                     <label className="block text-[10px] font-mono font-bold text-stone-500 uppercase tracking-wider">
                       Daftar Link Berkas Google Drive Langsung:
                     </label>
-                    <div className="max-h-[120px] overflow-y-auto border border-stone-200 rounded-xl p-2 bg-stone-50/50 space-y-2 divide-y divide-stone-100">
+                    <div className="max-h-[100px] overflow-y-auto border border-stone-200 rounded-xl p-2 bg-stone-50/50 space-y-2 divide-y divide-stone-100">
                       {attachmentFiles.map((f, idx) => (
                         <div key={idx} className="flex items-center justify-between text-xs pt-1.5 first:pt-0">
                           <span className="font-mono text-[11px] text-stone-600 truncate max-w-[280px]">
@@ -1899,16 +1928,25 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                   </div>
                 )}
 
-                {/* WhatsApp Button */}
-                <div className="pt-2">
+                {/* WhatsApp & Preview Buttons */}
+                <div className="pt-2 flex flex-col sm:flex-row gap-2.5">
                   <a
                     href={waUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="w-full flex items-center justify-center gap-2 bg-[#25D366] hover:bg-[#20ba5a] text-white font-bold py-3 px-4 rounded-xl transition text-sm cursor-pointer shadow-sm text-center"
+                    className="flex-1 flex items-center justify-center gap-2 bg-[#25D366] hover:bg-[#20ba5a] text-white font-bold py-3 px-4 rounded-2xl transition text-xs uppercase tracking-wider cursor-pointer shadow-sm text-center"
                   >
-                    <Send size={16} />
+                    <Send size={15} />
                     Kirim via WhatsApp
+                  </a>
+                  <a
+                    href={shareUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="py-3 px-4 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-2xl text-xs font-bold transition flex items-center justify-center gap-1.5 border border-stone-250 cursor-pointer"
+                  >
+                    <ExternalLink size={15} />
+                    Pratinjau
                   </a>
                 </div>
               </div>
