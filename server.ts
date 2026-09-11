@@ -2542,6 +2542,26 @@ app.post("/api/sync-submissions", (req, res) => {
   }
 });
 
+// GET /api/submissions/:id (Fetch single submission for public share-view / voucher)
+app.get("/api/submissions/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    const cleanId = String(id || "").toLowerCase().trim();
+    const state = readState();
+    const sub = (state.submissions || []).find((s: any) => 
+      String(s.id || "").toLowerCase().trim() === cleanId ||
+      String(s.kode || "").toLowerCase().trim() === cleanId
+    );
+
+    if (sub) {
+      return res.json({ success: true, submission: sub });
+    }
+    return res.status(404).json({ success: false, error: "Transaksi tidak ditemukan di penyimpanan server." });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Helper to determine weekday in Jakarta timezone ("Sunday"=0, "Saturday"=6, etc.)
 function getJakartaDayOfWeek(dateStr: string): number {
   const parts = dateStr.split("-").map(Number);

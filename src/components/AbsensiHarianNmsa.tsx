@@ -600,6 +600,18 @@ export function AbsensiHarianNmsa({
     localStorage.setItem("attendance_logs_v1", JSON.stringify(attendanceLogs));
   }, [attendanceLogs]);
 
+  useEffect(() => {
+    if (attendanceRecords && attendanceRecords.length > 0) {
+      localStorage.setItem("absensi_uang_makan_records", JSON.stringify(attendanceRecords));
+    }
+  }, [attendanceRecords]);
+
+  useEffect(() => {
+    if (workers && workers.length > 0) {
+      localStorage.setItem("workers_v1", JSON.stringify(workers));
+    }
+  }, [workers]);
+
   const [pettyCashHolders, setPettyCashHolders] = useState<string[]>(() => {
     if (propPettyCashHolders && propPettyCashHolders.length > 0) return propPettyCashHolders;
     const saved = localStorage.getItem("petty_cash_holders_v2");
@@ -928,36 +940,68 @@ export function AbsensiHarianNmsa({
   const [signatures, setSignatures] = useState<Record<string, string>>({});
   const [selfSignature, setSelfSignature] = useState<string | null>(null);
 
-  // Auto-backup attendance PDF to Google Drive on App Open (buka aplikasi) & on App Close (tutup aplikasi)
-  useEffect(() => {
-    // 1. On App Open: Trigger upload & update of Attendance PDF in Google Drive
-    const openTimer = setTimeout(() => {
-      googleDriveAutoBackup.backupAbsensi({
-        exportDate: new Date().toISOString(),
-        version: '2.0',
-        module: 'Absensi & Uang Makan Karyawan NMSA',
-        records: attendanceRecords,
-        workers,
-        signatures,
-        weeklyReports,
-        pettyCashReports
-      }).then(res => {
-        if (res.success) {
-          console.log('✓ [Buka Aplikasi] Absensi harian otomatis terunggah/terperbarui di Google Drive:', res.url);
-        }
-      }).catch(err => {
-        console.warn('Pencatatan auto-backup saat buka aplikasi:', err);
-      });
-    }, 2500);
+  // Refs to hold latest state for non-leaking listeners & safe backup
+  const attendanceRecordsRef = useRef(attendanceRecords);
+  const workersRef = useRef(workers);
+  const signaturesRef = useRef(signatures);
+  const weeklyReportsRef = useRef(weeklyReports);
+  const pettyCashReportsRef = useRef(pettyCashReports);
+  const hasBackedUpOnOpenRef = useRef<boolean>(false);
 
-    // 2. On App Close: Trigger upload & update of Attendance PDF before unload / pagehide
-    const handleAppClose = () => {
-      try {
+  useEffect(() => { attendanceRecordsRef.current = attendanceRecords; }, [attendanceRecords]);
+  useEffect(() => { workersRef.current = workers; }, [workers]);
+  useEffect(() => { signaturesRef.current = signatures; }, [signatures]);
+  useEffect(() => { weeklyReportsRef.current = weeklyReports; }, [weeklyReports]);
+  useEffect(() => { pettyCashReportsRef.current = pettyCashReports; }, [pettyCashReports]);
+
+  // 1. On App Open: Trigger upload & update of Attendance PDF in Google Drive once initial state is ready
+  useEffect(() => {
+    if (!initialFetchDone || hasBackedUpOnOpenRef.current) return;
+
+    // Check if there is valid data before attempting backup
+    const hasData = (attendanceRecords || []).some((r: any) =>
+      r && r.attendance && Object.values(r.attendance).some((val) => Boolean(val))
+    );
+
+    if (hasData) {
+      hasBackedUpOnOpenRef.current = true;
+      const openTimer = setTimeout(() => {
         googleDriveAutoBackup.backupAbsensi({
           exportDate: new Date().toISOString(),
-          records: attendanceRecords,
-          workers,
-          signatures
+          version: '2.0',
+          module: 'Absensi & Uang Makan Karyawan NMSA',
+          records: attendanceRecordsRef.current,
+          workers: workersRef.current,
+          signatures: signaturesRef.current,
+          weeklyReports: weeklyReportsRef.current,
+          pettyCashReports: pettyCashReportsRef.current
+        }).then(res => {
+          if (res.success) {
+            console.log('✓ [Buka Aplikasi] Absensi harian otomatis terunggah/terperbarui di Google Drive:', res.url);
+          }
+        }).catch(err => {
+          console.warn('Pencatatan auto-backup saat buka aplikasi:', err);
+        });
+      }, 1500);
+      return () => clearTimeout(openTimer);
+    }
+  }, [initialFetchDone, attendanceRecords]);
+
+  // 2. On App Close: Trigger upload & update of Attendance PDF before unload / pagehide (bound once)
+  useEffect(() => {
+    const handleAppClose = () => {
+      try {
+        const records = attendanceRecordsRef.current || [];
+        const hasData = records.some((r: any) =>
+          r && r.attendance && Object.values(r.attendance).some((val) => Boolean(val))
+        );
+        if (!hasData) return;
+
+        googleDriveAutoBackup.backupAbsensi({
+          exportDate: new Date().toISOString(),
+          records: records,
+          workers: workersRef.current,
+          signatures: signaturesRef.current
         }).catch(err => console.warn("Pencadangan saat tutup aplikasi:", err));
       } catch (e) {}
     };
@@ -966,11 +1010,10 @@ export function AbsensiHarianNmsa({
     window.addEventListener('pagehide', handleAppClose);
 
     return () => {
-      clearTimeout(openTimer);
       window.removeEventListener('beforeunload', handleAppClose);
       window.removeEventListener('pagehide', handleAppClose);
     };
-  }, [attendanceRecords, workers, signatures]);
+  }, []);
 
   // Bulk WA broadcast panel
   const [showBulkWA, setShowBulkWA] = useState<boolean>(false);
@@ -1638,6 +1681,7 @@ export function AbsensiHarianNmsa({
       if (res.ok) {
         const data = await res.json();
         if (data) {
+          let resolvedWorkers: Worker[] = workers;
           if (data.workers && data.workers.length > 0) {
             let mergedWorkers = [...data.workers];
             INITIAL_WORKERS.forEach(dw => {
@@ -1648,12 +1692,49 @@ export function AbsensiHarianNmsa({
                 existing.phoneNumber = dw.phoneNumber;
               }
             });
+            resolvedWorkers = mergedWorkers;
             setWorkers(mergedWorkers);
-            if (data.attendanceRecords) {
-              const workerIds = new Set(data.workers.map((w: any) => w.id));
-              const prunedRecords = data.attendanceRecords.filter((r: any) => workerIds.has(r.workerId));
-              setAttendanceRecords(prunedRecords);
-            }
+          }
+
+          if (data.attendanceRecords && Array.isArray(data.attendanceRecords)) {
+            const allWorkerIds = new Set(resolvedWorkers.map((w: any) => w.id));
+            setAttendanceRecords((prevLocal) => {
+              const map = new Map<string, AttendanceRecord>();
+
+              // 1. Keep local records first so local checkmarks are never wiped out
+              (prevLocal || []).forEach((r) => {
+                if (allWorkerIds.has(r.workerId)) {
+                  map.set(r.workerId, {
+                    ...r,
+                    attendance: { ...(r.attendance || {}) },
+                    customStatus: { ...(r.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">
+                  });
+                }
+              });
+
+              // 2. Merge incoming server records (union of checked dates)
+              data.attendanceRecords.forEach((r: AttendanceRecord) => {
+                if (!allWorkerIds.has(r.workerId)) return;
+                const existing = map.get(r.workerId);
+                if (!existing) {
+                  map.set(r.workerId, {
+                    ...r,
+                    attendance: { ...(r.attendance || {}) },
+                    customStatus: { ...(r.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">
+                  });
+                } else {
+                  existing.attendance = { ...(existing.attendance || {}), ...(r.attendance || {}) };
+                  existing.customStatus = { ...(existing.customStatus || {}), ...(r.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">;
+                  if (r.dailyAllowance) existing.dailyAllowance = r.dailyAllowance;
+                }
+              });
+
+              const mergedList = Array.from(map.values()) as AttendanceRecord[];
+              try {
+                localStorage.setItem("absensi_uang_makan_records", JSON.stringify(mergedList));
+              } catch (e) {}
+              return mergedList;
+            });
           }
           if (data.weeklyReports) setWeeklyReports(data.weeklyReports);
           if (data.pettyCashReports && Array.isArray(data.pettyCashReports)) setPettyCashReports(data.pettyCashReports);

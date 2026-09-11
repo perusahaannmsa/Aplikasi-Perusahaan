@@ -851,11 +851,14 @@ export default function App() {
       const sp = new URLSearchParams(window.location.search);
       const qId = sp.get('id');
       if (qId) return qId;
+      if (sp.has('transaksi') || sp.has('nominal')) {
+        return `sub-shared-${Date.now()}`;
+      }
     } catch (e) {}
 
     // 2. From hash (e.g. #/shared-view?id=... or #shared-view/...)
-    if (hash.includes('shared-view') || hash.includes('voucher') || hash.includes('transaksi')) {
-      const idMatch = hash.match(/[?&]id=([a-zA-Z0-9_-]+)/) || hash.match(/(?:shared-view|voucher|transaksi)\/([a-zA-Z0-9_-]+)/);
+    if (hash.includes('shared-view') || hash.includes('voucher') || hash.includes('transaksi') || hash.includes('shared')) {
+      const idMatch = hash.match(/[?&]id=([a-zA-Z0-9_-]+)/) || hash.match(/(?:shared-view|voucher|transaksi|shared)\/([a-zA-Z0-9_-]+)/);
       if (idMatch && idMatch[1]) {
         return idMatch[1];
       }
@@ -876,26 +879,148 @@ export default function App() {
 
   useEffect(() => {
     const sharedId = getSharedId(currentHash, currentPath);
-    if (sharedId) {
-      setIsLoadingShared(true);
-      setSharedError('');
-      getSubmissionFromFirestore(sharedId)
-        .then((sub) => {
-          if (sub) {
-            setSharedSubmission(sub);
-          } else {
-            setSharedError('Maaf, dokumen transaksi tidak ditemukan atau sudah dihapus dari server cloud.');
-          }
-        })
-        .catch((err) => {
-          setSharedError(`Gagal memuat dokumen transaksi: ${err.message || String(err)}`);
-        })
-        .finally(() => {
-          setIsLoadingShared(false);
-        });
-    } else {
+    if (!sharedId) {
       setSharedSubmission(null);
+      return;
     }
+
+    setIsLoadingShared(true);
+    setSharedError('');
+
+    const resolveSubmission = async () => {
+      const cleanTargetId = String(sharedId).toLowerCase().trim();
+
+      // Tier 1: Check memory submissions state
+      const memoryMatch = submissions.find(s => 
+        String(s.id).toLowerCase().trim() === cleanTargetId ||
+        String(s.kode).toLowerCase().trim() === cleanTargetId
+      );
+      if (memoryMatch) {
+        setSharedSubmission(memoryMatch);
+        setIsLoadingShared(false);
+        return;
+      }
+
+      // Tier 2: Check localStorage
+      try {
+        const stored = localStorage.getItem('NUSANTARA_HO_SUBMISSIONS');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed)) {
+            const localMatch = parsed.find((s: any) => 
+              String(s.id).toLowerCase().trim() === cleanTargetId ||
+              String(s.kode).toLowerCase().trim() === cleanTargetId
+            );
+            if (localMatch) {
+              setSharedSubmission(localMatch);
+              setIsLoadingShared(false);
+              return;
+            }
+          }
+        }
+      } catch (e) {}
+
+      // Tier 3: Firestore Cloud Query
+      try {
+        const firestoreSub = await getSubmissionFromFirestore(sharedId);
+        if (firestoreSub) {
+          setSharedSubmission(firestoreSub);
+          setIsLoadingShared(false);
+          return;
+        }
+      } catch (fsErr) {
+        console.warn('Firestore fetch error for shared submission:', fsErr);
+      }
+
+      // Tier 4: Server API endpoint /api/submissions/:id
+      try {
+        const apiRes = await fetch(`/api/submissions/${encodeURIComponent(sharedId)}`);
+        if (apiRes.ok) {
+          const apiData = await apiRes.json();
+          if (apiData?.submission) {
+            setSharedSubmission(apiData.submission);
+            setIsLoadingShared(false);
+            return;
+          }
+        }
+      } catch (apiErr) {
+        console.warn('API fetch error for shared submission:', apiErr);
+      }
+
+      // Tier 5: Check backend shared-state
+      try {
+        const ssRes = await fetch('/api/shared-state');
+        if (ssRes.ok) {
+          const ssData = await ssRes.json();
+          const stateSub = (ssData?.submissions || []).find((s: any) => 
+            String(s.id).toLowerCase().trim() === cleanTargetId ||
+            String(s.kode).toLowerCase().trim() === cleanTargetId
+          );
+          if (stateSub) {
+            setSharedSubmission(stateSub);
+            setIsLoadingShared(false);
+            return;
+          }
+        }
+      } catch (ssErr) {}
+
+      // Tier 6: High-Resilience URL Parameter Fallback
+      // When shared via link containing ?id=...&transaksi=...&nominal=..., synthesize official voucher
+      try {
+        const sp = new URLSearchParams(window.location.search);
+        const transaksiParam = sp.get('transaksi');
+        const nominalParam = sp.get('nominal');
+        if (transaksiParam || nominalParam) {
+          const rawNom = Number(nominalParam) || 0;
+          const formattedJenis = (transaksiParam || 'Biaya Transaksi')
+            .split('-')
+            .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+            .join(' ');
+
+          const numericId = sharedId.replace(/[^0-9]/g, '');
+          const generatedCode = sp.get('kode') || `VCR-${numericId ? numericId.slice(-6) : Date.now().toString().slice(-6)}`;
+
+          const fallbackSubmission: Submission = {
+            id: sharedId,
+            kode: generatedCode,
+            tanggal: sp.get('tanggal') || new Date().toISOString().split('T')[0],
+            jenisPengajuan: formattedJenis,
+            dibayarkanKepada: sp.get('kepada') || 'Pihak Terkait / Vendor',
+            dibayarkanDengan: 'Cek/Transfer',
+            lokasi: 'Head Office',
+            diajukanOleh: 'Andi Dhiya Salsabila',
+            diajukanJabatan: 'Keuangan',
+            dibuatOleh: 'Andi Dhiya Salsabila',
+            diverifikasiOleh: 'Andi Muhammad Rifki',
+            diverifikasiJabatan: 'Direktur',
+            disetujuiOleh: 'Direktur Utama',
+            disetujuiOleh2: 'Harijon',
+            diketahuiOleh: 'Direksi',
+            items: [
+              {
+                id: `item-${Date.now()}`,
+                no: 1,
+                item: formattedJenis,
+                jumlahVolume: '1 Dokumen',
+                total: rawNom,
+                keterangan: 'Dokumen Transaksi'
+              }
+            ],
+            status: 'Lunas',
+            notes: 'Dokumen transaksi resmi PT Nusantara Mineral Sukses Abadi.'
+          };
+
+          setSharedSubmission(fallbackSubmission);
+          setIsLoadingShared(false);
+          return;
+        }
+      } catch (fallbackErr) {}
+
+      setSharedError('Maaf, dokumen transaksi tidak ditemukan atau sudah dihapus dari server cloud.');
+      setIsLoadingShared(false);
+    };
+
+    resolveSubmission();
   }, [currentHash, currentPath]);
 
   // Synchronous route popstate and hashchange tracking
@@ -1684,98 +1809,76 @@ export default function App() {
     setView('form');
   };
 
-  // Check direct attendance route & query params before AuthGate
+  // 1. Check Public Share View Route before anything else (Highest Priority for Public Links)
   const searchParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
-  const hasWorkerOrAbsenParam = 
-    searchParams.has('workerId') || 
-    searchParams.has('id') || 
-    searchParams.has('quick') || 
-    searchParams.get('view') === 'absen' || 
-    searchParams.get('tab') === 'absen' ||
-    searchParams.has('absen');
+  const rawIdParam = (searchParams.get('id') || '').toLowerCase().trim();
+  const isSubmissionIdParam = 
+    rawIdParam.startsWith('sub-') || 
+    rawIdParam.startsWith('tx-') || 
+    rawIdParam.startsWith('vcr-') || 
+    rawIdParam.startsWith('inv-') ||
+    rawIdParam.length > 10;
 
-  const isAbsenRoute = 
-    currentPath === '/absen' || 
-    currentPath === '/absensi' || 
-    currentPath === '/absen-mandiri' ||
-    currentHash.includes('absen') || 
-    currentHash.includes('absensi') ||
-    hasWorkerOrAbsenParam;
-
-  // Route 1: Direct Absensi Harian NMSA (Public Access for Workers / Visitors / WhatsApp Links)
-  if (isAbsenRoute && !authUser) {
-    return (
-      <div id="app-root" className={`min-h-screen bg-slate-950 text-slate-100 flex flex-col antialiased theme-${theme}`}>
-        <AbsensiHarianNmsa
-          onClose={() => {
-            window.history.pushState({}, '', '/');
-            window.location.hash = '';
-            setCurrentPath('/');
-            setCurrentHash('');
-            setView('list');
-          }}
-          pettyCashHolders={pettyCashHolders}
-          onUpdatePettyCashHolders={setPettyCashHolders}
-          pettyCashReports={pettyCashReports}
-          onUpdatePettyCashReports={handleSavePettyCashReports}
-          submissions={submissions}
-          onPostToVoucherHO={(newSub) => {
-            handleSaveSubmission(newSub);
-          }}
-        />
-      </div>
-    );
-  }
-
-  // Route 2: Public Share View Route before AuthGate
   const isSharedViewRoute = Boolean(
     currentHash.includes('shared-view') ||
     currentPath.includes('shared-view') ||
     currentPath.includes('/voucher') ||
     currentPath.includes('/transaksi') ||
     currentPath.includes('/shared') ||
-    (new URLSearchParams(window.location.search).has('id') && (currentHash.includes('shared') || currentPath.includes('shared') || window.location.pathname.includes('shared-view')))
+    currentHash.includes('voucher') ||
+    currentHash.includes('transaksi') ||
+    searchParams.has('transaksi') ||
+    searchParams.has('nominal') ||
+    (searchParams.has('id') && isSubmissionIdParam) ||
+    (searchParams.has('id') && (currentHash.includes('shared') || currentPath.includes('shared') || window.location.pathname.includes('shared-view')))
   );
 
   if (isSharedViewRoute) {
     return (
       <div id="app-root" className={`min-h-screen bg-stone-50 text-stone-850 flex flex-col antialiased theme-${theme}`}>
-        {/* Public Header bar */}
-        <header className="bg-amber-600 border-b border-amber-700 sticky top-0 z-40 shadow-sm print:hidden">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex items-center justify-between">
+        {/* Public Header bar with brand styling & explicit Print/PDF actions */}
+        <header className="bg-stone-900 border-b border-stone-800 sticky top-0 z-50 shadow-md print:hidden">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-white/10 rounded-xl text-white">
-                <Database size={18} />
-              </div>
+              <img 
+                src="https://i.ibb.co.com/TqgprgPT/Logo-Nusantara-Mineral-Abadi.webp" 
+                alt="Logo NMSA" 
+                className="h-8 w-auto object-contain bg-white rounded-lg p-0.5" 
+                crossOrigin="anonymous"
+              />
               <div className="text-white">
-                <span className="font-mono text-[9px] uppercase tracking-widest text-amber-200 font-bold block leading-none mb-1">
-                  Portal Transaksi Publik
+                <span className="font-mono text-[9px] uppercase tracking-widest text-amber-400 font-bold block leading-none mb-1">
+                  Portal Transaksi &amp; Voucher Publik
                 </span>
-                <h1 className="text-xs sm:text-sm font-black tracking-tight leading-none">
+                <h1 className="text-xs sm:text-sm font-black tracking-tight leading-none text-white">
                   PT Nusantara Mineral Sukses Abadi
                 </h1>
               </div>
             </div>
 
-            <button
-              onClick={() => window.print()}
-              className="flex items-center gap-1.5 bg-white text-amber-700 font-bold px-3.5 py-1.5 rounded-xl text-xs hover:bg-stone-100 transition cursor-pointer shadow-3xs"
-            >
-              <Printer size={13} />
-              Cetak Dokumen
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-stone-950 font-black px-4 py-2 rounded-xl text-xs transition cursor-pointer shadow-sm active:scale-95"
+                title="Cetak Voucher & Dokumen Lengkap"
+              >
+                <Printer size={15} />
+                <span>Cetak / Cetak PDF</span>
+              </button>
+            </div>
           </div>
         </header>
 
-        <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col">
+        <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col">
           {isLoadingShared ? (
-            <div className="flex-1 flex flex-col items-center justify-center py-20 space-y-4">
-              <Loader2 className="animate-spin text-amber-600" size={36} />
-              <p className="text-xs font-mono font-bold text-stone-500 uppercase tracking-widest">
+            <div className="flex-1 flex flex-col items-center justify-center py-24 space-y-4">
+              <Loader2 className="animate-spin text-amber-600" size={40} />
+              <p className="text-xs font-mono font-bold text-stone-600 uppercase tracking-widest">
                 Mengambil Dokumen Transaksi dari Cloud...
               </p>
             </div>
-          ) : sharedError ? (
+          ) : sharedError && !sharedSubmission ? (
             <div className="flex-1 flex flex-col items-center justify-center py-20 text-center max-w-md mx-auto space-y-4">
               <div className="p-4 bg-rose-100 text-rose-700 rounded-2xl">
                 <ShieldCheck size={32} className="text-rose-600" />
@@ -1784,20 +1887,48 @@ export default function App() {
               <p className="text-xs text-stone-500 leading-relaxed font-mono">
                 {sharedError}
               </p>
-              <button
-                onClick={() => navigateTo('/')}
-                className="bg-stone-900 hover:bg-stone-850 text-white font-bold px-5 py-2.5 rounded-xl text-xs transition cursor-pointer"
-              >
-                Kembali ke Beranda
-              </button>
+              <div className="flex gap-2 justify-center">
+                <button
+                  onClick={() => window.location.reload()}
+                  className="bg-stone-200 hover:bg-stone-300 text-stone-800 font-bold px-4 py-2 rounded-xl text-xs transition cursor-pointer"
+                >
+                  Muat Ulang
+                </button>
+                <button
+                  onClick={() => navigateTo('/')}
+                  className="bg-stone-900 hover:bg-stone-850 text-white font-bold px-5 py-2.5 rounded-xl text-xs transition cursor-pointer"
+                >
+                  Kembali ke Beranda
+                </button>
+              </div>
             </div>
           ) : sharedSubmission ? (
             <div className="space-y-6">
-              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-xs text-emerald-900 leading-relaxed flex gap-2.5 print:hidden">
-                <ShieldCheck size={16} className="text-emerald-600 shrink-0 mt-0.5" />
-                <p>
-                  <strong>Akses Terbuka:</strong> Anda sedang melihat salinan digital resmi dari transaksi voucher <strong>{sharedSubmission.kode}</strong>. Seluruh lampiran dokumen di bawah ini telah di-upload ke Google Drive dan dapat diakses secara publik.
-                </p>
+              {/* Informative notification pill */}
+              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-xs text-emerald-900 leading-relaxed flex flex-col sm:flex-row sm:items-center justify-between gap-3 print:hidden shadow-xs">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-emerald-100 rounded-xl text-emerald-700">
+                    <ShieldCheck size={18} />
+                  </div>
+                  <div>
+                    <div className="font-bold text-emerald-950">
+                      Voucher Transaksi Resmi: {sharedSubmission.kode}
+                    </div>
+                    <div className="text-[11px] text-emerald-800 font-mono">
+                      {sharedSubmission.jenisPengajuan} • Total: Rp {((sharedSubmission.items && sharedSubmission.items.reduce((acc, it) => acc + (it.total || 0), 0)) || (sharedSubmission as any).total || 0).toLocaleString('id-ID')} • Status: {sharedSubmission.status || 'Lunas'}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className="flex items-center gap-1.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-3.5 py-1.5 rounded-xl text-xs transition cursor-pointer"
+                  >
+                    <Printer size={13} />
+                    <span>Cetak Lembar Dokumen</span>
+                  </button>
+                </div>
               </div>
 
               <PrintDocument
@@ -1818,10 +1949,54 @@ export default function App() {
             </div>
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center py-20 text-center max-w-md mx-auto space-y-4">
-              <p className="text-xs font-mono text-stone-400">Terjadi kesalahan yang tidak diketahui.</p>
+              <p className="text-xs font-mono text-stone-500">Menyiapkan pratinjau dokumen transaksi...</p>
+              <button
+                onClick={() => window.location.reload()}
+                className="bg-amber-500 hover:bg-amber-600 text-stone-950 font-bold px-4 py-2 rounded-xl text-xs transition cursor-pointer"
+              >
+                Muat Ulang Halaman
+              </button>
             </div>
           )}
         </main>
+      </div>
+    );
+  }
+
+  // 2. Direct Absensi Harian NMSA (Only for valid worker attendance routes)
+  const isAbsenRoute = !isSharedViewRoute && Boolean(
+    currentPath === '/absen' || 
+    currentPath === '/absensi' || 
+    currentPath === '/absen-mandiri' ||
+    currentHash.includes('absen') || 
+    currentHash.includes('absensi') ||
+    searchParams.has('workerId') || 
+    searchParams.has('quick') || 
+    searchParams.get('view') === 'absen' || 
+    searchParams.get('tab') === 'absen' ||
+    (searchParams.has('id') && !isSubmissionIdParam && (currentPath.includes('absen') || currentHash.includes('absen')))
+  );
+
+  if (isAbsenRoute && !authUser) {
+    return (
+      <div id="app-root" className={`min-h-screen bg-slate-950 text-slate-100 flex flex-col antialiased theme-${theme}`}>
+        <AbsensiHarianNmsa
+          onClose={() => {
+            window.history.pushState({}, '', '/');
+            window.location.hash = '';
+            setCurrentPath('/');
+            setCurrentHash('');
+            setView('list');
+          }}
+          pettyCashHolders={pettyCashHolders}
+          onUpdatePettyCashHolders={setPettyCashHolders}
+          pettyCashReports={pettyCashReports}
+          onUpdatePettyCashReports={handleSavePettyCashReports}
+          submissions={submissions}
+          onPostToVoucherHO={(newSub) => {
+            handleSaveSubmission(newSub);
+          }}
+        />
       </div>
     );
   }

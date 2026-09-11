@@ -257,6 +257,20 @@ class GoogleDriveAutoBackupService {
       const activeWorkerIds = new Set(workersList.filter((w: any) => w.isActive !== false).map((w: any) => w.id));
       const liveRecords = recordsList.filter((r: any) => activeWorkerIds.has(r.workerId));
 
+      // Guard: Do not overwrite Google Drive with empty records or unpopulated data
+      const targetRecords = liveRecords.length > 0 ? liveRecords : recordsList;
+      const hasAnyAttendance = targetRecords.some((r: any) => 
+        r && r.attendance && Object.values(r.attendance).some((val) => Boolean(val))
+      );
+
+      if (targetRecords.length === 0 || !hasAnyAttendance) {
+        console.log('[Auto-Backup Google Drive] Penundaan upload absensi: Belum ada presensi yang terisi atau data masih dalam proses sinkronisasi.');
+        return {
+          success: false,
+          error: 'Belum ada data presensi aktif untuk dicadangkan ke Google Drive.'
+        };
+      }
+
       // Generate the official PDF Blob matching "Cetak PDF Aktif"
       const { generateWeeklyReportPDFBlob } = await import('../lib/attendanceSheetGenerator');
       const liveReport = {
@@ -264,7 +278,7 @@ class GoogleDriveAutoBackupService {
         weekStartDate,
         weekEndDate,
         totalAmount: 0,
-        records: liveRecords.length > 0 ? liveRecords : recordsList,
+        records: targetRecords,
         isSubmitted: false,
         status: 'draft' as const,
         reportedAt: new Date().toISOString()

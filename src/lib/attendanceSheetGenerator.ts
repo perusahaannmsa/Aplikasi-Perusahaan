@@ -230,33 +230,44 @@ export function generateWeeklyReportHTML(
           .signature-container {
             display: flex;
             justify-content: space-between;
-            margin-top: 25px;
+            margin-top: 30px;
             page-break-inside: avoid;
-            padding: 0 10px;
+            padding: 0 20px;
           }
           .signature-box {
             width: 220px;
             text-align: center;
           }
           .signature-title {
-            font-size: 8.5px;
-            margin-bottom: 45px;
-            color: #475569;
-            font-weight: 500;
+            font-size: 9px;
+            margin-bottom: 50px;
+            color: #334155;
+            font-weight: 600;
+            line-height: 1.3;
+          }
+          .signature-name-wrapper {
+            display: inline-block;
+            min-width: 155px;
+            text-align: center;
+            margin: 0 auto;
           }
           .signature-name {
-            font-weight: bold;
-            font-size: 9px;
+            font-weight: 800;
+            font-size: 9.5px;
             color: #0f172a;
-            border-bottom: 1px solid #000;
-            display: inline-block;
+            line-height: 1.4;
             padding: 0 10px;
-            padding-bottom: 1px;
+            margin-bottom: 3px;
+          }
+          .signature-line {
+            height: 1.2px;
+            background-color: #0f172a;
+            width: 100%;
           }
           .signature-role {
-            font-size: 8px;
+            font-size: 8.5px;
             color: #64748b;
-            margin-top: 2px;
+            margin-top: 4px;
           }
           
           @media print {
@@ -327,13 +338,19 @@ export function generateWeeklyReportHTML(
         
         <div class="signature-container">
           <div class="signature-box">
-            <div class="signature-title">Diterima & Diperiksa Oleh,</div>
-            <div class="signature-name" style="text-decoration: none; border-bottom: 1.2px solid #000; padding-bottom: 1px;">Andi Dhiya Salsabila</div>
+            <div class="signature-title">Diterima &amp; Diperiksa Oleh,</div>
+            <div class="signature-name-wrapper">
+              <div class="signature-name">Andi Dhiya Salsabila</div>
+              <div class="signature-line"></div>
+            </div>
             <div class="signature-role">Keuangan</div>
           </div>
           <div class="signature-box">
-            <div class="signature-title">Diserahkan & Dilaporkan Oleh,</div>
-            <div class="signature-name" style="text-decoration: none; border-bottom: 1.2px solid #000; padding-bottom: 1px;">Nur Wahyudi</div>
+            <div class="signature-title">Diserahkan &amp; Dilaporkan Oleh,</div>
+            <div class="signature-name-wrapper">
+              <div class="signature-name">Nur Wahyudi</div>
+              <div class="signature-line"></div>
+            </div>
             <div class="signature-role">Staff Keuangan</div>
           </div>
         </div>
