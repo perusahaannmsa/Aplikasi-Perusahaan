@@ -23,7 +23,12 @@ function getSafeDates(startDateStr: string): string[] {
   return dates;
 }
 
-export function printWeeklyReportPDF(report: WeeklyReport, workers: Worker[], signatures?: { [workerId: string]: string }) {
+export function generateWeeklyReportHTML(
+  report: WeeklyReport, 
+  workers: Worker[], 
+  signatures?: { [workerId: string]: string },
+  autoPrint: boolean = false
+): string {
   const dates = getSafeDates(report.weekStartDate);
   const dayNames = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"];
   const workerMap = new Map(workers.map((w) => [w.id, w]));
@@ -116,13 +121,7 @@ export function printWeeklyReportPDF(report: WeeklyReport, workers: Worker[], si
     `;
   }).join("");
 
-  const printWindow = window.open("", "_blank");
-  if (!printWindow) {
-    alert("Gagal membuka jendela cetak. Pastikan pop-up browser tidak diblokir.");
-    return;
-  }
-
-  printWindow.document.write(`
+  return `
     <html>
       <head>
         <title>Rekap Uang Makan Mingguan - ${report.weekStartDate}</title>
@@ -270,7 +269,7 @@ export function printWeeklyReportPDF(report: WeeklyReport, workers: Worker[], si
       </head>
       <body>
         <div class="header">
-          <img src="https://i.ibb.co.com/FqDNnD8W/Logo-Nusantara-Mineral-Abadi.webp" alt="Logo PT" class="logo" />
+          <img src="https://i.ibb.co.com/TqgprgPT/Logo-Nusantara-Mineral-Abadi.webp" alt="Logo PT" class="logo" crossOrigin="anonymous" />
           <div class="header-text">
             <h1>PT. NUSANTARA MINERAL SUKSES ABADI</h1>
             <h2>Laporan Absensi & Uang Makan Mingguan Karyawan</h2>
@@ -339,6 +338,7 @@ export function printWeeklyReportPDF(report: WeeklyReport, workers: Worker[], si
           </div>
         </div>
         
+        ${autoPrint ? `
         <script>
           window.addEventListener('DOMContentLoaded', () => {
             setTimeout(() => {
@@ -346,10 +346,101 @@ export function printWeeklyReportPDF(report: WeeklyReport, workers: Worker[], si
             }, 500);
           });
         </script>
+        ` : ''}
       </body>
     </html>
-  `);
+  `;
+}
+
+export function printWeeklyReportPDF(report: WeeklyReport, workers: Worker[], signatures?: { [workerId: string]: string }) {
+  const html = generateWeeklyReportHTML(report, workers, signatures, true);
+  const printWindow = window.open("", "_blank");
+  if (!printWindow) {
+    alert("Gagal membuka jendela cetak. Pastikan pop-up browser tidak diblokir.");
+    return;
+  }
+  printWindow.document.write(html);
   printWindow.document.close();
+}
+
+/**
+ * Generates an actual PDF Blob matching the exact "Cetak PDF Aktif" view layout
+ */
+export async function generateWeeklyReportPDFBlob(
+  report: WeeklyReport,
+  workers: Worker[],
+  signatures?: { [workerId: string]: string }
+): Promise<Blob> {
+  const html = generateWeeklyReportHTML(report, workers, signatures, false);
+
+  if (typeof document === "undefined") {
+    // Edge case if called server-side
+    const { jsPDF } = await import("jspdf");
+    const doc = new jsPDF("p", "pt", "a4");
+    doc.text("PT. NUSANTARA MINERAL SUKSES ABADI", 40, 40);
+    return doc.output("blob");
+  }
+
+  // Create isolated off-screen sandbox container
+  const container = document.createElement("div");
+  container.id = "pdf-sandbox-" + Date.now();
+  container.style.position = "fixed";
+  container.style.left = "-9999px";
+  container.style.top = "0";
+  container.style.width = "794px"; // Exact A4 standard width at 96 DPI
+  container.style.backgroundColor = "#ffffff";
+  container.style.boxSizing = "border-box";
+  container.style.padding = "24px 30px";
+  container.style.zIndex = "-99999";
+  container.innerHTML = html;
+
+  document.body.appendChild(container);
+
+  try {
+    // Wait for DOM layout and images to paint
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    const html2canvasModule = await import("html2canvas");
+    const html2canvas = (html2canvasModule.default || html2canvasModule) as any;
+    const { jsPDF } = await import("jspdf");
+
+    const canvas = await html2canvas(container, {
+      scale: 2,
+      useCORS: true,
+      allowTaint: true,
+      backgroundColor: "#ffffff",
+      windowWidth: 794,
+      logging: false,
+    });
+
+    const imgData = canvas.toDataURL("image/jpeg", 0.95);
+    const pdf = new jsPDF({
+      orientation: "portrait",
+      unit: "mm",
+      format: "a4",
+    });
+
+    const pdfWidth = pdf.internal.pageSize.getWidth(); // 210mm
+    const pdfPageHeight = pdf.internal.pageSize.getHeight(); // 297mm
+    const imgHeight = (canvas.height * pdfWidth) / canvas.width;
+
+    pdf.addImage(imgData, "JPEG", 0, 0, pdfWidth, Math.min(imgHeight, pdfPageHeight));
+
+    return pdf.output("blob");
+  } catch (err) {
+    console.warn("Falling back to direct jsPDF generator:", err);
+    const { jsPDF } = await import("jspdf");
+    const doc = new jsPDF("p", "pt", "a4");
+    doc.setFontSize(14);
+    doc.text("PT. NUSANTARA MINERAL SUKSES ABADI", 40, 40);
+    doc.setFontSize(10);
+    doc.text(`Laporan Absensi & Uang Makan Mingguan - Periode: ${report.weekStartDate} s/d ${report.weekEndDate}`, 40, 60);
+    return doc.output("blob");
+  } finally {
+    if (document.body.contains(container)) {
+      document.body.removeChild(container);
+    }
+  }
 }
 
 export function generateAttendanceExcelBlob(

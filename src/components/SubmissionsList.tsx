@@ -145,7 +145,15 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
     try { return sessionStorage.getItem('sublist_pettyCashCustodianFilter') || 'All'; } catch (e) { return 'All'; }
   });
   const [pettyCashMonthFilter, setPettyCashMonthFilter] = useState<string>(() => {
-    try { return sessionStorage.getItem('sublist_pettyCashMonthFilter') || 'All'; } catch (e) { return 'All'; }
+    try {
+      const hasCustom = sessionStorage.getItem('sublist_hasCustomPeriodFilter');
+      if (hasCustom === 'true') {
+        return sessionStorage.getItem('sublist_pettyCashMonthFilter') || currentMonthDefault;
+      }
+      return currentMonthDefault;
+    } catch (e) {
+      return currentMonthDefault;
+    }
   });
 
   // States for Unpaid/Outstanding view
@@ -158,7 +166,15 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
 
   // States for Invoice Recap view
   const [invoiceMonthFilter, setInvoiceMonthFilter] = useState<string>(() => {
-    try { return sessionStorage.getItem('sublist_invoiceMonthFilter') || 'All'; } catch (e) { return 'All'; }
+    try {
+      const hasCustom = sessionStorage.getItem('sublist_hasCustomPeriodFilter');
+      if (hasCustom === 'true') {
+        return sessionStorage.getItem('sublist_invoiceMonthFilter') || currentMonthDefault;
+      }
+      return currentMonthDefault;
+    } catch (e) {
+      return currentMonthDefault;
+    }
   });
   const [invoiceSearchQuery, setInvoiceSearchQuery] = useState<string>(() => {
     try { return sessionStorage.getItem('sublist_invoiceSearchQuery') || ''; } catch (e) { return ''; }
@@ -3612,7 +3628,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
         const cleanSlug = (text: string) => (text || 'transaksi').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
         const shareSlug = cleanSlug(shareModalSub.jenisPengajuan);
         const shareUrl = `${window.location.origin}/shared-view?id=${shareModalSub.id}&transaksi=${encodeURIComponent(shareSlug)}&nominal=${grandTotal}`;
-        const shareImageUrl = `/api/share-image?id=${shareModalSub.id}`;
+        const shareImageUrl = `/api/share-image?id=${encodeURIComponent(shareModalSub.id)}&transaksi=${encodeURIComponent(shareModalSub.jenisPengajuan || '')}&nominal=${grandTotal}&kode=${encodeURIComponent(shareModalSub.kode || '')}&kepada=${encodeURIComponent(shareModalSub.dibayarkanKepada || '')}`;
         const isLunas = (shareModalSub.status || '').toLowerCase() === 'lunas' || shareModalSub.dibayarkanDengan === 'Cek/Transfer';
         const waText = `*${shareModalSub.jenisPengajuan || 'Dokumen Transaksi'} - Rp ${grandTotal.toLocaleString('id-ID')}*\n` +
           `*Nomor Voucher:* ${shareModalSub.kode}\n` +

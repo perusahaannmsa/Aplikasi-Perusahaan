@@ -1489,10 +1489,10 @@ export function AbsensiHarianNmsa({
             // 3. Generate PDF and Upload to dedicated Google Drive folder (Separate from Voucher-APP)
             try {
               await executeWithAutoRefreshToken(async (tok) => {
-                const { generateWeeklyReportPDFBlob } = await import('../lib/attendanceSheetGeneratorPDF');
-                const pdfBlob = generateWeeklyReportPDFBlob(newReport, workers);
+                const { generateWeeklyReportPDFBlob } = await import('../lib/attendanceSheetGenerator');
+                const pdfBlob = await generateWeeklyReportPDFBlob(newReport, workers, signatures);
                 
-                const fileName = `Rekap_Uang_Makan_${monday}_${friday}.pdf`;
+                const fileName = `Rekap_Uang_Makan_${monday}_s.d._${friday}.pdf`;
                 const monthName = today.toLocaleString('id-ID', {month: 'long'});
                 const folderYear = today.getFullYear().toString();
                 const periodFolderName = `Periode ${monday} s.d. ${friday}`;
@@ -1508,15 +1508,6 @@ export function AbsensiHarianNmsa({
                 newReport.pdfDriveUrl = pdfResult.webViewLink;
                 newReport.driveFileId = folderId;
                 newReport.driveUrl = folderId;
-
-                // Also auto-upload Excel copy
-                try {
-                  const excelBlob = generateAttendanceExcelBlob(monday, friday, attendanceRecords, workers);
-                  const excelResult = await uploadFileToDrive(tok, folderId, `Rekap_Uang_Makan_${monday}_to_${friday}.xlsx`, excelBlob);
-                  newReport.excelDriveUrl = excelResult.webViewLink;
-                } catch (excelErr) {
-                  console.error("Auto Excel upload failed", excelErr);
-                }
 
                 // Update Firebase and local state with the Google Drive links
                 try {
@@ -2038,11 +2029,8 @@ export function AbsensiHarianNmsa({
       }
 
       activeWorkers.forEach((worker) => {
-        const matchIdx = newRecords.findIndex(
-          (r) => r.workerId === worker.id && r.attendance[weekStart] !== undefined
-        );
+        const matchIdx = newRecords.findIndex((r) => r.workerId === worker.id);
 
-        // If no attendance record exists for this worker on this week, initiate it
         if (matchIdx === -1) {
           const initialAttendance: { [date: string]: boolean } = {};
           weekDates.forEach((date) => {
@@ -2055,6 +2043,24 @@ export function AbsensiHarianNmsa({
             dailyAllowance: globalAllowance,
           });
           updated = true;
+        } else {
+          // Ensure all weekDates exist in this worker's attendance record
+          let dateAdded = false;
+          const currentRecord = newRecords[matchIdx];
+          const updatedAtt = { ...(currentRecord.attendance || {}) };
+          weekDates.forEach((date) => {
+            if (updatedAtt[date] === undefined) {
+              updatedAtt[date] = false;
+              dateAdded = true;
+            }
+          });
+          if (dateAdded) {
+            newRecords[matchIdx] = {
+              ...currentRecord,
+              attendance: updatedAtt,
+            };
+            updated = true;
+          }
         }
       });
 
@@ -2065,10 +2071,9 @@ export function AbsensiHarianNmsa({
   // --- Handlers ---
   const handleToggleAttendance = (workerId: string, date: string) => {
     const updated = attendanceRecords.map((r) => {
-      // Find the specific worker record for this week's start date
-      const hasThisWeek = r.attendance[weekStart] !== undefined;
-      if (r.workerId === workerId && hasThisWeek) {
-        const nextVal = !r.attendance[date];
+      if (r.workerId === workerId) {
+        const currentVal = r.attendance ? r.attendance[date] : false;
+        const nextVal = !currentVal;
         const newCustomStatus = { ...(r.customStatus || {}) };
         const newReasons = { ...(r.reasons || {}) };
         delete newCustomStatus[date];
@@ -2076,7 +2081,7 @@ export function AbsensiHarianNmsa({
         return {
           ...r,
           attendance: {
-            ...r.attendance,
+            ...(r.attendance || {}),
             [date]: nextVal,
           },
           customStatus: newCustomStatus,
@@ -2090,24 +2095,21 @@ export function AbsensiHarianNmsa({
 
   const handleToggleAllForDay = (date: string, forceCheck: boolean) => {
     const updated = attendanceRecords.map((r) => {
-      if (r.attendance[weekStart] !== undefined) {
-        return {
-          ...r,
-          attendance: {
-            ...r.attendance,
-            [date]: forceCheck,
-          },
-        };
-      }
-      return r;
+      return {
+        ...r,
+        attendance: {
+          ...(r.attendance || {}),
+          [date]: forceCheck,
+        },
+      };
     });
     setAttendanceRecords(updated);
   };
 
   const handleToggleAllForWorker = (workerId: string, forceCheck: boolean) => {
     const updated = attendanceRecords.map((r) => {
-      if (r.workerId === workerId && r.attendance[weekStart] !== undefined) {
-        const newAttMap = { ...r.attendance };
+      if (r.workerId === workerId) {
+        const newAttMap = { ...(r.attendance || {}) };
         weekDates.forEach((d) => {
           newAttMap[d] = forceCheck;
         });
@@ -2130,7 +2132,7 @@ export function AbsensiHarianNmsa({
     // Generate filtered records for this week
     const activeWorkerIds = new Set(workers.map((w) => w.id));
     const thisWeeksRecords = attendanceRecords.filter(
-      (r) => r.attendance[weekStart] !== undefined && activeWorkerIds.has(r.workerId)
+      (r) => activeWorkerIds.has(r.workerId)
     );
 
     if (thisWeeksRecords.length === 0) {
@@ -2197,7 +2199,7 @@ export function AbsensiHarianNmsa({
           );
           newReport.sheetsUrl = sheetResult.spreadsheetUrl;
 
-          // 2. Export PDF and Excel to GDrive folders
+          // 2. Export PDF to GDrive folders (Official PDF matching Cetak PDF Aktif)
           const reportDate = new Date(weekStart);
           const folderYear = reportDate.getFullYear().toString();
           const monthName = reportDate.toLocaleString('id-ID', { month: 'long' });
@@ -2211,16 +2213,11 @@ export function AbsensiHarianNmsa({
             periodFolderName
           ]);
 
-          // Upload Excel format
-          const excelBlob = generateAttendanceExcelBlob(weekStart, weekEnd, thisWeeksRecords, workers);
-          const excelResult = await uploadFileToDrive(tok, folderId, `Rekap_Uang_Makan_${weekStart}_to_${weekEnd}.xlsx`, excelBlob);
-          newReport.excelDriveUrl = excelResult.webViewLink;
-
-          // Upload PDF format
+          // Upload official PDF format
           try {
-            const { generateWeeklyReportPDFBlob } = await import('../lib/attendanceSheetGeneratorPDF');
-            const pdfBlob = generateWeeklyReportPDFBlob(newReport, workers);
-            const pdfResult = await uploadFileToDrive(tok, folderId, `Rekap_Uang_Makan_${weekStart}_${weekEnd}.pdf`, pdfBlob);
+            const { generateWeeklyReportPDFBlob } = await import('../lib/attendanceSheetGenerator');
+            const pdfBlob = await generateWeeklyReportPDFBlob(newReport, workers, signatures);
+            const pdfResult = await uploadFileToDrive(tok, folderId, `Rekap_Uang_Makan_${weekStart}_s.d._${weekEnd}.pdf`, pdfBlob);
             newReport.pdfDriveUrl = pdfResult.webViewLink;
             newReport.driveFileId = folderId;
             newReport.driveUrl = folderId;
@@ -2228,7 +2225,7 @@ export function AbsensiHarianNmsa({
             console.error("PDF upload failed", pdfErr);
           }
 
-          alert(`Sukses! Laporan berhasil divalidasi, diunduh sebagai Excel, diexport ke Google Sheets: "${sheetTitle}", serta file PDF & Excel berhasil terunggah aman ke Google Drive Anda di folder: "Laporan Absensi PT. NMSA > ${folderYear} > ${monthName} > ${periodFolderName}"`);
+          alert(`Sukses! Laporan berhasil divalidasi, diexport ke Google Sheets: "${sheetTitle}", serta file PDF resmi absensi berhasil terunggah aman ke Google Drive Anda di folder: "Laporan Absensi PT. NMSA > ${folderYear} > ${monthName} > ${periodFolderName}"`);
         });
       } catch (err: any) {
         handleDriveError(err);
@@ -2326,7 +2323,7 @@ export function AbsensiHarianNmsa({
           );
           updatedReport.sheetsUrl = sheetResult.spreadsheetUrl;
 
-          // 2. Export PDF and Excel to dedicated GDrive folder
+          // 2. Export PDF to dedicated GDrive folder (Official PDF matching Cetak PDF Aktif)
           const reportDate = new Date(weekStart);
           const folderYear = reportDate.getFullYear().toString();
           const monthName = reportDate.toLocaleString('id-ID', { month: 'long' });
@@ -2340,16 +2337,11 @@ export function AbsensiHarianNmsa({
             periodFolderName
           ]);
 
-          // Upload Excel
-          const excelBlob = generateAttendanceExcelBlob(weekStart, weekEnd, currentWeekRecords, workers);
-          const excelResult = await uploadFileToDrive(tok, folderId, `Rekap_Uang_Makan_${weekStart}_to_${weekEnd}.xlsx`, excelBlob);
-          updatedReport.excelDriveUrl = excelResult.webViewLink;
-
           // Upload PDF
           try {
-            const { generateWeeklyReportPDFBlob } = await import('../lib/attendanceSheetGeneratorPDF');
-            const pdfBlob = generateWeeklyReportPDFBlob(updatedReport, workers);
-            const pdfResult = await uploadFileToDrive(tok, folderId, `Rekap_Uang_Makan_${weekStart}_${weekEnd}.pdf`, pdfBlob);
+            const { generateWeeklyReportPDFBlob } = await import('../lib/attendanceSheetGenerator');
+            const pdfBlob = await generateWeeklyReportPDFBlob(updatedReport, workers, signatures);
+            const pdfResult = await uploadFileToDrive(tok, folderId, `Rekap_Uang_Makan_${weekStart}_s.d._${weekEnd}.pdf`, pdfBlob);
             updatedReport.pdfDriveUrl = pdfResult.webViewLink;
             updatedReport.driveFileId = folderId;
             updatedReport.driveUrl = folderId;
@@ -6393,9 +6385,8 @@ export function AbsensiHarianNmsa({
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => {
-                          const liveRecords = attendanceRecords.filter(
-                            (r) => r.attendance[weekStart] !== undefined
-                          );
+                          const activeWorkerIds = new Set(workers.filter(w => w.isActive).map(w => w.id));
+                          const liveRecords = attendanceRecords.filter((r) => activeWorkerIds.has(r.workerId));
                           const liveReport: WeeklyReport = {
                             id: "LIVE",
                             weekStartDate: weekStart,
@@ -6420,9 +6411,8 @@ export function AbsensiHarianNmsa({
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => {
-                          const liveRecords = attendanceRecords.filter(
-                            (r) => r.attendance[weekStart] !== undefined
-                          );
+                          const activeWorkerIds = new Set(workers.filter(w => w.isActive).map(w => w.id));
+                          const liveRecords = attendanceRecords.filter((r) => activeWorkerIds.has(r.workerId));
                           const liveReport: WeeklyReport = {
                             id: "LIVE",
                             weekStartDate: weekStart,
@@ -6498,9 +6488,7 @@ export function AbsensiHarianNmsa({
                       </tr>
                     ) : (
                       workers.filter(w => w.isActive).map((worker, i) => {
-                        const rec = attendanceRecords.find(
-                          (r) => r.workerId === worker.id && r.attendance[weekStart] !== undefined
-                        );
+                        const rec = attendanceRecords.find((r) => r.workerId === worker.id);
 
                         // If record doesn't show yet
                         let totalDaysPresent = 0;

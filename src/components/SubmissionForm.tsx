@@ -1072,7 +1072,8 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
       setInvoiceDate(initialSubmission.invoiceDate || '');
       const initInvAmt = initialSubmission.invoiceAmount !== undefined ? initialSubmission.invoiceAmount : '';
       setInvoiceAmount(initInvAmt);
-      setIsInvoiceAmountCustom(Boolean(initialSubmission.invoiceAmount !== undefined && initialSubmission.invoiceAmount !== ''));
+      const initItemsTotal = (initialSubmission.items || []).reduce((s, it) => s + (Number(it.total) || 0), 0);
+      setIsInvoiceAmountCustom(Boolean(initialSubmission.invoiceAmount !== undefined && initialSubmission.invoiceAmount !== '' && Number(initialSubmission.invoiceAmount) !== initItemsTotal));
       setSendToAgenda(initialSubmission.sendToAgenda !== false);
       setIsPettyCash(initialSubmission.isPettyCash || false);
       setPettyCashCustodian(initialSubmission.pettyCashCustodian || '');

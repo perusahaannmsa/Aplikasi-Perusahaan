@@ -167,33 +167,74 @@ class GoogleDriveAutoBackupService {
   public async backupAbsensi(customData?: any): Promise<{ success: boolean; url?: string; error?: string }> {
     const today = new Date().toISOString().split('T')[0];
     const currentYear = new Date().getFullYear().toString();
-    const fileName = `Absensi_Karyawan_NMSA_${today}.json`;
+    const fileName = `Absensi_Karyawan_NMSA_${today}.pdf`;
     const folderPath = `ABSENSI-NMSA-APP/Cadangan-Data-Absensi/${currentYear}`;
 
     try {
-      // Gather attendance data from localStorage or passed object
-      let attendancePayload = customData;
-      if (!attendancePayload) {
-        const storedAbsen = localStorage.getItem('absen_records_v1');
-        const storedWorkers = localStorage.getItem('workers_v1');
-        const storedWeekly = localStorage.getItem('weekly_reports_v1');
-        const storedPetty = localStorage.getItem('petty_cash_reports');
-        const storedBank = localStorage.getItem('bank_statements');
+      // Calculate current week Monday to Friday
+      const now = new Date();
+      const currentDay = now.getDay(); // 0 is Sun, 1 is Mon...
+      const diffToMonday = (currentDay === 0 ? -6 : 1) - currentDay;
+      const mondayDate = new Date(now);
+      mondayDate.setDate(now.getDate() + diffToMonday);
+      const fridayDate = new Date(mondayDate);
+      fridayDate.setDate(mondayDate.getDate() + 4);
 
-        attendancePayload = {
-          exportDate: new Date().toISOString(),
-          version: '2.0',
-          module: 'Absensi & Uang Makan Karyawan NMSA',
-          records: storedAbsen ? JSON.parse(storedAbsen) : [],
-          workers: storedWorkers ? JSON.parse(storedWorkers) : [],
-          weeklyReports: storedWeekly ? JSON.parse(storedWeekly) : [],
-          pettyCashReports: storedPetty ? JSON.parse(storedPetty) : [],
-          bankStatements: storedBank ? JSON.parse(storedBank) : []
-        };
+      const fmtDate = (d: Date) => {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const dt = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${dt}`;
+      };
+
+      const weekStartDate = fmtDate(mondayDate);
+      const weekEndDate = fmtDate(fridayDate);
+
+      // Extract records, workers, and signatures
+      let recordsList = customData?.records;
+      let workersList = customData?.workers;
+      let signaturesMap = customData?.signatures;
+
+      if (!recordsList || !workersList) {
+        try {
+          const storedAbsen = localStorage.getItem('absen_records_v1') || localStorage.getItem('absensi_uang_makan_records');
+          const storedWorkers = localStorage.getItem('workers_v1');
+          const storedSig = localStorage.getItem('nmsa_signatures_v1');
+          if (storedAbsen) recordsList = JSON.parse(storedAbsen);
+          if (storedWorkers) workersList = JSON.parse(storedWorkers);
+          if (storedSig) signaturesMap = JSON.parse(storedSig);
+        } catch (e) {}
       }
 
-      const jsonStr = JSON.stringify(attendancePayload, null, 2);
-      const jsonBlob = new Blob([jsonStr], { type: 'application/json' });
+      // If still missing, attempt to read from shared state
+      if (!recordsList || recordsList.length === 0 || !workersList || workersList.length === 0) {
+        try {
+          const res = await fetch('/api/shared-state');
+          if (res.ok) {
+            const shared = await res.json();
+            if (shared.attendanceRecords) recordsList = shared.attendanceRecords;
+            if (shared.workers) workersList = shared.workers;
+          }
+        } catch (e) {}
+      }
+
+      recordsList = recordsList || [];
+      workersList = workersList || [];
+
+      // Generate the official PDF Blob matching "Cetak PDF Aktif"
+      const { generateWeeklyReportPDFBlob } = await import('../lib/attendanceSheetGenerator');
+      const liveReport = {
+        id: `auto-backup-${weekStartDate}`,
+        weekStartDate,
+        weekEndDate,
+        totalAmount: 0,
+        records: recordsList,
+        isSubmitted: false,
+        status: 'draft' as const,
+        reportedAt: new Date().toISOString()
+      };
+
+      const pdfBlob = await generateWeeklyReportPDFBlob(liveReport as any, workersList, signaturesMap);
 
       const result = await this.withDriveToken(async (token) => {
         const folderId = await getOrCreateNestedFolder(token, [
@@ -202,7 +243,7 @@ class GoogleDriveAutoBackupService {
           currentYear
         ]);
 
-        return await uploadFileToDrive(token, folderId, fileName, jsonBlob);
+        return await uploadFileToDrive(token, folderId, fileName, pdfBlob);
       });
 
       this.addLog({
@@ -213,7 +254,7 @@ class GoogleDriveAutoBackupService {
         fileUrl: result.webViewLink,
         folderPath,
         status: 'success',
-        recordCount: Array.isArray(attendancePayload.records) ? attendancePayload.records.length : undefined
+        recordCount: Array.isArray(recordsList) ? recordsList.length : undefined
       });
 
       const updatedLinks = { ...this.settings.latestLinks, absensi: result.webViewLink };
@@ -226,7 +267,7 @@ class GoogleDriveAutoBackupService {
         id: `log-absen-err-${Date.now()}`,
         timestamp: new Date().toISOString(),
         module: 'Absensi',
-        fileName: `Absensi_Karyawan_NMSA_${today}.json`,
+        fileName,
         folderPath,
         status: 'failed',
         errorMessage: err?.message || 'Gagal mengunggah ke Google Drive'

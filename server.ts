@@ -1065,9 +1065,43 @@ app.post("/api/shared-state", (req, res) => {
       });
     }
 
+    // Merge attendance records worker-by-worker to prevent accidental loss of historical or concurrent attendance dates
+    let mergedAttendance = currentState.attendanceRecords || [];
+    if (attendanceRecords !== undefined && Array.isArray(attendanceRecords)) {
+      const attMap = new Map();
+      for (const r of mergedAttendance) {
+        if (r && r.workerId) {
+          attMap.set(r.workerId, {
+            ...r,
+            attendance: { ...(r.attendance || {}) },
+            customStatus: { ...(r.customStatus || {}) },
+            reasons: { ...(r.reasons || {}) }
+          });
+        }
+      }
+      for (const r of attendanceRecords) {
+        if (r && r.workerId) {
+          const existing = attMap.get(r.workerId);
+          if (!existing) {
+            attMap.set(r.workerId, { ...r });
+          } else {
+            attMap.set(r.workerId, {
+              ...existing,
+              ...r,
+              dailyAllowance: r.dailyAllowance || existing.dailyAllowance || 25000,
+              attendance: { ...(existing.attendance || {}), ...(r.attendance || {}) },
+              customStatus: { ...(existing.customStatus || {}), ...(r.customStatus || {}) },
+              reasons: { ...(existing.reasons || {}), ...(r.reasons || {}) }
+            });
+          }
+        }
+      }
+      mergedAttendance = Array.from(attMap.values());
+    }
+
     const updatedState = {
       workers: mergedWorkers,
-      attendanceRecords: attendanceRecords !== undefined ? attendanceRecords : currentState.attendanceRecords,
+      attendanceRecords: mergedAttendance,
       weeklyReports: weeklyReports !== undefined ? weeklyReports : currentState.weeklyReports,
       pettyCashReports: pettyCashReports !== undefined ? pettyCashReports : currentState.pettyCashReports,
       attendancePin: attendancePin !== undefined ? attendancePin : currentState.attendancePin,
@@ -2799,9 +2833,9 @@ app.get("/api/cron-reminder", async (req, res) => {
         if (result.error) errors.push(result.error);
       }
 
-      // Anti-Spam Safe Rate Limiting: 3 to 5 minutes delay (180,000ms to 300,000ms + jitter) per worker message
-      const randomDelay = Math.floor(Math.random() * (300000 - 180000 + 1)) + 180000;
-      await new Promise(r => setTimeout(r, randomDelay));
+      // Anti-Spam Safe Rate Limiting: 1.5 to 2.5 seconds delay per message to prevent WhatsApp rate-limit while ensuring fast completion without HTTP timeout
+      const safeDelay = Math.floor(Math.random() * 1000) + 1500;
+      await new Promise(r => setTimeout(r, safeDelay));
     }
 
     state.lastCronStatus = `Berhasil mengirim pengingat ke ${sentCount} karyawan.${failedCount > 0 ? ` Gagal: ${failedCount} karyawan.` : ""}`;
