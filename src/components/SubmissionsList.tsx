@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Submission, ActivityLog } from '../types';
 import { formatRupiah, formatDateIndonesian, isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, sortSubmissionsDescending } from '../utils';
-import { Search, Eye, Edit2, Trash2, Calendar, MapPin, DollarSign, Plus, Copy, RefreshCw, Cloud, FileText, Database, History, FileSpreadsheet, CheckCircle, AlertCircle, Printer, Check, ExternalLink, Coins, User, Bell, ChevronDown, Sparkles, Share2, Send } from 'lucide-react';
+import { Search, Eye, Edit2, Trash2, Calendar, MapPin, DollarSign, Plus, Copy, RefreshCw, Cloud, FileText, Database, History, FileSpreadsheet, CheckCircle, AlertCircle, Printer, Check, ExternalLink, Coins, User, Bell, ChevronDown, Sparkles, Share2, Send, MoreVertical } from 'lucide-react';
 import { loadActivityLogsFromFirestore, isFirebaseConfigured } from '../firebase';
 import { LiveClock } from './LiveClock';
 
@@ -124,15 +124,30 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
 
   const [isModeDropdownOpen, setIsModeDropdownOpen] = useState(false);
   const modeDropdownRef = useRef<HTMLDivElement>(null);
+  const [openActionMenuId, setOpenActionMenuId] = useState<string | null>(null);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (modeDropdownRef.current && !modeDropdownRef.current.contains(event.target as Node)) {
         setIsModeDropdownOpen(false);
       }
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest('.action-menu-dropdown-root')) {
+        setOpenActionMenuId(null);
+      }
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setIsModeDropdownOpen(false);
+        setOpenActionMenuId(null);
+      }
     }
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
   }, []);
   const [activeSheetTab, setActiveSheetTab] = useState<string>('Data Sinkron');
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
@@ -1415,84 +1430,138 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                           Rp {formatRupiah(subTotal)}
                         </td>
                         <td className="py-4.5 px-6 text-center">
-                          <div className="flex items-center justify-center gap-1.5">
+                          <div className="relative inline-block text-left action-menu-dropdown-root">
                             <button
-                              title="Tampilkan / Cetak PDF"
-                              onClick={() => onSelect(sub)}
-                              id={`btn-view-${sub.id}`}
-                              className="p-2 hover:bg-stone-50 border border-transparent hover:border-stone-200 text-[#D4AF37] hover:text-[#Bca031] rounded-xl transition cursor-pointer shadow-3xs"
-                            >
-                              <Eye size={17} />
-                            </button>
-
-                            <button
-                              title="Bagikan Tautan Transaksi & Gambar Voucher (WhatsApp / Publik)"
-                              onClick={() => {
-                                setShareModalSub(sub);
-                                setIsCopiedShare(false);
+                              id={`btn-action-trigger-${sub.id}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setOpenActionMenuId(openActionMenuId === sub.id ? null : sub.id);
                               }}
-                              id={`btn-share-${sub.id}`}
-                              className="p-2 hover:bg-emerald-50 border border-transparent hover:border-emerald-200 text-emerald-600 hover:text-emerald-800 rounded-xl transition cursor-pointer shadow-3xs"
+                              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition shadow-3xs border cursor-pointer ${
+                                openActionMenuId === sub.id
+                                  ? "bg-amber-700 text-white border-amber-800 shadow-sm"
+                                  : "bg-white hover:bg-stone-50 text-stone-700 border-stone-200 hover:border-stone-300"
+                              }`}
+                              title="Pilihan Tindakan Transaksi"
                             >
-                              <Share2 size={16} />
-                            </button>
-                            
-                            <button
-                              title="Duplikat Data"
-                              onClick={() => onDuplicate(sub)}
-                              id={`btn-dup-${sub.id}`}
-                              className="p-2 hover:bg-stone-50 border border-transparent hover:border-stone-200 text-stone-500 hover:text-stone-850 rounded-xl transition cursor-pointer shadow-3xs"
-                            >
-                              <Copy size={16} />
+                              <span>Tindakan</span>
+                              <MoreVertical size={14} className={openActionMenuId === sub.id ? "text-white" : "text-stone-500"} />
                             </button>
 
-                            {((sub.jenisPengajuan || '').toLowerCase().includes('perjalanan dinas') || (sub.jenisPengajuan || '').toLowerCase().includes('sppd')) && onOpenSppdEditor && (
-                              <button
-                                title="Edit Form SPPD & Lembar Perjalanan Dinas"
-                                onClick={() => onOpenSppdEditor(sub)}
-                                className="p-2 bg-amber-500/15 hover:bg-amber-500/25 text-amber-800 rounded-xl transition cursor-pointer shadow-3xs flex items-center gap-1 text-xs font-bold shrink-0"
+                            {openActionMenuId === sub.id && (
+                              <div
+                                className="absolute right-0 mt-1.5 w-52 bg-white rounded-2xl shadow-xl border border-stone-200 py-1.5 z-50 animate-in fade-in zoom-in-95 duration-100 divide-y divide-stone-100 text-left"
+                                onClick={(e) => e.stopPropagation()}
                               >
-                                <FileText size={14} className="text-amber-700" />
-                                <span className="hidden xl:inline">Form SPPD</span>
-                              </button>
+                                <div className="py-1">
+                                  {/* 1. Bagikan Link */}
+                                  <button
+                                    id={`btn-share-${sub.id}`}
+                                    onClick={() => {
+                                      setOpenActionMenuId(null);
+                                      setShareModalSub(sub);
+                                      setIsCopiedShare(false);
+                                    }}
+                                    className="w-full px-3.5 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 flex items-center gap-2.5 transition text-left cursor-pointer"
+                                    title="Bagikan Tautan Transaksi & Gambar Voucher (WhatsApp / Publik)"
+                                  >
+                                    <Share2 size={15} className="text-emerald-600 shrink-0" />
+                                    <span>Bagikan Link</span>
+                                  </button>
+
+                                  {/* 2. Lihat */}
+                                  <button
+                                    id={`btn-view-${sub.id}`}
+                                    onClick={() => {
+                                      setOpenActionMenuId(null);
+                                      onSelect(sub);
+                                    }}
+                                    className="w-full px-3.5 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-50 flex items-center gap-2.5 transition text-left cursor-pointer"
+                                    title="Tampilkan / Cetak PDF"
+                                  >
+                                    <Eye size={15} className="text-[#D4AF37] shrink-0" />
+                                    <span>Lihat Voucher</span>
+                                  </button>
+
+                                  {/* 3. Salin */}
+                                  <button
+                                    id={`btn-dup-${sub.id}`}
+                                    onClick={() => {
+                                      setOpenActionMenuId(null);
+                                      onDuplicate(sub);
+                                    }}
+                                    className="w-full px-3.5 py-2 text-xs font-semibold text-stone-700 hover:bg-stone-50 flex items-center gap-2.5 transition text-left cursor-pointer"
+                                    title="Duplikat Data"
+                                  >
+                                    <Copy size={15} className="text-stone-500 shrink-0" />
+                                    <span>Salin Data</span>
+                                  </button>
+
+                                  {/* 4. Edit */}
+                                  <button
+                                    id={`btn-edit-${sub.id}`}
+                                    onClick={() => {
+                                      setOpenActionMenuId(null);
+                                      onEdit(sub);
+                                    }}
+                                    className="w-full px-3.5 py-2 text-xs font-semibold text-sky-700 hover:bg-sky-50 flex items-center gap-2.5 transition text-left cursor-pointer"
+                                    title="Edit Data Transaksi"
+                                  >
+                                    <Edit2 size={15} className="text-sky-600 shrink-0" />
+                                    <span>Edit Transaksi</span>
+                                  </button>
+
+                                  {/* SPPD option if applicable */}
+                                  {((sub.jenisPengajuan || '').toLowerCase().includes('perjalanan dinas') || (sub.jenisPengajuan || '').toLowerCase().includes('sppd')) && onOpenSppdEditor && (
+                                    <button
+                                      onClick={() => {
+                                        setOpenActionMenuId(null);
+                                        onOpenSppdEditor(sub);
+                                      }}
+                                      className="w-full px-3.5 py-2 text-xs font-semibold text-amber-850 hover:bg-amber-50 flex items-center gap-2.5 transition text-left cursor-pointer"
+                                    >
+                                      <FileText size={15} className="text-amber-700 shrink-0" />
+                                      <span>Form SPPD</span>
+                                    </button>
+                                  )}
+
+                                  {/* Mark as paid if applicable */}
+                                  {onMarkAsPaid && isEligibleForManualPaymentMark(sub) && (
+                                    <button
+                                      id={`btn-markpaid-${sub.id}`}
+                                      onClick={() => {
+                                        setOpenActionMenuId(null);
+                                        if (window.confirm(`Yakin ingin menandai voucher ${sub.kode} untuk "${sub.dibayarkanKepada}" sebagai SUDAH DIBAYAR (Lunas) tanpa bukti bayar fisik?`)) {
+                                          onMarkAsPaid(sub.id);
+                                        }
+                                      }}
+                                      className="w-full px-3.5 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-50 flex items-center gap-2.5 transition text-left cursor-pointer"
+                                    >
+                                      <CheckCircle size={15} className="text-teal-600 shrink-0" />
+                                      <span>Tandai Sudah Dibayar</span>
+                                    </button>
+                                  )}
+                                </div>
+
+                                {/* 5. Hapus */}
+                                <div className="py-1">
+                                  <button
+                                    id={`btn-delete-${sub.id}`}
+                                    onClick={() => {
+                                      setOpenActionMenuId(null);
+                                      if (window.confirm(`Yakin ingin menghapus data pengajuan untuk "${sub.dibayarkanKepada}" senilai Rp ${formatRupiah(subTotal)}?`)) {
+                                        onDelete(sub.id);
+                                      }
+                                    }}
+                                    className="w-full px-3.5 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 flex items-center gap-2.5 transition text-left cursor-pointer"
+                                    title="Hapus Data Transaksi"
+                                  >
+                                    <Trash2 size={15} className="text-rose-500 shrink-0" />
+                                    <span>Hapus Data</span>
+                                  </button>
+                                </div>
+                              </div>
                             )}
-
-                            <button
-                              title="Edit Data"
-                              onClick={() => onEdit(sub)}
-                              id={`btn-edit-${sub.id}`}
-                              className="p-2 hover:bg-stone-50 border border-transparent hover:border-stone-200 text-sky-500 hover:text-sky-750 rounded-xl transition cursor-pointer shadow-3xs"
-                            >
-                              <Edit2 size={16} />
-                            </button>
-
-                            {onMarkAsPaid && isEligibleForManualPaymentMark(sub) && (
-                              <button
-                                title="Tandai Sudah Dibayar (Lunas tanpa bukti fisik)"
-                                onClick={() => {
-                                  if (window.confirm(`Yakin ingin menandai voucher ${sub.kode} untuk "${sub.dibayarkanKepada}" sebagai SUDAH DIBAYAR (Lunas) tanpa bukti bayar fisik? (Karena umur transaksi sudah lebih dari 1 minggu)`)) {
-                                    onMarkAsPaid(sub.id);
-                                  }
-                                }}
-                                id={`btn-markpaid-${sub.id}`}
-                                className="p-2 hover:bg-teal-50 border border-transparent hover:border-teal-200 text-teal-600 hover:text-teal-850 rounded-xl transition cursor-pointer shadow-3xs"
-                              >
-                                <CheckCircle size={16} />
-                              </button>
-                            )}
-
-                            <button
-                              title="Hapus Data"
-                              onClick={() => {
-                                if (window.confirm(`Yakin ingin menghapus data pengajuan untuk "${sub.dibayarkanKepada}" senilai Rp ${formatRupiah(subTotal)}?`)) {
-                                  onDelete(sub.id);
-                                }
-                              }}
-                              id={`btn-delete-${sub.id}`}
-                              className="p-2 hover:bg-rose-50 border border-transparent hover:border-rose-150 text-rose-500 hover:text-rose-700 rounded-xl transition cursor-pointer shadow-3xs"
-                            >
-                              <Trash2 size={16} />
-                            </button>
                           </div>
                         </td>
                       </tr>

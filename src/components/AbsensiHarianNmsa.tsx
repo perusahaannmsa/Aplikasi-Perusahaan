@@ -667,28 +667,6 @@ export function AbsensiHarianNmsa({
     window.addEventListener('nmsa-drive-autobackup-started', handleSyncStarted);
     window.addEventListener('nmsa-drive-autobackup-completed', handleSyncCompleted);
 
-    // Automatic check for today's daily backup to Google Drive
-    if (googleDriveAutoBackup.isAutoBackupEnabled() && googleDriveAutoBackup.isBackupDueToday()) {
-      const timer = setTimeout(() => {
-        googleDriveAutoBackup.backupAbsensi({
-          exportDate: new Date().toISOString(),
-          version: '2.0',
-          module: 'Absensi & Uang Makan Karyawan NMSA',
-          records: attendanceRecords,
-          workers,
-          weeklyReports,
-          pettyCashReports
-        }).then(res => {
-          if (res.success) {
-            console.log('✓ Absensi harian otomatis berhasil dicadangkan ke Google Drive:', res.url);
-          }
-        }).catch(err => {
-          console.warn('Pencatatan auto-backup absensi catatan:', err);
-        });
-      }, 4000);
-      return () => clearTimeout(timer);
-    }
-
     return () => {
       window.removeEventListener('nmsa-drive-autobackup-settings-updated', handleSettingsUpdated);
       window.removeEventListener('nmsa-drive-autobackup-log-added', handleLogAdded);
@@ -949,6 +927,50 @@ export function AbsensiHarianNmsa({
   // Signatures for Friday Confirmation
   const [signatures, setSignatures] = useState<Record<string, string>>({});
   const [selfSignature, setSelfSignature] = useState<string | null>(null);
+
+  // Auto-backup attendance PDF to Google Drive on App Open (buka aplikasi) & on App Close (tutup aplikasi)
+  useEffect(() => {
+    // 1. On App Open: Trigger upload & update of Attendance PDF in Google Drive
+    const openTimer = setTimeout(() => {
+      googleDriveAutoBackup.backupAbsensi({
+        exportDate: new Date().toISOString(),
+        version: '2.0',
+        module: 'Absensi & Uang Makan Karyawan NMSA',
+        records: attendanceRecords,
+        workers,
+        signatures,
+        weeklyReports,
+        pettyCashReports
+      }).then(res => {
+        if (res.success) {
+          console.log('✓ [Buka Aplikasi] Absensi harian otomatis terunggah/terperbarui di Google Drive:', res.url);
+        }
+      }).catch(err => {
+        console.warn('Pencatatan auto-backup saat buka aplikasi:', err);
+      });
+    }, 2500);
+
+    // 2. On App Close: Trigger upload & update of Attendance PDF before unload / pagehide
+    const handleAppClose = () => {
+      try {
+        googleDriveAutoBackup.backupAbsensi({
+          exportDate: new Date().toISOString(),
+          records: attendanceRecords,
+          workers,
+          signatures
+        }).catch(err => console.warn("Pencadangan saat tutup aplikasi:", err));
+      } catch (e) {}
+    };
+
+    window.addEventListener('beforeunload', handleAppClose);
+    window.addEventListener('pagehide', handleAppClose);
+
+    return () => {
+      clearTimeout(openTimer);
+      window.removeEventListener('beforeunload', handleAppClose);
+      window.removeEventListener('pagehide', handleAppClose);
+    };
+  }, [attendanceRecords, workers, signatures]);
 
   // Bulk WA broadcast panel
   const [showBulkWA, setShowBulkWA] = useState<boolean>(false);
@@ -2159,47 +2181,27 @@ export function AbsensiHarianNmsa({
       submittedAt: new Date().toISOString(),
     };
 
-    // Export to screen and local download immediately
-    triggerAttendanceExcelDownload(weekStart, weekEnd, thisWeeksRecords, workers, `Rekap_Uang_Makan_${weekStart}_to_${weekEnd}.xlsx`);
+    // Export and local PDF download immediately (matching Cetak PDF Aktif, NOT Excel)
+    try {
+      const { generateWeeklyReportPDFBlob } = await import('../lib/attendanceSheetGenerator');
+      const pdfBlob = await generateWeeklyReportPDFBlob(newReport, workers, signatures);
+      const pdfUrl = URL.createObjectURL(pdfBlob);
+      const a = document.createElement("a");
+      a.href = pdfUrl;
+      a.download = `Rekap_Uang_Makan_${weekStart}_s.d._${weekEnd}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(pdfUrl), 5000);
+    } catch (pdfDownloadErr) {
+      console.warn("Direct PDF download fallback to print:", pdfDownloadErr);
+      printWeeklyReportPDF(newReport, workers, signatures);
+    }
 
-    // If connected to Google Sheets, try uploading automatically!
+    // If connected to Google Drive, upload official PDF automatically!
     if (isDriveConnected) {
       try {
         await executeWithAutoRefreshToken(async (tok) => {
-          const sheetTitle = `Rekap Uang Makan Mingguan (${weekStart} s/d ${weekEnd})`;
-          const headers = ["No.", "Nama Karyawan", "Jabatan", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Total Hadir", "Tarif Harian (Rp)", "Total Uang Makan (Rp)"];
-          
-          const workerMap = new Map<string, Worker>(workers.map((w) => [w.id, w]));
-          const rows = thisWeeksRecords.map((rec, index) => {
-            const w = workerMap.get(rec.workerId);
-            let totalHadir = 0;
-            const dayStates = weekDates.map((date) => {
-              const hasAtt = rec.attendance[date] || false;
-              if (hasAtt) totalHadir++;
-              return hasAtt ? "Hadir" : "Absen";
-            });
-
-            return [
-              index + 1,
-              w?.name || "Karyawan",
-              w?.role || "-",
-              ...dayStates,
-              totalHadir,
-              rec.dailyAllowance,
-              totalHadir * rec.dailyAllowance
-            ];
-          });
-
-          // 1. Export to Google Sheet
-          const sheetResult = await exportAttendanceToGoogleSheet(
-            tok,
-            sheetTitle,
-            headers,
-            rows
-          );
-          newReport.sheetsUrl = sheetResult.spreadsheetUrl;
-
-          // 2. Export PDF to GDrive folders (Official PDF matching Cetak PDF Aktif)
           const reportDate = new Date(weekStart);
           const folderYear = reportDate.getFullYear().toString();
           const monthName = reportDate.toLocaleString('id-ID', { month: 'long' });
@@ -2213,7 +2215,7 @@ export function AbsensiHarianNmsa({
             periodFolderName
           ]);
 
-          // Upload official PDF format
+          // Upload official PDF format (NOT Excel)
           try {
             const { generateWeeklyReportPDFBlob } = await import('../lib/attendanceSheetGenerator');
             const pdfBlob = await generateWeeklyReportPDFBlob(newReport, workers, signatures);
@@ -2225,13 +2227,13 @@ export function AbsensiHarianNmsa({
             console.error("PDF upload failed", pdfErr);
           }
 
-          alert(`Sukses! Laporan berhasil divalidasi, diexport ke Google Sheets: "${sheetTitle}", serta file PDF resmi absensi berhasil terunggah aman ke Google Drive Anda di folder: "Laporan Absensi PT. NMSA > ${folderYear} > ${monthName} > ${periodFolderName}"`);
+          alert(`Sukses! Rekap uang makan mingguan berhasil disimpan dalam format PDF resmi, terunduh otomatis ke perangkat, serta berkas PDF resmi berhasil terunggah dan tersimpan aman di Google Drive Anda di folder: "ABSENSI-NMSA-APP > Laporan-Absensi-Uang-Makan > ${folderYear} > ${monthName} > ${periodFolderName}"`);
         });
       } catch (err: any) {
         handleDriveError(err);
       }
     } else {
-      alert("Laporan Uang Makan Mingguan berhasil disimpan dan terunduh otomatis ke komputer Anda! Silakan hubungkan Google Sheets/Drive di pojok kanan atas jika Anda ingin pencatatan otomatis di Cloud.");
+      alert("Laporan Uang Makan Mingguan (PDF) berhasil divalidasi dan terunduh otomatis ke komputer Anda! Silakan hubungkan Google Drive di pojok kanan atas untuk pencadangan otomatis.");
     }
 
     setWeeklyReports([newReport, ...weeklyReports]);
@@ -6707,11 +6709,27 @@ export function AbsensiHarianNmsa({
                           </button>
 
                           <button
-                            onClick={() => triggerAttendanceExcelDownload(report.weekStartDate, report.weekEndDate, report.records, workers, `Rekap_Uang_Makan_${report.weekStartDate}.xlsx`)}
+                            onClick={async () => {
+                              try {
+                                const { generateWeeklyReportPDFBlob } = await import('../lib/attendanceSheetGenerator');
+                                const blob = await generateWeeklyReportPDFBlob(report, workers, signatures);
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement('a');
+                                a.href = url;
+                                a.download = `Rekap_Uang_Makan_${report.weekStartDate}_s.d._${report.weekEndDate}.pdf`;
+                                document.body.appendChild(a);
+                                a.click();
+                                document.body.removeChild(a);
+                                setTimeout(() => URL.revokeObjectURL(url), 5000);
+                              } catch (e) {
+                                printWeeklyReportPDF(report, workers, signatures);
+                              }
+                            }}
                             className="bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer"
+                            title="Unduh Berkas PDF Resmi (Sama persis dengan Cetak PDF Aktif)"
                           >
-                            <Download className="w-3.5 h-3.5" />
-                            <span>Excel</span>
+                            <Download className="w-3.5 h-3.5 text-indigo-600" />
+                            <span>Unduh PDF</span>
                           </button>
 
                           <button

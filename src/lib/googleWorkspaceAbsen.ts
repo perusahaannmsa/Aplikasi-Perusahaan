@@ -94,13 +94,54 @@ export async function getOrCreateNestedFolder(accessToken: string, folderNames: 
   return parentId!;
 }
 
-// Helper to upload a file (like the generated Excel Blob) to Google Drive in a specific folder
+// Helper to upload or update a file (like the generated PDF Blob) in a specific Google Drive folder
 export async function uploadFileToDrive(
   accessToken: string,
   folderId: string,
   fileName: string,
   fileBlob: Blob
 ): Promise<{ id: string; webViewLink: string }> {
+  // 1. Check if a file with the same name already exists in this folder to avoid duplicates and keep file updated
+  try {
+    const q = `'${folderId}' in parents and name = '${fileName.replace(/'/g, "\\'")}' and trashed = false`;
+    const checkRes = await fetch(
+      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name,webViewLink)&pageSize=1`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      }
+    );
+    if (checkRes.ok) {
+      const checkData = await checkRes.json();
+      if (checkData.files && checkData.files.length > 0) {
+        const existingFile = checkData.files[0];
+        // Update content of existing file in place
+        const updateRes = await fetch(
+          `https://www.googleapis.com/upload/drive/v3/files/${existingFile.id}?uploadType=media&fields=id,name,webViewLink`,
+          {
+            method: "PATCH",
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              "Content-Type": fileBlob.type || "application/pdf",
+            },
+            body: fileBlob,
+          }
+        );
+        if (updateRes.ok) {
+          const updatedJson = await updateRes.json();
+          return {
+            id: updatedJson.id || existingFile.id,
+            webViewLink: updatedJson.webViewLink || existingFile.webViewLink || `https://drive.google.com/file/d/${existingFile.id}/view`,
+          };
+        }
+      }
+    }
+  } catch (lookupErr) {
+    console.warn("Could not check/update existing file on Drive, falling back to upload:", lookupErr);
+  }
+
+  // 2. If not found or update failed, upload as a new file
   const metadata = {
     name: fileName,
     parents: [folderId],

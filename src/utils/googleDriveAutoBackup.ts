@@ -163,15 +163,16 @@ class GoogleDriveAutoBackupService {
 
   /**
    * 1. Backup Absensi Karyawan to Google Drive (Separate Dedicated Folder: ABSENSI-NMSA-APP)
+   * Matches "Cetak PDF Aktif" exact layout and format with official PDF.
    */
   public async backupAbsensi(customData?: any): Promise<{ success: boolean; url?: string; error?: string }> {
     const today = new Date().toISOString().split('T')[0];
     const currentYear = new Date().getFullYear().toString();
-    const fileName = `Absensi_Karyawan_NMSA_${today}.pdf`;
+    const fileName = customData?.fileName || `Absensi_Karyawan_NMSA_${today}.pdf`;
     const folderPath = `ABSENSI-NMSA-APP/Cadangan-Data-Absensi/${currentYear}`;
 
     try {
-      // Calculate current week Monday to Friday
+      // Calculate current week Monday to Friday in local time
       const now = new Date();
       const currentDay = now.getDay(); // 0 is Sun, 1 is Mon...
       const diffToMonday = (currentDay === 0 ? -6 : 1) - currentDay;
@@ -187,8 +188,8 @@ class GoogleDriveAutoBackupService {
         return `${y}-${m}-${dt}`;
       };
 
-      const weekStartDate = fmtDate(mondayDate);
-      const weekEndDate = fmtDate(fridayDate);
+      const weekStartDate = customData?.weekStartDate || fmtDate(mondayDate);
+      const weekEndDate = customData?.weekEndDate || fmtDate(fridayDate);
 
       // Extract records, workers, and signatures
       let recordsList = customData?.records;
@@ -197,29 +198,64 @@ class GoogleDriveAutoBackupService {
 
       if (!recordsList || !workersList) {
         try {
-          const storedAbsen = localStorage.getItem('absen_records_v1') || localStorage.getItem('absensi_uang_makan_records');
-          const storedWorkers = localStorage.getItem('workers_v1');
-          const storedSig = localStorage.getItem('nmsa_signatures_v1');
+          const storedAbsen = localStorage.getItem('absensi_uang_makan_records') || localStorage.getItem('attendance_records_nmsa');
+          const storedWorkers = localStorage.getItem('workers_v1') || localStorage.getItem('workers_nmsa');
+          const storedSig = localStorage.getItem('nmsa_signatures_v1') || localStorage.getItem('attendance_signatures');
           if (storedAbsen) recordsList = JSON.parse(storedAbsen);
           if (storedWorkers) workersList = JSON.parse(storedWorkers);
           if (storedSig) signaturesMap = JSON.parse(storedSig);
         } catch (e) {}
       }
 
-      // If still missing, attempt to read from shared state
+      // If still missing or empty, attempt to read from shared state API
       if (!recordsList || recordsList.length === 0 || !workersList || workersList.length === 0) {
         try {
           const res = await fetch('/api/shared-state');
           if (res.ok) {
             const shared = await res.json();
-            if (shared.attendanceRecords) recordsList = shared.attendanceRecords;
-            if (shared.workers) workersList = shared.workers;
+            if (!recordsList || recordsList.length === 0) recordsList = shared.attendanceRecords;
+            if (!workersList || workersList.length === 0) workersList = shared.workers;
+            if (!signaturesMap) signaturesMap = shared.signatures;
           }
         } catch (e) {}
       }
 
       recordsList = recordsList || [];
       workersList = workersList || [];
+
+      // If records are empty or log-style, check for raw event logs and merge
+      try {
+        const rawLogsStr = localStorage.getItem('absen_records_v1');
+        if (rawLogsStr) {
+          const rawLogs: any[] = JSON.parse(rawLogsStr);
+          if (Array.isArray(rawLogs) && rawLogs.length > 0) {
+            const recMap = new Map<string, any>(recordsList.map((r: any) => [r.workerId, r]));
+            for (const log of rawLogs) {
+              if (log.workerId && log.date) {
+                let rec = recMap.get(log.workerId);
+                if (!rec) {
+                  rec = {
+                    workerId: log.workerId,
+                    dailyAllowance: 25000,
+                    attendance: {},
+                    customStatus: {}
+                  };
+                  recordsList.push(rec);
+                  recMap.set(log.workerId, rec);
+                }
+                if (!rec.attendance) rec.attendance = {};
+                if (log.status === 'Hadir' || log.checkIn || log.timestamp) {
+                  rec.attendance[log.date] = true;
+                }
+              }
+            }
+          }
+        }
+      } catch (logErr) {}
+
+      // Filter to active workers only (matching Cetak PDF Aktif)
+      const activeWorkerIds = new Set(workersList.filter((w: any) => w.isActive !== false).map((w: any) => w.id));
+      const liveRecords = recordsList.filter((r: any) => activeWorkerIds.has(r.workerId));
 
       // Generate the official PDF Blob matching "Cetak PDF Aktif"
       const { generateWeeklyReportPDFBlob } = await import('../lib/attendanceSheetGenerator');
@@ -228,7 +264,7 @@ class GoogleDriveAutoBackupService {
         weekStartDate,
         weekEndDate,
         totalAmount: 0,
-        records: recordsList,
+        records: liveRecords.length > 0 ? liveRecords : recordsList,
         isSubmitted: false,
         status: 'draft' as const,
         reportedAt: new Date().toISOString()
@@ -254,7 +290,7 @@ class GoogleDriveAutoBackupService {
         fileUrl: result.webViewLink,
         folderPath,
         status: 'success',
-        recordCount: Array.isArray(recordsList) ? recordsList.length : undefined
+        recordCount: Array.isArray(liveRecords) ? liveRecords.length : recordsList.length
       });
 
       const updatedLinks = { ...this.settings.latestLinks, absensi: result.webViewLink };
@@ -272,6 +308,52 @@ class GoogleDriveAutoBackupService {
         status: 'failed',
         errorMessage: err?.message || 'Gagal mengunggah ke Google Drive'
       });
+      return { success: false, error: err?.message };
+    }
+  }
+
+  /**
+   * Dedicated Weekly Attendance & Uang Makan PDF Uploader
+   * Uploads official Rekap_Uang_Makan_...pdf to ABSENSI-NMSA-APP/Laporan-Absensi-Uang-Makan
+   */
+  public async backupWeeklyAttendanceReport(report: any, workers: any[], signatures?: any): Promise<{ success: boolean; url?: string; error?: string }> {
+    try {
+      const weekStart = report.weekStartDate;
+      const weekEnd = report.weekEndDate;
+      const reportDate = new Date(weekStart);
+      const folderYear = reportDate.getFullYear().toString();
+      const monthName = reportDate.toLocaleString('id-ID', { month: 'long' });
+      const periodFolderName = `Periode ${weekStart} s.d. ${weekEnd}`;
+      const fileName = `Rekap_Uang_Makan_${weekStart}_s.d._${weekEnd}.pdf`;
+
+      const { generateWeeklyReportPDFBlob } = await import('../lib/attendanceSheetGenerator');
+      const pdfBlob = await generateWeeklyReportPDFBlob(report, workers, signatures);
+
+      const result = await this.withDriveToken(async (token) => {
+        const folderId = await getOrCreateNestedFolder(token, [
+          'ABSENSI-NMSA-APP',
+          'Laporan-Absensi-Uang-Makan',
+          folderYear,
+          monthName,
+          periodFolderName
+        ]);
+
+        return await uploadFileToDrive(token, folderId, fileName, pdfBlob);
+      });
+
+      this.addLog({
+        id: `log-weekly-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        module: 'Absensi',
+        fileName,
+        fileUrl: result.webViewLink,
+        folderPath: `ABSENSI-NMSA-APP/Laporan-Absensi-Uang-Makan/${folderYear}/${monthName}/${periodFolderName}`,
+        status: 'success'
+      });
+
+      return { success: true, url: result.webViewLink };
+    } catch (err: any) {
+      console.warn('Gagal upload Laporan Mingguan ke Google Drive:', err);
       return { success: false, error: err?.message };
     }
   }
@@ -593,6 +675,30 @@ class GoogleDriveAutoBackupService {
       return { success: false, count };
     } finally {
       this.isSyncing = false;
+    }
+  }
+
+  /**
+   * Called when the app is opened: checks connection and auto-syncs attendance PDF to Google Drive
+   */
+  public async onAppOpen(): Promise<void> {
+    console.log('[Drive Auto-Backup] App opened: Triggering initial attendance sync to Google Drive...');
+    try {
+      await this.backupAbsensi();
+    } catch (e) {
+      console.warn('[Drive Auto-Backup] On app open sync warning:', e);
+    }
+  }
+
+  /**
+   * Called when the app is closing or unmounting: triggers final attendance sync to Google Drive
+   */
+  public async onAppClose(): Promise<void> {
+    console.log('[Drive Auto-Backup] App closing: Triggering final attendance sync to Google Drive...');
+    try {
+      await this.backupAbsensi();
+    } catch (e) {
+      console.warn('[Drive Auto-Backup] On app close sync warning:', e);
     }
   }
 }
