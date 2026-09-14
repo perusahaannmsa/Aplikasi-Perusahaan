@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Submission, ActivityLog } from '../types';
 import { formatRupiah, formatDateIndonesian, isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, sortSubmissionsDescending } from '../utils';
-import { Search, Eye, Edit2, Trash2, Calendar, MapPin, DollarSign, Plus, Copy, RefreshCw, Cloud, FileText, Database, History, FileSpreadsheet, CheckCircle, AlertCircle, Printer, Check, ExternalLink, Coins, User, Bell, ChevronDown, Sparkles, Share2, Send, MoreVertical } from 'lucide-react';
+import { Search, Eye, Edit2, Trash2, Calendar, MapPin, DollarSign, Plus, Copy, RefreshCw, Cloud, FileText, Database, History, FileSpreadsheet, CheckCircle, AlertCircle, Printer, Check, ExternalLink, Coins, User, Bell, ChevronDown, Sparkles, Share2, Send, MoreVertical, Receipt } from 'lucide-react';
 import { loadActivityLogsFromFirestore, isFirebaseConfigured } from '../firebase';
 import { LiveClock } from './LiveClock';
 
@@ -21,6 +21,7 @@ interface SubmissionsListProps {
   onLayoutModeChange?: (mode: 'standard' | 'spreadsheet' | 'audit_logs' | 'invoice_recap' | 'unpaid_outstanding' | 'petty_cash_recap') => void;
   pettyCashHolders?: string[];
   onOpenConsolidateModal?: () => void;
+  onOpenPph23View?: () => void;
 }
 
 export const SubmissionsList: React.FC<SubmissionsListProps> = ({
@@ -39,6 +40,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   onLayoutModeChange,
   pettyCashHolders = [],
   onOpenConsolidateModal,
+  onOpenPph23View,
 }) => {
   const [searchTerm, setSearchTerm] = useState(() => {
     try { return sessionStorage.getItem('sublist_searchTerm') || ''; } catch (e) { return ''; }
@@ -964,9 +966,36 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                     {pettyCashSubmissions.length}
                   </span>
                 </button>
+
+                {onOpenPph23View && (
+                  <button
+                    onClick={() => { setIsModeDropdownOpen(false); onOpenPph23View(); }}
+                    className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer text-stone-700 hover:bg-amber-50"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Receipt size={14} className="text-amber-600" />
+                      <span>Bukti Potong PPh 23 (Biaya PSi & Jasa)</span>
+                    </div>
+                    <span className="text-[9px] font-mono text-amber-900 font-bold bg-amber-100 px-1.5 py-0.2 rounded">
+                      Coretax
+                    </span>
+                  </button>
+                )}
               </div>
             )}
           </div>
+
+          {onOpenPph23View && (
+            <button
+              onClick={onOpenPph23View}
+              className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-950 font-bold text-xs transition cursor-pointer shadow-3xs"
+              title="Tampilan khusus transaksi Biaya PSi atau Jasa dengan pemotongan PPh 23, NPWP perusahaan, dan status Coretax"
+            >
+              <Receipt size={13} className="text-amber-700" />
+              <span>Bukti Potong PPh 23 (Biaya PSi)</span>
+              <span className="text-[9px] font-mono bg-amber-200 text-amber-900 px-1 rounded font-bold">DJP</span>
+            </button>
+          )}
 
           <div className="hidden sm:flex items-center gap-2 text-xs font-bold text-stone-500">
             <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />

@@ -27,6 +27,7 @@ import { AgendaReminderBanner } from './components/AgendaReminderBanner';
 import { GeneralLedger } from './components/GeneralLedger';
 import { WhatsAppAiModal } from './components/WhatsAppAiModal';
 import { LiveClock } from './components/LiveClock';
+import { Pph23BupotRecap } from './components/Pph23BupotRecap';
 import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, syncInvoiceSubmissionToAgenda, formatDateIndonesian } from './utils';
 import { areNamesSimilar, toTitleCase } from './utils/nameConsolidation';
 import { 
@@ -56,7 +57,7 @@ import {
   subscribeToCompanySettingsFromFirestore,
   saveCompanySettingsToFirestore
 } from './firebase';
-import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell, MessageSquare, Bot, Sparkles, BookOpen } from 'lucide-react';
+import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell, MessageSquare, Bot, Sparkles, BookOpen, Wrench } from 'lucide-react';
 
 export default function App() {
   const [theme, setTheme] = useState<'classic' | 'gold-dark' | 'emerald' | 'slate'>(() => {
@@ -702,20 +703,20 @@ export default function App() {
     };
   }, []);
 
-  const [view, setViewInternal] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger'>(() => {
+  const [view, setViewInternal] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23'>(() => {
     try {
       const stored = sessionStorage.getItem('NUSANTARA_ACTIVE_VIEW') || localStorage.getItem('NUSANTARA_ACTIVE_VIEW');
-      if (stored && ['list', 'form', 'print', 'sppd', 'absen', 'npwp', 'accurate', 'agenda', 'ledger'].includes(stored)) {
+      if (stored && ['list', 'form', 'print', 'sppd', 'absen', 'npwp', 'accurate', 'agenda', 'ledger', 'pph23'].includes(stored)) {
         return stored as any;
       }
     } catch (e) {}
     return 'list';
   });
 
-  const [previousView, setPreviousView] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger'>(() => {
+  const [previousView, setPreviousView] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23'>(() => {
     try {
       const stored = sessionStorage.getItem('NUSANTARA_PREVIOUS_VIEW');
-      if (stored && ['list', 'form', 'print', 'sppd', 'absen', 'npwp', 'accurate', 'agenda', 'ledger'].includes(stored)) {
+      if (stored && ['list', 'form', 'print', 'sppd', 'absen', 'npwp', 'accurate', 'agenda', 'ledger', 'pph23'].includes(stored)) {
         return stored as any;
       }
     } catch (e) {}
@@ -723,7 +724,7 @@ export default function App() {
   });
 
   const setView = (
-    newView: 'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger',
+    newView: 'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23',
     options?: { preservePrevious?: boolean }
   ) => {
     setViewInternal((current) => {
@@ -823,6 +824,8 @@ export default function App() {
 
   const userMenuRef = useRef<HTMLDivElement>(null);
   const dashboardNavRef = useRef<HTMLDivElement>(null);
+  const toolsDropdownRef = useRef<HTMLDivElement>(null);
+  const [isToolsDropdownOpen, setIsToolsDropdownOpen] = useState(false);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -831,6 +834,9 @@ export default function App() {
       }
       if (dashboardNavRef.current && !dashboardNavRef.current.contains(event.target as Node)) {
         setIsDashboardNavOpen(false);
+      }
+      if (toolsDropdownRef.current && !toolsDropdownRef.current.contains(event.target as Node)) {
+        setIsToolsDropdownOpen(false);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
@@ -2283,12 +2289,15 @@ export default function App() {
                         layoutMode === 'petty_cash_recap' ? 'Voucher HO (Petty Cash)' :
                         'Voucher HO'
                       )}
+                      {view === 'pph23' && 'Bukti Potong PPh 23 (PSi & Jasa)'}
                       {view === 'absen' && 'Absen Harian NMSA'}
                       {view === 'npwp' && 'Master NPWP & Vendor'}
                       {view === 'accurate' && 'Pemetaan Akun'}
                       {view === 'form' && 'Form Pengajuan Payment'}
                       {view === 'print' && 'Cetak Dokumen F1/F2'}
                       {view === 'sppd' && 'Data SPPD & Perjalanan'}
+                      {view === 'agenda' && 'Agenda Kerja'}
+                      {view === 'ledger' && 'Buku Besar Sub-Jenis'}
                     </span>
                     <ChevronDown size={14} className={`text-stone-300 transition-transform duration-200 ${isDashboardNavOpen ? 'rotate-180' : ''}`} />
                   </div>
@@ -2320,6 +2329,30 @@ export default function App() {
                           </span>
                         </div>
                       </div>
+                    </button>
+
+                    {/* 1.1 BUKTI POTONG PPH 23 (BIAYA PSI & JASA) - CORETAX READY */}
+                    <button
+                      onClick={() => {
+                        setView('pph23');
+                        setIsDashboardNavOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer text-left mb-1 ${
+                        view === 'pph23' ? 'bg-amber-500 text-stone-950 font-black' : 'text-stone-800 hover:bg-amber-50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <Receipt size={15} className={view === 'pph23' ? 'text-stone-950' : 'text-amber-600'} />
+                        <div className="flex flex-col">
+                          <span>Bukti Potong PPh 23 (Biaya PSi & Jasa)</span>
+                          <span className={`text-[10px] font-normal ${view === 'pph23' ? 'text-stone-900' : 'text-stone-400'}`}>
+                            Pemotongan Pajak & NPWP untuk Coretax DJP
+                          </span>
+                        </div>
+                      </div>
+                      <span className="text-[9px] font-mono bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded font-bold">
+                        Coretax
+                      </span>
                     </button>
 
                     {/* 2. ABSEN HARIAN NMSA */}
@@ -2432,7 +2465,7 @@ export default function App() {
                       </span>
                     </button>
 
-                    {(view === 'form' || view === 'print' || view === 'sppd' || view === 'agenda' || view === 'ledger') && (
+                    {(view === 'form' || view === 'print' || view === 'sppd' || view === 'agenda' || view === 'ledger' || view === 'pph23') && (
                       <button
                         onClick={() => { setView('list'); setIsDashboardNavOpen(false); }}
                         className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer text-left text-amber-700 bg-amber-50 hover:bg-amber-100 mt-1 border border-amber-200"
@@ -2446,72 +2479,176 @@ export default function App() {
               </div>
             </div>
 
+            {/* HEADER RIGHT ACTIONS: CLEAN, COMPACT & PROFESSIONAL */}
             <div className="flex items-center gap-2 sm:gap-2.5">
-              {/* Real-time System Clock (Hari, Tanggal & Jam WIB) */}
-              <LiveClock variant="badge" className="hidden lg:inline-flex" />
+              {/* Real-time System Clock (WIB) */}
+              <LiveClock variant="badge" className="hidden xl:inline-flex" />
 
-              {/* Quick Buku Besar Header Button */}
-              <button
-                type="button"
-                onClick={() => setView('ledger')}
-                className={`flex items-center gap-1.5 py-1.5 px-3 rounded-2xl border transition cursor-pointer shadow-3xs font-mono text-xs font-bold ${
-                  view === 'ledger'
-                    ? 'bg-amber-500 text-stone-950 border-amber-600 font-black'
-                    : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
-                }`}
-                title="Buku Besar Sub-Jenis Pengajuan (General Ledger)"
-              >
-                <BookOpen size={14} className={view === 'ledger' ? 'text-stone-950' : 'text-amber-600'} />
-                <span className="hidden md:inline font-sans">Buku Besar</span>
-              </button>
-
-              {/* Quick Agenda & Reminder Header Button */}
+              {/* Compact Agenda / Notif Button with Red Badge */}
               <button
                 type="button"
                 onClick={() => setView('agenda')}
-                className={`flex items-center gap-1.5 py-1.5 px-3 rounded-2xl border transition cursor-pointer shadow-3xs font-mono text-xs font-bold ${
+                className={`relative p-2 rounded-xl border transition cursor-pointer shadow-3xs ${
                   view === 'agenda'
-                    ? 'bg-amber-500 text-stone-950 border-amber-600 font-black'
+                    ? 'bg-amber-500 text-stone-950 border-amber-600'
                     : agendaDueCount > 0
                     ? 'bg-amber-50 hover:bg-amber-100 border-amber-300 text-amber-950'
                     : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
                 }`}
-                title={`Agenda Kegiatan & Pengingat Tugas (${agendaDueCount} tugas jatuh tempo / hari ini)`}
+                title={`Agenda & Pengingat Tugas (${agendaDueCount} tugas jatuh tempo / hari ini)`}
               >
-                <Bell size={14} className={agendaDueCount > 0 ? 'text-rose-600 animate-bounce' : 'text-stone-500'} />
-                <span className="hidden md:inline font-sans">Agenda</span>
+                <Bell size={16} className={agendaDueCount > 0 ? 'text-rose-600 animate-bounce' : 'text-stone-500'} />
                 {agendaDueCount > 0 && (
-                  <span className="flex h-4 min-w-[16px] px-1 items-center justify-center rounded-full bg-rose-600 text-[10px] font-black text-white">
+                  <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] px-1 items-center justify-center rounded-full bg-rose-600 text-[9px] font-black text-white shadow-xs">
                     {agendaDueCount}
                   </span>
                 )}
               </button>
 
-              {/* WhatsApp AI & Database Assistant Button */}
-              <button
-                type="button"
-                onClick={() => setIsWhatsAppModalOpen(true)}
-                className="flex items-center gap-1.5 py-1.5 px-3 rounded-2xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-950 transition cursor-pointer shadow-3xs font-mono text-xs font-bold"
-                title="Integrasi WhatsApp Business AI & Pusat Data. Klik untuk Scan QR / Kode Pairing / Make.com Webhook."
-              >
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
-                <MessageSquare size={14} className="text-emerald-700 shrink-0" />
-                <span className="hidden md:inline font-sans">WhatsApp AI</span>
-              </button>
+              {/* UNIFIED TOOLS & INTEGRATIONS DROPDOWN (WhatsApp AI, Drive, Buku Besar, dll) */}
+              <div className="relative" ref={toolsDropdownRef}>
+                <button
+                  type="button"
+                  onClick={() => setIsToolsDropdownOpen(!isToolsDropdownOpen)}
+                  className="flex items-center gap-1.5 py-1.5 px-3 rounded-xl bg-stone-50 hover:bg-stone-100 border border-stone-200 text-stone-800 transition cursor-pointer shadow-3xs text-xs font-bold font-sans"
+                  title="Pusat Layanan Terhubung: WhatsApp AI, Cloud Drive, & Alat Keuangan"
+                >
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
+                  <Wrench size={13} className="text-amber-600 shrink-0" />
+                  <span className="hidden sm:inline font-sans">Layanan &amp; Alat</span>
+                  <ChevronDown size={13} className={`text-stone-400 transition-transform duration-200 ${isToolsDropdownOpen ? 'rotate-180' : ''}`} />
+                </button>
 
-              {/* Master Google Drive 24/7 Status Header Badge */}
-              <button
-                type="button"
-                onClick={() => setIsGoogleDriveSettingsOpen(true)}
-                className="hidden sm:flex items-center gap-2 py-1.5 px-3 rounded-2xl bg-amber-50/90 hover:bg-amber-100 border border-amber-300/80 text-amber-950 transition cursor-pointer shadow-3xs font-mono text-xs"
-                title="Master Google Drive 24/7 Terhubung ke Semua Menu. Klik untuk Kelola Akun & Whitelist."
-              >
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
-                <Cloud size={14} className="text-amber-600 shrink-0" />
-                <span className="font-bold truncate max-w-[140px] md:max-w-[200px]">
-                  {masterDriveEmail}
-                </span>
-              </button>
+                {/* Dropdown Popover */}
+                {isToolsDropdownOpen && (
+                  <div className="absolute right-0 top-full mt-2 w-72 sm:w-80 bg-white rounded-2xl shadow-xl border border-stone-200 z-50 overflow-hidden p-2.5 animate-in fade-in zoom-in-95 duration-150 font-sans space-y-2">
+                    <div className="px-2.5 py-1 border-b border-stone-150 flex items-center justify-between">
+                      <span className="text-[10px] font-mono font-bold text-stone-400 uppercase tracking-wider">
+                        Layanan &amp; Integrasi Cloud
+                      </span>
+                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                        <span>Online</span>
+                      </span>
+                    </div>
+
+                    {/* 1. WhatsApp AI */}
+                    <div className="p-2.5 rounded-xl bg-emerald-50/70 border border-emerald-200/80 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <div className="p-2 bg-emerald-600 text-white rounded-lg">
+                          <MessageSquare size={14} />
+                        </div>
+                        <div>
+                          <h5 className="font-bold text-xs text-stone-900 leading-tight">WhatsApp AI Assistant</h5>
+                          <p className="text-[10px] text-stone-500 font-mono">Pusat Data &amp; Notifikasi</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsToolsDropdownOpen(false);
+                          setIsWhatsAppModalOpen(true);
+                        }}
+                        className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-[11px] shadow-3xs cursor-pointer transition"
+                      >
+                        Buka
+                      </button>
+                    </div>
+
+                    {/* 2. Master Google Drive 24/7 */}
+                    <div className="p-2.5 rounded-xl bg-amber-50/70 border border-amber-200/80 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="p-2 bg-amber-500 text-stone-950 rounded-lg shrink-0">
+                          <Cloud size={14} />
+                        </div>
+                        <div className="min-w-0">
+                          <h5 className="font-bold text-xs text-stone-900 leading-tight truncate">Master Google Drive</h5>
+                          <p className="text-[10px] text-stone-500 font-mono truncate" title={masterDriveEmail}>
+                            {masterDriveEmail}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsToolsDropdownOpen(false);
+                          setIsGoogleDriveSettingsOpen(true);
+                        }}
+                        className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-stone-950 font-bold rounded-lg text-[11px] shadow-3xs cursor-pointer transition shrink-0"
+                      >
+                        Kelola
+                      </button>
+                    </div>
+
+                    {/* Quick Access Menu Items */}
+                    <div className="pt-1 border-t border-stone-150 space-y-1">
+                      {/* Buku Besar */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsToolsDropdownOpen(false);
+                          setView('ledger');
+                        }}
+                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs font-bold text-stone-700 hover:bg-stone-100 transition cursor-pointer"
+                      >
+                        <div className="flex items-center gap-2">
+                          <BookOpen size={14} className="text-amber-600" />
+                          <span>Buku Besar Sub-Jenis</span>
+                        </div>
+                        <span className="text-[9px] font-mono text-stone-400">Akuntansi</span>
+                      </button>
+
+                      {/* Bukti Potong PPh 23 Coretax */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsToolsDropdownOpen(false);
+                          setView('pph23');
+                        }}
+                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs font-bold text-stone-700 hover:bg-amber-50 transition cursor-pointer"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Receipt size={14} className="text-amber-600" />
+                          <span>Bukti Potong PPh 23 (PSi &amp; Jasa)</span>
+                        </div>
+                        <span className="text-[9px] font-mono text-amber-800 bg-amber-100 px-1.5 rounded font-bold">Coretax</span>
+                      </button>
+
+                      {/* Master NPWP */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsToolsDropdownOpen(false);
+                          setView('npwp');
+                        }}
+                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs font-bold text-stone-700 hover:bg-stone-100 transition cursor-pointer"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Receipt size={14} className="text-indigo-600" />
+                          <span>Master NPWP &amp; Vendor</span>
+                        </div>
+                        <span className="text-[9px] font-mono text-stone-400">Pajak</span>
+                      </button>
+
+                      {/* SPPD Dinas */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsToolsDropdownOpen(false);
+                          setView('sppd');
+                        }}
+                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs font-bold text-stone-700 hover:bg-stone-100 transition cursor-pointer"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Briefcase size={14} className="text-amber-600" />
+                          <span>Formulir &amp; SPPD Dinas</span>
+                        </div>
+                        <span className="text-[9px] font-mono text-stone-400">Tugas</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {/* User Profile Dropdown Menu (Contains Theme, Profile, Cloud Center & Logout) */}
               <div className="relative" ref={userMenuRef}>
@@ -2693,6 +2830,7 @@ export default function App() {
             userProfile={userProfile}
             pettyCashHolders={pettyCashHolders}
             onOpenConsolidateModal={() => setIsConsolidateNamesModalOpen(true)}
+            onOpenPph23View={() => setView('pph23')}
             onSelect={(sub, initialTab) => {
               try { sessionStorage.setItem('sublist_scrollPos', window.scrollY.toString()); } catch (e) {}
               setActiveSubmission(sub);
@@ -2867,6 +3005,22 @@ export default function App() {
               setView('form');
             }}
             onClose={() => setView(previousView || 'list')}
+          />
+        )}
+
+        {/* VIEW 10: Modul Bukti Potong PPh 23 (Biaya PSi & Jasa Rekanan) - Coretax DJP Ready */}
+        {view === 'pph23' && (
+          <Pph23BupotRecap
+            submissions={submissions}
+            npwpRecords={npwpRecords}
+            onSaveNpwpRecords={handleSaveNpwpRecords}
+            onUpdateSubmission={handleSaveSubmission}
+            onSelectSubmission={(sub) => {
+              setActiveSubmission(sub);
+              setPrintInitialTab('both');
+              setView('print');
+            }}
+            onBackToVoucher={() => setView('list')}
           />
         )}
 

@@ -51,6 +51,15 @@ export interface Submission {
   sendToAgenda?: boolean; // Jadwalkan pengingat lapor PPh ke Agenda (Coretax DJP)
   agendaItemId?: string; // ID agenda terkait jika ada
   
+  // PPh 23 & Bukti Potong (Coretax DJP) properties
+  pph23Rate?: number; // Persentase tarif PPh 23 (default 2%)
+  pph23Amount?: number; // Nominal PPh 23 yang dipotong (Rp)
+  dppAmount?: number; // Dasar Pengenaan Pajak (DPP)
+  bupotNumber?: string; // Nomor Bukti Pemotongan PPh 23 / Coretax
+  bupotStatus?: 'Belum Bupot' | 'Sudah Bupot' | 'Siap Lapor Coretax';
+  bupotDate?: string; // Tanggal penerbitan Bukti Potong
+  vendorNpwp?: string; // NPWP Vendor/Rekanan terkait (jika disimpan langsung)
+  
   // Salary Slip details
   salaryDetails?: SalaryDetails;
   
