@@ -2289,7 +2289,7 @@ export default function App() {
                         layoutMode === 'petty_cash_recap' ? 'Voucher HO (Petty Cash)' :
                         'Voucher HO'
                       )}
-                      {view === 'pph23' && 'Bukti Potong PPh 23 (PSi & Jasa)'}
+                      {view === 'pph23' && 'Bukti Potong PPh 23 (Tagihan)'}
                       {view === 'absen' && 'Absen Harian NMSA'}
                       {view === 'npwp' && 'Master NPWP & Vendor'}
                       {view === 'accurate' && 'Pemetaan Akun'}
@@ -2344,9 +2344,9 @@ export default function App() {
                       <div className="flex items-center gap-2.5">
                         <Receipt size={15} className={view === 'pph23' ? 'text-stone-950' : 'text-amber-600'} />
                         <div className="flex flex-col">
-                          <span>Bukti Potong PPh 23 (Biaya PSi & Jasa)</span>
+                          <span>Bukti Potong PPh 23 (Transaksi Tagihan)</span>
                           <span className={`text-[10px] font-normal ${view === 'pph23' ? 'text-stone-900' : 'text-stone-400'}`}>
-                            Pemotongan Pajak & NPWP untuk Coretax DJP
+                            Pemotongan Pajak PPh 23 Tagihan & NPWP (Coretax DJP)
                           </span>
                         </div>
                       </div>

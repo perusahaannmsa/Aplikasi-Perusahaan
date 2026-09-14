@@ -974,7 +974,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                   >
                     <div className="flex items-center gap-2">
                       <Receipt size={14} className="text-amber-600" />
-                      <span>Bukti Potong PPh 23 (Biaya PSi & Jasa)</span>
+                      <span>Bukti Potong PPh 23 (Tagihan)</span>
                     </div>
                     <span className="text-[9px] font-mono text-amber-900 font-bold bg-amber-100 px-1.5 py-0.2 rounded">
                       Coretax
@@ -989,10 +989,10 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
             <button
               onClick={onOpenPph23View}
               className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-950 font-bold text-xs transition cursor-pointer shadow-3xs"
-              title="Tampilan khusus transaksi Biaya PSi atau Jasa dengan pemotongan PPh 23, NPWP perusahaan, dan status Coretax"
+              title="Rekapitulasi transaksi tagihan dengan pemotongan PPh 23, NPWP perusahaan, dan tautan dokumen"
             >
               <Receipt size={13} className="text-amber-700" />
-              <span>Bukti Potong PPh 23 (Biaya PSi)</span>
+              <span>Bukti Potong PPh 23 (Tagihan)</span>
               <span className="text-[9px] font-mono bg-amber-200 text-amber-900 px-1 rounded font-bold">DJP</span>
             </button>
           )}
