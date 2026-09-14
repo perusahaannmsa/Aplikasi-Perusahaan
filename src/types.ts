@@ -4,6 +4,7 @@ export interface SubmissionItem {
   item: string;
   jumlahVolume: string; // Keterangan/Volume
   total: number; // Nominal
+  nominal?: number;
   keterangan: string; // Detail tambahan
   debit?: number;
   kredit?: number;
@@ -36,7 +37,10 @@ export interface Submission {
   kode: string; // e.g. "HO"
   dibayarkanKepada: string;
   dibayarkanDengan: PaymentMethod;
-  status?: 'Lunas' | 'Belum Lunas';
+  status?: 'Lunas' | 'Belum Lunas' | 'DP / Cicilan';
+  dpAmount?: number; // Nominal DP atau Cicilan yang sudah dibayarkan
+  cicilanNotes?: string; // Catatan termin / cicilan (contoh: "DP 50%", "Termin 1")
+  driveArchived?: boolean; // Penanda pengarsipan Google Drive selesai
   notes: string;
   
   // Invoice properties
@@ -81,6 +85,10 @@ export interface Submission {
   // Signatures for Formulir Pengajuan
   dibuatOleh: string;
   disetujuiOleh: string; // e.g. "Harijon"
+  diketahuiOleh?: string;
+  companyId?: string;
+  companyName?: string;
+  rekeningTujuan?: string;
 
   // Signatures for Bukti Pengeluaran Kas/Bank (F1)
   diajukanOleh?: string; // e.g. "Andi Dhiya Salsabila"
@@ -154,7 +162,7 @@ export interface AttendanceRecord {
   workerId: string;
   attendance: { [date: string]: boolean }; // date -> present status
   dailyAllowance: number; // e.g. Rp 50.000
-  customStatus?: { [date: string]: "Sakit" | "Izin" | "Meeting" };
+  customStatus?: { [date: string]: "Sakit" | "Izin" | "Meeting" | "Cuti" | "Absen" | "Alpa" | string };
   reasons?: { [date: string]: string };
 }
 

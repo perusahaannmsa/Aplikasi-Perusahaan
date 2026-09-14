@@ -51,6 +51,18 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
 
   // Helper to test if a submission is missing F1, F2, or attachments on Google Drive
   const checkDriveCompleteness = (sub: Submission) => {
+    if (sub.driveArchived) {
+      return {
+        hasF1: true,
+        hasF2: true,
+        hasUnarchivedRawFiles: false,
+        hasUnarchivedPayment: false,
+        hasUnarchivedPetty: false,
+        isComplete: true,
+        needsSync: false
+      };
+    }
+
     const driveFiles = sub.googleDriveFiles || [];
     
     // Check F1
@@ -84,7 +96,7 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
       hasUnarchivedPayment,
       hasUnarchivedPetty,
       isComplete,
-      needsSync: !isComplete || driveFiles.length === 0
+      needsSync: !isComplete
     };
   };
 
@@ -1105,6 +1117,8 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
         // Update target object
         const updatedSub: Submission = {
           ...sub,
+          driveArchived: true,
+          files: (sub.files || []).map(f => ({ ...f, isDrive: true })),
           googleDriveFiles: freshFinalFiles,
           buktiPembayaran: freshBuktiPembayaran || sub.buktiPembayaran
         };
@@ -1114,6 +1128,7 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
         
         if (parentIndex !== -1) {
           updatedSubmissions[parentIndex] = updatedSub;
+          onUpdateSubmissions([...updatedSubmissions]);
         }
         actualSuccesses++;
         setSuccessCount(actualSuccesses);

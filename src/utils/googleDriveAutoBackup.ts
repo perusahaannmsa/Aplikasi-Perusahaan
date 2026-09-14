@@ -23,6 +23,7 @@ export interface BackupSyncLog {
   module: 'Absensi' | 'Submissions' | 'NPWP' | 'SPPD' | 'Accurate' | 'Agenda' | 'Full_Database';
   fileName: string;
   fileUrl?: string;
+  url?: string;
   folderPath: string;
   status: 'success' | 'failed' | 'in_progress';
   recordCount?: number;
@@ -334,14 +335,25 @@ class GoogleDriveAutoBackupService {
     try {
       const weekStart = report.weekStartDate;
       const weekEnd = report.weekEndDate;
-      const reportDate = new Date(weekStart);
-      const folderYear = reportDate.getFullYear().toString();
-      const monthName = reportDate.toLocaleString('id-ID', { month: 'long' });
+      const [yStr, mStr] = (weekStart || "").split("-");
+      const folderYear = yStr || new Date().getFullYear().toString();
+      const monthNamesIndo = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+      const mIdx = parseInt(mStr, 10) - 1;
+      const monthName = (mIdx >= 0 && mIdx < 12) ? monthNamesIndo[mIdx] : "Agustus";
       const periodFolderName = `Periode ${weekStart} s.d. ${weekEnd}`;
       const fileName = `Rekap_Uang_Makan_${weekStart}_s.d._${weekEnd}.pdf`;
 
+      // Fallback workers if empty
+      let workersList = workers;
+      if (!workersList || workersList.length === 0) {
+        try {
+          const storedWorkers = localStorage.getItem('workers_v1') || localStorage.getItem('workers_nmsa');
+          if (storedWorkers) workersList = JSON.parse(storedWorkers);
+        } catch (e) {}
+      }
+
       const { generateWeeklyReportPDFBlob } = await import('../lib/attendanceSheetGenerator');
-      const pdfBlob = await generateWeeklyReportPDFBlob(report, workers, signatures);
+      const pdfBlob = await generateWeeklyReportPDFBlob(report, workersList || [], signatures);
 
       const result = await this.withDriveToken(async (token) => {
         const folderId = await getOrCreateNestedFolder(token, [
@@ -356,7 +368,7 @@ class GoogleDriveAutoBackupService {
       });
 
       this.addLog({
-        id: `log-weekly-${Date.now()}`,
+        id: `log-weekly-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
         timestamp: new Date().toISOString(),
         module: 'Absensi',
         fileName,
@@ -370,6 +382,52 @@ class GoogleDriveAutoBackupService {
       console.warn('Gagal upload Laporan Mingguan ke Google Drive:', err);
       return { success: false, error: err?.message };
     }
+  }
+
+  /**
+   * Backup all weekly attendance reports from history to Google Drive
+   * Loops through all reports in Riwayat Laporan Jumat and uploads each to its dedicated period folder
+   */
+  public async backupAllWeeklyReports(
+    reports: any[],
+    workers: any[],
+    signatures?: any,
+    onProgress?: (current: number, total: number, report: any) => void
+  ): Promise<{ success: boolean; totalUploaded: number; failed: number; results: Array<{ id: string; url?: string; error?: string }> }> {
+    if (!reports || reports.length === 0) {
+      return { success: true, totalUploaded: 0, failed: 0, results: [] };
+    }
+
+    const results: Array<{ id: string; url?: string; error?: string }> = [];
+    let totalUploaded = 0;
+    let failed = 0;
+
+    for (let i = 0; i < reports.length; i++) {
+      const rep = reports[i];
+      if (onProgress) {
+        onProgress(i + 1, reports.length, rep);
+      }
+      try {
+        const res = await this.backupWeeklyAttendanceReport(rep, workers, signatures);
+        if (res.success && res.url) {
+          totalUploaded++;
+          results.push({ id: rep.id, url: res.url });
+        } else {
+          failed++;
+          results.push({ id: rep.id, error: res.error || 'Gagal upload' });
+        }
+      } catch (err: any) {
+        failed++;
+        results.push({ id: rep.id, error: err?.message || 'Error' });
+      }
+    }
+
+    return {
+      success: totalUploaded > 0,
+      totalUploaded,
+      failed,
+      results
+    };
   }
 
   /**

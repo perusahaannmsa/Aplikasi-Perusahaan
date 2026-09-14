@@ -780,7 +780,6 @@ export default function App() {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isDashboardNavOpen, setIsDashboardNavOpen] = useState(false);
-  const [isVoucherSubmenuOpen, setIsVoucherSubmenuOpen] = useState(true);
   const [isCloudModalOpen, setIsCloudModalOpen] = useState(false);
   const [isGoogleDriveSettingsOpen, setIsGoogleDriveSettingsOpen] = useState(false);
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
@@ -995,7 +994,11 @@ export default function App() {
             diverifikasiJabatan: 'Direktur',
             disetujuiOleh: 'Direktur Utama',
             disetujuiOleh2: 'Harijon',
+            disetujuiJabatan2: 'Direktur Keuangan',
+            dibukukanOleh: 'Sri Ekowati',
+            dibukukanJabatan: 'Accounting',
             diketahuiOleh: 'Direksi',
+            createdAt: new Date().toISOString(),
             items: [
               {
                 id: `item-${Date.now()}`,
@@ -1602,7 +1605,7 @@ export default function App() {
   };
 
   // Sync / Import handler for Google Sheets legacy vouchers
-  const handleSheetsImport = (importedList: Submission[], mergeMode: 'merge' | 'overwrite') => {
+  const handleSheetsImport = (importedList: Submission[], mergeMode: 'merge' | 'overwrite' = 'merge') => {
     if (mergeMode === 'overwrite') {
       saveSubmissionsToStorage(importedList);
     } else {
@@ -2298,92 +2301,26 @@ export default function App() {
                       Pilihan Menu Dashboard:
                     </div>
 
-                    {/* 1. VOUCHER HO DROPDOWN GROUP */}
-                    <div className="rounded-xl border border-stone-200 bg-stone-50/80 overflow-hidden mb-1.5">
-                      <button
-                        onClick={() => setIsVoucherSubmenuOpen(!isVoucherSubmenuOpen)}
-                        className={`w-full flex items-center justify-between px-3 py-2 text-xs font-bold transition cursor-pointer text-left ${
-                          view === 'list' ? 'bg-stone-900 text-white font-black' : 'text-stone-800 hover:bg-stone-100'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <Database size={15} className={view === 'list' ? 'text-amber-400' : 'text-stone-600'} />
-                          <div className="flex flex-col">
-                            <span className="leading-snug">Voucher HO & Mode Rekap</span>
-                            <span className={`text-[10px] font-normal leading-none ${view === 'list' ? 'text-stone-300' : 'text-stone-400'}`}>
-                              Daftar Transaksi & Layout Mode
-                            </span>
-                          </div>
+                    {/* 1. VOUCHER HO */}
+                    <button
+                      onClick={() => {
+                        setView('list');
+                        setIsDashboardNavOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer text-left mb-1.5 ${
+                        view === 'list' ? 'bg-stone-900 text-white font-black' : 'text-stone-800 hover:bg-stone-100'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <Database size={15} className={view === 'list' ? 'text-amber-400' : 'text-stone-600'} />
+                        <div className="flex flex-col">
+                          <span className="leading-snug">Voucher HO</span>
+                          <span className={`text-[10px] font-normal leading-none ${view === 'list' ? 'text-stone-300' : 'text-stone-400'}`}>
+                            Daftar Transaksi & Pengajuan Kas/Bank
+                          </span>
                         </div>
-                        <ChevronDown size={14} className={`transition-transform duration-200 ${isVoucherSubmenuOpen ? 'rotate-180' : ''}`} />
-                      </button>
-
-                      {/* SUB-MENU DROPDOWN FOR VOUCHER HO */}
-                      {isVoucherSubmenuOpen && (
-                        <div className="p-1.5 space-y-1 bg-white border-t border-stone-200">
-                          <button
-                            onClick={() => {
-                              setView('list');
-                              setLayoutMode('standard');
-                              setIsDashboardNavOpen(false);
-                            }}
-                            className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-                              view === 'list' && layoutMode === 'standard'
-                                ? 'bg-amber-500 text-stone-950 font-black'
-                                : 'text-stone-700 hover:bg-stone-100'
-                            }`}
-                          >
-                            <div className="flex items-center gap-2">
-                              <Database size={13} className={view === 'list' && layoutMode === 'standard' ? 'text-stone-950' : 'text-amber-600'} />
-                              <span>Tampilan Standar</span>
-                            </div>
-                            <span className="text-[9px] font-mono opacity-80">Daftar Utama</span>
-                          </button>
-
-                          <button
-                            onClick={() => {
-                              setView('list');
-                              setLayoutMode('invoice_recap');
-                              setIsDashboardNavOpen(false);
-                            }}
-                            className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-                              view === 'list' && layoutMode === 'invoice_recap'
-                                ? 'bg-amber-600 text-white font-black'
-                                : 'text-stone-700 hover:bg-amber-50'
-                            }`}
-                          >
-                            <div className="flex items-center gap-2">
-                              <FileSpreadsheet size={13} className={view === 'list' && layoutMode === 'invoice_recap' ? 'text-white' : 'text-amber-600'} />
-                              <span>Rekap & Bukti Invoice</span>
-                            </div>
-                            <span className="text-[9px] font-mono opacity-80">Vendor</span>
-                          </button>
-
-                          <button
-                            onClick={() => {
-                              setView('list');
-                              setLayoutMode('petty_cash_recap');
-                              setIsDashboardNavOpen(false);
-                            }}
-                            className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
-                              view === 'list' && layoutMode === 'petty_cash_recap'
-                                ? 'bg-violet-700 text-white font-black'
-                                : 'text-violet-900 hover:bg-violet-50'
-                            }`}
-                          >
-                            <div className="flex items-center gap-2">
-                              <Coins size={13} className={view === 'list' && layoutMode === 'petty_cash_recap' ? 'text-white' : 'text-violet-600'} />
-                              <span>Petty Cash Lapangan</span>
-                            </div>
-                            <span className={`text-[9px] font-mono px-1.5 py-0.2 rounded font-bold ${
-                              view === 'list' && layoutMode === 'petty_cash_recap' ? 'bg-white text-violet-900' : 'bg-violet-100 text-violet-800'
-                            }`}>
-                              {pettyCashCount}
-                            </span>
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                      </div>
+                    </button>
 
                     {/* 2. ABSEN HARIAN NMSA */}
                     <button

@@ -140,7 +140,14 @@
     size: A4 landscape;
     margin: 10mm 12mm 10mm 12mm;
   }
-  body, #app-root, main {
+  html, body, #app-root, main, #submissions-list-container {
+    display: block !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-width: 100% !important;
+    overflow: visible !important;
+    position: static !important;
+    float: none !important;
     background: white !important;
     color: black !important;
     padding: 0 !important;
@@ -158,7 +165,31 @@
     page-break-inside: avoid !important;
     break-inside: avoid !important;
   }
-  table, tr, td, th {
+  #printable-submissions-table,
+  .print-only-container {
+    display: block !important;
+    visibility: visible !important;
+  }
+  table {
+    page-break-inside: auto !important;
+    break-inside: auto !important;
+    width: 100% !important;
+    border-collapse: collapse !important;
+  }
+  thead {
+    display: table-header-group !important;
+  }
+  tbody {
+    display: table-row-group !important;
+  }
+  tfoot {
+    display: table-footer-group !important;
+  }
+  tr {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+  td, th {
     page-break-inside: avoid !important;
     break-inside: avoid !important;
   }

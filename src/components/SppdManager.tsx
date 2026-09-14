@@ -77,6 +77,7 @@ export interface SPPDRecord {
   kotaAsal: string;
   kotaTujuan: string;
   transportasi: string;
+  kendaraan?: string;
   lamaPerjalanan: string;
   tanggalMulai: string;
   tanggalSelesai: string;

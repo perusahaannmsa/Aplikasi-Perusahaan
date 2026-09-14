@@ -584,14 +584,19 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
 
   // Grouped amounts for quick charts/budget
   const methodStats = useMemo(() => {
-    let tunai = 0;
     let transfer = 0;
+    let lunasCount = 0;
+    let dpCount = 0;
+    let belumLunasCount = 0;
     filteredSubmissions.forEach(sub => {
       const subSum = sub.items.reduce((itemSum, item) => itemSum + item.total, 0);
-      if (sub.dibayarkanDengan === 'Tunai') tunai += subSum;
-      else transfer += subSum;
+      transfer += subSum;
+      const status = sub.status || (sub.dibayarkanDengan === 'Cek/Transfer' ? 'Lunas' : 'Belum Lunas');
+      if (status === 'Lunas') lunasCount++;
+      else if (status === 'DP / Cicilan') dpCount++;
+      else belumLunasCount++;
     });
-    return { tunai, transfer };
+    return { transfer, lunasCount, dpCount, belumLunasCount };
   }, [filteredSubmissions]);
 
   // Invoice calculations and groupings
@@ -1069,15 +1074,16 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
           <div className="relative overflow-hidden bg-white p-6 rounded-2xl shadow-xs border border-stone-205 flex items-center justify-between group">
             <div className="absolute right-0 top-0 w-24 h-24 bg-stone-100 rounded-full blur-2xl transition-all group-hover:scale-125"></div>
             <div className="space-y-1 relative z-10 w-full">
-              <span className="text-[10px] text-stone-500 font-mono tracking-widest uppercase block">Klasifikasi Pembayaran</span>
+              <span className="text-[10px] text-stone-500 font-mono tracking-widest uppercase block">Metode & Status Pembayaran</span>
               <div className="text-xs space-y-1.5 font-mono pt-1">
                 <div className="flex justify-between gap-4">
-                  <span className="text-stone-450">Tunai:</span>
-                  <span className="font-bold text-stone-800">Rp {formatRupiah(methodStats.tunai)}</span>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <span className="text-stone-450">Cek / Transfer:</span>
+                  <span className="text-stone-450">Semua Transfer:</span>
                   <span className="font-bold text-stone-800">Rp {formatRupiah(methodStats.transfer)}</span>
+                </div>
+                <div className="flex justify-between gap-4 text-[11px]">
+                  <span className="text-stone-450">Lunas: <strong className="text-teal-700">{methodStats.lunasCount}</strong></span>
+                  <span className="text-stone-450">DP/Cicilan: <strong className="text-amber-700">{methodStats.dpCount}</strong></span>
+                  <span className="text-stone-450">Belum Lunas: <strong className="text-rose-700">{methodStats.belumLunasCount}</strong></span>
                 </div>
               </div>
             </div>
@@ -1118,25 +1124,15 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 />
               </div>
 
-              {/* Method Filter */}
-              <select
-                className="px-4 py-2.5 bg-stone-50 border border-stone-250 rounded-xl text-sm focus:ring-2 focus:ring-stone-400 focus:outline-none md:w-48 text-stone-700"
-                value={methodFilter}
-                onChange={(e) => setMethodFilter(e.target.value)}
-              >
-                <option value="All">Semua Metode</option>
-                <option value="Tunai">Tunai</option>
-                <option value="Cek/Transfer">Cek/Transfer</option>
-              </select>
-
               {/* Status Filter */}
               <select
-                className="px-4 py-2.5 bg-stone-50 border border-stone-250 rounded-xl text-sm focus:ring-2 focus:ring-stone-400 focus:outline-none md:w-48 text-stone-700"
+                className="px-4 py-2.5 bg-stone-50 border border-stone-250 rounded-xl text-sm focus:ring-2 focus:ring-stone-400 focus:outline-none md:w-48 text-stone-700 font-medium"
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
               >
                 <option value="All">Semua Status</option>
                 <option value="Lunas">Lunas</option>
+                <option value="DP / Cicilan">DP / Cicilan</option>
                 <option value="Belum Lunas">Belum Lunas</option>
               </select>
             </div>
@@ -1307,15 +1303,6 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
               )}
 
               <button
-                onClick={handleDownloadCSV}
-                className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-4.5 py-2.5 bg-emerald-800 hover:bg-emerald-900 border border-emerald-950 text-white font-extrabold rounded-xl transition duration-150 text-xs shadow-3xs cursor-pointer select-none"
-                title="Download Laporan Format CSV/Excel"
-              >
-                <FileSpreadsheet size={13} className="text-white" />
-                <span>Unduh Laporan (CSV)</span>
-              </button>
-
-              <button
                 onClick={() => window.print()}
                 className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-4.5 py-2.5 bg-stone-900 hover:bg-stone-800 border border-stone-955 text-white font-extrabold rounded-xl transition duration-150 text-xs shadow-3xs cursor-pointer select-none"
                 title="Cetak Laporan Bulanan / Filter Terpilih"
@@ -1374,21 +1361,24 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                         <td className="py-4.5 px-6">
                           <div className="font-extrabold text-stone-900">{sub.dibayarkanKepada}</div>
                           <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                            <span className={`inline-block text-[10px] font-mono px-2.5 py-0.5 rounded-full font-extrabold ${
-                              sub.dibayarkanDengan === 'Tunai'
-                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-150'
-                                : 'bg-indigo-50 text-indigo-700 border border-indigo-150'
-                            }`}>
-                              {sub.dibayarkanDengan}
+                            <span className="inline-block text-[10px] font-mono px-2.5 py-0.5 rounded-full font-extrabold bg-indigo-50 text-indigo-700 border border-indigo-150">
+                              Transfer
                             </span>
                             
-                            <span className={`inline-block text-[10px] font-mono px-2.5 py-0.5 rounded-full font-extrabold ${
-                              (sub.status || (sub.dibayarkanDengan === 'Cek/Transfer' ? 'Lunas' : 'Belum Lunas')) === 'Lunas'
-                                ? 'bg-teal-50 text-teal-700 border border-teal-150'
-                                : 'bg-rose-50 text-rose-700 border border-rose-150'
-                            }`}>
-                              {sub.status || (sub.dibayarkanDengan === 'Cek/Transfer' ? 'Lunas' : 'Belum Lunas')}
-                            </span>
+                            {sub.status === 'DP / Cicilan' ? (
+                              <span className="inline-block text-[10px] font-mono px-2.5 py-0.5 rounded-full font-extrabold bg-amber-50 text-amber-800 border border-amber-200" title={sub.cicilanNotes || 'Pembayaran bertahap/cicilan'}>
+                                DP/Cicilan: Rp {formatRupiah(sub.dpAmount || 0)}
+                                {sub.dpAmount && subTotal > sub.dpAmount ? ` (Sisa Rp ${formatRupiah(subTotal - sub.dpAmount)})` : ''}
+                              </span>
+                            ) : (
+                              <span className={`inline-block text-[10px] font-mono px-2.5 py-0.5 rounded-full font-extrabold ${
+                                (sub.status || 'Lunas') === 'Lunas'
+                                  ? 'bg-teal-50 text-teal-700 border border-teal-150'
+                                  : 'bg-rose-50 text-rose-700 border border-rose-150'
+                              }`}>
+                                {sub.status || 'Lunas'}
+                              </span>
+                            )}
 
                             {sub.isInvoice && (
                               <span className="inline-block text-[9px] font-mono bg-amber-500 text-white font-black px-2 py-0.5 rounded-md shadow-3xs uppercase tracking-wider">
@@ -3601,7 +3591,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
         Only visible on physical print paper or PDF export (hidden on screen)
       */}
       {layoutMode === 'standard' && (
-        <div className="hidden print:block font-sans text-black p-4 space-y-6">
+        <div id="printable-submissions-table" className="hidden print:block print-only-container font-sans text-black p-4 space-y-6">
           <div className="border-b-2 border-stone-900 pb-4 flex justify-between items-end">
             <div>
               <h1 className="text-xl font-bold font-display uppercase tracking-wider text-stone-900">PT NUSANTARA MINERAL SUKSES ABADI</h1>
@@ -3614,7 +3604,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
             </div>
           </div>
 
-          <table className="w-full text-left border-collapse text-[10px]">
+          <table className="w-full text-left border-collapse text-[10px] my-2">
             <thead>
               <tr className="bg-stone-100 border-y-2 border-stone-900 font-bold text-stone-850">
                 <th className="py-2 px-2 border border-stone-300 text-center w-10">No</th>
@@ -3624,7 +3614,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 <th className="py-2 px-2 border border-stone-300 w-32">Jenis Pengajuan</th>
                 <th className="py-2 px-2 border border-stone-300 w-40">Penerima Kas</th>
                 <th className="py-2 px-2 border border-stone-300 w-20 text-center">Metode</th>
-                <th className="py-2 px-2 border border-stone-300 w-20 text-center">Status</th>
+                <th className="py-2 px-2 border border-stone-300 w-28 text-center">Status</th>
                 <th className="py-2 px-2 border border-stone-300 w-28 text-right">Total Nilai</th>
               </tr>
             </thead>
@@ -3632,7 +3622,9 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
               {filteredSubmissions.length > 0 ? (
                 filteredSubmissions.map((sub, idx) => {
                   const subTotal = sub.items.reduce((sum, i) => sum + i.total, 0);
-                  const displayStatus = sub.status || (sub.dibayarkanDengan === 'Cek/Transfer' ? 'Lunas' : 'Belum Lunas');
+                  const displayStatus = sub.status === 'DP / Cicilan'
+                    ? `DP/Cicilan${sub.dpAmount ? ` (Rp ${formatRupiah(sub.dpAmount)})` : ''}`
+                    : (sub.status || 'Lunas');
                   return (
                     <tr key={sub.id} className="align-top">
                       <td className="py-2 px-2 border border-stone-200 text-center font-mono">{idx + 1}</td>
@@ -3641,7 +3633,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                       <td className="py-2 px-2 border border-stone-200 font-bold">{sub.lokasi}</td>
                       <td className="py-2 px-2 border border-stone-200">{sub.jenisPengajuan}</td>
                       <td className="py-2 px-2 border border-stone-200 font-bold">{sub.dibayarkanKepada}</td>
-                      <td className="py-2 px-2 border border-stone-200 text-center font-mono">{sub.dibayarkanDengan}</td>
+                      <td className="py-2 px-2 border border-stone-200 text-center font-mono">Transfer</td>
                       <td className="py-2 px-2 border border-stone-200 text-center font-mono font-bold text-[9px]">{displayStatus}</td>
                       <td className="py-2 px-2 border border-stone-200 text-right font-mono font-bold font-black text-stone-900 whitespace-nowrap">
                         Rp {formatRupiah(subTotal)}
@@ -3654,6 +3646,8 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                   <td colSpan={9} className="py-8 text-center text-stone-400">Tidak ada data transaksi yang cocok dengan kriteria filter.</td>
                 </tr>
               )}
+            </tbody>
+            <tfoot>
               {/* Total Row */}
               <tr className="bg-stone-50 font-bold text-stone-955 border-t-2 border-stone-900">
                 <td colSpan={8} className="py-2.5 px-2 text-right text-stone-850">SUM/TOTAL NILAI KELUAR:</td>
@@ -3661,11 +3655,11 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                   Rp {formatRupiah(filteredSubmissions.reduce((sum, s) => sum + s.items.reduce((acc, i) => acc + i.total, 0), 0))}
                 </td>
               </tr>
-            </tbody>
+            </tfoot>
           </table>
 
           {/* Autograph / Tanda Tangan */}
-          <div className="pt-12 grid grid-cols-3 gap-6 text-center text-[11px] leading-normal pb-8">
+          <div className="pt-8 grid grid-cols-3 gap-6 text-center text-[11px] leading-normal pb-8 page-break break-inside-avoid">
             <div className="space-y-12">
               <p className="font-semibold text-stone-600">Dibuat Oleh,</p>
               <div className="space-y-0.5">

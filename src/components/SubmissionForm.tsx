@@ -316,7 +316,9 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
   const [kode, setKode] = useState('HO');
   const [dibayarkanKepada, setDibayarkanKepada] = useState('');
   const [dibayarkanDengan, setDibayarkanDengan] = useState<PaymentMethod>('Cek/Transfer');
-  const [status, setStatus] = useState<'Lunas' | 'Belum Lunas'>('Belum Lunas');
+  const [status, setStatus] = useState<'Lunas' | 'Belum Lunas' | 'DP / Cicilan'>('Belum Lunas');
+  const [dpAmount, setDpAmount] = useState<number | string>('');
+  const [cicilanNotes, setCicilanNotes] = useState('');
   const [notes, setNotes] = useState('');
 
   // Effective petty cash holders master list
@@ -761,12 +763,10 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
 
   // Sync payment status state with payment proof file presence
   useEffect(() => {
-    if (buktiPembayaranFile || buktiPembayaranDrive) {
+    if (initialSubmission?.status) {
+      setStatus(initialSubmission.status);
+    } else if (buktiPembayaranFile || buktiPembayaranDrive) {
       setStatus('Lunas');
-    } else if (initialSubmission && initialSubmission.status === 'Lunas') {
-      setStatus('Lunas'); // Preserve manual lunas marking when editing
-    } else {
-      setStatus('Belum Lunas');
     }
   }, [buktiPembayaranFile, buktiPembayaranDrive, initialSubmission]);
 
@@ -1063,6 +1063,8 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
       setDibayarkanKepada(initialSubmission.dibayarkanKepada);
       setDibayarkanDengan(initialSubmission.dibayarkanDengan);
       setStatus(initialSubmission.status || 'Belum Lunas');
+      setDpAmount(initialSubmission.dpAmount !== undefined ? initialSubmission.dpAmount : '');
+      setCicilanNotes(initialSubmission.cicilanNotes || '');
       setNotes(initialSubmission.notes);
       const initIsInv = initialSubmission.isInvoice || false;
       setIsInvoice(initIsInv);
@@ -1073,7 +1075,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
       const initInvAmt = initialSubmission.invoiceAmount !== undefined ? initialSubmission.invoiceAmount : '';
       setInvoiceAmount(initInvAmt);
       const initItemsTotal = (initialSubmission.items || []).reduce((s, it) => s + (Number(it.total) || 0), 0);
-      setIsInvoiceAmountCustom(Boolean(initialSubmission.invoiceAmount !== undefined && initialSubmission.invoiceAmount !== '' && Number(initialSubmission.invoiceAmount) !== initItemsTotal));
+      setIsInvoiceAmountCustom(Boolean(initialSubmission.invoiceAmount !== undefined && (initialSubmission.invoiceAmount as any) !== '' && Number(initialSubmission.invoiceAmount) !== initItemsTotal));
       setSendToAgenda(initialSubmission.sendToAgenda !== false);
       setIsPettyCash(initialSubmission.isPettyCash || false);
       setPettyCashCustodian(initialSubmission.pettyCashCustodian || '');
@@ -1165,6 +1167,8 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
       setDibayarkanKepada('');
       setDibayarkanDengan('Cek/Transfer');
       setStatus('Belum Lunas');
+      setDpAmount('');
+      setCicilanNotes('');
       setNotes('');
       setGoogleDriveFileUrl('');
       setGoogleDriveFileName('');
@@ -1280,9 +1284,19 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
       setValidationError('Nama item pengajuan tidak boleh kosong.');
       return;
     }
-    if (isPettyCash && !pettyCashCustodian.trim()) {
-      setValidationError('Nama pemegang Petty cash wajib diisi untuk transaksi Pengisian Petty Cash Lapangan.');
+    if (isPettyCash && !dibayarkanKepada.trim() && !pettyCashCustodian.trim()) {
+      setValidationError('Nama penerima / pemegang Petty cash wajib diisi untuk transaksi kas kecil.');
       return;
+    }
+    if (status === 'DP / Cicilan') {
+      if (dpAmount === '' || isNaN(Number(dpAmount)) || Number(dpAmount) <= 0) {
+        setValidationError('Untuk status DP / Cicilan, harap masukkan nominal DP atau pembayaran termin yang telah dilakukan.');
+        return;
+      }
+      if (Number(dpAmount) > calculatedGrandTotal && calculatedGrandTotal > 0) {
+        setValidationError('Nominal DP / Cicilan tidak boleh melebihi total nilai transaksi.');
+        return;
+      }
     }
     if (calculatedGrandTotal < 0) {
       setValidationError('Total Gabungan pengajuan tidak boleh di bawah 0 (negatif). Harap periksa kembali pengeluaran dan pengurangan/potongan Anda.');
@@ -1881,10 +1895,16 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
       const matchedHolderForPenerima = effectiveHolders.find(h => areNamesSimilar(h, rawPenerima).isMatch);
       const normalizedPenerima = matchedHolderForPenerima || (rawPenerima ? toTitleCase(rawPenerima) : '');
 
-      // Normalize custodian for Petty Cash
-      const rawCustodian = (pettyCashCustodian || '').trim();
+      // Normalize custodian for Petty Cash (always matches penerima if petty cash)
+      const rawCustodian = (pettyCashCustodian || dibayarkanKepada || '').trim();
       const matchedHolderForCustodian = effectiveHolders.find(h => areNamesSimilar(h, rawCustodian).isMatch);
-      const normalizedCustodian = matchedHolderForCustodian || (rawCustodian ? toTitleCase(rawCustodian) : (effectiveHolders[0] || 'Suryo Pranoto'));
+      const normalizedCustodian = isPettyCash 
+        ? normalizedPenerima 
+        : (matchedHolderForCustodian || (rawCustodian ? toTitleCase(rawCustodian) : (effectiveHolders[0] || 'Suryo Pranoto')));
+
+      const finalStatus: 'Lunas' | 'Belum Lunas' | 'DP / Cicilan' = status === 'DP / Cicilan'
+        ? 'DP / Cicilan'
+        : (status === 'Lunas' || isLunas ? 'Lunas' : 'Belum Lunas');
 
       const payload: Submission = {
         id: id || `sub-${Date.now()}`,
@@ -1893,8 +1913,10 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         jenisPengajuan,
         kode,
         dibayarkanKepada: normalizedPenerima,
-        dibayarkanDengan,
-        status: isLunas ? 'Lunas' : 'Belum Lunas',
+        dibayarkanDengan: 'Cek/Transfer',
+        status: finalStatus,
+        dpAmount: finalStatus === 'DP / Cicilan' ? (dpAmount !== '' ? Number(dpAmount) : 0) : undefined,
+        cicilanNotes: finalStatus === 'DP / Cicilan' ? cicilanNotes : undefined,
         notes,
         
         // Save Invoice properties
@@ -2216,10 +2238,21 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
           {/* Dibayarkan Kepada */}
           <div className="lg:col-span-2">
             <div className="flex items-center justify-between mb-1">
-              <label className="block text-xs font-medium text-stone-500">
-                Dibayarkan Kepada (Penerima)
+              <label className="block text-xs font-medium text-stone-600">
+                {isPettyCash ? "Dibayarkan Kepada / Pemegang Kas" : "Dibayarkan Kepada (Penerima)"}
               </label>
               <div className="flex items-center gap-2">
+                {isPettyCash && onOpenManageHolders && (
+                  <button
+                    type="button"
+                    onClick={onOpenManageHolders}
+                    className="text-[10px] text-amber-700 hover:text-amber-800 font-extrabold flex items-center gap-1 cursor-pointer hover:underline"
+                    title="Kelola Master List Pemegang Petty Cash"
+                  >
+                    <Plus size={10} />
+                    <span>Master List Kas</span>
+                  </button>
+                )}
                 {onOpenConsolidateModal && (
                   <button
                     type="button"
@@ -2228,12 +2261,12 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                     title="Periksa nama-nama serupa yang belum distandarisasi"
                   >
                     <Sparkles size={10} />
-                    <span>Satukan Variasi Nama</span>
+                    <span>Satukan Nama</span>
                   </button>
                 )}
                 {isPettyCash && (
                   <span className="text-[10px] text-amber-700 font-mono font-bold bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
-                    Pemegang Petty Cash
+                    Petty Cash
                   </span>
                 )}
               </div>
@@ -2243,10 +2276,14 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
               type="text"
               list="preset-penerima"
               className="w-full bg-white border border-stone-200 rounded-lg py-2 px-3 text-sm focus:outline-none focus:ring-1 focus:ring-stone-400 font-semibold text-stone-900"
-              placeholder={isPettyCash ? "Masukkan nama penerima / pemegang kas..." : "Masukkan nama penerima..."}
+              placeholder={isPettyCash ? "Pilih atau ketik pemegang kas / penerima..." : "Masukkan nama penerima..."}
               value={dibayarkanKepada}
               onChange={(e) => {
-                setDibayarkanKepada(e.target.value);
+                const val = e.target.value;
+                setDibayarkanKepada(val);
+                if (isPettyCash) {
+                  setPettyCashCustodian(val);
+                }
               }}
               onBlur={() => {
                 const trimmed = dibayarkanKepada.trim();
@@ -2255,15 +2292,43 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                 const exact = recipientHistory.find(r => r.toLowerCase() === trimmed.toLowerCase());
                 if (exact && exact !== dibayarkanKepada) {
                   setDibayarkanKepada(exact);
-                  if (isPettyCash && effectiveHolders.some(h => h.toLowerCase() === exact.toLowerCase())) {
+                  if (isPettyCash) {
                     setPettyCashCustodian(exact);
                   }
                 }
               }}
             />
             <datalist id="preset-penerima">
-              {recipientHistory.map(p => <option key={p} value={p} />)}
+              {isPettyCash 
+                ? Array.from(new Set([...effectiveHolders, ...recipientHistory])).map(p => <option key={p} value={p} />)
+                : recipientHistory.map(p => <option key={p} value={p} />)
+              }
             </datalist>
+
+            {/* Quick chips for Petty Cash Custodians right inside Dibayarkan Kepada */}
+            {isPettyCash && (
+              <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                <span className="text-[10px] text-stone-500 font-mono font-semibold">Pilih Cepat:</span>
+                {effectiveHolders.map((holder, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => {
+                      setDibayarkanKepada(holder);
+                      setPettyCashCustodian(holder);
+                    }}
+                    className={`px-2 py-0.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1 ${
+                      dibayarkanKepada === holder
+                        ? 'bg-amber-600 text-white shadow-3xs'
+                        : 'bg-stone-100 hover:bg-amber-100 text-stone-700 hover:text-amber-900 border border-stone-200'
+                    }`}
+                  >
+                    <span>👤</span>
+                    <span>{holder}</span>
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* Smart detection suggestion for incomplete name */}
             {(() => {
@@ -2295,36 +2360,35 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
             })()}
           </div>
 
-          {/* Dibayarkan Dengan */}
+          {/* Dibayarkan Dengan (Transfer Only) */}
           <div>
             <label className="block text-xs font-medium text-stone-500 mb-1">Metode Bayar</label>
-            <select
-              className="w-full bg-white border border-stone-200 rounded-lg py-2 px-3 text-sm focus:outline-none focus:ring-1 focus:ring-stone-400"
-              value={dibayarkanDengan}
-              onChange={(e) => {
-                const method = e.target.value as PaymentMethod;
-                setDibayarkanDengan(method);
-              }}
-            >
-              <option value="Cek/Transfer">Cek / Transfer</option>
-              <option value="Tunai">Tunai</option>
-            </select>
-          </div>
-
-          {/* Status Pembayaran (Auto-Calculated Badge based on proof upload) */}
-          <div>
-            <label className="block text-xs font-medium text-stone-500 mb-1">Status Pembayaran</label>
-            <div className="w-full bg-stone-50 border border-stone-200 rounded-lg py-1.5 px-3 text-sm flex items-center justify-between min-h-[38px]">
-              <span className="font-medium text-stone-500 text-xs">Auto-System</span>
-              <span className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono uppercase tracking-wider ${
-                (buktiPembayaranFile || buktiPembayaranDrive) 
-                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-250' 
-                  : 'bg-amber-50 text-[#a58421] border border-amber-250'
-              }`}>
-                {(buktiPembayaranFile || buktiPembayaranDrive) ? 'Lunas' : 'Belum Lunas'}
+            <div className="w-full bg-stone-50 border border-stone-200 rounded-lg py-2 px-3 text-sm flex items-center justify-between min-h-[38px] text-stone-800 font-semibold">
+              <span>Transfer / Bank</span>
+              <span className="text-[10px] font-mono text-emerald-700 bg-emerald-50 border border-emerald-250 px-2 py-0.5 rounded font-bold">
+                Transfer
               </span>
             </div>
-            <p className="text-[10px] text-stone-400 mt-1">Status ditentukan berdasarkan bukti pembayaran.</p>
+          </div>
+
+          {/* Status Pembayaran (Belum Lunas, DP / Cicilan, Lunas) */}
+          <div>
+            <label className="block text-xs font-medium text-stone-500 mb-1">Status Pembayaran</label>
+            <select
+              className="w-full bg-white border border-stone-200 rounded-lg py-2 px-3 text-sm focus:outline-none focus:ring-1 focus:ring-stone-400 font-semibold text-stone-800"
+              value={status}
+              onChange={(e) => {
+                const newStatus = e.target.value as any;
+                setStatus(newStatus);
+              }}
+            >
+              <option value="Belum Lunas">Belum Lunas</option>
+              <option value="DP / Cicilan">DP / Cicilan (Bertahap)</option>
+              <option value="Lunas">Lunas (Selesai)</option>
+            </select>
+            <p className="text-[10px] text-stone-400 mt-1">
+              {status === 'DP / Cicilan' ? 'Pembayaran bertahap / uang muka.' : status === 'Lunas' ? 'Transaksi sudah dibayar penuh.' : 'Menunggu pembayaran transfer.'}
+            </p>
           </div>
 
           {/* Catatan / Notes */}
@@ -2339,6 +2403,65 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
             />
           </div>
         </div>
+
+        {/* DP / Cicilan Detail Panel */}
+        {status === 'DP / Cicilan' && (
+          <div className="p-4 bg-amber-500/10 border border-amber-400/40 rounded-2xl space-y-3 animate-fade-in my-3">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <span className="text-xs font-extrabold text-amber-900 flex items-center gap-1.5">
+                <Coins size={14} className="text-amber-600" />
+                Rincian Pembayaran Uang Muka (DP) / Cicilan Bertahap
+              </span>
+              <span className="text-[11px] font-mono font-bold text-amber-800">
+                Total Transaksi: Rp {formatRupiah(calculatedGrandTotal)}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-stone-700 mb-1">
+                  Nominal DP / Cicilan Terbayar (Rp) *
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-stone-400 font-mono">Rp</span>
+                  <input
+                    type="text"
+                    placeholder="Contoh: 5.000.000"
+                    className="w-full pl-9 pr-3 py-2 bg-white border border-stone-200 rounded-xl text-sm font-mono font-bold text-stone-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    value={dpAmount !== '' ? formatRupiah(Number(dpAmount) || 0) : ''}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/\D/g, '');
+                      setDpAmount(val ? Number(val) : '');
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-700 mb-1">
+                  Keterangan Termin / Tahapan Pekerjaan
+                </label>
+                <input
+                  type="text"
+                  placeholder="Contoh: DP 30%, Termin 1 dari 3, sisa saat BAST"
+                  className="w-full px-3 py-2 bg-white border border-stone-200 rounded-xl text-sm text-stone-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  value={cicilanNotes}
+                  onChange={(e) => setCicilanNotes(e.target.value)}
+                />
+              </div>
+            </div>
+
+            {/* Live calculation balance */}
+            <div className="p-2.5 bg-white/80 rounded-xl border border-amber-300/50 flex items-center justify-between text-xs font-mono">
+              <span className="text-stone-600">
+                Sisa Pembayaran yang Belum Lunas:
+              </span>
+              <span className="font-bold text-rose-700 text-sm">
+                Rp {formatRupiah(Math.max(0, calculatedGrandTotal - (Number(dpAmount) || 0)))}
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* INVOICE MANUAL TOGGLE IF NOT AUTO-DETECTED */}
         {!isInvoice && (
@@ -2630,95 +2753,10 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                 <div className="p-3 bg-violet-500/10 border border-violet-500/20 rounded-xl text-[11px] text-violet-800 flex items-start gap-2">
                   <Sparkles size={14} className="text-violet-600 shrink-0 mt-0.5" />
                   <div className="space-y-0.5">
-                    <span className="font-bold">Sistem Menyeleksi Transaksi Petty Cash / Kas Kecil Lapangan (Otomatis)</span>
-                    <p className="text-stone-550">Sistem mengelompokkan voucher ini ke dalam rekapitulasi real-time Petty Cash berdasarkan pemegang petty cash.</p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="block text-xs font-bold text-stone-600">
-                        Nama Pemegang Petty Cash (Custodian)
-                      </label>
-                      {onOpenManageHolders && (
-                        <button
-                          type="button"
-                          onClick={onOpenManageHolders}
-                          className="text-[10px] text-amber-700 hover:text-amber-800 font-extrabold flex items-center gap-1 cursor-pointer hover:underline"
-                        >
-                          <Plus size={11} />
-                          <span>Kelola Master List</span>
-                        </button>
-                      )}
-                    </div>
-                    <div className="flex gap-2">
-                      <select
-                        className="flex-1 bg-white border border-stone-200 rounded-lg py-2 px-3 text-xs md:text-sm focus:outline-none focus:ring-1 focus:ring-amber-500 font-semibold text-stone-800 cursor-pointer"
-                        value={pettyCashCustodian || (effectiveHolders.length > 0 ? effectiveHolders[0] : '')}
-                        onChange={(e) => {
-                          const selected = e.target.value;
-                          setPettyCashCustodian(selected);
-                          setDibayarkanKepada(selected);
-                        }}
-                      >
-                        {/* Preserve older/legacy custodian names if not present in master list */}
-                        {pettyCashCustodian && !effectiveHolders.includes(pettyCashCustodian) && (
-                          <option value={pettyCashCustodian}>👤 {pettyCashCustodian} (Laporan Lama)</option>
-                        )}
-                        {effectiveHolders.map((holder, idx) => (
-                          <option key={idx} value={holder}>
-                            👤 {holder}
-                          </option>
-                        ))}
-                      </select>
-                      {onOpenManageHolders && (
-                        <button
-                          type="button"
-                          onClick={onOpenManageHolders}
-                          className="px-3 py-2 bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20 text-amber-900 rounded-lg text-xs font-bold transition flex items-center gap-1 shrink-0 cursor-pointer"
-                          title="Tambah / Kelola Master List Pemegang Petty Cash"
-                        >
-                          <Plus size={13} />
-                          <span className="hidden sm:inline">Kelola List</span>
-                        </button>
-                      )}
-                      {onOpenConsolidateModal && (
-                        <button
-                          type="button"
-                          onClick={onOpenConsolidateModal}
-                          className="px-2.5 py-2 bg-stone-900 hover:bg-stone-800 text-amber-400 rounded-lg text-xs font-bold transition flex items-center gap-1 shrink-0 cursor-pointer shadow-3xs"
-                          title="Satukan nama yang serupa/berbeda penulisan"
-                        >
-                          <Sparkles size={12} />
-                          <span className="hidden sm:inline">Satukan Nama</span>
-                        </button>
-                      )}
-                    </div>
-
-                    {/* Quick-select chips for Petty Cash Custodians: Clicking automatically updates both custodian and recipient */}
-                    <div className="flex flex-wrap items-center gap-1.5 mt-2">
-                      <span className="text-[10px] text-stone-500 font-mono font-semibold">Klik Cepat Nama:</span>
-                      {effectiveHolders.map((holder, idx) => (
-                        <button
-                          key={idx}
-                          type="button"
-                          onClick={() => {
-                            setPettyCashCustodian(holder);
-                            setDibayarkanKepada(holder);
-                          }}
-                          className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1 ${
-                            pettyCashCustodian === holder
-                              ? 'bg-amber-600 text-white shadow-3xs'
-                              : 'bg-stone-100 hover:bg-amber-100 text-stone-700 hover:text-amber-900 border border-stone-200'
-                          }`}
-                          title={`Pilih ${holder} dan otomatis masukkan ke kolom Dibayarkan Kepada`}
-                        >
-                          <span>👤</span>
-                          <span>{holder}</span>
-                        </button>
-                      ))}
-                    </div>
+                    <span className="font-bold">Transaksi Petty Cash / Kas Kecil Lapangan Terdeteksi</span>
+                    <p className="text-stone-550">
+                      Nama pemegang petty cash otomatis disamakan dengan nama penerima di atas (<strong>{dibayarkanKepada || 'Belum dipilih'}</strong>). Silakan lampirkan berkas LPJ petty cash jika tersedia.
+                    </p>
                   </div>
                 </div>
 

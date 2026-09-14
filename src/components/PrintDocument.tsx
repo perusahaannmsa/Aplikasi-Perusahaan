@@ -13,7 +13,7 @@ interface PrintDocumentProps {
   onEdit?: () => void;
   onOpenSppdEditor?: () => void;
   userProfile?: any;
-  initialTab?: 'both' | 'pengajuan' | 'pengeluaran' | 'lampiran' | 'slip_gaji' | 'sppd_sheet';
+  initialTab?: 'both' | 'pengajuan' | 'pengeluaran' | 'lampiran' | 'slip_gaji' | 'sppd_sheet' | 'only_invoice_payment';
   onUpdateSubmission?: (updated: Submission) => void;
   isSharedView?: boolean;
 }
@@ -391,7 +391,7 @@ const PageScaleWrapper: React.FC<{ children: React.ReactNode; isLandscape?: bool
 };
 
 export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack, onEdit, onOpenSppdEditor, userProfile, initialTab, onUpdateSubmission, isSharedView }) => {
-  const [activeTab, setActiveTab] = useState<'both' | 'pengajuan' | 'pengeluaran' | 'slip_gaji' | 'lampiran' | 'sppd_sheet'>(
+  const [activeTab, setActiveTab] = useState<'both' | 'pengajuan' | 'pengeluaran' | 'slip_gaji' | 'lampiran' | 'sppd_sheet' | 'only_invoice_payment'>(
     initialTab || 'both'
   );
 

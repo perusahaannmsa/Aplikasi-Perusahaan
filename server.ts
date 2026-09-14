@@ -1099,10 +1099,42 @@ app.post("/api/shared-state", (req, res) => {
       mergedAttendance = Array.from(attMap.values());
     }
 
+    let mergedWeeklyReports = currentState.weeklyReports || [];
+    if (weeklyReports !== undefined && Array.isArray(weeklyReports)) {
+      if (req.body.replaceWeeklyReports) {
+        mergedWeeklyReports = weeklyReports;
+      } else {
+        const repMap = new Map<string, any>();
+        (currentState.weeklyReports || []).forEach((r: any) => {
+          if (r && (r.id || r.weekStartDate)) repMap.set(r.id || r.weekStartDate, r);
+        });
+        weeklyReports.forEach((r: any) => {
+          if (r && (r.id || r.weekStartDate)) {
+            const key = r.id || r.weekStartDate;
+            const existing = repMap.get(key);
+            if (!existing) {
+              repMap.set(key, r);
+            } else {
+              repMap.set(key, {
+                ...existing,
+                ...r,
+                records: (r.records && r.records.length > 0) ? r.records : existing.records,
+                sheetsUrl: r.sheetsUrl || existing.sheetsUrl,
+                pdfDriveUrl: r.pdfDriveUrl || existing.pdfDriveUrl
+              });
+            }
+          }
+        });
+        mergedWeeklyReports = Array.from(repMap.values()).sort((a: any, b: any) =>
+          new Date(b.submittedAt || b.weekStartDate || 0).getTime() - new Date(a.submittedAt || a.weekStartDate || 0).getTime()
+        );
+      }
+    }
+
     const updatedState = {
       workers: mergedWorkers,
       attendanceRecords: mergedAttendance,
-      weeklyReports: weeklyReports !== undefined ? weeklyReports : currentState.weeklyReports,
+      weeklyReports: mergedWeeklyReports,
       pettyCashReports: pettyCashReports !== undefined ? pettyCashReports : currentState.pettyCashReports,
       attendancePin: attendancePin !== undefined ? attendancePin : currentState.attendancePin,
       signatures: signatures !== undefined ? signatures : currentState.signatures,
