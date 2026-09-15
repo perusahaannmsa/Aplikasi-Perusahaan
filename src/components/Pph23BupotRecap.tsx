@@ -26,7 +26,8 @@ import {
   Eye,
   Cloud,
   FileCheck,
-  ChevronDown
+  ChevronDown,
+  CheckCircle2
 } from 'lucide-react';
 
 interface Pph23BupotRecapProps {
@@ -694,7 +695,7 @@ export const Pph23BupotRecap: React.FC<Pph23BupotRecapProps> = ({
                 <th className="py-3.5 px-3 text-center w-12">No</th>
 
                 {/* 2. TGL & NO DOKUMEN TRANSAKSINYA */}
-                <th className="py-3.5 px-4 whitespace-nowrap min-w-[160px]">Tgl &amp; No Dokumen</th>
+                <th className="py-3.5 px-4 whitespace-nowrap min-w-[170px]">Tgl &amp; No Dokumen Transaksinya</th>
 
                 {/* 3. VENDOR */}
                 <th className="py-3.5 px-4 whitespace-nowrap min-w-[200px]">Vendor</th>
@@ -703,21 +704,21 @@ export const Pph23BupotRecap: React.FC<Pph23BupotRecapProps> = ({
                 <th className="py-3.5 px-4 whitespace-nowrap min-w-[210px]">NPWP</th>
 
                 {/* 5. DPP DARI TRANSAKSINYA (DILUAR PPN DAN BIAYA LAINNYA) */}
-                <th className="py-3.5 px-4 text-right whitespace-nowrap min-w-[170px]">
-                  DPP Transaksi (di luar PPN)
+                <th className="py-3.5 px-4 text-right whitespace-nowrap min-w-[220px]">
+                  DPP dari Transaksinya (diluar PPN &amp; biaya lainnya)
                 </th>
 
                 {/* 6. TARIF % */}
                 <th className="py-3.5 px-3 text-center whitespace-nowrap w-20">Tarif %</th>
 
                 {/* 7. PPH YANG DIPOTONG -2% */}
-                <th className="py-3.5 px-4 text-right whitespace-nowrap min-w-[170px] bg-amber-500/25 text-amber-300 font-black">
-                  PPh Yang Dipotong (-2%)
+                <th className="py-3.5 px-4 text-right whitespace-nowrap min-w-[180px] bg-amber-500/25 text-amber-300 font-black">
+                  PPh Yang dipotong -2%
                 </th>
 
                 {/* 8. LIHAT DOKUMENNYA */}
-                <th className="py-3.5 px-4 text-center whitespace-nowrap w-36 print:hidden">
-                  Lihat Dokumen
+                <th className="py-3.5 px-4 text-center whitespace-nowrap w-40 print:hidden">
+                  Lihat Dokumennya
                 </th>
               </tr>
             </thead>
@@ -1049,67 +1050,130 @@ export const Pph23BupotRecap: React.FC<Pph23BupotRecapProps> = ({
                 </div>
               </div>
 
-              {/* Berkas Lampiran Google Drive */}
+              {/* Berkas Dokumen & Lampiran Tagihan */}
               <div>
                 <h4 className="font-bold text-stone-800 text-xs mb-1.5 flex items-center gap-1.5">
                   <Cloud size={14} className="text-amber-600" />
-                  <span>Berkas Dokumen Lampiran</span>
+                  <span>Berkas Dokumen Lampiran Tagihan</span>
                 </h4>
                 
-                {previewSub.googleDriveFiles && previewSub.googleDriveFiles.length > 0 ? (
-                  <div className="space-y-1.5">
-                    {previewSub.googleDriveFiles.map((file, fIdx) => (
-                      <div
-                        key={fIdx}
-                        className="flex items-center justify-between p-2.5 rounded-xl bg-stone-50 border border-stone-200 hover:border-amber-300 transition"
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <FileCheck size={16} className="text-emerald-600 shrink-0" />
-                          <div className="min-w-0">
-                            <p className="font-bold text-stone-900 text-xs truncate">{file.name}</p>
-                            <span className="text-[10px] font-mono text-stone-400 uppercase">
-                              {file.docType ? file.docType.replace('_', ' ') : 'Lampiran'}
-                            </span>
-                          </div>
-                        </div>
+                {(() => {
+                  const driveFiles = previewSub.googleDriveFiles || [];
+                  const rawFiles = (previewSub.files || []).filter(f => !driveFiles.some(df => df.name === f.name));
+                  const hasDriveUrl = !!previewSub.googleDriveFileUrl && driveFiles.length === 0;
+                  const hasPaymentProof = !!previewSub.buktiPembayaran?.url;
+                  const totalFiles = driveFiles.length + rawFiles.length + (hasDriveUrl ? 1 : 0) + (hasPaymentProof ? 1 : 0);
 
-                        {file.url && (
+                  if (totalFiles === 0) {
+                    return (
+                      <div className="p-4 rounded-xl bg-stone-50 border border-dashed border-stone-200 text-center text-stone-400 text-xs">
+                        Belum ada berkas lampiran yang diunggah untuk transaksi ini.
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="space-y-1.5">
+                      {driveFiles.map((file, fIdx) => (
+                        <div
+                          key={`df-${fIdx}`}
+                          className="flex items-center justify-between p-2.5 rounded-xl bg-stone-50 border border-stone-200 hover:border-amber-300 transition"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <FileCheck size={16} className="text-emerald-600 shrink-0" />
+                            <div className="min-w-0">
+                              <p className="font-bold text-stone-900 text-xs truncate">{file.name}</p>
+                              <span className="text-[10px] font-mono text-stone-400 uppercase">
+                                Google Drive • {file.docType ? file.docType.replace('_', ' ') : 'Lampiran'}
+                              </span>
+                            </div>
+                          </div>
+
+                          {file.url && (
+                            <a
+                              href={file.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-stone-950 font-bold rounded-lg text-xs transition shrink-0 shadow-3xs"
+                            >
+                              <span>Buka Dokumen</span>
+                              <ExternalLink size={12} />
+                            </a>
+                          )}
+                        </div>
+                      ))}
+
+                      {hasDriveUrl && (
+                        <div className="flex items-center justify-between p-2.5 rounded-xl bg-stone-50 border border-stone-200">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <FileCheck size={16} className="text-emerald-600 shrink-0" />
+                            <p className="font-bold text-stone-900 text-xs truncate">
+                              {previewSub.googleDriveFileName || 'Dokumen Tagihan (Drive)'}
+                            </p>
+                          </div>
                           <a
-                            href={file.url}
+                            href={previewSub.googleDriveFileUrl}
                             target="_blank"
                             rel="noreferrer"
-                            className="inline-flex items-center gap-1 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-stone-950 font-bold rounded-lg text-xs transition shrink-0 shadow-3xs"
+                            className="inline-flex items-center gap-1 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-stone-950 font-bold rounded-lg text-xs transition shadow-3xs"
                           >
                             <span>Buka di Drive</span>
                             <ExternalLink size={12} />
                           </a>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                ) : previewSub.googleDriveFileUrl ? (
-                  <div className="flex items-center justify-between p-2.5 rounded-xl bg-stone-50 border border-stone-200">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <FileCheck size={16} className="text-emerald-600 shrink-0" />
-                      <p className="font-bold text-stone-900 text-xs truncate">
-                        {previewSub.googleDriveFileName || 'Dokumen Lampiran Tagihan'}
-                      </p>
+                        </div>
+                      )}
+
+                      {rawFiles.map((file, rIdx) => (
+                        <div
+                          key={`rf-${rIdx}`}
+                          className="flex items-center justify-between p-2.5 rounded-xl bg-stone-50 border border-stone-200"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <FileText size={16} className="text-stone-500 shrink-0" />
+                            <div className="min-w-0">
+                              <p className="font-bold text-stone-900 text-xs truncate">{file.name}</p>
+                              <span className="text-[10px] font-mono text-stone-400 uppercase">Lampiran Tambahan</span>
+                            </div>
+                          </div>
+                          {file.url && (
+                            <a
+                              href={file.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-800 font-bold rounded-lg text-xs transition shrink-0"
+                            >
+                              <span>Buka</span>
+                              <ExternalLink size={12} />
+                            </a>
+                          )}
+                        </div>
+                      ))}
+
+                      {hasPaymentProof && (
+                        <div className="flex items-center justify-between p-2.5 rounded-xl bg-emerald-50/60 border border-emerald-200">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+                            <div className="min-w-0">
+                              <p className="font-bold text-stone-900 text-xs truncate">
+                                {previewSub.buktiPembayaran?.name || 'Bukti Bayar / Transfer'}
+                              </p>
+                              <span className="text-[10px] font-mono text-emerald-700 uppercase">Bukti Pelunasan</span>
+                            </div>
+                          </div>
+                          <a
+                            href={previewSub.buktiPembayaran!.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-xs transition shrink-0 shadow-3xs"
+                          >
+                            <span>Lihat Bukti Bayar</span>
+                            <ExternalLink size={12} />
+                          </a>
+                        </div>
+                      )}
                     </div>
-                    <a
-                      href={previewSub.googleDriveFileUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-stone-950 font-bold rounded-lg text-xs transition shadow-3xs"
-                    >
-                      <span>Buka di Drive</span>
-                      <ExternalLink size={12} />
-                    </a>
-                  </div>
-                ) : (
-                  <div className="p-3 rounded-xl bg-stone-50 border border-dashed border-stone-200 text-center text-stone-400 text-xs">
-                    Belum ada berkas lampiran khusus yang diunggah ke Google Drive.
-                  </div>
-                )}
+                  );
+                })()}
               </div>
             </div>
 

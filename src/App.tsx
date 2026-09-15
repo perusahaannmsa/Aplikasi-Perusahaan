@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Submission, SubmissionItem, PettyCashReport, TransactionType, NpwpRecord, AgendaItem } from './types';
+import { Submission, SubmissionItem, PettyCashReport, TransactionType, NpwpRecord, AgendaItem, Project, ProjectRabItem, ProjectExpense } from './types';
 import { INITIAL_SUBMISSIONS } from './data/initialData';
 import { INITIAL_AGENDA_ITEMS } from './data/initialAgenda';
 import { SubmissionsList } from './components/SubmissionsList';
@@ -28,6 +28,7 @@ import { GeneralLedger } from './components/GeneralLedger';
 import { WhatsAppAiModal } from './components/WhatsAppAiModal';
 import { LiveClock } from './components/LiveClock';
 import { Pph23BupotRecap } from './components/Pph23BupotRecap';
+import { ProjectBudgetRab } from './components/ProjectBudgetRab';
 import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, syncInvoiceSubmissionToAgenda, formatDateIndonesian } from './utils';
 import { areNamesSimilar, toTitleCase } from './utils/nameConsolidation';
 import { 
@@ -57,7 +58,7 @@ import {
   subscribeToCompanySettingsFromFirestore,
   saveCompanySettingsToFirestore
 } from './firebase';
-import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell, MessageSquare, Bot, Sparkles, BookOpen, Wrench } from 'lucide-react';
+import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell, MessageSquare, Bot, Sparkles, BookOpen, Wrench, Building2 } from 'lucide-react';
 
 export default function App() {
   const [theme, setTheme] = useState<'classic' | 'gold-dark' | 'emerald' | 'slate'>(() => {
@@ -175,6 +176,40 @@ export default function App() {
     }
   });
 
+  // Project Management & Budget (RAB) per Proyek (Accurate Style)
+  const [projects, setProjects] = useState<Project[]>(() => {
+    try {
+      const stored = localStorage.getItem('nmsa_projects_v1');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+    return [];
+  });
+
+  const [projectRab, setProjectRab] = useState<ProjectRabItem[]>(() => {
+    try {
+      const stored = localStorage.getItem('nmsa_project_rab_v1');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+    return [];
+  });
+
+  const [projectExpenses, setProjectExpenses] = useState<ProjectExpense[]>(() => {
+    try {
+      const stored = localStorage.getItem('nmsa_project_expenses_v1');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+    return [];
+  });
+
   const [isHoldersModalOpen, setIsHoldersModalOpen] = useState(false);
   const [isConsolidateNamesModalOpen, setIsConsolidateNamesModalOpen] = useState(false);
 
@@ -255,6 +290,18 @@ export default function App() {
                 setAgendaItems(fbData.agendaItems);
                 localStorage.setItem('nmsa_agenda_items_v1', JSON.stringify(fbData.agendaItems));
               }
+              if (fbData.projects && Array.isArray(fbData.projects) && fbData.projects.length > 0) {
+                setProjects(fbData.projects);
+                localStorage.setItem('nmsa_projects_v1', JSON.stringify(fbData.projects));
+              }
+              if (fbData.projectRab && Array.isArray(fbData.projectRab)) {
+                setProjectRab(fbData.projectRab);
+                localStorage.setItem('nmsa_project_rab_v1', JSON.stringify(fbData.projectRab));
+              }
+              if (fbData.projectExpenses && Array.isArray(fbData.projectExpenses)) {
+                setProjectExpenses(fbData.projectExpenses);
+                localStorage.setItem('nmsa_project_expenses_v1', JSON.stringify(fbData.projectExpenses));
+              }
             }
             return;
           }
@@ -294,6 +341,18 @@ export default function App() {
               setAgendaItems(raw.agendaItems);
               localStorage.setItem('nmsa_agenda_items_v1', JSON.stringify(raw.agendaItems));
             }
+            if (raw.projects && Array.isArray(raw.projects) && raw.projects.length > 0) {
+              setProjects(raw.projects);
+              localStorage.setItem('nmsa_projects_v1', JSON.stringify(raw.projects));
+            }
+            if (raw.projectRab && Array.isArray(raw.projectRab)) {
+              setProjectRab(raw.projectRab);
+              localStorage.setItem('nmsa_project_rab_v1', JSON.stringify(raw.projectRab));
+            }
+            if (raw.projectExpenses && Array.isArray(raw.projectExpenses)) {
+              setProjectExpenses(raw.projectExpenses);
+              localStorage.setItem('nmsa_project_expenses_v1', JSON.stringify(raw.projectExpenses));
+            }
             if (raw.submissions && Array.isArray(raw.submissions) && raw.submissions.length > 0) {
               setSubmissions(prev => {
                 const map = new Map<string, Submission>();
@@ -303,6 +362,28 @@ export default function App() {
               });
             }
           }
+
+          // Also attempt explicit /api/projects synchronization
+          try {
+            const prjRes = await fetch('/api/projects');
+            if (prjRes.ok) {
+              const prjData = await prjRes.json();
+              if (prjData && prjData.success) {
+                if (prjData.projects && Array.isArray(prjData.projects) && prjData.projects.length > 0) {
+                  setProjects(prjData.projects);
+                  localStorage.setItem('nmsa_projects_v1', JSON.stringify(prjData.projects));
+                }
+                if (prjData.projectRab && Array.isArray(prjData.projectRab)) {
+                  setProjectRab(prjData.projectRab);
+                  localStorage.setItem('nmsa_project_rab_v1', JSON.stringify(prjData.projectRab));
+                }
+                if (prjData.projectExpenses && Array.isArray(prjData.projectExpenses)) {
+                  setProjectExpenses(prjData.projectExpenses);
+                  localStorage.setItem('nmsa_project_expenses_v1', JSON.stringify(prjData.projectExpenses));
+                }
+              }
+            }
+          } catch (prjErr) {}
           return;
         } catch (err) {
           if (i < retries - 1) {
@@ -703,20 +784,20 @@ export default function App() {
     };
   }, []);
 
-  const [view, setViewInternal] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23'>(() => {
+  const [view, setViewInternal] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab'>(() => {
     try {
       const stored = sessionStorage.getItem('NUSANTARA_ACTIVE_VIEW') || localStorage.getItem('NUSANTARA_ACTIVE_VIEW');
-      if (stored && ['list', 'form', 'print', 'sppd', 'absen', 'npwp', 'accurate', 'agenda', 'ledger', 'pph23'].includes(stored)) {
+      if (stored && ['list', 'form', 'print', 'sppd', 'absen', 'npwp', 'accurate', 'agenda', 'ledger', 'pph23', 'rab'].includes(stored)) {
         return stored as any;
       }
     } catch (e) {}
     return 'list';
   });
 
-  const [previousView, setPreviousView] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23'>(() => {
+  const [previousView, setPreviousView] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab'>(() => {
     try {
       const stored = sessionStorage.getItem('NUSANTARA_PREVIOUS_VIEW');
-      if (stored && ['list', 'form', 'print', 'sppd', 'absen', 'npwp', 'accurate', 'agenda', 'ledger', 'pph23'].includes(stored)) {
+      if (stored && ['list', 'form', 'print', 'sppd', 'absen', 'npwp', 'accurate', 'agenda', 'ledger', 'pph23', 'rab'].includes(stored)) {
         return stored as any;
       }
     } catch (e) {}
@@ -724,7 +805,7 @@ export default function App() {
   });
 
   const setView = (
-    newView: 'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23',
+    newView: 'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab',
     options?: { preservePrevious?: boolean }
   ) => {
     setViewInternal((current) => {
@@ -735,6 +816,157 @@ export default function App() {
       try { sessionStorage.setItem('NUSANTARA_ACTIVE_VIEW', newView); } catch (e) {}
       return newView;
     });
+  };
+
+  // Handlers for Project & RAB Management
+  const handleSaveProject = async (project: Project) => {
+    setProjects(prev => {
+      const existingIdx = prev.findIndex(p => p.id === project.id);
+      const updated = existingIdx >= 0 
+        ? prev.map(p => p.id === project.id ? { ...p, ...project, updatedAt: new Date().toISOString() } : p)
+        : [project, ...prev];
+      try { localStorage.setItem('nmsa_projects_v1', JSON.stringify(updated)); } catch (e) {}
+      return updated;
+    });
+
+    try {
+      await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project })
+      });
+    } catch (e) {
+      console.warn('Gagal sinkronisasi proyek ke server:', e);
+    }
+  };
+
+  const handleDeleteProject = async (projectId: string) => {
+    setProjects(prev => {
+      const updated = prev.filter(p => p.id !== projectId);
+      try { localStorage.setItem('nmsa_projects_v1', JSON.stringify(updated)); } catch (e) {}
+      return updated;
+    });
+    setProjectRab(prev => {
+      const updated = prev.filter(r => r.projectId !== projectId);
+      try { localStorage.setItem('nmsa_project_rab_v1', JSON.stringify(updated)); } catch (e) {}
+      return updated;
+    });
+    setProjectExpenses(prev => {
+      const updated = prev.filter(e => e.projectId !== projectId);
+      try { localStorage.setItem('nmsa_project_expenses_v1', JSON.stringify(updated)); } catch (e) {}
+      return updated;
+    });
+
+    try {
+      await fetch(`/api/projects/${projectId}`, { method: 'DELETE' });
+    } catch (e) {
+      console.warn('Gagal menghapus proyek di server:', e);
+    }
+  };
+
+  const handleSaveRabItem = async (item: ProjectRabItem) => {
+    setProjectRab(prev => {
+      const existingIdx = prev.findIndex(r => r.id === item.id);
+      const updated = existingIdx >= 0
+        ? prev.map(r => r.id === item.id ? { ...r, ...item, updatedAt: new Date().toISOString() } : r)
+        : [...prev, item];
+      try { localStorage.setItem('nmsa_project_rab_v1', JSON.stringify(updated)); } catch (e) {}
+      return updated;
+    });
+
+    try {
+      await fetch(`/api/projects/${item.projectId}/rab`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item })
+      });
+    } catch (e) {
+      console.warn('Gagal sinkronisasi pos RAB ke server:', e);
+    }
+  };
+
+  const handleDeleteRabItem = async (itemId: string, projectId: string) => {
+    setProjectRab(prev => {
+      const updated = prev.filter(r => r.id !== itemId);
+      try { localStorage.setItem('nmsa_project_rab_v1', JSON.stringify(updated)); } catch (e) {}
+      return updated;
+    });
+
+    try {
+      await fetch(`/api/projects/${projectId}/rab/${itemId}`, { method: 'DELETE' });
+    } catch (e) {
+      console.warn('Gagal menghapus pos RAB di server:', e);
+    }
+  };
+
+  const handleSaveExpense = async (expense: ProjectExpense) => {
+    setProjectExpenses(prev => {
+      const existingIdx = prev.findIndex(e => e.id === expense.id);
+      const updated = existingIdx >= 0
+        ? prev.map(e => e.id === expense.id ? { ...e, ...expense } : e)
+        : [expense, ...prev];
+      try { localStorage.setItem('nmsa_project_expenses_v1', JSON.stringify(updated)); } catch (e) {}
+      return updated;
+    });
+
+    if (expense.rabItemId) {
+      setProjectRab(prev => {
+        const updated = prev.map(r => {
+          if (r.id === expense.rabItemId) {
+            return {
+              ...r,
+              actualSpent: (Number(r.actualSpent) || 0) + (Number(expense.amount) || 0),
+              updatedAt: new Date().toISOString()
+            };
+          }
+          return r;
+        });
+        try { localStorage.setItem('nmsa_project_rab_v1', JSON.stringify(updated)); } catch (e) {}
+        return updated;
+      });
+    }
+
+    try {
+      await fetch(`/api/projects/${expense.projectId}/expenses`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expense })
+      });
+    } catch (e) {
+      console.warn('Gagal sinkronisasi pengeluaran proyek ke server:', e);
+    }
+  };
+
+  const handleDeleteExpense = async (expenseId: string, projectId: string) => {
+    const existing = projectExpenses.find(e => e.id === expenseId);
+    if (existing && existing.rabItemId) {
+      setProjectRab(prev => {
+        const updated = prev.map(r => {
+          if (r.id === existing.rabItemId) {
+            return {
+              ...r,
+              actualSpent: Math.max(0, (Number(r.actualSpent) || 0) - (Number(existing.amount) || 0)),
+              updatedAt: new Date().toISOString()
+            };
+          }
+          return r;
+        });
+        try { localStorage.setItem('nmsa_project_rab_v1', JSON.stringify(updated)); } catch (e) {}
+        return updated;
+      });
+    }
+
+    setProjectExpenses(prev => {
+      const updated = prev.filter(e => e.id !== expenseId);
+      try { localStorage.setItem('nmsa_project_expenses_v1', JSON.stringify(updated)); } catch (e) {}
+      return updated;
+    });
+
+    try {
+      await fetch(`/api/projects/${projectId}/expenses/${expenseId}`, { method: 'DELETE' });
+    } catch (e) {
+      console.warn('Gagal menghapus pengeluaran proyek di server:', e);
+    }
   };
 
   // Auto restore scroll position when returning to list view
@@ -2290,6 +2522,7 @@ export default function App() {
                         'Voucher HO'
                       )}
                       {view === 'pph23' && 'Bukti Potong PPh 23 (Tagihan)'}
+                      {view === 'rab' && 'RAB & Anggaran Proyek'}
                       {view === 'absen' && 'Absen Harian NMSA'}
                       {view === 'npwp' && 'Master NPWP & Vendor'}
                       {view === 'accurate' && 'Pemetaan Akun'}
@@ -2465,7 +2698,28 @@ export default function App() {
                       </span>
                     </button>
 
-                    {(view === 'form' || view === 'print' || view === 'sppd' || view === 'agenda' || view === 'ledger' || view === 'pph23') && (
+                    {/* 8. RAB & ANGGARAN PROYEK (ACCURATE STYLE) */}
+                    <button
+                      onClick={() => { setView('rab'); setIsDashboardNavOpen(false); }}
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer text-left mb-1 ${
+                        view === 'rab' ? 'bg-amber-500 text-stone-950 font-black' : 'text-stone-700 hover:bg-stone-100'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <Building2 size={15} className={view === 'rab' ? 'text-stone-950' : 'text-emerald-600'} />
+                        <div className="flex flex-col">
+                          <span>RAB &amp; Anggaran Proyek</span>
+                          <span className={`text-[10px] font-normal ${view === 'rab' ? 'text-stone-900' : 'text-stone-400'}`}>
+                            RAB Proyek &amp; Realisasi Pengeluaran
+                          </span>
+                        </div>
+                      </div>
+                      <span className="text-[9px] font-mono bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-bold">
+                        Accurate
+                      </span>
+                    </button>
+
+                    {(view === 'form' || view === 'print' || view === 'sppd' || view === 'agenda' || view === 'ledger' || view === 'pph23' || view === 'rab') && (
                       <button
                         onClick={() => { setView('list'); setIsDashboardNavOpen(false); }}
                         className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer text-left text-amber-700 bg-amber-50 hover:bg-amber-100 mt-1 border border-amber-200"
@@ -2612,6 +2866,22 @@ export default function App() {
                           <span>Bukti Potong PPh 23 (PSi &amp; Jasa)</span>
                         </div>
                         <span className="text-[9px] font-mono text-amber-800 bg-amber-100 px-1.5 rounded font-bold">Coretax</span>
+                      </button>
+
+                      {/* RAB & Anggaran Proyek Accurate */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsToolsDropdownOpen(false);
+                          setView('rab');
+                        }}
+                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs font-bold text-stone-700 hover:bg-emerald-50 transition cursor-pointer"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Building2 size={14} className="text-emerald-600" />
+                          <span>RAB &amp; Anggaran Proyek</span>
+                        </div>
+                        <span className="text-[9px] font-mono text-emerald-800 bg-emerald-100 px-1.5 rounded font-bold">Accurate</span>
                       </button>
 
                       {/* Master NPWP */}
@@ -2831,6 +3101,7 @@ export default function App() {
             pettyCashHolders={pettyCashHolders}
             onOpenConsolidateModal={() => setIsConsolidateNamesModalOpen(true)}
             onOpenPph23View={() => setView('pph23')}
+            onOpenRabView={() => setView('rab')}
             onSelect={(sub, initialTab) => {
               try { sessionStorage.setItem('sublist_scrollPos', window.scrollY.toString()); } catch (e) {}
               setActiveSubmission(sub);
@@ -3020,6 +3291,23 @@ export default function App() {
               setPrintInitialTab('both');
               setView('print');
             }}
+            onBackToVoucher={() => setView('list')}
+          />
+        )}
+
+        {/* VIEW 11: Modul Rencana Anggaran Biaya (RAB) & Pengeluaran Proyek (Accurate Style) */}
+        {view === 'rab' && (
+          <ProjectBudgetRab
+            projects={projects}
+            projectRab={projectRab}
+            projectExpenses={projectExpenses}
+            submissions={submissions}
+            onSaveProject={handleSaveProject}
+            onDeleteProject={handleDeleteProject}
+            onSaveRabItem={handleSaveRabItem}
+            onDeleteRabItem={handleDeleteRabItem}
+            onSaveExpense={handleSaveExpense}
+            onDeleteExpense={handleDeleteExpense}
             onBackToVoucher={() => setView('list')}
           />
         )}

@@ -463,6 +463,10 @@ export function formatRupiah(value: number | string): string {
   }).format(num);
 }
 
+export function formatCurrency(value: number | string): string {
+  return `Rp ${formatRupiah(value)}`;
+}
+
 export interface VolumeAnalysisResult {
   type: 'qty' | 'price' | 'volume' | 'custom' | 'empty';
   badgeLabel: string;
@@ -944,6 +948,8 @@ export function getPettyCashCustodian(sub: any, knownHolders?: string[]): string
 export function isInvoiceSubmission(sub: any): boolean {
   if (!sub) return false;
   if (typeof sub.isInvoice === 'boolean') return sub.isInvoice;
+  const jenis = (sub.jenisPengajuan || sub.jenis || '').toLowerCase();
+  const isTagihanJenis = jenis.includes('tagihan') || jenis.includes('invoice') || jenis.includes('inv');
   const hasInvoiceFile = !!sub.googleDriveFiles?.some(
     (f: any) => f.docType === 'invoice_vendor' || 
          (f.name || '').toLowerCase().includes('invoice') || 
@@ -954,21 +960,23 @@ export function isInvoiceSubmission(sub: any): boolean {
                         (sub.notes || '').toLowerCase().includes('inv/');
   const isInvoiceItem = sub.items?.some((i: any) => 
     (i.item || '').toLowerCase().includes('invoice') || 
-    (i.keterangan || '').toLowerCase().includes('invoice')
+    (i.item || '').toLowerCase().includes('tagihan') ||
+    (i.keterangan || '').toLowerCase().includes('invoice') ||
+    (i.keterangan || '').toLowerCase().includes('tagihan')
   );
   const hasInvoiceNo = Boolean(sub.invoiceNumber && String(sub.invoiceNumber).trim().length > 0);
-  const match = hasInvoiceFile || isInvoiceNote || isInvoiceItem || hasInvoiceNo;
+  const hasVendorNpwp = Boolean(sub.vendorNpwp && String(sub.vendorNpwp).trim().length > 0);
+  const hasBupot = Boolean(sub.bupotNumber && String(sub.bupotNumber).trim().length > 0);
+
+  const match = isTagihanJenis || hasInvoiceFile || isInvoiceNote || isInvoiceItem || hasInvoiceNo || hasVendorNpwp || hasBupot;
   if (match) {
     const isTax = 
-      (sub.jenisPengajuan || '').toLowerCase().includes('pajak') ||
-      (sub.dibayarkanKepada || '').toLowerCase().includes('pajak') ||
+      jenis.includes('pembayaran pajak') ||
+      jenis.includes('ssp ') ||
+      (sub.dibayarkanKepada || '').toLowerCase().includes('kas negara') ||
       (sub.dibayarkanKepada || '').toLowerCase().includes('djp') ||
-      (sub.notes || '').toLowerCase().includes('pajak') ||
-      (sub.notes || '').toLowerCase().includes('djp') ||
-      (sub.items || []).some((i: any) => 
-        (i.item || '').toLowerCase().includes('pajak') || 
-        (i.keterangan || '').toLowerCase().includes('pajak')
-      );
+      (sub.notes || '').toLowerCase().includes('setor pajak') ||
+      (sub.notes || '').toLowerCase().includes('ebilling');
     if (isTax) return false;
   }
   return match;

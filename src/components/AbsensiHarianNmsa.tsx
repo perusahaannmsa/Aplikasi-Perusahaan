@@ -89,7 +89,7 @@ function formatLocalYYYYMMDD(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-// Extract Year and Month Name in Indonesian from a period or date string
+// Extract Year and Month Name in Indonesian with 01-12 prefix from a period or date string
 function parseYearAndMonthFromPeriod(periodText: string): { targetYear: string; targetMonth: string } {
   const cleanPeriod = periodText || "";
   
@@ -103,28 +103,38 @@ function parseYearAndMonthFromPeriod(periodText: string): { targetYear: string; 
     "Juli", "Agustus", "September", "Oktober", "November", "Desember"
   ];
   
-  let targetMonth = "";
-  for (const m of monthsIndo) {
-    if (cleanPeriod.toLowerCase().includes(m.toLowerCase())) {
-      targetMonth = m;
+  let monthIdx = -1;
+  for (let i = 0; i < monthsIndo.length; i++) {
+    if (cleanPeriod.toLowerCase().includes(monthsIndo[i].toLowerCase())) {
+      monthIdx = i;
       break;
     }
   }
   
   // 3. If still empty, check English months
-  if (!targetMonth) {
+  if (monthIdx === -1) {
     const monthsEng = [
       "January", "February", "March", "April", "May", "June", 
       "July", "August", "September", "October", "November", "December"
     ];
-    const idx = monthsEng.findIndex(m => cleanPeriod.toLowerCase().includes(m.toLowerCase()));
-    if (idx !== -1) {
-      targetMonth = monthsIndo[idx];
-    } else {
-      // Default to current month name in Indonesian
-      targetMonth = new Date().toLocaleString("id-ID", { month: "long" });
+    monthIdx = monthsEng.findIndex(m => cleanPeriod.toLowerCase().includes(m.toLowerCase()));
+  }
+
+  // 4. Check ISO numeric formats e.g. 2026-08 or 08/2026
+  if (monthIdx === -1) {
+    const isoMatch = cleanPeriod.match(/\b20\d{2}[-/](0[1-9]|1[0-2])\b/) || cleanPeriod.match(/\b(0[1-9]|1[0-2])[-/](20\d{2})\b/);
+    if (isoMatch) {
+      const num = parseInt(isoMatch[1] || isoMatch[2], 10);
+      if (num >= 1 && num <= 12) monthIdx = num - 1;
     }
   }
+  
+  if (monthIdx === -1) {
+    monthIdx = new Date().getMonth();
+  }
+
+  const monthNum = String(monthIdx + 1).padStart(2, "0");
+  const targetMonth = `${monthNum} - ${monthsIndo[monthIdx]}`; // e.g. "08 - Agustus"
   
   return { targetYear, targetMonth };
 }
@@ -614,6 +624,8 @@ export function AbsensiHarianNmsa({
     }
   }, [weeklyReports]);
 
+  const [reportDisplayMode, setReportDisplayMode] = useState<'last3' | 'all'>('last3');
+
   useEffect(() => {
     localStorage.setItem("attendance_logs_v1", JSON.stringify(attendanceLogs));
   }, [attendanceLogs]);
@@ -965,6 +977,7 @@ export function AbsensiHarianNmsa({
   const weeklyReportsRef = useRef(weeklyReports);
   const pettyCashReportsRef = useRef(pettyCashReports);
   const hasBackedUpOnOpenRef = useRef<boolean>(false);
+  const lastUserInteractionTimeRef = useRef<number>(0);
 
   useEffect(() => { attendanceRecordsRef.current = attendanceRecords; }, [attendanceRecords]);
   useEffect(() => { workersRef.current = workers; }, [workers]);
@@ -1587,15 +1600,23 @@ export function AbsensiHarianNmsa({
                 const pdfBlob = await generateWeeklyReportPDFBlob(newReport, workers, signatures);
                 
                 const fileName = `Rekap_Uang_Makan_${monday}_s.d._${friday}.pdf`;
-                const monthName = today.toLocaleString('id-ID', {month: 'long'});
-                const folderYear = today.getFullYear().toString();
-                const periodFolderName = `Periode ${monday} s.d. ${friday}`;
+                const [yStr, mStr, dStr] = (monday || "").split("-");
+                const folderYear = yStr || today.getFullYear().toString();
+                const monthNamesIndo = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+                const mIdx = Math.max(0, Math.min(11, (parseInt(mStr, 10) || (today.getMonth() + 1)) - 1));
+                const monthNum = String(mIdx + 1).padStart(2, "0");
+                const monthFolderName = `${monthNum} - ${monthNamesIndo[mIdx]}`;
+                
+                const dayNum = parseInt(dStr || "1", 10);
+                const weekOrder = Math.min(5, Math.max(1, Math.ceil(dayNum / 7)));
+                const weekOrderStr = String(weekOrder).padStart(2, "0");
+                const periodFolderName = `${weekOrderStr} - Periode ${monday} s.d. ${friday}`;
                 
                 const folderId = await getOrCreateNestedFolder(tok, [
                   "ABSENSI-NMSA-APP",
                   "Laporan-Absensi-Uang-Makan",
                   folderYear,
-                  monthName,
+                  monthFolderName,
                   periodFolderName
                 ]);
                 const pdfResult = await uploadFileToDrive(tok, folderId, fileName, pdfBlob);
@@ -1722,48 +1743,61 @@ export function AbsensiHarianNmsa({
               }
             });
             resolvedWorkers = mergedWorkers;
-            setWorkers(mergedWorkers);
+            setWorkers((prevWorkers) => {
+              if (JSON.stringify(prevWorkers) !== JSON.stringify(mergedWorkers)) {
+                return mergedWorkers;
+              }
+              return prevWorkers;
+            });
           }
 
           if (data.attendanceRecords && Array.isArray(data.attendanceRecords)) {
-            const allWorkerIds = new Set(resolvedWorkers.map((w: any) => w.id));
-            setAttendanceRecords((prevLocal) => {
-              const map = new Map<string, AttendanceRecord>();
+            // Guard: If quiet background poll and user interacted within last 60s or is currently focused on an input/form, skip overwriting
+            const isInputActive = typeof document !== "undefined" && document.activeElement && 
+              (document.activeElement.tagName === "INPUT" || document.activeElement.tagName === "TEXTAREA" || document.activeElement.tagName === "SELECT");
+            const isRecentInteraction = Date.now() - lastUserInteractionTimeRef.current < 60000;
 
-              // 1. Keep local records first so local checkmarks are never wiped out
-              (prevLocal || []).forEach((r) => {
-                if (allWorkerIds.has(r.workerId)) {
-                  map.set(r.workerId, {
-                    ...r,
-                    attendance: { ...(r.attendance || {}) },
-                    customStatus: { ...(r.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">
-                  });
-                }
+            if (!(quiet && (isInputActive || isRecentInteraction))) {
+              const allWorkerIds = new Set(resolvedWorkers.map((w: any) => w.id));
+              setAttendanceRecords((prevLocal) => {
+                const map = new Map<string, AttendanceRecord>();
+
+                // 1. Keep local records first so local checkmarks are never wiped out
+                (prevLocal || []).forEach((r) => {
+                  if (allWorkerIds.has(r.workerId)) {
+                    map.set(r.workerId, {
+                      ...r,
+                      attendance: { ...(r.attendance || {}) },
+                      customStatus: { ...(r.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">
+                    });
+                  }
+                });
+
+                // 2. Merge incoming server records (local records take priority over older server data)
+                data.attendanceRecords.forEach((r: AttendanceRecord) => {
+                  if (!allWorkerIds.has(r.workerId)) return;
+                  const existing = map.get(r.workerId);
+                  if (!existing) {
+                    map.set(r.workerId, {
+                      ...r,
+                      attendance: { ...(r.attendance || {}) },
+                      customStatus: { ...(r.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">
+                    });
+                  } else {
+                    // Local state always takes priority to avoid checkmarks disappearing
+                    existing.attendance = { ...(r.attendance || {}), ...(existing.attendance || {}) };
+                    existing.customStatus = { ...(r.customStatus || {}), ...(existing.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">;
+                    if (r.dailyAllowance && !existing.dailyAllowance) existing.dailyAllowance = r.dailyAllowance;
+                  }
+                });
+
+                const mergedList = Array.from(map.values()) as AttendanceRecord[];
+                try {
+                  localStorage.setItem("absensi_uang_makan_records", JSON.stringify(mergedList));
+                } catch (e) {}
+                return mergedList;
               });
-
-              // 2. Merge incoming server records (union of checked dates)
-              data.attendanceRecords.forEach((r: AttendanceRecord) => {
-                if (!allWorkerIds.has(r.workerId)) return;
-                const existing = map.get(r.workerId);
-                if (!existing) {
-                  map.set(r.workerId, {
-                    ...r,
-                    attendance: { ...(r.attendance || {}) },
-                    customStatus: { ...(r.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">
-                  });
-                } else {
-                  existing.attendance = { ...(existing.attendance || {}), ...(r.attendance || {}) };
-                  existing.customStatus = { ...(existing.customStatus || {}), ...(r.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">;
-                  if (r.dailyAllowance) existing.dailyAllowance = r.dailyAllowance;
-                }
-              });
-
-              const mergedList = Array.from(map.values()) as AttendanceRecord[];
-              try {
-                localStorage.setItem("absensi_uang_makan_records", JSON.stringify(mergedList));
-              } catch (e) {}
-              return mergedList;
-            });
+            }
           }
           if (data.weeklyReports && Array.isArray(data.weeklyReports)) {
             setWeeklyReports((prevLocal) => {
@@ -1872,12 +1906,14 @@ export function AbsensiHarianNmsa({
     return () => clearTimeout(fallbackTimer);
   }, []);
 
-  // 1b. Periodic quiet background sync (every 15 seconds) to get worker updates automatically
+  // 1b. Periodic quiet background sync (every 30 seconds) to get worker updates automatically
   useEffect(() => {
     if (!initialFetchDone) return;
     const interval = setInterval(() => {
-      fetchSharedState(true);
-    }, 15000);
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        fetchSharedState(true);
+      }
+    }, 30000);
     return () => clearInterval(interval);
   }, [initialFetchDone]);
 
@@ -2256,6 +2292,7 @@ export function AbsensiHarianNmsa({
 
   // --- Handlers ---
   const handleToggleAttendance = (workerId: string, date: string) => {
+    lastUserInteractionTimeRef.current = Date.now();
     const updated = attendanceRecords.map((r) => {
       if (r.workerId === workerId) {
         const currentVal = r.attendance ? r.attendance[date] : false;
@@ -2276,10 +2313,14 @@ export function AbsensiHarianNmsa({
       }
       return r;
     });
+    try {
+      localStorage.setItem("absensi_uang_makan_records", JSON.stringify(updated));
+    } catch (e) {}
     setAttendanceRecords(updated);
   };
 
   const handleToggleAllForDay = (date: string, forceCheck: boolean) => {
+    lastUserInteractionTimeRef.current = Date.now();
     const updated = attendanceRecords.map((r) => {
       return {
         ...r,
@@ -2289,10 +2330,14 @@ export function AbsensiHarianNmsa({
         },
       };
     });
+    try {
+      localStorage.setItem("absensi_uang_makan_records", JSON.stringify(updated));
+    } catch (e) {}
     setAttendanceRecords(updated);
   };
 
   const handleToggleAllForWorker = (workerId: string, forceCheck: boolean) => {
+    lastUserInteractionTimeRef.current = Date.now();
     const updated = attendanceRecords.map((r) => {
       if (r.workerId === workerId) {
         const newAttMap = { ...(r.attendance || {}) };
@@ -2306,6 +2351,9 @@ export function AbsensiHarianNmsa({
       }
       return r;
     });
+    try {
+      localStorage.setItem("absensi_uang_makan_records", JSON.stringify(updated));
+    } catch (e) {}
     setAttendanceRecords(updated);
   };
 
@@ -2541,16 +2589,24 @@ export function AbsensiHarianNmsa({
           updatedReport.sheetsUrl = sheetResult.spreadsheetUrl;
 
           // 2. Export PDF to dedicated GDrive folder (Official PDF matching Cetak PDF Aktif)
+          const [yStr, mStr, dStr] = (weekStart || "").split("-");
           const reportDate = new Date(weekStart);
-          const folderYear = reportDate.getFullYear().toString();
-          const monthName = reportDate.toLocaleString('id-ID', { month: 'long' });
-          const periodFolderName = `Periode ${weekStart} s.d. ${weekEnd}`;
+          const folderYear = yStr || reportDate.getFullYear().toString();
+          const monthNamesIndo = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+          const mIdx = Math.max(0, Math.min(11, (parseInt(mStr, 10) || (reportDate.getMonth() + 1)) - 1));
+          const monthNum = String(mIdx + 1).padStart(2, "0");
+          const monthFolderName = `${monthNum} - ${monthNamesIndo[mIdx]}`; // 01 - 12
+          
+          const dayNum = parseInt(dStr || "1", 10);
+          const weekOrder = Math.min(5, Math.max(1, Math.ceil(dayNum / 7)));
+          const weekOrderStr = String(weekOrder).padStart(2, "0");
+          const periodFolderName = `${weekOrderStr} - Periode ${weekStart} s.d. ${weekEnd}`;
 
           const folderId = await getOrCreateNestedFolder(tok, [
             "ABSENSI-NMSA-APP",
             "Laporan-Absensi-Uang-Makan",
             folderYear,
-            monthName,
+            monthFolderName,
             periodFolderName
           ]);
 
@@ -6876,25 +6932,49 @@ export function AbsensiHarianNmsa({
 
                                return (
                                  <td key={dateStr} className="py-4 px-3 text-center">
-                                   <button
-                                     onClick={() => setManageStatusModal({
-                                       workerId: worker.id,
-                                       workerName: worker.name,
-                                       date: dateStr,
-                                       status: isChecked ? "Hadir" : "Absen",
-                                       reason: ""
-                                     })}
-                                     className={`w-8 h-8 rounded-xl border flex items-center justify-center transition cursor-pointer mx-auto ${
-                                       isChecked
-                                         ? "bg-emerald-600 border-transparent text-white"
-                                         : "border-slate-300 hover:border-slate-400 bg-white text-slate-300 hover:text-slate-500"
-                                     }`}
-                                     title={`${isChecked ? 'Hadir' : 'Absen'} (Klik untuk mengubah status manual)`}
-                                   >
-                                     <svg className="w-5.5 h-5.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
-                                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                                     </svg>
-                                   </button>
+                                   <div className="relative inline-flex items-center justify-center group">
+                                     <button
+                                       type="button"
+                                       onClick={() => handleToggleAttendance(worker.id, dateStr)}
+                                       onContextMenu={(e) => {
+                                         e.preventDefault();
+                                         setManageStatusModal({
+                                           workerId: worker.id,
+                                           workerName: worker.name,
+                                           date: dateStr,
+                                           status: isChecked ? "Hadir" : "Absen",
+                                           reason: ""
+                                         });
+                                       }}
+                                       className={`w-8 h-8 rounded-xl border flex items-center justify-center transition cursor-pointer ${
+                                         isChecked
+                                           ? "bg-emerald-600 border-transparent text-white shadow-xs hover:bg-emerald-700"
+                                           : "border-slate-300 hover:border-slate-400 bg-white text-slate-300 hover:text-slate-500"
+                                       }`}
+                                       title={`${isChecked ? 'Hadir' : 'Absen'} (Klik langsung untuk ubah Hadir/Absen, klik kanan atau titik opsi untuk Sakit/Izin/Meeting)`}
+                                     >
+                                       <svg className="w-5.5 h-5.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
+                                         <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                       </svg>
+                                     </button>
+                                     <button
+                                       type="button"
+                                       onClick={(e) => {
+                                         e.stopPropagation();
+                                         setManageStatusModal({
+                                           workerId: worker.id,
+                                           workerName: worker.name,
+                                           date: dateStr,
+                                           status: isChecked ? "Hadir" : "Absen",
+                                           reason: ""
+                                         });
+                                       }}
+                                       className="opacity-0 group-hover:opacity-100 absolute -bottom-1.5 -right-1.5 w-4 h-4 rounded-full bg-slate-700 text-white text-[9px] font-bold flex items-center justify-center transition hover:scale-110 shadow-xs cursor-pointer z-10"
+                                       title="Opsi status Sakit, Izin, Cuti, Meeting"
+                                     >
+                                       &vellip;
+                                     </button>
+                                   </div>
                                  </td>
                                );
                              })}
@@ -6935,209 +7015,331 @@ export function AbsensiHarianNmsa({
 
             {/* PAST SUBMITTED REPORTS LOG (WEEKLY REPORTS ACCORDION) */}
             <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs">
-              <h3 className="text-base font-bold text-slate-900 font-display mb-4 flex items-center gap-1.5">
-                <FileCheck className="w-5 h-5 text-indigo-600" />
-                <span>Riwayat Laporan Jumat & Google Sheets Cloud Sync</span>
-              </h3>
-              
-              {weeklyReports.length === 0 ? (
-                <div className="text-center py-6 text-slate-400 text-xs text-balance">
-                  Tidak ada riwayat submission mingguan sebelumnya. Laporan baru akan log di sini setiap Anda menekan tombol "Kirim Laporan Uang Makan Jumat".
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {weeklyReports.map((report) => {
-                    const matchedWorkers = report.records.length;
-                    const reportDates = getDatesForWeekStart(report.weekStartDate);
-                    const totalCost = report.records.reduce((sum, r) => {
-                      const presentDays = reportDates.filter(k => r.attendance?.[k] && (!r.customStatus || (r.customStatus[k] !== "Meeting" && r.customStatus[k] !== "Izin" && r.customStatus[k] !== "Sakit"))).length;
-                      return sum + (presentDays * (r.dailyAllowance || globalAllowance || 25000));
-                    }, 0);
+              {(() => {
+                // Urutkan dari periode terlama - terbaru
+                const sortedWeeklyReports = [...weeklyReports].sort((a, b) => {
+                  const timeA = new Date(a.weekStartDate || a.submittedAt || 0).getTime();
+                  const timeB = new Date(b.weekStartDate || b.submittedAt || 0).getTime();
+                  return timeA - timeB; // Terlama -> Terbaru
+                });
 
-                    return (
-                      <div key={report.id} className="p-4 bg-slate-50 border border-slate-200 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-mono font-bold bg-indigo-100 text-indigo-800 px-2.5 py-1 rounded-md">{report.id}</span>
-                            <span className="text-xs text-slate-500">Period: {report.weekStartDate} s/d {report.weekEndDate}</span>
-                          </div>
-                          <div className="text-xs text-slate-500 mt-1.5">
-                            Dilaporkan pada: <strong className="text-slate-800">{new Date(report.submittedAt || "").toLocaleString("id-ID")}</strong> 
-                            &bull; Karyawan: <strong className="text-slate-800">{matchedWorkers} orang</strong>
-                            &bull; Total Pengeluaran: <strong className="text-slate-800">Rp {totalCost.toLocaleString("id-ID")}</strong>
-                          </div>
-                        </div>
+                // Tampilkan 3 periode terakhir secara default, namun semua periode tetap bisa diakses & discroll
+                const displayedReports = reportDisplayMode === 'last3' && sortedWeeklyReports.length > 3
+                  ? sortedWeeklyReports.slice(-3)
+                  : sortedWeeklyReports;
 
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => printWeeklyReportPDF(report, workers, signatures)}
-                            className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer shadow-xs hover:shadow-sm"
-                          >
-                            <FileText className="w-3.5 h-3.5" />
-                            <span>Cetak PDF</span>
-                          </button>
+                const last3Ids = new Set(sortedWeeklyReports.slice(-3).map(r => r.id));
 
-                          <button
-                            onClick={async () => {
-                              try {
-                                const { generateWeeklyReportPDFBlob } = await import('../lib/attendanceSheetGenerator');
-                                const blob = await generateWeeklyReportPDFBlob(report, workers, signatures);
-                                const url = URL.createObjectURL(blob);
-                                const a = document.createElement('a');
-                                a.href = url;
-                                a.download = `Rekap_Uang_Makan_${report.weekStartDate}_s.d._${report.weekEndDate}.pdf`;
-                                document.body.appendChild(a);
-                                a.click();
-                                document.body.removeChild(a);
-                                setTimeout(() => URL.revokeObjectURL(url), 5000);
-                              } catch (e) {
-                                printWeeklyReportPDF(report, workers, signatures);
-                              }
-                            }}
-                            className="bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer"
-                            title="Unduh Berkas PDF Resmi (Sama persis dengan Cetak PDF Aktif)"
-                          >
-                            <Download className="w-3.5 h-3.5 text-indigo-600" />
-                            <span>Unduh PDF</span>
-                          </button>
-
-                          <button
-                            onClick={() => handleUpdateWeeklyReport(report)}
-                            className="bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer"
-                            title="Perbarui & sinkronkan laporan dengan data absensi terkini"
-                          >
-                            <RefreshCw className="w-3.5 h-3.5 text-amber-600" />
-                            <span>Perbarui Data</span>
-                          </button>
-
-                          <button
-                            onClick={() => handleRemoveWeeklyReport(report.id)}
-                            className="bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer"
-                            title="Hapus Laporan"
-                          >
-                            <Trash className="w-3.5 h-3.5 text-rose-500" />
-                            <span>Hapus</span>
-                          </button>
-
-                          {report.sheetsUrl ? (
-                            <a
-                              href={report.sheetsUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition"
-                            >
-                              <Globe className="w-3.5 h-3.5 text-emerald-600" />
-                              <span>Buka Google Sheets</span>
-                            </a>
-                          ) : (
-                            isDriveConnected && (
-                              <button
-                                onClick={async () => {
-                                  try {
-                                    await executeWithAutoRefreshToken(async (tok) => {
-                                      const sheetTitle = `Rekap Uang Makan Mingguan (${report.weekStartDate} s/d ${report.weekEndDate})`;
-                                      const headers = ["No.", "Nama Karyawan", "Jabatan", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Total Hadir", "Tarif Harian (Rp)", "Total Uang Makan (Rp)"];
-                                      
-                                      const workerMap = new Map<string, Worker>(workers.map((w) => [w.id, w]));
-                                      const rows = report.records.map((rec, index) => {
-                                        const w = workerMap.get(rec.workerId);
-                                        let totalHadir = 0;
-                                        const dayStates = weekDates.map((date) => {
-                                          const hasAtt = rec.attendance[date] || false;
-                                          if (hasAtt) totalHadir++;
-                                          return hasAtt ? "Hadir" : "Absen";
-                                        });
-
-                                        return [
-                                          index + 1,
-                                          w?.name || "Karyawan",
-                                          w?.role || "-",
-                                          ...dayStates,
-                                          totalHadir,
-                                          rec.dailyAllowance,
-                                          totalHadir * rec.dailyAllowance
-                                        ];
-                                      });
-
-                                      const sheetResult = await exportAttendanceToGoogleSheet(
-                                        tok,
-                                        sheetTitle,
-                                        headers,
-                                        rows
-                                      );
-                                      
-                                      setWeeklyReports(weeklyReports.map(lg => lg.id === report.id ? { ...lg, sheetsUrl: sheetResult.spreadsheetUrl } : lg));
-                                      alert("Sukses sinkronisasi rekap ke dokumen Google Spreadsheet baru!");
-                                    });
-                                  } catch (err: any) {
-                                    handleDriveError(err);
-                                  }
-                                }}
-                                className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer"
-                              >
-                                <CloudUpload className="w-3.5 h-3.5" />
-                                <span>Sync Drive</span>
-                              </button>
-                            )
-                          )}
-
-                          {report.pdfDriveUrl ? (
-                            <a
-                              href={report.pdfDriveUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition font-semibold"
-                              title="Buka Berkas PDF Resmi di Google Drive"
-                            >
-                              <ExternalLink className="w-3.5 h-3.5 text-emerald-600" />
-                              <span>PDF di Drive</span>
-                            </a>
-                          ) : (
-                            <button
-                              onClick={async () => {
-                                try {
-                                  const res = await googleDriveAutoBackup.backupWeeklyAttendanceReport(report, workers, signatures);
-                                  if (res.success && res.url) {
-                                    const updated = weeklyReports.map(r => r.id === report.id ? { ...r, pdfDriveUrl: res.url } : r);
-                                    setWeeklyReports(updated);
-                                    try {
-                                      localStorage.setItem("laporan_uang_makan_log", JSON.stringify(updated));
-                                      localStorage.setItem("weekly_reports_nmsa", JSON.stringify(updated));
-                                      localStorage.setItem("weekly_reports", JSON.stringify(updated));
-                                    } catch (e) {}
-                                    await syncStateToServer(
-                                      workers,
-                                      attendanceRecords,
-                                      updated,
-                                      pettyCashReports,
-                                      attendancePin,
-                                      signatures,
-                                      pettyCashHolders,
-                                      attendanceLogs,
-                                      waMethod,
-                                      autoReminderHour
-                                    );
-                                    alert("✓ Berkas PDF laporan berhasil diunggah ke Google Drive!");
-                                  } else {
-                                    alert("Gagal mengunggah ke Google Drive: " + (res.error || "Pastikan Google Drive terhubung"));
-                                  }
-                                } catch (e: any) {
-                                  alert("Gagal mengunggah: " + (e.message || String(e)));
-                                }
-                              }}
-                              className="bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition font-medium cursor-pointer"
-                              title="Unggah berkas PDF laporan ini ke Google Drive"
-                            >
-                              <CloudUpload className="w-3.5 h-3.5 text-indigo-600" />
-                              <span>Upload ke Drive</span>
-                            </button>
-                          )}
-                        </div>
+                return (
+                  <>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-100">
+                      <div>
+                        <h3 className="text-base font-bold text-slate-900 font-display flex items-center gap-2">
+                          <FileCheck className="w-5 h-5 text-indigo-600" />
+                          <span>Riwayat Laporan Jumat (Terlama &rarr; Terbaru)</span>
+                        </h3>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          Semua riwayat periode tersimpan aman dan terintegrasi otomatis ke Google Drive.
+                        </p>
                       </div>
-                    );
-                  })}
-                </div>
-              )}
+
+                      <div className="flex items-center gap-2">
+                        {/* TOGGLE 3 TERAKHIR vs SEMUA PERIODE */}
+                        {sortedWeeklyReports.length > 3 && (
+                          <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs">
+                            <button
+                              type="button"
+                              onClick={() => setReportDisplayMode('last3')}
+                              className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer ${
+                                reportDisplayMode === 'last3'
+                                  ? 'bg-white text-indigo-800 shadow-2xs'
+                                  : 'text-slate-600 hover:text-slate-900'
+                              }`}
+                            >
+                              3 Periode Terakhir
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setReportDisplayMode('all')}
+                              className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer ${
+                                reportDisplayMode === 'all'
+                                  ? 'bg-white text-indigo-800 shadow-2xs'
+                                  : 'text-slate-600 hover:text-slate-900'
+                              }`}
+                            >
+                              Semua ({sortedWeeklyReports.length}) Scroll
+                            </button>
+                          </div>
+                        )}
+
+                        {/* CADANGKAN SELURUH RIWAYAT KE GOOGLE DRIVE */}
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (sortedWeeklyReports.length === 0) {
+                              alert("Belum ada riwayat laporan mingguan untuk dicadangkan.");
+                              return;
+                            }
+                            if (!window.confirm(`Cadangkan dan pastikan seluruh ${sortedWeeklyReports.length} berkas laporan mingguan terunggah aman ke folder Google Drive?`)) {
+                              return;
+                            }
+                            try {
+                              let count = 0;
+                              const updatedReports = [...weeklyReports];
+                              for (let i = 0; i < updatedReports.length; i++) {
+                                const rep = updatedReports[i];
+                                if (!rep.pdfDriveUrl) {
+                                  const res = await googleDriveAutoBackup.backupWeeklyAttendanceReport(rep, workers, signatures);
+                                  if (res.success && res.url) {
+                                    updatedReports[i] = { ...rep, pdfDriveUrl: res.url };
+                                    count++;
+                                  }
+                                }
+                              }
+                              setWeeklyReports(updatedReports);
+                              try {
+                                localStorage.setItem("laporan_uang_makan_log", JSON.stringify(updatedReports));
+                                localStorage.setItem("weekly_reports_nmsa", JSON.stringify(updatedReports));
+                                localStorage.setItem("weekly_reports", JSON.stringify(updatedReports));
+                              } catch (e) {}
+                              await syncStateToServer(
+                                workers,
+                                attendanceRecords,
+                                updatedReports,
+                                pettyCashReports,
+                                attendancePin,
+                                signatures,
+                                pettyCashHolders,
+                                attendanceLogs,
+                                waMethod,
+                                autoReminderHour
+                              );
+                              alert(`✓ Sukses! Seluruh riwayat (${sortedWeeklyReports.length} periode) telah tersinkronisasi dan tersimpan lengkap di Google Drive.`);
+                            } catch (e: any) {
+                              alert("Gagal mencadangkan: " + (e.message || String(e)));
+                            }
+                          }}
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                          title="Pastikan semua laporan mingguan tersimpan di Google Drive"
+                        >
+                          <CloudUpload className="w-3.5 h-3.5" />
+                          <span>Cadangkan Semua ke Drive</span>
+                        </button>
+                      </div>
+                    </div>
+                    
+                    {displayedReports.length === 0 ? (
+                      <div className="text-center py-6 text-slate-400 text-xs text-balance">
+                        Tidak ada riwayat submission mingguan sebelumnya. Laporan baru akan log di sini setiap Anda menekan tombol "Kirim Laporan Uang Makan Jumat".
+                      </div>
+                    ) : (
+                      <div className="space-y-3 max-h-[460px] overflow-y-auto pr-1.5 scrollbar-thin">
+                        {displayedReports.map((report, idx) => {
+                          const matchedWorkers = report.records.length;
+                          const reportDates = getDatesForWeekStart(report.weekStartDate);
+                          const totalCost = report.records.reduce((sum, r) => {
+                            const presentDays = reportDates.filter(k => r.attendance?.[k] && (!r.customStatus || (r.customStatus[k] !== "Meeting" && r.customStatus[k] !== "Izin" && r.customStatus[k] !== "Sakit"))).length;
+                            return sum + (presentDays * (r.dailyAllowance || globalAllowance || 25000));
+                          }, 0);
+                          const isRecent3 = last3Ids.has(report.id);
+
+                          return (
+                            <div key={report.id} className={`p-4 bg-slate-50 border rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-4 transition ${
+                              isRecent3 ? 'border-indigo-200 bg-indigo-50/20' : 'border-slate-200'
+                            }`}>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[10px] font-mono font-black text-slate-400">
+                                    #{idx + 1}
+                                  </span>
+                                  <span className="text-xs font-mono font-bold bg-indigo-100 text-indigo-800 px-2.5 py-0.5 rounded-md">{report.id}</span>
+                                  <span className="text-xs text-slate-600 font-bold">Periode: {report.weekStartDate} s/d {report.weekEndDate}</span>
+                                  {isRecent3 && (
+                                    <span className="text-[9px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full border border-amber-200">
+                                      3 Periode Terakhir
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-xs text-slate-500 mt-1.5">
+                                  Dilaporkan pada: <strong className="text-slate-800">{new Date(report.submittedAt || "").toLocaleString("id-ID")}</strong> 
+                                  &bull; Karyawan: <strong className="text-slate-800">{matchedWorkers} orang</strong>
+                                  &bull; Total Pengeluaran: <strong className="text-slate-800">Rp {totalCost.toLocaleString("id-ID")}</strong>
+                                </div>
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                  onClick={() => printWeeklyReportPDF(report, workers, signatures)}
+                                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer shadow-xs hover:shadow-sm"
+                                >
+                                  <FileText className="w-3.5 h-3.5" />
+                                  <span>Cetak PDF</span>
+                                </button>
+
+                                <button
+                                  onClick={async () => {
+                                    try {
+                                      const { generateWeeklyReportPDFBlob } = await import('../lib/attendanceSheetGenerator');
+                                      const blob = await generateWeeklyReportPDFBlob(report, workers, signatures);
+                                      const url = URL.createObjectURL(blob);
+                                      const a = document.createElement('a');
+                                      a.href = url;
+                                      a.download = `Rekap_Uang_Makan_${report.weekStartDate}_s.d._${report.weekEndDate}.pdf`;
+                                      document.body.appendChild(a);
+                                      a.click();
+                                      document.body.removeChild(a);
+                                      setTimeout(() => URL.revokeObjectURL(url), 5000);
+                                    } catch (e) {
+                                      printWeeklyReportPDF(report, workers, signatures);
+                                    }
+                                  }}
+                                  className="bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer"
+                                  title="Unduh Berkas PDF Resmi"
+                                >
+                                  <Download className="w-3.5 h-3.5 text-indigo-600" />
+                                  <span>Unduh PDF</span>
+                                </button>
+
+                                <button
+                                  onClick={() => handleUpdateWeeklyReport(report)}
+                                  className="bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer"
+                                  title="Perbarui & sinkronkan laporan dengan data absensi terkini"
+                                >
+                                  <RefreshCw className="w-3.5 h-3.5 text-amber-600" />
+                                  <span>Perbarui Data</span>
+                                </button>
+
+                                <button
+                                  onClick={() => handleRemoveWeeklyReport(report.id)}
+                                  className="bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer"
+                                  title="Hapus Laporan"
+                                >
+                                  <Trash className="w-3.5 h-3.5 text-rose-500" />
+                                  <span>Hapus</span>
+                                </button>
+
+                                {report.sheetsUrl ? (
+                                  <a
+                                    href={report.sheetsUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition"
+                                  >
+                                    <Globe className="w-3.5 h-3.5 text-emerald-600" />
+                                    <span>Buka Google Sheets</span>
+                                  </a>
+                                ) : (
+                                  isDriveConnected && (
+                                    <button
+                                      onClick={async () => {
+                                        try {
+                                          await executeWithAutoRefreshToken(async (tok) => {
+                                            const sheetTitle = `Rekap Uang Makan Mingguan (${report.weekStartDate} s/d ${report.weekEndDate})`;
+                                            const headers = ["No.", "Nama Karyawan", "Jabatan", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Total Hadir", "Tarif Harian (Rp)", "Total Uang Makan (Rp)"];
+                                            
+                                            const workerMap = new Map<string, Worker>(workers.map((w) => [w.id, w]));
+                                            const rows = report.records.map((rec, index) => {
+                                              const w = workerMap.get(rec.workerId);
+                                              let totalHadir = 0;
+                                              const dayStates = weekDates.map((date) => {
+                                                const hasAtt = rec.attendance[date] || false;
+                                                if (hasAtt) totalHadir++;
+                                                return hasAtt ? "Hadir" : "Absen";
+                                              });
+
+                                              return [
+                                                index + 1,
+                                                w?.name || "Karyawan",
+                                                w?.role || "-",
+                                                ...dayStates,
+                                                totalHadir,
+                                                rec.dailyAllowance,
+                                                totalHadir * rec.dailyAllowance
+                                              ];
+                                            });
+
+                                            const sheetResult = await exportAttendanceToGoogleSheet(
+                                              tok,
+                                              sheetTitle,
+                                              headers,
+                                              rows
+                                            );
+                                            
+                                            setWeeklyReports(weeklyReports.map(lg => lg.id === report.id ? { ...lg, sheetsUrl: sheetResult.spreadsheetUrl } : lg));
+                                            alert("Sukses sinkronisasi rekap ke dokumen Google Spreadsheet baru!");
+                                          });
+                                        } catch (err: any) {
+                                          handleDriveError(err);
+                                        }
+                                      }}
+                                      className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer"
+                                    >
+                                      <CloudUpload className="w-3.5 h-3.5" />
+                                      <span>Sync Sheets</span>
+                                    </button>
+                                  )
+                                )}
+
+                                {report.pdfDriveUrl ? (
+                                  <a
+                                    href={report.pdfDriveUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition font-semibold"
+                                    title="Buka Berkas PDF Resmi di Google Drive"
+                                  >
+                                    <ExternalLink className="w-3.5 h-3.5 text-emerald-600" />
+                                    <span>PDF di Drive</span>
+                                  </a>
+                                ) : (
+                                  <button
+                                    onClick={async () => {
+                                      try {
+                                        const res = await googleDriveAutoBackup.backupWeeklyAttendanceReport(report, workers, signatures);
+                                        if (res.success && res.url) {
+                                          const updated = weeklyReports.map(r => r.id === report.id ? { ...r, pdfDriveUrl: res.url } : r);
+                                          setWeeklyReports(updated);
+                                          try {
+                                            localStorage.setItem("laporan_uang_makan_log", JSON.stringify(updated));
+                                            localStorage.setItem("weekly_reports_nmsa", JSON.stringify(updated));
+                                            localStorage.setItem("weekly_reports", JSON.stringify(updated));
+                                          } catch (e) {}
+                                          await syncStateToServer(
+                                            workers,
+                                            attendanceRecords,
+                                            updated,
+                                            pettyCashReports,
+                                            attendancePin,
+                                            signatures,
+                                            pettyCashHolders,
+                                            attendanceLogs,
+                                            waMethod,
+                                            autoReminderHour
+                                          );
+                                          alert("✓ Berkas PDF laporan berhasil diunggah ke Google Drive!");
+                                        } else {
+                                          alert("Gagal mengunggah ke Google Drive: " + (res.error || "Pastikan Google Drive terhubung"));
+                                        }
+                                      } catch (e: any) {
+                                        alert("Gagal mengunggah: " + (e.message || String(e)));
+                                      }
+                                    }}
+                                    className="bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition font-medium cursor-pointer"
+                                    title="Unggah berkas PDF laporan ini ke Google Drive"
+                                  >
+                                    <CloudUpload className="w-3.5 h-3.5 text-indigo-600" />
+                                    <span>Upload ke Drive</span>
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </div>
 
           </div>
@@ -9228,122 +9430,88 @@ export function AbsensiHarianNmsa({
 
                   <div className="space-y-2 pt-2 border-t border-slate-100">
                      <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 mb-1 block">Ubah Status Menjadi</span>
-                     <div className="grid grid-cols-2 gap-2">
-                        <button
-                          onClick={() => {
-                            const updated = attendanceRecords.map((r) => {
-                              if (r.workerId === manageStatusModal.workerId && r.attendance[weekStart] !== undefined) {
-                                const newCustomStatus = { ...(r.customStatus || {}) };
-                                const newReasons = { ...(r.reasons || {}) };
-                                delete newCustomStatus[manageStatusModal.date];
-                                delete newReasons[manageStatusModal.date];
-                                return { ...r, attendance: { ...r.attendance, [manageStatusModal.date]: true }, customStatus: newCustomStatus, reasons: newReasons };
-                              }
-                              return r;
-                            });
-                            setAttendanceRecords(updated);
-                            setManageStatusModal(null);
-                          }}
-                          className="w-full bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold py-2 rounded-xl transition cursor-pointer"
-                        >
-                          Hadir
-                        </button>
-                        <button
-                          onClick={() => {
-                            const updated = attendanceRecords.map((r) => {
-                              if (r.workerId === manageStatusModal.workerId && r.attendance[weekStart] !== undefined) {
-                                const newCustomStatus = { ...(r.customStatus || {}) };
-                                const newReasons = { ...(r.reasons || {}) };
-                                delete newCustomStatus[manageStatusModal.date];
-                                delete newReasons[manageStatusModal.date];
-                                return { ...r, attendance: { ...r.attendance, [manageStatusModal.date]: false }, customStatus: newCustomStatus, reasons: newReasons };
-                              }
-                              return r;
-                            });
-                            setAttendanceRecords(updated);
-                            setManageStatusModal(null);
-                          }}
-                          className="w-full bg-slate-300 hover:bg-slate-400 text-slate-800 text-xs font-bold py-2 rounded-xl transition cursor-pointer"
-                        >
-                          Absen
-                        </button>
-                        <button
-                          onClick={() => {
-                            const updated = attendanceRecords.map((r) => {
-                              if (r.workerId === manageStatusModal.workerId && r.attendance[weekStart] !== undefined) {
-                                const newCustomStatus = { ...(r.customStatus || {}) };
-                                const newReasons = { ...(r.reasons || {}) };
-                                newCustomStatus[manageStatusModal.date] = "Sakit";
-                                newReasons[manageStatusModal.date] = "Diatur oleh admin";
-                                return { ...r, attendance: { ...r.attendance, [manageStatusModal.date]: false }, customStatus: newCustomStatus, reasons: newReasons };
-                              }
-                              return r;
-                            });
-                            setAttendanceRecords(updated);
-                            setManageStatusModal(null);
-                          }}
-                          className="w-full bg-amber-400 hover:bg-amber-500 text-slate-900 text-xs font-bold py-2 rounded-xl transition cursor-pointer"
-                        >
-                          Sakit
-                        </button>
-                        <button
-                          onClick={() => {
-                            const updated = attendanceRecords.map((r) => {
-                              if (r.workerId === manageStatusModal.workerId && r.attendance[weekStart] !== undefined) {
-                                const newCustomStatus = { ...(r.customStatus || {}) };
-                                const newReasons = { ...(r.reasons || {}) };
-                                newCustomStatus[manageStatusModal.date] = "Izin";
-                                newReasons[manageStatusModal.date] = "Diatur oleh admin";
-                                return { ...r, attendance: { ...r.attendance, [manageStatusModal.date]: false }, customStatus: newCustomStatus, reasons: newReasons };
-                              }
-                              return r;
-                            });
-                            setAttendanceRecords(updated);
-                            setManageStatusModal(null);
-                          }}
-                          className="w-full bg-emerald-300 hover:bg-emerald-400 text-emerald-900 text-xs font-bold py-2 rounded-xl transition cursor-pointer"
-                        >
-                          Izin
-                        </button>
-                        <button
-                          onClick={() => {
-                            const updated = attendanceRecords.map((r) => {
-                              if (r.workerId === manageStatusModal.workerId && r.attendance[weekStart] !== undefined) {
-                                const newCustomStatus = { ...(r.customStatus || {}) };
-                                const newReasons = { ...(r.reasons || {}) };
-                                newCustomStatus[manageStatusModal.date] = "Cuti";
-                                newReasons[manageStatusModal.date] = "Diatur oleh admin";
-                                return { ...r, attendance: { ...r.attendance, [manageStatusModal.date]: false }, customStatus: newCustomStatus, reasons: newReasons };
-                              }
-                              return r;
-                            });
-                            setAttendanceRecords(updated);
-                            setManageStatusModal(null);
-                          }}
-                          className="w-full bg-purple-500 hover:bg-purple-600 text-white text-xs font-bold py-2 rounded-xl transition cursor-pointer"
-                        >
-                          Cuti
-                        </button>
-                        <button
-                          onClick={() => {
-                            const updated = attendanceRecords.map((r) => {
-                              if (r.workerId === manageStatusModal.workerId && r.attendance[weekStart] !== undefined) {
-                                const newCustomStatus = { ...(r.customStatus || {}) };
-                                const newReasons = { ...(r.reasons || {}) };
-                                newCustomStatus[manageStatusModal.date] = "Meeting";
-                                newReasons[manageStatusModal.date] = "Diatur oleh admin";
-                                return { ...r, attendance: { ...r.attendance, [manageStatusModal.date]: false }, customStatus: newCustomStatus, reasons: newReasons };
-                              }
-                              return r;
-                            });
-                            setAttendanceRecords(updated);
-                            setManageStatusModal(null);
-                          }}
-                          className="w-full col-span-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold py-2 rounded-xl transition cursor-pointer"
-                        >
-                          Meeting di Luar
-                        </button>
-                     </div>
+                     {(() => {
+                       const handleApplyStatus = (statusType: "Hadir" | "Absen" | "Sakit" | "Izin" | "Cuti" | "Meeting") => {
+                         lastUserInteractionTimeRef.current = Date.now();
+                         const dateToChange = manageStatusModal.date;
+                         const targetWorkerId = manageStatusModal.workerId;
+                         const updated = attendanceRecords.map((r) => {
+                           if (r.workerId === targetWorkerId) {
+                             const newCustomStatus = { ...(r.customStatus || {}) };
+                             const newReasons = { ...(r.reasons || {}) };
+                             const newAtt = { ...(r.attendance || {}) };
+
+                             if (statusType === "Hadir") {
+                               newAtt[dateToChange] = true;
+                               delete newCustomStatus[dateToChange];
+                               delete newReasons[dateToChange];
+                             } else if (statusType === "Absen") {
+                               newAtt[dateToChange] = false;
+                               delete newCustomStatus[dateToChange];
+                               delete newReasons[dateToChange];
+                             } else {
+                               newAtt[dateToChange] = false;
+                               newCustomStatus[dateToChange] = statusType as any;
+                               newReasons[dateToChange] = "Diatur manual oleh admin";
+                             }
+                             return { ...r, attendance: newAtt, customStatus: newCustomStatus, reasons: newReasons };
+                           }
+                           return r;
+                         });
+                         try {
+                           localStorage.setItem("absensi_uang_makan_records", JSON.stringify(updated));
+                         } catch (e) {}
+                         setAttendanceRecords(updated);
+                         setManageStatusModal(null);
+                       };
+
+                       return (
+                         <div className="grid grid-cols-2 gap-2">
+                           <button
+                             type="button"
+                             onClick={() => handleApplyStatus("Hadir")}
+                             className="w-full bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold py-2.5 rounded-xl transition cursor-pointer shadow-xs"
+                           >
+                             Hadir
+                           </button>
+                           <button
+                             type="button"
+                             onClick={() => handleApplyStatus("Absen")}
+                             className="w-full bg-slate-300 hover:bg-slate-400 text-slate-800 text-xs font-bold py-2.5 rounded-xl transition cursor-pointer"
+                           >
+                             Absen
+                           </button>
+                           <button
+                             type="button"
+                             onClick={() => handleApplyStatus("Sakit")}
+                             className="w-full bg-amber-400 hover:bg-amber-500 text-slate-900 text-xs font-bold py-2.5 rounded-xl transition cursor-pointer shadow-xs"
+                           >
+                             Sakit (S)
+                           </button>
+                           <button
+                             type="button"
+                             onClick={() => handleApplyStatus("Izin")}
+                             className="w-full bg-emerald-300 hover:bg-emerald-400 text-emerald-900 text-xs font-bold py-2.5 rounded-xl transition cursor-pointer shadow-xs"
+                           >
+                             Izin (I)
+                           </button>
+                           <button
+                             type="button"
+                             onClick={() => handleApplyStatus("Cuti")}
+                             className="w-full bg-purple-500 hover:bg-purple-600 text-white text-xs font-bold py-2.5 rounded-xl transition cursor-pointer shadow-xs"
+                           >
+                             Cuti (C)
+                           </button>
+                           <button
+                             type="button"
+                             onClick={() => handleApplyStatus("Meeting")}
+                             className="w-full bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold py-2.5 rounded-xl transition cursor-pointer shadow-xs"
+                           >
+                             Meeting di Luar
+                           </button>
+                         </div>
+                       );
+                     })()}
                   </div>
                 </div>
               </motion.div>

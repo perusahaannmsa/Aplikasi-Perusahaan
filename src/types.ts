@@ -109,6 +109,12 @@ export interface Submission {
   dibukukanOleh: string; // e.g. "Sri Ekowati"
   dibukukanJabatan: string; // e.g. "Accounting"
 
+  // Project & RAB link (Accurate Style)
+  projectId?: string;
+  projectName?: string;
+  projectCode?: string;
+  projectRabItemId?: string;
+
   items: SubmissionItem[];
   createdAt: string;
   deletedPageIds?: string[];
@@ -342,5 +348,93 @@ export interface AgendaItem {
   createdAt: string;
   updatedAt?: string;
 }
+
+/* ============================================================================
+ * FITUR RAB & ANGGARAN PROYEK (PROJECT BUDGET & RAB - ACCURATE STYLE)
+ * ============================================================================ */
+export type ProjectStatus = 'Perencanaan' | 'Berjalan' | 'Selesai' | 'On-Hold';
+
+export type RabCategory =
+  | 'Material & Bahan'
+  | 'Material'
+  | 'Upah & Tenaga Kerja'
+  | 'Upah Tenaga Kerja'
+  | 'Sewa Alat & Mesin'
+  | 'Alat Berat & Peralatan'
+  | 'Subkontraktor & Spesialis'
+  | 'Subkontraktor'
+  | 'Transportasi & Logistik'
+  | 'Overhead & Perizinan'
+  | 'Biaya Operasional Lapangan'
+  | 'Operasional & BBM'
+  | 'Biaya Lain-Lain & Cadangan'
+  | 'Lain-lain';
+
+export interface ProjectRabItem {
+  id: string;
+  projectId: string;
+  category: RabCategory;
+  accurateAccountCode?: string; // e.g. "5-1100"
+  accurateAccountName?: string; // e.g. "Beban Material Proyek"
+  accountCode?: string;
+  accountName?: string;
+  itemCode?: string;
+  name: string; // Deskripsi Pekerjaan / Nama Barang
+  itemName?: string;
+  volume: number;
+  unit: string; // "m3", "ton", "unit", "jam", "hari", "ls", "titik", "rit"
+  unitPrice: number; // Harga Satuan (Rp)
+  totalBudget: number; // volume * unitPrice
+  actualSpent: number; // Total realisasi yang terpakai
+  notes?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface ProjectExpense {
+  id: string;
+  projectId: string;
+  rabItemId?: string; // Link ke item RAB spesifik
+  voucherNumber?: string; // No Voucher HO / Ref
+  submissionId?: string; // ID transaksi voucher jika berasal dari pengajuan
+  date: string; // YYYY-MM-DD
+  category: RabCategory;
+  accountCode?: string;
+  accountName?: string;
+  accurateAccountCode?: string;
+  accurateAccountName?: string;
+  description: string;
+  recipient: string; // Dibayarkan kepada / Vendor
+  amount: number; // Nominal Pengeluaran (Rp)
+  paymentMethod?: string;
+  invoiceNumber?: string;
+  receiptUrl?: string; // Link bukti / Google Drive
+  accurateRef?: string;
+  recordedBy?: string;
+  notes?: string;
+  createdAt: string;
+}
+
+export interface Project {
+  id: string;
+  code: string; // e.g. "PRJ-2026-001"
+  name: string; // e.g. "Pembangunan Dermaga Jetty Phase 1"
+  clientName: string; // Klien / Pemilik Proyek
+  location: string; // Lokasi Pekerjaan (e.g. "Site Morowali", "Site Pomalaa")
+  contractNumber?: string; // No SPK / Kontrak / PO
+  contractValue: number; // Nilai Kontrak Proyek (Rp)
+  startDate: string; // YYYY-MM-DD
+  targetEndDate: string; // YYYY-MM-DD
+  endDate?: string;
+  actualEndDate?: string;
+  projectManager: string; // Manajer Proyek / PIC (e.g. "Harijon")
+  status: ProjectStatus;
+  progressPercent: number; // 0 - 100%
+  physicalProgress?: number;
+  description?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
 
 

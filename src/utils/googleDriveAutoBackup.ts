@@ -169,8 +169,12 @@ class GoogleDriveAutoBackupService {
   public async backupAbsensi(customData?: any): Promise<{ success: boolean; url?: string; error?: string }> {
     const today = new Date().toISOString().split('T')[0];
     const currentYear = new Date().getFullYear().toString();
+    const currentMonthIdx = new Date().getMonth();
+    const monthNamesIndo = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+    const monthNum = String(currentMonthIdx + 1).padStart(2, "0");
+    const monthFolderName = `${monthNum} - ${monthNamesIndo[currentMonthIdx]}`;
     const fileName = customData?.fileName || `Absensi_Karyawan_NMSA_${today}.pdf`;
-    const folderPath = `ABSENSI-NMSA-APP/Cadangan-Data-Absensi/${currentYear}`;
+    const folderPath = `ABSENSI-NMSA-APP/Cadangan-Data-Absensi/${currentYear}/${monthFolderName}`;
 
     try {
       // Calculate current week Monday to Friday in local time
@@ -291,7 +295,8 @@ class GoogleDriveAutoBackupService {
         const folderId = await getOrCreateNestedFolder(token, [
           'ABSENSI-NMSA-APP',
           'Cadangan-Data-Absensi',
-          currentYear
+          currentYear,
+          monthFolderName
         ]);
 
         return await uploadFileToDrive(token, folderId, fileName, pdfBlob);
@@ -335,12 +340,19 @@ class GoogleDriveAutoBackupService {
     try {
       const weekStart = report.weekStartDate;
       const weekEnd = report.weekEndDate;
-      const [yStr, mStr] = (weekStart || "").split("-");
+      const [yStr, mStr, dStr] = (weekStart || "").split("-");
       const folderYear = yStr || new Date().getFullYear().toString();
       const monthNamesIndo = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
-      const mIdx = parseInt(mStr, 10) - 1;
-      const monthName = (mIdx >= 0 && mIdx < 12) ? monthNamesIndo[mIdx] : "Agustus";
-      const periodFolderName = `Periode ${weekStart} s.d. ${weekEnd}`;
+      const mIdx = Math.max(0, Math.min(11, (parseInt(mStr, 10) || 1) - 1));
+      const monthName = monthNamesIndo[mIdx];
+      const monthNum = String(mIdx + 1).padStart(2, "0");
+      const monthFolderName = `${monthNum} - ${monthName}`; // e.g. "08 - Agustus" (urut 01-12 di Google Drive)
+
+      // Periode depannya diberi angka urut agar berurut dari awal sampai akhir setiap bulannya (01 - 05)
+      const dayNum = parseInt(dStr || "1", 10);
+      const weekOrder = Math.min(5, Math.max(1, Math.ceil(dayNum / 7)));
+      const weekOrderStr = String(weekOrder).padStart(2, "0");
+      const periodFolderName = `${weekOrderStr} - Periode ${weekStart} s.d. ${weekEnd}`;
       const fileName = `Rekap_Uang_Makan_${weekStart}_s.d._${weekEnd}.pdf`;
 
       // Fallback workers if empty
@@ -360,7 +372,7 @@ class GoogleDriveAutoBackupService {
           'ABSENSI-NMSA-APP',
           'Laporan-Absensi-Uang-Makan',
           folderYear,
-          monthName,
+          monthFolderName,
           periodFolderName
         ]);
 
@@ -373,7 +385,7 @@ class GoogleDriveAutoBackupService {
         module: 'Absensi',
         fileName,
         fileUrl: result.webViewLink,
-        folderPath: `ABSENSI-NMSA-APP/Laporan-Absensi-Uang-Makan/${folderYear}/${monthName}/${periodFolderName}`,
+        folderPath: `ABSENSI-NMSA-APP/Laporan-Absensi-Uang-Makan/${folderYear}/${monthFolderName}/${periodFolderName}`,
         status: 'success'
       });
 

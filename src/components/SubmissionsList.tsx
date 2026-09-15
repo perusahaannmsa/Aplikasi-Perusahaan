@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Submission, ActivityLog } from '../types';
 import { formatRupiah, formatDateIndonesian, isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, sortSubmissionsDescending } from '../utils';
-import { Search, Eye, Edit2, Trash2, Calendar, MapPin, DollarSign, Plus, Copy, RefreshCw, Cloud, FileText, Database, History, FileSpreadsheet, CheckCircle, AlertCircle, Printer, Check, ExternalLink, Coins, User, Bell, ChevronDown, Sparkles, Share2, Send, MoreVertical, Receipt } from 'lucide-react';
+import { Search, Eye, Edit2, Trash2, Calendar, MapPin, DollarSign, Plus, Copy, RefreshCw, Cloud, FileText, Database, History, FileSpreadsheet, CheckCircle, AlertCircle, Printer, Check, ExternalLink, Coins, User, Bell, ChevronDown, Sparkles, Share2, Send, MoreVertical, Receipt, Building2 } from 'lucide-react';
 import { loadActivityLogsFromFirestore, isFirebaseConfigured } from '../firebase';
 import { LiveClock } from './LiveClock';
 
@@ -22,6 +22,7 @@ interface SubmissionsListProps {
   pettyCashHolders?: string[];
   onOpenConsolidateModal?: () => void;
   onOpenPph23View?: () => void;
+  onOpenRabView?: () => void;
 }
 
 export const SubmissionsList: React.FC<SubmissionsListProps> = ({
@@ -41,6 +42,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   pettyCashHolders = [],
   onOpenConsolidateModal,
   onOpenPph23View,
+  onOpenRabView,
 }) => {
   const [searchTerm, setSearchTerm] = useState(() => {
     try { return sessionStorage.getItem('sublist_searchTerm') || ''; } catch (e) { return ''; }
@@ -981,6 +983,21 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                     </span>
                   </button>
                 )}
+
+                {onOpenRabView && (
+                  <button
+                    onClick={() => { setIsModeDropdownOpen(false); onOpenRabView(); }}
+                    className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer text-stone-700 hover:bg-emerald-50"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Building2 size={14} className="text-emerald-600" />
+                      <span>RAB &amp; Anggaran Proyek</span>
+                    </div>
+                    <span className="text-[9px] font-mono text-emerald-900 font-bold bg-emerald-100 px-1.5 py-0.2 rounded">
+                      Accurate
+                    </span>
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -994,6 +1011,18 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
               <Receipt size={13} className="text-amber-700" />
               <span>Bukti Potong PPh 23 (Tagihan)</span>
               <span className="text-[9px] font-mono bg-amber-200 text-amber-900 px-1 rounded font-bold">DJP</span>
+            </button>
+          )}
+
+          {onOpenRabView && (
+            <button
+              onClick={onOpenRabView}
+              className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-950 font-bold text-xs transition cursor-pointer shadow-3xs"
+              title="Kelola Rencana Anggaran Biaya (RAB) proyek, anggaran biaya Accurate, dan realisasi pengeluaran dana"
+            >
+              <Building2 size={13} className="text-emerald-700" />
+              <span>RAB Proyek</span>
+              <span className="text-[9px] font-mono bg-emerald-200 text-emerald-900 px-1 rounded font-bold">Accurate</span>
             </button>
           )}
 
@@ -1168,14 +1197,26 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
 
             {/* Action Button Container */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0">
+              {onOpenPph23View && (
+                <button
+                  onClick={onOpenPph23View}
+                  id="btn-open-tagihan-recap"
+                  className="flex items-center justify-center gap-1.5 px-3.5 py-2.5 border border-amber-300 bg-amber-50 hover:bg-amber-100 hover:border-amber-400 text-amber-900 font-bold rounded-xl transition shadow-3xs cursor-pointer text-xs"
+                  title="Tampilkan Rekap Transaksi Tagihan Rekanan & Potongan PPh 23"
+                >
+                  <Receipt size={14} className="text-amber-700" />
+                  <span>Transaksi Tagihan (PPh 23)</span>
+                </button>
+              )}
+
               {onOpenSppdManager && (
                 <button
                   onClick={onOpenSppdManager}
                   id="btn-open-sppd-manager"
-                  className="flex items-center justify-center gap-1.5 px-3.5 py-2.5 border border-amber-300 bg-amber-50 hover:bg-amber-100 hover:border-amber-400 text-amber-900 font-bold rounded-xl transition shadow-3xs cursor-pointer text-xs"
+                  className="flex items-center justify-center gap-1.5 px-3.5 py-2.5 border border-stone-250 bg-stone-50 hover:bg-stone-100 text-stone-750 font-bold rounded-xl transition shadow-3xs cursor-pointer text-xs"
                   title="Buka Formulir SPPD & Hitung Biaya Perjalanan Dinas"
                 >
-                  <FileText size={14} className="text-amber-700" />
+                  <FileText size={14} className="text-stone-600" />
                   <span>Kelola SPPD Dinas</span>
                 </button>
               )}

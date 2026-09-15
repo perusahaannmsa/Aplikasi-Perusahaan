@@ -777,6 +777,255 @@ const defaultWorkers = [
   { id: "W09", name: "Junaedi", phoneNumber: "+62 895-3914-41239", role: "Karyawan", isActive: true }
 ];
 
+const defaultProjects = [
+  {
+    id: "PRJ-2026-001",
+    code: "PRJ-2026-001",
+    name: "Pembangunan Jetty & Conveyor Dermaga Morowali",
+    clientName: "PT Bintang Delapan Mineral",
+    location: "Kawasan Industri Morowali, Sulawesi Tengah",
+    contractNumber: "042/SPK-NMSA/BDM/V/2026",
+    contractValue: 5250000000,
+    startDate: "2026-05-01",
+    targetEndDate: "2026-11-30",
+    projectManager: "Harijon",
+    status: "Berjalan",
+    progressPercent: 45,
+    description: "Konstruksi sipil pemancangan pipa baja laut, perakitan trestle, dan conveyor belt ore dermaga.",
+    createdAt: "2026-05-01T08:00:00.000Z",
+    updatedAt: "2026-09-10T14:30:00.000Z"
+  },
+  {
+    id: "PRJ-2026-002",
+    code: "PRJ-2026-002",
+    name: "Pekerjaan Land Clearing & Hauling Road Site Pomalaa",
+    clientName: "PT Aneka Tambang Tbk (Antam)",
+    location: "Site Pomalaa, Kolaka, Sulawesi Tenggara",
+    contractNumber: "SPK-119/NMSA-ANTAM/VII/2026",
+    contractValue: 3100000000,
+    startDate: "2026-07-15",
+    targetEndDate: "2026-12-20",
+    projectManager: "Suryo Pranoto",
+    status: "Berjalan",
+    progressPercent: 65,
+    description: "Pembersihan lahan pit penambangan nikel, stripping overburden, dan perkerasan jalan hauling 12 KM.",
+    createdAt: "2026-07-15T09:00:00.000Z",
+    updatedAt: "2026-09-12T10:15:00.000Z"
+  },
+  {
+    id: "PRJ-2026-003",
+    code: "PRJ-2026-003",
+    name: "Pengadaan & Fabrikasi Storage Hopper Tambang Kolaka",
+    clientName: "PT Ceria Nugraha Indotama",
+    location: "Kolaka, Sulawesi Tenggara",
+    contractNumber: "PO-CNI-2026-088",
+    contractValue: 1450000000,
+    startDate: "2026-08-20",
+    targetEndDate: "2027-01-31",
+    projectManager: "Harijon",
+    status: "Perencanaan",
+    progressPercent: 15,
+    description: "Fabrikasi baja struktur plat hardox anti aus, vibrator hopper ore crusher.",
+    createdAt: "2026-08-20T08:00:00.000Z",
+    updatedAt: "2026-09-05T11:00:00.000Z"
+  }
+];
+
+const defaultProjectRab = [
+  {
+    id: "rab-001-01",
+    projectId: "PRJ-2026-001",
+    category: "Material & Bahan",
+    accurateAccountCode: "5-1100",
+    accurateAccountName: "Beban Material Proyek",
+    itemCode: "MAT-01",
+    name: "Tiang Pancang Pipa Baja Dia. 600mm x 12mm",
+    volume: 120,
+    unit: "titik",
+    unitPrice: 12500000,
+    totalBudget: 1500000000,
+    actualSpent: 1250000000,
+    notes: "Pengadaan dari pabrikan Cilegon",
+    createdAt: "2026-05-02T08:00:00.000Z"
+  },
+  {
+    id: "rab-001-02",
+    projectId: "PRJ-2026-001",
+    category: "Material & Bahan",
+    accurateAccountCode: "5-1100",
+    accurateAccountName: "Beban Material Proyek",
+    itemCode: "MAT-02",
+    name: "Beton Ready Mix K-350 Tahan Salinitas Laut",
+    volume: 450,
+    unit: "m3",
+    unitPrice: 1350000,
+    totalBudget: 607500000,
+    actualSpent: 270000000,
+    notes: "Pengecoran pile cap & slab dermaga",
+    createdAt: "2026-05-02T08:00:00.000Z"
+  },
+  {
+    id: "rab-001-03",
+    projectId: "PRJ-2026-001",
+    category: "Upah & Tenaga Kerja",
+    accurateAccountCode: "5-1200",
+    accurateAccountName: "Beban Upah Langsung Proyek",
+    itemCode: "LAB-01",
+    name: "Upah Mandor & Tim Pemancangan Dermaga (25 org)",
+    volume: 180,
+    unit: "hari",
+    unitPrice: 3500000,
+    totalBudget: 630000000,
+    actualSpent: 315000000,
+    notes: "Sistem absensi & uang makan harian",
+    createdAt: "2026-05-02T08:00:00.000Z"
+  },
+  {
+    id: "rab-001-04",
+    projectId: "PRJ-2026-001",
+    category: "Sewa Alat & Mesin",
+    accurateAccountCode: "5-1300",
+    accurateAccountName: "Beban Sewa Alat Berat",
+    itemCode: "EQP-01",
+    name: "Sewa Ponton Crane Hammer Pemancang 150 Ton",
+    volume: 4,
+    unit: "bulan",
+    unitPrice: 175000000,
+    totalBudget: 700000000,
+    actualSpent: 525000000,
+    notes: "Termasuk kru operator ponton",
+    createdAt: "2026-05-02T08:00:00.000Z"
+  },
+  {
+    id: "rab-001-05",
+    projectId: "PRJ-2026-001",
+    category: "Transportasi & Logistik",
+    accurateAccountCode: "5-1500",
+    accurateAccountName: "Beban Logistik & Angkutan",
+    itemCode: "TRN-01",
+    name: "Mobilisasi & Demobilisasi Tongkang Material Laut",
+    volume: 3,
+    unit: "rit",
+    unitPrice: 85000000,
+    totalBudget: 255000000,
+    actualSpent: 170000000,
+    notes: "Rute Surabaya - Morowali",
+    createdAt: "2026-05-02T08:00:00.000Z"
+  },
+  {
+    id: "rab-001-06",
+    projectId: "PRJ-2026-001",
+    category: "Overhead & Perizinan",
+    accurateAccountCode: "5-1700",
+    accurateAccountName: "Beban Overhead & Izin Proyek",
+    itemCode: "OVH-01",
+    name: "Izin Syahbandar, K3 & Pengujian Tarik Tiang (PDA Test)",
+    volume: 1,
+    unit: "ls",
+    unitPrice: 150000000,
+    totalBudget: 150000000,
+    actualSpent: 110000000,
+    notes: "Legalitas kelautan dan lab sertifikasi",
+    createdAt: "2026-05-02T08:00:00.000Z"
+  },
+  {
+    id: "rab-002-01",
+    projectId: "PRJ-2026-002",
+    category: "Sewa Alat & Mesin",
+    accurateAccountCode: "5-1300",
+    accurateAccountName: "Beban Sewa Alat Berat",
+    itemCode: "EQP-02",
+    name: "Sewa Excavator Komatsu PC300 & Dozer D85 (4 unit)",
+    volume: 5,
+    unit: "bulan",
+    unitPrice: 195000000,
+    totalBudget: 975000000,
+    actualSpent: 585000000,
+    notes: "Operasional perataan dan penggalian",
+    createdAt: "2026-07-16T08:00:00.000Z"
+  },
+  {
+    id: "rab-002-02",
+    projectId: "PRJ-2026-002",
+    category: "Material & Bahan",
+    accurateAccountCode: "5-1100",
+    accurateAccountName: "Beban Material Proyek",
+    itemCode: "MAT-03",
+    name: "Batu Split & Base Course Jalan Hauling (Agregat A/B)",
+    volume: 2400,
+    unit: "m3",
+    unitPrice: 225000,
+    totalBudget: 540000000,
+    actualSpent: 420000000,
+    notes: "Pengerasan lapisan jalan truk 40 ton",
+    createdAt: "2026-07-16T08:00:00.000Z"
+  },
+  {
+    id: "rab-002-03",
+    projectId: "PRJ-2026-002",
+    category: "Biaya Operasional Lapangan",
+    accurateAccountCode: "5-1600",
+    accurateAccountName: "Beban Operasional Lapangan",
+    itemCode: "OPS-01",
+    name: "BBM Solar Industri (HSD) Alat Berat & Truk",
+    volume: 45000,
+    unit: "liter",
+    unitPrice: 15500,
+    totalBudget: 697500000,
+    actualSpent: 465000000,
+    notes: "Pengisian tangki site Pomalaa",
+    createdAt: "2026-07-16T08:00:00.000Z"
+  }
+];
+
+const defaultProjectExpenses = [
+  {
+    id: "exp-001",
+    projectId: "PRJ-2026-001",
+    rabItemId: "rab-001-01",
+    voucherNumber: "VOUCHER-HO/2026/05/012",
+    date: "2026-05-18",
+    category: "Material & Bahan",
+    description: "Pembayaran Uang Muka Tiang Pancang Baja PT Krakatau Steel",
+    recipient: "PT Krakatau Steel Tbk",
+    amount: 500000000,
+    paymentMethod: "Bank Transfer Mandiri",
+    invoiceNumber: "INV-KS-0992",
+    recordedBy: "Sri Ekowati",
+    createdAt: "2026-05-18T10:00:00.000Z"
+  },
+  {
+    id: "exp-002",
+    projectId: "PRJ-2026-001",
+    rabItemId: "rab-001-04",
+    voucherNumber: "VOUCHER-HO/2026/06/005",
+    date: "2026-06-05",
+    category: "Sewa Alat & Mesin",
+    description: "Sewa Ponton Crane Hammer Bulan ke-1 Site Morowali",
+    recipient: "PT Pelayaran Bahtera Samudra",
+    amount: 175000000,
+    paymentMethod: "Bank Transfer Mandiri",
+    invoiceNumber: "INV-PBS-441",
+    recordedBy: "Sri Ekowati",
+    createdAt: "2026-06-05T14:20:00.000Z"
+  },
+  {
+    id: "exp-003",
+    projectId: "PRJ-2026-002",
+    rabItemId: "rab-002-03",
+    voucherNumber: "VOUCHER-HO/2026/07/028",
+    date: "2026-07-28",
+    category: "Biaya Operasional Lapangan",
+    description: "Pembelian Solar Industri HSD 15.000 Liter Pomalaa",
+    recipient: "PT Pertamina Patra Niaga",
+    amount: 232500000,
+    paymentMethod: "Bank Transfer BCA",
+    invoiceNumber: "INV-PPN-9821",
+    recordedBy: "Sri Ekowati",
+    createdAt: "2026-07-28T09:15:00.000Z"
+  }
+];
+
 // Helper to read state safely
 function readState() {
   const autoPin = getAutomaticDailyPin();
@@ -859,6 +1108,18 @@ function readState() {
       if (!parsed.companySettings) {
         parsed.companySettings = {};
       }
+      if (!parsed.projects || parsed.projects.length === 0) {
+        parsed.projects = defaultProjects;
+        stateChanged = true;
+      }
+      if (!parsed.projectRab || parsed.projectRab.length === 0) {
+        parsed.projectRab = defaultProjectRab;
+        stateChanged = true;
+      }
+      if (!parsed.projectExpenses) {
+        parsed.projectExpenses = defaultProjectExpenses;
+        stateChanged = true;
+      }
       if (parsed.waMethod === undefined) {
         parsed.waMethod = "desktop";
       }
@@ -917,6 +1178,9 @@ function readState() {
     accurateMappedReports: [],
     auditLogs: [],
     companySettings: {},
+    projects: defaultProjects,
+    projectRab: defaultProjectRab,
+    projectExpenses: defaultProjectExpenses,
     waMethod: "desktop",
     autoReminderHour: "09:00",
     lastCronPing: "",
@@ -1034,6 +1298,9 @@ app.post("/api/shared-state", (req, res) => {
       sppdRecords,
       agendaItems,
       submissions,
+      projects,
+      projectRab,
+      projectExpenses,
       accurateAccounts,
       accurateMappedReports,
       auditLogs,
@@ -1144,6 +1411,9 @@ app.post("/api/shared-state", (req, res) => {
       sppdRecords: sppdRecords !== undefined ? sppdRecords : currentState.sppdRecords,
       agendaItems: agendaItems !== undefined ? agendaItems : currentState.agendaItems,
       submissions: submissions !== undefined ? submissions : currentState.submissions,
+      projects: projects !== undefined ? projects : currentState.projects,
+      projectRab: projectRab !== undefined ? projectRab : currentState.projectRab,
+      projectExpenses: projectExpenses !== undefined ? projectExpenses : currentState.projectExpenses,
       accurateAccounts: accurateAccounts !== undefined ? accurateAccounts : currentState.accurateAccounts,
       accurateMappedReports: accurateMappedReports !== undefined ? accurateMappedReports : currentState.accurateMappedReports,
       auditLogs: auditLogs !== undefined ? auditLogs : currentState.auditLogs,
@@ -1199,6 +1469,11 @@ app.get("/api/unified-storage", (req, res) => {
       menu6_agenda_kerja: {
         agendaItems: state.agendaItems || []
       },
+      menu7_proyek_rab: {
+        projects: state.projects || [],
+        projectRab: state.projectRab || [],
+        projectExpenses: state.projectExpenses || []
+      },
       riwayat_audit_log: state.auditLogs || [],
       companySettings: state.companySettings || {},
       raw: state
@@ -1224,6 +1499,9 @@ app.post("/api/unified-storage", (req, res) => {
     if (incoming.npwpRecords !== undefined) state.npwpRecords = incoming.npwpRecords;
     if (incoming.sppdRecords !== undefined) state.sppdRecords = incoming.sppdRecords;
     if (incoming.agendaItems !== undefined) state.agendaItems = incoming.agendaItems;
+    if (incoming.projects !== undefined) state.projects = incoming.projects;
+    if (incoming.projectRab !== undefined) state.projectRab = incoming.projectRab;
+    if (incoming.projectExpenses !== undefined) state.projectExpenses = incoming.projectExpenses;
     if (incoming.accurateAccounts !== undefined) state.accurateAccounts = incoming.accurateAccounts;
     if (incoming.accurateMappedReports !== undefined) state.accurateMappedReports = incoming.accurateMappedReports;
     if (incoming.auditLogs !== undefined) state.auditLogs = incoming.auditLogs;
@@ -1292,6 +1570,184 @@ app.delete("/api/sppd/:id", (req, res) => {
     state.sppdRecords = currentRecords.filter(r => r.id !== id && r.noSppd !== id);
     writeState(state);
     res.json({ success: true, sppdRecords: state.sppdRecords });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Dedicated Project & RAB (Accurate Style) API Endpoints
+app.get("/api/projects", (req, res) => {
+  try {
+    const state = readState();
+    res.json({
+      success: true,
+      projects: state.projects || [],
+      projectRab: state.projectRab || [],
+      projectExpenses: state.projectExpenses || []
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post("/api/projects", (req, res) => {
+  try {
+    const state = readState();
+    const currentProjects: any[] = state.projects || [];
+    
+    if (req.body.projects && Array.isArray(req.body.projects)) {
+      state.projects = req.body.projects;
+    } else if (req.body.project) {
+      const incoming = req.body.project;
+      const existingIdx = currentProjects.findIndex(p => p.id === incoming.id || p.code === incoming.code);
+      if (existingIdx >= 0) {
+        currentProjects[existingIdx] = { ...currentProjects[existingIdx], ...incoming, updatedAt: new Date().toISOString() };
+      } else {
+        currentProjects.unshift({
+          ...incoming,
+          id: incoming.id || `PRJ-${Date.now()}`,
+          createdAt: incoming.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+      }
+      state.projects = currentProjects;
+    }
+
+    if (req.body.projectRab && Array.isArray(req.body.projectRab)) {
+      state.projectRab = req.body.projectRab;
+    }
+    if (req.body.projectExpenses && Array.isArray(req.body.projectExpenses)) {
+      state.projectExpenses = req.body.projectExpenses;
+    }
+
+    writeState(state);
+    res.json({
+      success: true,
+      projects: state.projects,
+      projectRab: state.projectRab,
+      projectExpenses: state.projectExpenses
+    });
+  } catch (error: any) {
+    console.error("Gagal menyimpan data proyek:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.delete("/api/projects/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    const state = readState();
+    state.projects = (state.projects || []).filter(p => p.id !== id && p.code !== id);
+    // Also clean up or preserve associated items
+    state.projectRab = (state.projectRab || []).filter(r => r.projectId !== id);
+    state.projectExpenses = (state.projectExpenses || []).filter(e => e.projectId !== id);
+    writeState(state);
+    res.json({ success: true, projects: state.projects });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post("/api/projects/:id/rab", (req, res) => {
+  try {
+    const { id } = req.params;
+    const state = readState();
+    let currentRab: any[] = state.projectRab || [];
+
+    if (req.body.rabItems && Array.isArray(req.body.rabItems)) {
+      // Replace or merge items for this project
+      const others = currentRab.filter(r => r.projectId !== id);
+      state.projectRab = [...others, ...req.body.rabItems];
+    } else if (req.body.item) {
+      const item = req.body.item;
+      item.projectId = id;
+      item.totalBudget = (Number(item.volume) || 0) * (Number(item.unitPrice) || 0);
+      const existingIdx = currentRab.findIndex(r => r.id === item.id);
+      if (existingIdx >= 0) {
+        currentRab[existingIdx] = { ...currentRab[existingIdx], ...item, updatedAt: new Date().toISOString() };
+      } else {
+        currentRab.push({
+          ...item,
+          id: item.id || `rab-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          actualSpent: item.actualSpent || 0,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+      }
+      state.projectRab = currentRab;
+    }
+
+    writeState(state);
+    res.json({ success: true, projectRab: state.projectRab });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.delete("/api/projects/:id/rab/:itemId", (req, res) => {
+  try {
+    const { itemId } = req.params;
+    const state = readState();
+    state.projectRab = (state.projectRab || []).filter(r => r.id !== itemId);
+    writeState(state);
+    res.json({ success: true, projectRab: state.projectRab });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post("/api/projects/:id/expenses", (req, res) => {
+  try {
+    const { id } = req.params;
+    const state = readState();
+    const currentExpenses: any[] = state.projectExpenses || [];
+    const expense = req.body.expense || req.body;
+    expense.projectId = id;
+    expense.id = expense.id || `exp-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    expense.createdAt = expense.createdAt || new Date().toISOString();
+    
+    currentExpenses.unshift(expense);
+    state.projectExpenses = currentExpenses;
+
+    // If linked to a rab item, update actualSpent
+    if (expense.rabItemId) {
+      const rabItem = (state.projectRab || []).find(r => r.id === expense.rabItemId);
+      if (rabItem) {
+        rabItem.actualSpent = (Number(rabItem.actualSpent) || 0) + (Number(expense.amount) || 0);
+        rabItem.updatedAt = new Date().toISOString();
+      }
+    }
+
+    writeState(state);
+    res.json({
+      success: true,
+      projectExpenses: state.projectExpenses,
+      projectRab: state.projectRab
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.delete("/api/projects/:id/expenses/:expId", (req, res) => {
+  try {
+    const { expId } = req.params;
+    const state = readState();
+    const existing = (state.projectExpenses || []).find(e => e.id === expId);
+    if (existing && existing.rabItemId) {
+      const rabItem = (state.projectRab || []).find(r => r.id === existing.rabItemId);
+      if (rabItem) {
+        rabItem.actualSpent = Math.max(0, (Number(rabItem.actualSpent) || 0) - (Number(existing.amount) || 0));
+        rabItem.updatedAt = new Date().toISOString();
+      }
+    }
+    state.projectExpenses = (state.projectExpenses || []).filter(e => e.id !== expId);
+    writeState(state);
+    res.json({
+      success: true,
+      projectExpenses: state.projectExpenses,
+      projectRab: state.projectRab
+    });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
