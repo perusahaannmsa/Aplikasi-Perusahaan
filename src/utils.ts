@@ -182,7 +182,8 @@ export async function generateF1PdfBytes(submission: any, grandTotal: number): P
   // Calculate total required height and scaling factor to fit within 290pt
   const rawItems = items.map(item => {
     const lines = wrapText(item.item || '', 340, fontRegular, 9);
-    const h = lines.length * 14 + 14;
+    const minH = items.length <= 2 ? 50 : (items.length <= 4 ? 35 : 24);
+    const h = Math.max(minH, lines.length * 14 + 14);
     return { lines, rawH: h };
   });
   const totalItemsHeight = rawItems.reduce((acc, r) => acc + r.rawH, 0);
@@ -207,7 +208,7 @@ export async function generateF1PdfBytes(submission: any, grandTotal: number): P
     // col check line
     page.drawLine({ start: { x: 390, y: curY }, end: { x: 390, y: curY - rowHeight }, thickness: 1 });
 
-    const textOffsetY = scale < 0.75 ? 10 : 14;
+    const textOffsetY = scale < 0.75 ? 10 : (items.length <= 2 ? 20 : 14);
     for (let l = 0; l < lines.length; l++) {
       page.drawText(lines[l], { x: 48, y: curY - textOffsetY - (l * lineSpacing), size: itemFontSize, font: fontBold });
     }
@@ -250,7 +251,9 @@ export async function generateF1PdfBytes(submission: any, grandTotal: number): P
 
   // Signatures Row (3 Signers for F1: Diajukan, Diverifikasi, Disetujui)
   const blockW = 515 / 3;
-  const sigY = curY - 70;
+  // Generous signing height for normal vouchers
+  const sigGap = scale < 0.75 ? 65 : (items.length <= 3 ? 90 : 80);
+  const sigY = curY - sigGap;
 
   const applicantName = cleanSingleLine(submission.diajukanOleh || 'Andi Dhiya Salsabila');
   const applicantRole = cleanSingleLine(submission.diajukanJabatan || 'Keuangan');
@@ -296,13 +299,14 @@ export async function generateF1PdfBytes(submission: any, grandTotal: number): P
   page.drawText(approverRole, { x: 40 + blockW * 2 + (blockW / 2) - (approverRole.length * 2), y: sigY - 14, size: 8, font: fontRegular });
 
   // Notes block
-  const noteY = sigY - 45;
+  const noteY = sigY - (scale < 0.75 ? 40 : 50);
+  const noteBoxH = scale < 0.75 ? 35 : (items.length <= 3 ? 50 : 42);
   page.drawText('NOTE :', { x: 40, y: noteY, size: 9, font: fontBold });
   page.drawRectangle({
     x: 40,
-    y: noteY - 45,
+    y: noteY - noteBoxH,
     width: 515,
-    height: 38,
+    height: noteBoxH,
     borderColor: rgb(0, 0, 0),
     borderWidth: 1,
     color: rgb(0.98, 0.98, 0.98),
@@ -382,7 +386,8 @@ export async function generateF2PdfBytes(submission: any, grandTotal: number): P
   const rawF2Items = items.map(item => {
     const descWrapped = wrapText(item.item || '', 240, fontRegular, 8);
     const ketWrapped = wrapText(item.keterangan || '-', 70, fontRegular, 8);
-    const rawH = Math.max(descWrapped.length, ketWrapped.length, 1) * 12 + 10;
+    const minH = items.length <= 3 ? 32 : 20;
+    const rawH = Math.max(minH, Math.max(descWrapped.length, ketWrapped.length, 1) * 12 + 10);
     return { descWrapped, ketWrapped, rawH };
   });
   const totalF2Height = rawF2Items.reduce((acc, r) => acc + r.rawH, 0);
@@ -412,7 +417,7 @@ export async function generateF2PdfBytes(submission: any, grandTotal: number): P
     page.drawLine({ start: { x: 390, y: curY }, end: { x: 390, y: curY - rowHeight }, thickness: 1 });
     page.drawLine({ start: { x: 470, y: curY }, end: { x: 470, y: curY - rowHeight }, thickness: 1 });
 
-    const textOffsetY = scaleF2 < 0.75 ? 10 : 14;
+    const textOffsetY = scaleF2 < 0.75 ? 10 : (items.length <= 3 ? 18 : 14);
     // Fill row texts
     page.drawText(String(i + 1), { x: 48, y: curY - textOffsetY, size: f2FontSize, font: fontMono });
     
@@ -447,29 +452,31 @@ export async function generateF2PdfBytes(submission: any, grandTotal: number): P
   curY -= 25;
   
   // Signatures
-  const sigY = curY - 80;
+  const f2SigGap = scaleF2 < 0.75 ? 65 : (items.length <= 4 ? 90 : 80);
+  const sigY = curY - f2SigGap;
   const f2Dibuat = cleanSingleLine(submission.dibuatOleh || 'Nur Wahyudi');
   const f2DiajukanName = cleanSingleLine(submission.diajukanOleh || 'Andi Dhiya Salsabila');
   const f2DiajukanRole = cleanSingleLine(submission.diajukanJabatan || 'Keuangan');
 
-  page.drawText('Dibuat Oleh', { x: 90, y: curY - 30, size: 10, font: fontRegular });
+  page.drawText('Dibuat Oleh', { x: 90, y: curY - 25, size: 10, font: fontRegular });
   page.drawText(f2Dibuat, { x: 70, y: sigY, size: 10, font: fontBold });
   page.drawLine({ start: { x: 60, y: sigY - 2 }, end: { x: 200, y: sigY - 2 }, thickness: 1 });
   page.drawText('Staff Keuangan', { x: 90, y: sigY - 14, size: 8, font: fontRegular });
   
-  page.drawText('Diajukan', { x: 410, y: curY - 30, size: 10, font: fontRegular });
+  page.drawText('Diajukan', { x: 410, y: curY - 25, size: 10, font: fontRegular });
   page.drawText(f2DiajukanName, { x: 375, y: sigY, size: 10, font: fontBold });
   page.drawLine({ start: { x: 370, y: sigY - 2 }, end: { x: 500, y: sigY - 2 }, thickness: 1 });
   page.drawText(f2DiajukanRole, { x: 405, y: sigY - 14, size: 8, font: fontRegular });
   
   // Notes block
-  curY = sigY - 50;
-  page.drawText('NOTE :', { x: 40, y: curY, size: 9, font: fontBold });
+  const f2NoteY = sigY - (scaleF2 < 0.75 ? 40 : 50);
+  const f2NoteH = scaleF2 < 0.75 ? 35 : (items.length <= 4 ? 50 : 42);
+  page.drawText('NOTE :', { x: 40, y: f2NoteY, size: 9, font: fontBold });
   page.drawRectangle({
     x: 40,
-    y: curY - 50,
+    y: f2NoteY - f2NoteH,
     width: 515,
-    height: 40,
+    height: f2NoteH,
     borderColor: rgb(0,0,0),
     borderWidth: 1,
   });
