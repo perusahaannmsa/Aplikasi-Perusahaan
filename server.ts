@@ -318,36 +318,92 @@ KEMBALIKAN HANYA FORMAT JSON VALID:
   }
 });
 
+// Helper to thoroughly sanitize and normalize Google RSA PEM private keys
+export function sanitizePrivateKey(rawKey: string | undefined | null): string {
+  if (!rawKey || typeof rawKey !== "string") return "";
+  let clean = rawKey.trim();
+
+  // Strip single or double quotes repeatedly from outer bounds
+  while (
+    (clean.startsWith('"') && clean.endsWith('"')) ||
+    (clean.startsWith("'") && clean.endsWith("'"))
+  ) {
+    clean = clean.slice(1, -1).trim();
+  }
+
+  // Unescape standard escaped control characters
+  clean = clean
+    .replace(/\\r\\n/g, "\n")
+    .replace(/\\n/g, "\n")
+    .replace(/\\r/g, "\n")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n");
+
+  // In case of double-escaped newlines
+  if (clean.includes("\\n")) {
+    clean = clean.replace(/\\n/g, "\n");
+  }
+
+  // Ensure standard trailing newline for OpenSSL decoder
+  if (!clean.endsWith("\n")) {
+    clean += "\n";
+  }
+
+  return clean;
+}
+
+// Helper to extract clean Google Drive file ID from raw id or sharing URL
+export function cleanDriveFileId(rawId: string): string {
+  if (!rawId) return "";
+  const clean = rawId.trim();
+  const match1 = clean.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (match1) return match1[1];
+  const match2 = clean.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (match2) return match2[1];
+  const match3 = clean.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  if (match3) return match3[1];
+  return clean;
+}
+
 // Helper to safely obtain Google Service Account credentials from env, service-account.json, or data-store.json
 function getServiceAccountCredentials(): { clientEmail: string; privateKey: string; projectId?: string; source?: string } | null {
   // 1. Check direct environment variables
   if (process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGLE_PRIVATE_KEY) {
-    let pk = process.env.GOOGLE_PRIVATE_KEY;
-    if (pk.includes("\\n")) pk = pk.replace(/\\n/g, "\n");
-    return {
-      clientEmail: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL.trim(),
-      privateKey: pk,
-      projectId: process.env.GOOGLE_PROJECT_ID || process.env.GCP_PROJECT_ID || "Google Cloud",
-      source: "env_direct"
-    };
+    const pk = sanitizePrivateKey(process.env.GOOGLE_PRIVATE_KEY);
+    if (pk) {
+      return {
+        clientEmail: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL.trim(),
+        privateKey: pk,
+        projectId: process.env.GOOGLE_PROJECT_ID || process.env.GCP_PROJECT_ID || "Google Cloud",
+        source: "env_direct"
+      };
+    }
   }
 
   // 2. Check GOOGLE_CREDENTIALS environment variable (JSON string)
   if (process.env.GOOGLE_CREDENTIALS) {
     try {
-      const creds = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+      let rawJson = process.env.GOOGLE_CREDENTIALS.trim();
+      while (
+        (rawJson.startsWith('"') && rawJson.endsWith('"')) ||
+        (rawJson.startsWith("'") && rawJson.endsWith("'"))
+      ) {
+        rawJson = rawJson.slice(1, -1).trim();
+      }
+      const creds = JSON.parse(rawJson);
       if (creds.client_email && creds.private_key) {
-        let pk = creds.private_key;
-        if (pk.includes("\\n")) pk = pk.replace(/\\n/g, "\n");
-        return {
-          clientEmail: creds.client_email.trim(),
-          privateKey: pk,
-          projectId: creds.project_id || "Google Cloud",
-          source: "env_json"
-        };
+        const pk = sanitizePrivateKey(creds.private_key);
+        if (pk) {
+          return {
+            clientEmail: creds.client_email.trim(),
+            privateKey: pk,
+            projectId: creds.project_id || "Google Cloud",
+            source: "env_json"
+          };
+        }
       }
     } catch (e) {
-      console.warn("Failed to parse GOOGLE_CREDENTIALS env:", e);
+      // Ignored non-JSON GOOGLE_CREDENTIALS
     }
   }
 
@@ -358,14 +414,15 @@ function getServiceAccountCredentials(): { clientEmail: string; privateKey: stri
       const content = fs.readFileSync(saFilePath, "utf8");
       const creds = JSON.parse(content);
       if (creds.client_email && creds.private_key) {
-        let pk = creds.private_key;
-        if (pk.includes("\\n")) pk = pk.replace(/\\n/g, "\n");
-        return {
-          clientEmail: creds.client_email.trim(),
-          privateKey: pk,
-          projectId: creds.project_id || "Google Cloud",
-          source: "file"
-        };
+        const pk = sanitizePrivateKey(creds.private_key);
+        if (pk) {
+          return {
+            clientEmail: creds.client_email.trim(),
+            privateKey: pk,
+            projectId: creds.project_id || "Google Cloud",
+            source: "file"
+          };
+        }
       }
     } catch (e) {
       console.warn("Failed to read service-account.json file:", e);
@@ -378,14 +435,15 @@ function getServiceAccountCredentials(): { clientEmail: string; privateKey: stri
     if (fs.existsSync(dataStorePath)) {
       const ds = JSON.parse(fs.readFileSync(dataStorePath, "utf8"));
       if (ds.serviceAccount && ds.serviceAccount.client_email && ds.serviceAccount.private_key) {
-        let pk = ds.serviceAccount.private_key;
-        if (pk.includes("\\n")) pk = pk.replace(/\\n/g, "\n");
-        return {
-          clientEmail: ds.serviceAccount.client_email.trim(),
-          privateKey: pk,
-          projectId: ds.serviceAccount.project_id || "Google Cloud",
-          source: "data_store"
-        };
+        const pk = sanitizePrivateKey(ds.serviceAccount.private_key);
+        if (pk) {
+          return {
+            clientEmail: ds.serviceAccount.client_email.trim(),
+            privateKey: pk,
+            projectId: ds.serviceAccount.project_id || "Google Cloud",
+            source: "data_store"
+          };
+        }
       }
     }
   } catch (e) {}
@@ -440,9 +498,9 @@ app.post("/api/service-account/save", async (req, res) => {
       });
     }
 
-    let cleanPrivateKey = privateKey;
-    if (cleanPrivateKey.includes("\\n")) {
-      cleanPrivateKey = cleanPrivateKey.replace(/\\n/g, "\n");
+    let cleanPrivateKey = sanitizePrivateKey(privateKey);
+    if (!cleanPrivateKey) {
+      return res.status(400).json({ error: "Private key tidak valid atau kosong." });
     }
 
     // Verify validity by requesting a real JWT authorization test
@@ -519,7 +577,10 @@ app.post("/api/service-account/test", async (req, res) => {
 
     // Call Google Drive API About to check storage/status
     const drive = google.drive({ version: "v3", auth: jwtClient });
-    const aboutRes = await drive.about.get({ fields: "user, storageQuota" }).catch(() => null);
+    const aboutRes = await drive.about.get({ fields: "user, storageQuota" }).catch((err) => {
+      console.warn("drive.about.get warning (check if Drive API enabled in GCP console):", err?.message || err);
+      return null;
+    });
 
     return res.json({
       success: true,
@@ -594,8 +655,9 @@ app.get("/api/drive-token", async (req, res) => {
 });
 
 app.get("/api/drive-proxy", async (req, res) => {
-  const fileId = req.query.id as string;
-  if (!fileId) return res.status(400).json({ error: "Missing id parameter." });
+  const rawId = req.query.id as string;
+  if (!rawId) return res.status(400).json({ error: "Missing id parameter." });
+  const fileId = cleanDriveFileId(rawId);
 
   // 1. Check if token is provided via Authorization header or query param
   const authHeader = req.headers.authorization;
@@ -614,34 +676,29 @@ app.get("/api/drive-proxy", async (req, res) => {
       });
       if (driveRes.ok) {
         const contentType = driveRes.headers.get("content-type") || "application/pdf";
-        res.setHeader("Content-Type", contentType);
-        res.setHeader("Cache-Control", "public, max-age=86400");
         const arrayBuffer = await driveRes.arrayBuffer();
-        return res.send(Buffer.from(arrayBuffer));
+        if (arrayBuffer.byteLength > 0) {
+          res.setHeader("Content-Type", contentType);
+          res.setHeader("Cache-Control", "public, max-age=86400");
+          return res.send(Buffer.from(arrayBuffer));
+        }
       }
-    } catch (errUserToken) {
-      console.warn("User token download failed, trying service account or public fallbacks...", errUserToken);
+    } catch (errUserToken: any) {
+      console.warn("User token download failed, trying service account or public fallbacks...", errUserToken?.message || errUserToken);
     }
   }
 
   // 2. Check if Service Account credentials exist
   try {
-    let clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-    let privateKey = process.env.GOOGLE_PRIVATE_KEY;
-    if (process.env.GOOGLE_CREDENTIALS) {
-      try {
-        const creds = JSON.parse(process.env.GOOGLE_CREDENTIALS);
-        clientEmail = creds.client_email;
-        privateKey = creds.private_key;
-      } catch (e) {}
-    }
-
-    if (clientEmail && privateKey) {
-      if (privateKey.includes("\\n")) privateKey = privateKey.replace(/\\n/g, "\n");
+    const creds = getServiceAccountCredentials();
+    if (creds && creds.clientEmail && creds.privateKey) {
       const jwtClient = new google.auth.JWT({
-        email: clientEmail,
-        key: privateKey,
-        scopes: ["https://www.googleapis.com/auth/drive.readonly"]
+        email: creds.clientEmail,
+        key: creds.privateKey,
+        scopes: [
+          "https://www.googleapis.com/auth/drive.readonly",
+          "https://www.googleapis.com/auth/drive"
+        ]
       });
       const drive = google.drive({ version: 'v3', auth: jwtClient });
       try {
@@ -652,12 +709,12 @@ app.get("/api/drive-proxy", async (req, res) => {
         res.setHeader("Content-Type", mimeType);
         res.setHeader("Cache-Control", "public, max-age=86400");
         return res.send(Buffer.from(driveRes.data as ArrayBuffer));
-      } catch (errDrive) {
-        console.warn("Drive Service Account download failed, trying public URLs...", errDrive);
+      } catch (errDrive: any) {
+        console.warn("Drive Service Account download failed, trying public URLs...", errDrive?.message || errDrive);
       }
     }
-  } catch (saErr) {
-    console.warn("Service account initialization error:", saErr);
+  } catch (saErr: any) {
+    console.warn("Service account initialization error:", saErr?.message || saErr);
   }
 
   // 3. Fallback to resilient public Google Drive URLs
@@ -679,8 +736,15 @@ app.get("/api/drive-proxy", async (req, res) => {
       if (response.ok) {
         const contentType = response.headers.get("content-type") || "application/octet-stream";
         // Check if returned content is an HTML error page rather than actual file content
+        if (contentType.includes("text/html")) {
+          continue;
+        }
         const arrayBuffer = await response.arrayBuffer();
         if (arrayBuffer.byteLength > 0) {
+          const sliceStr = Buffer.from(arrayBuffer.slice(0, 50)).toString("utf8").toLowerCase();
+          if (sliceStr.includes("<!doctype") || sliceStr.includes("<html")) {
+            continue;
+          }
           res.setHeader("Content-Type", contentType);
           res.setHeader("Cache-Control", "public, max-age=86400");
           return res.send(Buffer.from(arrayBuffer));
@@ -692,7 +756,7 @@ app.get("/api/drive-proxy", async (req, res) => {
   }
 
   return res.status(404).json({ 
-    error: "Dokumen Google Drive tidak dapat diunduh langsung tanpa izin akses. Silakan hubungkan akun Google Drive di menu.", 
+    error: "Dokumen Google Drive tidak dapat diunduh langsung tanpa izin akses. Silakan pastikan file dibagikan ke publik atau hubungkan akun Google Drive.", 
     fileId 
   });
 });

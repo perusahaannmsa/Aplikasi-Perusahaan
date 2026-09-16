@@ -26,9 +26,14 @@ import {
   RefreshCw, 
   Check, 
   ExternalLink,
-  ChevronDown
+  ChevronDown,
+  Settings,
+  Sparkles,
+  Eye
 } from 'lucide-react';
 import { formatCurrency, formatDateIndonesian } from '../utils';
+import { useAccurateCoa, mapCoaToRabCategory } from '../utils/accurateCoaStore';
+import { AccurateCoaMasterModal } from './AccurateCoaMasterModal';
 
 interface ProjectBudgetRabProps {
   projects: Project[];
@@ -41,19 +46,10 @@ interface ProjectBudgetRabProps {
   onDeleteRabItem: (itemId: string, projectId: string) => Promise<void>;
   onSaveExpense: (expense: ProjectExpense) => Promise<void>;
   onDeleteExpense: (expenseId: string, projectId: string) => Promise<void>;
+  onCreateVoucherForProject?: (projectId: string, projectRabItemId?: string) => void;
+  onViewSubmission?: (sub: Submission) => void;
   onBackToVoucher?: () => void;
 }
-
-const ACCURATE_ACCOUNTS: { code: string; name: string; category: RabCategory }[] = [
-  { code: '5-1100', name: 'Beban Material & Bahan Proyek', category: 'Material' },
-  { code: '5-1200', name: 'Beban Upah & Tenaga Kerja Langsung', category: 'Upah Tenaga Kerja' },
-  { code: '5-1300', name: 'Beban Sewa Alat Berat & Mesin', category: 'Alat Berat & Peralatan' },
-  { code: '5-1400', name: 'Beban Subkontraktor & Pekerjaan Spesialis', category: 'Subkontraktor' },
-  { code: '5-1500', name: 'Beban Transportasi, Logistik & Angkutan', category: 'Transportasi & Logistik' },
-  { code: '5-1600', name: 'Beban Operasional Lapangan & BBM', category: 'Operasional & BBM' },
-  { code: '5-1700', name: 'Beban Overhead, K3 & Perizinan Proyek', category: 'Overhead & Perizinan' },
-  { code: '5-1900', name: 'Beban Lain-Lain & Cadangan Tak Terduga', category: 'Lain-lain' },
-];
 
 export const ProjectBudgetRab: React.FC<ProjectBudgetRabProps> = ({
   projects = [],
@@ -66,8 +62,13 @@ export const ProjectBudgetRab: React.FC<ProjectBudgetRabProps> = ({
   onDeleteRabItem,
   onSaveExpense,
   onDeleteExpense,
+  onCreateVoucherForProject,
+  onViewSubmission,
   onBackToVoucher
 }) => {
+  const { accounts: coaAccounts } = useAccurateCoa();
+  const [isCoaModalOpen, setIsCoaModalOpen] = useState(false);
+
   const [selectedProjectId, setSelectedProjectId] = useState<string>(() => {
     return projects.length > 0 ? projects[0].id : '';
   });
@@ -93,8 +94,8 @@ export const ProjectBudgetRab: React.FC<ProjectBudgetRabProps> = ({
     return projects.find(p => p.id === selectedProjectId) || projects[0] || null;
   }, [projects, selectedProjectId]);
 
-  // RAB items for active project
-  const activeProjectRab = useMemo(() => {
+  // Raw RAB items for active project
+  const rawProjectRab = useMemo(() => {
     if (!activeProject) return [];
     return projectRab.filter(r => r.projectId === activeProject.id);
   }, [projectRab, activeProject]);
@@ -104,37 +105,68 @@ export const ProjectBudgetRab: React.FC<ProjectBudgetRabProps> = ({
     if (!activeProject) return [];
     const directExpenses = projectExpenses.filter(e => e.projectId === activeProject.id);
     
-    // Also include approved/paid submissions tagged to this project that aren't already in expenses
-    const taggedSubmissions = submissions
-      .filter(s => (s as any).projectId === activeProject.id && (s.status === 'Lunas' || (s as any).status === 'approved'))
+    // Also include submissions tagged to this project
+    const taggedSubmissions = (submissions || [])
+      .filter(s => (s as any).projectId === activeProject.id)
       .map(s => {
-        const total = (s.items || []).reduce((acc, it) => acc + (it.total || 0), 0);
+        const total = (s.items || []).reduce((acc, it) => acc + (Number(it.total) || 0), 0);
+        const rItem = rawProjectRab.find(r => r.id === s.projectRabItemId);
+        const accCode = s.projectAccountCode || rItem?.accountCode || '5-1600';
+        const accName = s.projectAccountName || rItem?.accountName || 'Beban Voucher Proyek (Voucher HO)';
+        const cat = rItem?.category || mapCoaToRabCategory({ code: accCode, name: accName });
+
         return {
           id: `sub-exp-${s.id}`,
           projectId: activeProject.id,
-          date: s.tanggal,
-          category: 'Operasional & BBM' as RabCategory,
-          accountCode: '5-1600',
-          accountName: 'Beban Operasional Proyek (Voucher HO)',
+          rabItemId: s.projectRabItemId,
+          submissionId: s.id,
+          voucherNumber: s.kode,
+          date: s.tanggal || (s.createdAt ? s.createdAt.split('T')[0] : new Date().toISOString().split('T')[0]),
+          category: cat,
+          accountCode: accCode,
+          accountName: accName,
           description: s.notes || (s as any).keperluan || `Voucher HO ${s.kode}`,
-          recipient: s.diajukanOleh || 'HO',
+          recipient: s.dibayarkanKepada || s.diajukanOleh || 'Penerima Voucher',
           amount: total,
-          paymentMethod: 'Transfer HO',
+          paymentMethod: (s.dibayarkanDengan as any) || 'Transfer HO',
           invoiceNumber: s.kode,
+          notes: `Voucher HO: ${s.status || 'Belum Lunas'}${s.dpAmount ? ` (DP: Rp ${Number(s.dpAmount).toLocaleString('id-ID')})` : ''}`,
           createdAt: s.createdAt || new Date().toISOString()
         } as ProjectExpense;
       });
 
-    // Deduplicate by invoiceNumber or id
+    // Deduplicate by submissionId or invoiceNumber or id
     const all = [...directExpenses];
     taggedSubmissions.forEach(ts => {
-      if (!all.some(e => e.invoiceNumber === ts.invoiceNumber || e.id === ts.id)) {
+      const exists = all.some(e => 
+        e.id === ts.id || 
+        (ts.submissionId && e.submissionId === ts.submissionId) ||
+        (ts.invoiceNumber && e.invoiceNumber === ts.invoiceNumber)
+      );
+      if (!exists) {
         all.push(ts);
       }
     });
 
     return all.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [projectExpenses, submissions, activeProject]);
+  }, [projectExpenses, submissions, activeProject, rawProjectRab]);
+
+  // RAB items for active project with dynamic actualSpent calculated from matching expenses
+  const activeProjectRab = useMemo(() => {
+    if (!activeProject) return [];
+    return rawProjectRab.map(item => {
+      const matchingExpenses = activeProjectExpenses.filter(e => {
+        if (e.rabItemId && e.rabItemId === item.id) return true;
+        if (!e.rabItemId && e.accountCode && (e.accountCode === item.accountCode || (item as any).accurateAccountCode === e.accountCode)) return true;
+        return false;
+      });
+      const spent = matchingExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+      return {
+        ...item,
+        actualSpent: spent > 0 ? spent : (item.actualSpent || 0)
+      };
+    });
+  }, [rawProjectRab, activeProject, activeProjectExpenses]);
 
   // Financial Calculations for Active Project
   const financialSummary = useMemo(() => {
@@ -176,6 +208,15 @@ export const ProjectBudgetRab: React.FC<ProjectBudgetRabProps> = ({
     };
   }, [activeProject, activeProjectRab, activeProjectExpenses]);
 
+  // Available categories for filtering
+  const availableCategories = useMemo(() => {
+    const cats = new Set<string>();
+    activeProjectRab.forEach(item => {
+      if (item.category) cats.add(item.category);
+    });
+    return Array.from(cats);
+  }, [activeProjectRab]);
+
   // Filtered RAB items
   const filteredRabItems = useMemo(() => {
     return activeProjectRab.filter(item => {
@@ -192,10 +233,28 @@ export const ProjectBudgetRab: React.FC<ProjectBudgetRabProps> = ({
 
   // Category breakdown for summary
   const categoryBreakdown = useMemo(() => {
+    const defaultCategories: RabCategory[] = [
+      'Material',
+      'Upah Tenaga Kerja',
+      'Alat Berat & Peralatan',
+      'Subkontraktor',
+      'Transportasi & Logistik',
+      'Operasional & BBM',
+      'Overhead & Perizinan',
+      'Lain-lain'
+    ];
+
     const map = new Map<string, { budget: number; spent: number; count: number }>();
     
-    ACCURATE_ACCOUNTS.forEach(acc => {
-      map.set(acc.category, { budget: 0, spent: 0, count: 0 });
+    defaultCategories.forEach(cat => {
+      map.set(cat, { budget: 0, spent: 0, count: 0 });
+    });
+
+    coaAccounts.forEach(acc => {
+      const cat = mapCoaToRabCategory(acc);
+      if (!map.has(cat)) {
+        map.set(cat, { budget: 0, spent: 0, count: 0 });
+      }
     });
 
     activeProjectRab.forEach(item => {
@@ -215,7 +274,7 @@ export const ProjectBudgetRab: React.FC<ProjectBudgetRabProps> = ({
       burnRate: data.budget > 0 ? (data.spent / data.budget) * 100 : 0,
       count: data.count
     })).filter(c => c.budget > 0 || c.spent > 0);
-  }, [activeProjectRab]);
+  }, [activeProjectRab, coaAccounts]);
 
   // Handlers for Project
   const handleOpenAddProject = () => {
@@ -856,52 +915,79 @@ export const ProjectBudgetRab: React.FC<ProjectBudgetRabProps> = ({
                 </div>
               </div>
 
-              {/* NAVIGATION TABS (RAB / EXPENSES / PROFITABILITY SUMMARY) */}
-              <div className="flex bg-stone-100 p-1 rounded-xl w-full sm:w-auto">
-                <button
-                  type="button"
-                  onClick={() => setActiveSubTab('rab')}
-                  className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
-                    activeSubTab === 'rab'
-                      ? 'bg-white text-stone-900 shadow-xs'
-                      : 'text-stone-600 hover:text-stone-900'
-                  }`}
-                >
-                  <Calculator className="w-3.5 h-3.5 text-amber-600" />
-                  <span>Rencana Anggaran Biaya (RAB)</span>
-                  <span className="ml-1 text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-stone-100 text-stone-700">
-                    {activeProjectRab.length}
-                  </span>
-                </button>
+              {/* ACTION BAR: CREATE VOUCHER FOR THIS PROJECT & MANAGE COA 1 PINTU */}
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                {/* NAVIGATION TABS (RAB / EXPENSES / PROFITABILITY SUMMARY) */}
+                <div className="flex bg-stone-100 p-1 rounded-xl w-full sm:w-auto">
+                  <button
+                    type="button"
+                    onClick={() => setActiveSubTab('rab')}
+                    className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
+                      activeSubTab === 'rab'
+                        ? 'bg-white text-stone-900 shadow-xs'
+                        : 'text-stone-600 hover:text-stone-900'
+                    }`}
+                  >
+                    <Calculator className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Rencana Anggaran Biaya (RAB)</span>
+                    <span className="ml-1 text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-stone-100 text-stone-700">
+                      {activeProjectRab.length}
+                    </span>
+                  </button>
 
-                <button
-                  type="button"
-                  onClick={() => setActiveSubTab('expenses')}
-                  className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
-                    activeSubTab === 'expenses'
-                      ? 'bg-white text-stone-900 shadow-xs'
-                      : 'text-stone-600 hover:text-stone-900'
-                  }`}
-                >
-                  <CreditCard className="w-3.5 h-3.5 text-blue-600" />
-                  <span>Buku Pengeluaran Beban Riil</span>
-                  <span className="ml-1 text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-stone-100 text-stone-700">
-                    {activeProjectExpenses.length}
-                  </span>
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveSubTab('expenses')}
+                    className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
+                      activeSubTab === 'expenses'
+                        ? 'bg-white text-stone-900 shadow-xs'
+                        : 'text-stone-600 hover:text-stone-900'
+                    }`}
+                  >
+                    <CreditCard className="w-3.5 h-3.5 text-blue-600" />
+                    <span>Buku Pengeluaran Beban Riil</span>
+                    <span className="ml-1 text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-stone-100 text-stone-700">
+                      {activeProjectExpenses.length}
+                    </span>
+                  </button>
 
-                <button
-                  type="button"
-                  onClick={() => setActiveSubTab('summary')}
-                  className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
-                    activeSubTab === 'summary'
-                      ? 'bg-white text-stone-900 shadow-xs'
-                      : 'text-stone-600 hover:text-stone-900'
-                  }`}
-                >
-                  <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>Analisis &amp; Akun Accurate</span>
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveSubTab('summary')}
+                    className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
+                      activeSubTab === 'summary'
+                        ? 'bg-white text-stone-900 shadow-xs'
+                        : 'text-stone-600 hover:text-stone-900'
+                    }`}
+                  >
+                    <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Analisis &amp; Akun Accurate</span>
+                  </button>
+                </div>
+
+                {/* PROJECT ACTION SHORTCUTS */}
+                <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                  {onCreateVoucherForProject && (
+                    <button
+                      type="button"
+                      onClick={() => onCreateVoucherForProject(activeProject.id)}
+                      className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-stone-950 font-bold text-xs rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                      title="Buat voucher transaksi pengeluaran baru yang otomatis tersambung ke proyek ini"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Buat Voucher Proyek</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setIsCoaModalOpen(true)}
+                    className="px-3 py-1.5 bg-white hover:bg-stone-50 border border-stone-250 text-stone-700 font-bold text-xs rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-3xs"
+                    title="Kelola Master Akun COA (1 Pintu) - Terhubung ke RAB dan Pemetaan Akun"
+                  >
+                    <Settings className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Kelola COA ({coaAccounts.length})</span>
+                  </button>
+                </div>
               </div>
 
               {/* SUB-TAB 1: TABEL RAB DETAIL */}
@@ -928,8 +1014,8 @@ export const ProjectBudgetRab: React.FC<ProjectBudgetRabProps> = ({
                         className="text-xs py-1.5 px-3 rounded-xl border border-stone-200 bg-white text-stone-700 focus:outline-none focus:ring-1 focus:ring-amber-500"
                       >
                         <option value="all">Semua Kategori</option>
-                        {ACCURATE_ACCOUNTS.map(a => (
-                          <option key={a.category} value={a.category}>{a.category}</option>
+                        {availableCategories.map(cat => (
+                          <option key={cat} value={cat}>{cat}</option>
                         ))}
                       </select>
                     </div>
@@ -1133,11 +1219,18 @@ export const ProjectBudgetRab: React.FC<ProjectBudgetRabProps> = ({
                               <td className="py-2.5 px-3 font-mono text-[11px] whitespace-nowrap">
                                 {exp.date}
                               </td>
-                              <td className="py-2.5 px-3 font-mono text-[10px] font-bold text-stone-800">
-                                {exp.invoiceNumber || '-'}
+                              <td className="py-2.5 px-3 font-mono text-[10px]">
+                                <div className="flex flex-col items-start gap-0.5">
+                                  <span className="font-bold text-stone-800">{exp.invoiceNumber || '-'}</span>
+                                  {(exp.submissionId || exp.id.startsWith('sub-exp-')) && (
+                                    <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 flex items-center gap-1">
+                                      <span>Voucher HO</span>
+                                    </span>
+                                  )}
+                                </div>
                               </td>
                               <td className="py-2.5 px-3">
-                                <span className="font-mono text-[10px] bg-stone-100 px-1.5 py-0.5 rounded font-bold">
+                                <span className="font-mono text-[10px] bg-stone-100 px-1.5 py-0.5 rounded font-bold text-stone-700">
                                   {exp.accountCode}
                                 </span>
                               </td>
@@ -1156,7 +1249,21 @@ export const ProjectBudgetRab: React.FC<ProjectBudgetRabProps> = ({
                                 {formatCurrency(exp.amount)}
                               </td>
                               <td className="py-2.5 px-3 text-center">
-                                {!exp.id.startsWith('sub-exp-') && (
+                                {exp.submissionId || exp.id.startsWith('sub-exp-') ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const sub = (submissions || []).find(s => s.id === exp.submissionId || s.kode === exp.invoiceNumber);
+                                      if (sub && onViewSubmission) {
+                                        onViewSubmission(sub);
+                                      }
+                                    }}
+                                    className="p-1 text-amber-600 hover:text-amber-800 hover:bg-amber-50 rounded cursor-pointer transition"
+                                    title="Lihat Voucher Transaksi Asli"
+                                  >
+                                    <Eye className="w-3.5 h-3.5" />
+                                  </button>
+                                ) : (
                                   <button
                                     onClick={async () => {
                                       if (window.confirm(`Hapus transaksi pengeluaran "${exp.description}"?`)) {
@@ -1483,27 +1590,37 @@ export const ProjectBudgetRab: React.FC<ProjectBudgetRabProps> = ({
 
             <form onSubmit={handleSaveRabSubmit} className="space-y-4">
               <div>
-                <label className="block text-[11px] font-bold text-stone-700 uppercase mb-1">
-                  Akun Beban Proyek (Standar Accurate)
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[11px] font-bold text-stone-700 uppercase">
+                    Akun Beban Proyek (Standar COA Accurate)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setIsCoaModalOpen(true)}
+                    className="text-[10px] text-amber-700 hover:text-amber-800 font-bold flex items-center gap-1 cursor-pointer"
+                  >
+                    <Settings className="w-3 h-3 text-amber-600" />
+                    <span>Kelola Akun (1 Pintu)</span>
+                  </button>
+                </div>
                 <select
                   value={editingRabItem.accountCode}
                   onChange={(e) => {
-                    const acc = ACCURATE_ACCOUNTS.find(a => a.code === e.target.value);
+                    const acc = coaAccounts.find(a => a.code === e.target.value);
                     if (acc) {
                       setEditingRabItem({
                         ...editingRabItem,
                         accountCode: acc.code,
                         accountName: acc.name,
-                        category: acc.category
+                        category: mapCoaToRabCategory(acc)
                       });
                     }
                   }}
                   className="w-full px-3 py-2 text-xs rounded-xl border border-stone-200 focus:outline-none focus:ring-1 focus:ring-amber-500 font-mono"
                 >
-                  {ACCURATE_ACCOUNTS.map(a => (
+                  {coaAccounts.map(a => (
                     <option key={a.code} value={a.code}>
-                      {a.code} - {a.name}
+                      [{a.code}] {a.name} ({a.category || 'Akun'})
                     </option>
                   ))}
                 </select>
@@ -1753,6 +1870,12 @@ export const ProjectBudgetRab: React.FC<ProjectBudgetRabProps> = ({
           </div>
         </div>
       )}
+
+      {/* MASTER COA (1 PINTU) MODAL */}
+      <AccurateCoaMasterModal
+        isOpen={isCoaModalOpen}
+        onClose={() => setIsCoaModalOpen(false)}
+      />
 
     </div>
   );

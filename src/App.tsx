@@ -3156,6 +3156,8 @@ export default function App() {
             initialSubmission={editingSubmission}
             userProfile={userProfile}
             submissions={submissions}
+            projects={projects}
+            projectRab={projectRab}
             pettyCashHolders={pettyCashHolders}
             onOpenManageHolders={() => setIsHoldersModalOpen(true)}
             onOpenConsolidateModal={() => setIsConsolidateNamesModalOpen(true)}
@@ -3316,6 +3318,48 @@ export default function App() {
             onDeleteRabItem={handleDeleteRabItem}
             onSaveExpense={handleSaveExpense}
             onDeleteExpense={handleDeleteExpense}
+            onCreateVoucherForProject={(projectId, rabItemId) => {
+              const proj = projects.find(p => p.id === projectId);
+              const rItem = projectRab.find(r => r.id === rabItemId);
+              setEditingSubmission({
+                id: '',
+                kode: 'HO',
+                tanggal: new Date().toISOString().split('T')[0],
+                jenisPengajuan: 'Biaya Kantor',
+                dibayarkanKepada: '',
+                dibayarkanDengan: 'Cek/Transfer',
+                status: 'Belum Lunas',
+                projectId: projectId,
+                projectName: proj?.name,
+                projectCode: proj?.code,
+                projectRabItemId: rabItemId,
+                projectRabItemName: rItem?.name,
+                projectAccountCode: rItem?.accountCode,
+                projectAccountName: rItem?.accountName,
+                notes: rItem ? `Realisasi Pos RAB [${rItem.accountCode || ''}] ${rItem.name}` : '',
+                items: [
+                  {
+                    id: 'it-1',
+                    item: rItem ? `${rItem.name} (${rItem.accountName || rItem.category})` : '',
+                    volume: '1',
+                    satuan: 'Lumpsum',
+                    hargaSatuan: 0,
+                    total: 0,
+                    keterangan: proj ? `Proyek ${proj.name}` : ''
+                  }
+                ]
+              } as any);
+              setPreviousView('rab');
+              setView('form');
+            }}
+            onViewSubmission={(sub) => {
+              if (sub) {
+                setActiveSubmission(sub);
+                setPrintInitialTab('pengeluaran');
+                setPreviousView('rab');
+                setView('print');
+              }
+            }}
             onBackToVoucher={() => setView('list')}
           />
         )}

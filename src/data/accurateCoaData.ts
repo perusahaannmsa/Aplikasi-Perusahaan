@@ -115,8 +115,16 @@ export const DEFAULT_ACCURATE_ACCOUNTS: AccurateAccount[] = [
   { code: '440101', name: 'Diskon Penjualan IDR', category: 'Pendapatan' },
   { code: '440102', name: 'Diskon Penjualan USD', category: 'Pendapatan' },
 
-  // Beban Pokok Penjualan
+  // Beban Pokok Penjualan / Biaya Proyek & HPP
   { code: '5101', name: 'Beban Pokok Penjualan', category: 'Beban Pokok Penjualan', keywords: ['hpp', 'cogs'] },
+  { code: '5-1100', name: 'Beban Material & Bahan Proyek', category: 'Beban Pokok Penjualan', keywords: ['material', 'semen', 'besi', 'pasir', 'batu', 'kayu', 'cat', 'bahan proyek'] },
+  { code: '5-1200', name: 'Beban Upah & Tenaga Kerja Langsung', category: 'Beban Pokok Penjualan', keywords: ['upah', 'mandor', 'tukang', 'gaji lapangan', 'harian', 'tenaga kerja'] },
+  { code: '5-1300', name: 'Beban Sewa Alat Berat & Mesin', category: 'Beban Pokok Penjualan', keywords: ['sewa alat', 'excavator', 'dozer', 'crane', 'loader', 'genset'] },
+  { code: '5-1400', name: 'Beban Subkontraktor & Pekerjaan Spesialis', category: 'Beban Pokok Penjualan', keywords: ['subkon', 'subkontraktor', 'spesialis', 'borongan'] },
+  { code: '5-1500', name: 'Beban Transportasi, Logistik & Angkutan', category: 'Beban Pokok Penjualan', keywords: ['logistik', 'angkutan', 'mobilisasi', 'demobilisasi', 'ekspedisi proyek'] },
+  { code: '5-1600', name: 'Beban Operasional Lapangan & BBM', category: 'Beban Pokok Penjualan', keywords: ['bbm proyek', 'solar genset', 'operasional site', 'mess', 'air kerja'] },
+  { code: '5-1700', name: 'Beban Overhead, K3 & Perizinan Proyek', category: 'Beban Pokok Penjualan', keywords: ['k3', 'safety', 'apd', 'helm', 'rompi', 'izin proyek', 'retribusi site'] },
+  { code: '5-1900', name: 'Beban Lain-Lain & Cadangan Tak Terduga', category: 'Beban Pokok Penjualan', keywords: ['tak terduga', 'cadangan', 'lain-lain proyek'] },
   { code: '5102', name: 'Biaya Surveyor', category: 'Beban Pokok Penjualan', keywords: ['surveyor', 'draft survey', 'lhv', 'sucofindo', 'geoservices', 'carsurin'] },
   { code: '5103', name: 'Biaya Tongkang', category: 'Beban Pokok Penjualan', keywords: ['tongkang', 'barge', 'freight tongkang', 'towing'] },
   { code: '5104', name: 'Biaya Trucking', category: 'Beban Pokok Penjualan', keywords: ['trucking', 'sewa dump truck', 'dt', 'hauling', 'angkut'] },

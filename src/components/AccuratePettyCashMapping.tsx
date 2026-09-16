@@ -11,6 +11,8 @@ import {
 } from 'lucide-react';
 import { AccurateAccount, AccurateMappedTransaction, AccurateMappingReport, PettyCashReport, Submission } from '../types';
 import { DEFAULT_ACCURATE_ACCOUNTS, autoMapTransactionToAccurate } from '../data/accurateCoaData';
+import { useAccurateCoa } from '../utils/accurateCoaStore';
+import { AccurateCoaMasterModal } from './AccurateCoaMasterModal';
 import { isPettyCashSubmission, getPettyCashCustodian, sortSubmissionsDescending } from '../utils';
 import { 
   saveAccurateMappingToFirestore, 
@@ -189,21 +191,8 @@ export function AccuratePettyCashMapping({
   onSaveSubmission,
   onBack
 }: AccuratePettyCashMappingProps) {
-  // Master Accounts State
-  const [accounts, setAccounts] = useState<AccurateAccount[]>(() => {
-    try {
-      const stored = localStorage.getItem('accurate_coa_master_v1');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 20) {
-          return parsed;
-        }
-      }
-      return DEFAULT_ACCURATE_ACCOUNTS;
-    } catch (e) {
-      return DEFAULT_ACCURATE_ACCOUNTS;
-    }
-  });
+  // Master Accounts State from unified store (1 Pintu)
+  const { accounts } = useAccurateCoa();
 
   const cachedInitial = useMemo(() => getInitialCachedMapping(), []);
 
@@ -943,6 +932,13 @@ export function AccuratePettyCashMapping({
 
     // 3. Link back to Submission object if applicable
     if (targetSub) {
+      try {
+        localStorage.setItem('accurate_mapping_sub_' + targetSub.id, JSON.stringify(mappingPayload));
+        if (targetSub.kode) {
+          localStorage.setItem('accurate_mapping_code_' + targetSub.kode, JSON.stringify(mappingPayload));
+        }
+      } catch (e) {}
+
       const updatedSub: Submission = {
         ...targetSub,
         isAccurateMapped: true,
@@ -1040,6 +1036,8 @@ export function AccuratePettyCashMapping({
     } else {
       setActiveSubmission(null);
     }
+
+    setActiveTab('workspace');
 
     setSuccessMessage(`Berhasil memuat pemetaan tersimpan "${mapping.title}" (${mapping.transactions.length} baris transaksi - Rp ${(mapping.totalExpense || 0).toLocaleString('id-ID')})!`);
     setTimeout(() => setSuccessMessage(''), 3500);
@@ -1228,14 +1226,8 @@ export function AccuratePettyCashMapping({
   // Paste Text state
   const [pastedText, setPastedText] = useState<string>('');
 
-  // COA Manager Modal State
+  // COA Manager Modal State (Centralized 1 Pintu Modal)
   const [isCoaModalOpen, setIsCoaModalOpen] = useState<boolean>(false);
-  const [editingCode, setEditingCode] = useState<string | null>(null);
-  const [newCode, setNewCode] = useState<string>('');
-  const [newName, setNewName] = useState<string>('');
-  const [newCategory, setNewCategory] = useState<string>('Beban Operasional');
-  const [newKeywords, setNewKeywords] = useState<string>('');
-  const [searchTermCoa, setSearchTermCoa] = useState<string>('');
 
   // Group Detail Modal State
   const [selectedGroupCode, setSelectedGroupCode] = useState<string | null>(null);
@@ -1244,15 +1236,6 @@ export function AccuratePettyCashMapping({
 
   // File Upload Ref
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Sync Master Accounts to localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem('accurate_coa_master_v1', JSON.stringify(accounts));
-    } catch (e) {
-      console.error(e);
-    }
-  }, [accounts]);
 
   // Helper: Get Kas Account Object
   const kasAccount = accounts.find(a => a.code === selectedKasCode) || {
@@ -1779,8 +1762,22 @@ export function AccuratePettyCashMapping({
   };
 
   // 5. Load from Uploaded Voucher HO Submission with AI Document Parsing
-  const handleLoadVoucherSubmission = async (sub: Submission, specificDocUrl?: string, specificDocName?: string) => {
+  const handleLoadVoucherSubmission = async (
+    sub: Submission, 
+    specificDocUrl?: string, 
+    specificDocName?: string,
+    forceReparse: boolean = false
+  ) => {
     if (!sub) return;
+
+    // Fast path: if this submission already has a saved mapping, load it immediately without re-parsing!
+    if (!forceReparse) {
+      const stats = getVoucherStats(sub);
+      if (stats.savedMapping && stats.savedMapping.transactions && stats.savedMapping.transactions.length > 0) {
+        handleLoadSavedMapping(stats.savedMapping);
+        return;
+      }
+    }
 
     // Strictly prioritize LPJ (Laporan Pertanggungjawaban Petty Cash Lapangan) documents
     const lpjDocs = getSubmissionDocuments(sub);
@@ -1836,9 +1833,10 @@ export function AccuratePettyCashMapping({
           setReportTitle(`Laporan Petty Cash: ${sub.kode} - ${custodian}`);
           setPeriod(sub.tanggal ? sub.tanggal.substring(0, 7) : new Date().toISOString().substring(0, 7));
           setTransactions(mappedTxs);
+          setActiveTab('workspace');
           setSuccessMessage(`Berhasil menganalisis Berkas LPJ Lapangan "${docName || 'Petty Cash'}" & mengekstrak ${mappedTxs.length} rincian transaksi via AI!`);
 
-          saveAccurateMappingToFirestore({
+          const newMapping: AccurateMappingReport = {
             id: `vh-map-${sub.id}`,
             title: `Laporan Petty Cash: ${sub.kode} - ${custodian}`,
             period: sub.tanggal ? sub.tanggal.substring(0, 7) : new Date().toISOString().substring(0, 7),
@@ -1846,10 +1844,21 @@ export function AccuratePettyCashMapping({
             totalExpense: mappedTxs.reduce((s, t) => s + (t.amount || 0), 0),
             transactions: mappedTxs,
             custodian,
-            documentUrl: docUrl,
+            documentUrl: docUrl || undefined,
             documentName: docName || undefined,
-            savedAt: new Date().toISOString()
-          });
+            savedAt: new Date().toISOString(),
+            submissionId: sub.id,
+            submissionCode: sub.kode
+          };
+
+          saveAccurateMappingToFirestore(newMapping);
+          setSavedMappings(prev => [newMapping, ...prev.filter(m => m.id !== newMapping.id)]);
+          try {
+            localStorage.setItem('accurate_mapping_sub_' + sub.id, JSON.stringify(newMapping));
+            if (sub.kode) {
+              localStorage.setItem('accurate_mapping_code_' + sub.kode, JSON.stringify(newMapping));
+            }
+          } catch (e) {}
 
           setIsProcessing(false);
           return; // Done with AI parsing!
@@ -1886,9 +1895,10 @@ export function AccuratePettyCashMapping({
     setReportTitle(`Laporan Petty Cash: ${sub.kode} - ${custodian}`);
     setPeriod(sub.tanggal ? sub.tanggal.substring(0, 7) : new Date().toISOString().substring(0, 7));
     setTransactions(mappedTxs);
+    setActiveTab('workspace');
     setSuccessMessage(`Memuat ${mappedTxs.length} rincian transaksi dari data voucher [${sub.kode}] (${custodian}).`);
 
-    saveAccurateMappingToFirestore({
+    const fallbackMapping: AccurateMappingReport = {
       id: `vh-map-${sub.id}`,
       title: `Laporan Petty Cash: ${sub.kode} - ${custodian}`,
       period: sub.tanggal ? sub.tanggal.substring(0, 7) : new Date().toISOString().substring(0, 7),
@@ -1898,8 +1908,19 @@ export function AccuratePettyCashMapping({
       custodian,
       documentUrl: docUrl || undefined,
       documentName: docName || undefined,
-      savedAt: new Date().toISOString()
-    });
+      savedAt: new Date().toISOString(),
+      submissionId: sub.id,
+      submissionCode: sub.kode
+    };
+
+    saveAccurateMappingToFirestore(fallbackMapping);
+    setSavedMappings(prev => [fallbackMapping, ...prev.filter(m => m.id !== fallbackMapping.id)]);
+    try {
+      localStorage.setItem('accurate_mapping_sub_' + sub.id, JSON.stringify(fallbackMapping));
+      if (sub.kode) {
+        localStorage.setItem('accurate_mapping_code_' + sub.kode, JSON.stringify(fallbackMapping));
+      }
+    } catch (e) {}
   };
 
   // Save current mapping report to Cloud Firestore & App LocalStorage
@@ -2230,68 +2251,6 @@ export function AccuratePettyCashMapping({
     setTimeout(() => setSuccessMessage(''), 3000);
   };
 
-  // --- COA MANAGEMENT HANDLERS ---
-  const handleStartEditCoa = (acc: AccurateAccount) => {
-    setEditingCode(acc.code);
-    setNewCode(acc.code);
-    setNewName(acc.name);
-    setNewCategory(acc.category);
-    setNewKeywords(acc.keywords ? acc.keywords.join(', ') : '');
-  };
-
-  const handleCancelEditCoa = () => {
-    setEditingCode(null);
-    setNewCode('');
-    setNewName('');
-    setNewCategory('Beban Operasional');
-    setNewKeywords('');
-  };
-
-  const handleAddCoaAccount = () => {
-    if (!newCode.trim() || !newName.trim()) return;
-
-    const keywordsArr = newKeywords.split(',').map(k => k.trim()).filter(Boolean);
-    const updatedAcc: AccurateAccount = {
-      code: newCode.trim(),
-      name: newName.trim(),
-      category: newCategory,
-      keywords: keywordsArr
-    };
-
-    if (editingCode) {
-      setAccounts(prev => prev.map(a => a.code === editingCode ? updatedAcc : a));
-      setSuccessMessage(`Akun Accurate [${updatedAcc.code}] ${updatedAcc.name} berhasil diperbarui!`);
-    } else {
-      setAccounts(prev => [...prev, updatedAcc]);
-      setSuccessMessage(`Akun Accurate [${updatedAcc.code}] ${updatedAcc.name} berhasil ditambahkan!`);
-    }
-
-    handleCancelEditCoa();
-    setTimeout(() => setSuccessMessage(''), 3000);
-  };
-
-  const handleDeleteCoaAccount = (code: string) => {
-    setAccounts(prev => prev.filter(a => a.code !== code));
-    if (editingCode === code) {
-      handleCancelEditCoa();
-    }
-  };
-
-  const handleResetCoaToDefault = () => {
-    if (confirm('Apakah Anda yakin ingin mereset seluruh daftar COA ke susunan standar Accurate dari dokumen laporan?')) {
-      setAccounts(DEFAULT_ACCURATE_ACCOUNTS);
-      localStorage.setItem('accurate_coa_master_v1', JSON.stringify(DEFAULT_ACCURATE_ACCOUNTS));
-      setSuccessMessage('Daftar COA Accurate berhasil direset ke standar lengkap!');
-      setTimeout(() => setSuccessMessage(''), 3000);
-    }
-  };
-
-  const filteredCoaAccounts = accounts.filter(a => 
-    a.code.toLowerCase().includes(searchTermCoa.toLowerCase()) || 
-    a.name.toLowerCase().includes(searchTermCoa.toLowerCase()) ||
-    a.category.toLowerCase().includes(searchTermCoa.toLowerCase())
-  );
-
   return (
     <div className="space-y-6 pb-12">
       {/* Header Banner */}
@@ -2481,7 +2440,13 @@ export function AccuratePettyCashMapping({
                     <div 
                       key={sub.id} 
                       className="bg-white hover:bg-emerald-50/40 border border-stone-250 hover:border-emerald-400 rounded-2xl p-4 transition shadow-xs flex flex-col justify-between space-y-3.5 cursor-pointer group"
-                      onClick={() => handleOpenVoucherModal(sub)}
+                      onClick={() => {
+                        if (stats.savedMapping) {
+                          handleLoadSavedMapping(stats.savedMapping);
+                        } else {
+                          handleOpenVoucherModal(sub);
+                        }
+                      }}
                     >
                       <div className="space-y-2.5">
                         {/* Header: Document Code & Type Badge */}
@@ -2634,7 +2599,7 @@ export function AccuratePettyCashMapping({
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleLoadVoucherSubmission(sub);
+                                  handleLoadVoucherSubmission(sub, undefined, undefined, true);
                                 }}
                                 className="bg-stone-100 hover:bg-stone-200 text-stone-700 border border-stone-300 px-2 py-1.5 rounded-xl text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
                                 title="Analisis ulang dokumen fisik atau rincian item voucher ini"
@@ -3494,201 +3459,12 @@ export function AccuratePettyCashMapping({
         </div>
       )}
 
-      {/* Modal / Drawer: COA Manager */}
-      {isCoaModalOpen && (
-        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 space-y-5 shadow-2xl border border-stone-200 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-stone-200 pb-4">
-              <div className="flex items-center gap-2 text-stone-900 font-sans font-black text-lg">
-                <Settings className="text-amber-500" size={20} />
-                <h3>Kelola Master Akun Accurate (Chart of Accounts)</h3>
-              </div>
-              <button
-                onClick={() => setIsCoaModalOpen(false)}
-                className="text-stone-400 hover:text-stone-700 font-bold text-sm cursor-pointer px-2 py-1 rounded-lg"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Add / Edit Account Form */}
-            <div className={`border p-4 rounded-2xl space-y-3 transition-colors ${editingCode ? 'bg-amber-50/70 border-amber-300' : 'bg-stone-50 border-stone-250'}`}>
-              <h4 className="font-bold text-xs text-stone-900 uppercase font-mono tracking-wider flex items-center justify-between">
-                <span>{editingCode ? `✏️ Edit Akun Accurate [${editingCode}]` : '+ Tambah Akun Accurate Baru'}</span>
-                <span className="text-[10px] text-stone-500 font-normal">Kategori & Kata Kunci Otomatis</span>
-              </h4>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="text-[10px] font-mono text-stone-500 uppercase font-bold block mb-1">
-                    Kode Perkiraan:
-                  </label>
-                  <input
-                    type="text"
-                    value={newCode}
-                    onChange={(e) => setNewCode(e.target.value)}
-                    placeholder="Contoh: 600030"
-                    className="w-full bg-white border border-stone-250 rounded-xl p-2 text-xs font-mono focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                  />
-                </div>
-
-                <div className="sm:col-span-2">
-                  <label className="text-[10px] font-mono text-stone-500 uppercase font-bold block mb-1">
-                    Nama Akun Accurate:
-                  </label>
-                  <input
-                    type="text"
-                    value={newName}
-                    onChange={(e) => setNewName(e.target.value)}
-                    placeholder="Contoh: Beban Humas & CSR Site"
-                    className="w-full bg-white border border-stone-250 rounded-xl p-2 text-xs font-mono focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[10px] font-mono text-stone-500 uppercase font-bold block mb-1">
-                    Tipe Akun:
-                  </label>
-                  <select
-                    value={newCategory}
-                    onChange={(e) => setNewCategory(e.target.value)}
-                    className="w-full bg-white border border-stone-250 rounded-xl p-2 text-xs font-mono focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                  >
-                    <option value="Kas & Bank">Kas & Bank</option>
-                    <option value="Piutang Usaha">Piutang Usaha</option>
-                    <option value="Persediaan">Persediaan</option>
-                    <option value="Aset Lancar Lainnya">Aset Lancar Lainnya</option>
-                    <option value="Aset Tetap">Aset Tetap</option>
-                    <option value="Akumulasi Penyusutan">Akumulasi Penyusutan</option>
-                    <option value="Utang Usaha">Utang Usaha</option>
-                    <option value="Liabilitas Jangka Pendek">Liabilitas Jangka Pendek</option>
-                    <option value="Liabilitas Jangka Panjang">Liabilitas Jangka Panjang</option>
-                    <option value="Modal">Modal</option>
-                    <option value="Pendapatan">Pendapatan</option>
-                    <option value="Beban Pokok Penjualan">Beban Pokok Penjualan</option>
-                    <option value="Beban Operasional">Beban Operasional</option>
-                    <option value="Pendapatan Lainnya">Pendapatan Lainnya</option>
-                    <option value="Beban Lainnya">Beban Lainnya</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-[10px] font-mono text-stone-500 uppercase font-bold block mb-1">
-                    Kata Kunci Auto-Mapping (Opsional):
-                  </label>
-                  <input
-                    type="text"
-                    value={newKeywords}
-                    onChange={(e) => setNewKeywords(e.target.value)}
-                    placeholder="Contoh: humas, csr, donasi, warga"
-                    className="w-full bg-white border border-stone-250 rounded-xl p-2 text-xs font-mono focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handleAddCoaAccount}
-                  disabled={!newCode.trim() || !newName.trim()}
-                  className="bg-emerald-700 hover:bg-emerald-800 disabled:bg-stone-300 text-white font-bold px-4 py-2 rounded-xl text-xs transition cursor-pointer flex items-center gap-1.5 shadow-3xs"
-                >
-                  {editingCode ? <Check size={14} /> : <Plus size={14} />}
-                  <span>{editingCode ? 'Simpan Perubahan Akun' : 'Simpan Akun COA Baru'}</span>
-                </button>
-
-                {editingCode && (
-                  <button
-                    onClick={handleCancelEditCoa}
-                    className="bg-stone-200 hover:bg-stone-300 text-stone-700 font-bold px-3 py-2 rounded-xl text-xs transition cursor-pointer"
-                  >
-                    Batal Edit
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* List of Current Accounts */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-mono font-bold text-stone-700 uppercase">
-                  Daftar Akun Master COA ({accounts.length} Akun)
-                </span>
-
-                <div className="relative w-48">
-                  <input
-                    type="text"
-                    value={searchTermCoa}
-                    onChange={(e) => setSearchTermCoa(e.target.value)}
-                    placeholder="Cari kode/nama..."
-                    className="w-full bg-stone-50 border border-stone-250 rounded-xl pl-7 pr-2 py-1 text-xs font-mono focus:outline-none"
-                  />
-                  <Search size={12} className="absolute left-2.5 top-2 text-stone-400" />
-                </div>
-              </div>
-
-              <div className="border border-stone-250 rounded-2xl max-h-60 overflow-y-auto divide-y divide-stone-200">
-                {filteredCoaAccounts.map((acc) => (
-                  <div key={acc.code} className={`p-3 flex items-center justify-between gap-3 text-xs font-mono transition ${editingCode === acc.code ? 'bg-amber-100/60' : 'hover:bg-stone-50'}`}>
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">
-                          {acc.code}
-                        </span>
-                        <span className="font-extrabold text-stone-900">{acc.name}</span>
-                        <span className="text-[10px] text-stone-500 bg-stone-100 px-1.5 py-0.2 rounded font-sans">
-                          {acc.category}
-                        </span>
-                      </div>
-                      {acc.keywords && acc.keywords.length > 0 && (
-                        <span className="block text-[10px] text-stone-400 mt-0.5">
-                          Keywords: {acc.keywords.join(', ')}
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button
-                        onClick={() => handleStartEditCoa(acc)}
-                        className="text-stone-400 hover:text-amber-600 transition cursor-pointer p-1.5 rounded-lg hover:bg-amber-100/80"
-                        title="Edit akun ini"
-                      >
-                        <Edit2 size={14} />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteCoaAccount(acc.code)}
-                        className="text-stone-400 hover:text-rose-600 transition cursor-pointer p-1.5 rounded-lg hover:bg-rose-100/80"
-                        title="Hapus akun ini"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="pt-2 flex items-center justify-between border-t border-stone-200">
-              <button
-                onClick={handleResetCoaToDefault}
-                className="bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 font-bold px-3.5 py-2 rounded-xl text-xs transition cursor-pointer flex items-center gap-1.5"
-                title="Kembalikan susunan COA ke standar lengkap sesuai laporan Accurate"
-              >
-                <RefreshCw size={13} />
-                <span>Reset ke Standar COA Accurate</span>
-              </button>
-
-              <button
-                onClick={() => setIsCoaModalOpen(false)}
-                className="bg-stone-900 hover:bg-stone-800 text-white font-bold px-5 py-2.5 rounded-xl text-xs transition cursor-pointer"
-              >
-                Selesai
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Centralized One-Door Master COA Modal */}
+      <AccurateCoaMasterModal
+        isOpen={isCoaModalOpen}
+        onClose={() => setIsCoaModalOpen(false)}
+        title="Kelola Master Akun Accurate (Chart of Accounts - 1 Pintu Global)"
+      />
 
       {/* Modal: Detail Rincian & Pemindahan Transaksi per Akun */}
       {selectedGroupCode && (
@@ -3959,6 +3735,27 @@ export function AccuratePettyCashMapping({
                           }}
                         />
                       </label>
+
+                      {(() => {
+                        const modalStats = getVoucherStats(selectedVoucherForModal);
+                        if (modalStats.savedMapping) {
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsVoucherModalOpen(false);
+                                handleLoadSavedMapping(modalStats.savedMapping!);
+                              }}
+                              className="bg-indigo-700 hover:bg-indigo-800 text-white font-extrabold px-3.5 py-2 rounded-xl text-xs flex items-center gap-1.5 shadow-md transition cursor-pointer"
+                              title="Buka pemetaan akun yang tersimpan langsung tanpa perlu menganalisis ulang berkas"
+                            >
+                              <History size={15} />
+                              <span>Buka Pemetaan Tersimpan</span>
+                            </button>
+                          );
+                        }
+                        return null;
+                      })()}
 
                       <button
                         type="button"

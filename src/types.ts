@@ -9,6 +9,11 @@ export interface SubmissionItem {
   debit?: number;
   kredit?: number;
   saldo?: number;
+  // Optional project RAB allocation per item
+  rabItemId?: string;
+  rabItemName?: string;
+  accountCode?: string;
+  accountName?: string;
 }
 
 export type PaymentMethod = 'Tunai' | 'Cek/Transfer';
@@ -114,6 +119,9 @@ export interface Submission {
   projectName?: string;
   projectCode?: string;
   projectRabItemId?: string;
+  projectRabItemName?: string;
+  projectAccountCode?: string;
+  projectAccountName?: string;
 
   items: SubmissionItem[];
   createdAt: string;

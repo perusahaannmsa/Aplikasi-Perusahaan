@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Submission, SubmissionItem, PaymentMethod, REQUIRED_TRANSACTION_DOCS } from '../types';
+import { Submission, SubmissionItem, PaymentMethod, REQUIRED_TRANSACTION_DOCS, Project, ProjectRabItem } from '../types';
 import { 
   googleDriveLogin, 
   getStoredGoogleDriveToken, 
@@ -12,7 +12,7 @@ import {
 } from '../firebase';
 import { DriveAccountsManager } from './DriveAccountsManager';
 import { SppdIntegration, SppdRecord } from './SppdIntegration';
-import { Trash2, Plus, ArrowLeft, Save, AlertCircle, Sparkles, Cloud, Loader2, FileText, Coins, FileUp, ExternalLink, GitBranch, X, Calculator, Percent, Tag, Receipt, CalendarX, CalendarCheck, AlertTriangle, Calendar, CheckSquare, Clock } from 'lucide-react';
+import { Trash2, Plus, ArrowLeft, Save, AlertCircle, Sparkles, Cloud, Loader2, FileText, Coins, FileUp, ExternalLink, GitBranch, X, Calculator, Percent, Tag, Receipt, CalendarX, CalendarCheck, AlertTriangle, Calendar, CheckSquare, Clock, FolderKanban, Building2, CheckCircle2 } from 'lucide-react';
 import { generateF1PdfBytes, generateF2PdfBytes, formatDateIndonesian, convertImageToPdf, formatRupiah, analyzeVolumeInput, checkIsHolidayOrWeekend, getNextWorkday, getPreviousWorkday, formatDateWithDayIndonesian, getDefaultTransactionDate, HolidayCheckResult, calculateTaxDueDate } from '../utils';
 import { areNamesSimilar, toTitleCase } from '../utils/nameConsolidation';
 
@@ -20,6 +20,8 @@ interface SubmissionFormProps {
   initialSubmission?: Submission | null;
   userProfile?: any;
   submissions?: Submission[];
+  projects?: Project[];
+  projectRab?: ProjectRabItem[];
   onSave: (submission: Submission) => Promise<void> | void;
   onCancel: () => void;
   pettyCashHolders?: string[];
@@ -292,6 +294,8 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
   initialSubmission,
   userProfile,
   submissions = [],
+  projects = [],
+  projectRab = [],
   onSave,
   onCancel,
   pettyCashHolders = [],
@@ -304,6 +308,15 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
   const [lokasi, setLokasi] = useState('Lt. 1');
   const [tanggal, setTanggal] = useState('');
   const [jenisPengajuan, setJenisPengajuan] = useState('Biaya Gaji');
+
+  // Project & RAB linking state (Accurate Online Proyek Integration)
+  const [projectId, setProjectId] = useState<string>(initialSubmission?.projectId || '');
+  const [projectName, setProjectName] = useState<string>(initialSubmission?.projectName || '');
+  const [projectCode, setProjectCode] = useState<string>(initialSubmission?.projectCode || '');
+  const [projectRabItemId, setProjectRabItemId] = useState<string>(initialSubmission?.projectRabItemId || '');
+  const [projectRabItemName, setProjectRabItemName] = useState<string>(initialSubmission?.projectRabItemName || '');
+  const [projectAccountCode, setProjectAccountCode] = useState<string>(initialSubmission?.projectAccountCode || '');
+  const [projectAccountName, setProjectAccountName] = useState<string>(initialSubmission?.projectAccountName || '');
 
   // Evaluasi hari libur nasional, tanggal merah, atau akhir pekan secara reaktif
   const holidayInfo = useMemo(() => {
@@ -1151,6 +1164,15 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
       }
 
       setItems(initialSubmission.items.map(item => ({ ...item })));
+
+      // Project & RAB link
+      setProjectId(initialSubmission.projectId || '');
+      setProjectName(initialSubmission.projectName || '');
+      setProjectCode(initialSubmission.projectCode || '');
+      setProjectRabItemId(initialSubmission.projectRabItemId || '');
+      setProjectRabItemName(initialSubmission.projectRabItemName || '');
+      setProjectAccountCode(initialSubmission.projectAccountCode || '');
+      setProjectAccountName(initialSubmission.projectAccountName || '');
     } else {
       // Setup default current date (otomatis pilih hari kerja terdekat jika hari ini adalah tanggal merah/akhir pekan)
       const defaultDateInfo = getDefaultTransactionDate();
@@ -1170,6 +1192,13 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
       setDpAmount('');
       setCicilanNotes('');
       setNotes('');
+      setProjectId('');
+      setProjectName('');
+      setProjectCode('');
+      setProjectRabItemId('');
+      setProjectRabItemName('');
+      setProjectAccountCode('');
+      setProjectAccountName('');
       setGoogleDriveFileUrl('');
       setGoogleDriveFileName('');
       setGoogleDriveFiles([]);
@@ -1972,6 +2001,16 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         disetujuiJabatan2,
         dibukukanOleh,
         dibukukanJabatan,
+
+        // Project & RAB link (Accurate Online Proyek Integration)
+        projectId: projectId || undefined,
+        projectName: projectName || undefined,
+        projectCode: projectCode || undefined,
+        projectRabItemId: projectRabItemId || undefined,
+        projectRabItemName: projectRabItemName || undefined,
+        projectAccountCode: projectAccountCode || undefined,
+        projectAccountName: projectAccountName || undefined,
+
         items: cleanedItems,
         createdAt: initialSubmission ? initialSubmission.createdAt : new Date().toISOString()
       };
@@ -2402,6 +2441,197 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
               onChange={(e) => setNotes(e.target.value)}
             />
           </div>
+        </div>
+
+        {/* INTEGRASI KONEKSI RAB & PROYEK (ACCURATE ONLINE STYLE) */}
+        <div className={`p-4 rounded-2xl border transition-all my-3 ${
+          projectId ? 'bg-gradient-to-r from-emerald-50/80 via-white to-amber-50/60 border-emerald-300 shadow-xs' : 'bg-stone-50/80 border-stone-200'
+        }`}>
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pb-3 border-b border-stone-200/80">
+            <div className="flex items-center gap-2">
+              <div className={`p-2 rounded-xl shrink-0 ${projectId ? 'bg-emerald-600 text-white' : 'bg-stone-200 text-stone-600'}`}>
+                <FolderKanban size={18} />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h4 className="text-xs font-black text-stone-900 uppercase tracking-wide">
+                    Hubungkan ke Rencana Anggaran Biaya (RAB) & Proyek
+                  </h4>
+                  {projectId && (
+                    <span className="text-[10px] font-mono font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-300 flex items-center gap-1">
+                      <CheckCircle2 size={11} className="text-emerald-700" />
+                      <span>Terhubung: {projectCode || projectName}</span>
+                    </span>
+                  )}
+                  {projectAccountCode && (
+                    <span className="text-[10px] font-mono font-bold bg-amber-100 text-amber-900 px-2 py-0.5 rounded-full border border-amber-300">
+                      Akun: [{projectAccountCode}] {projectAccountName}
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-stone-500 mt-0.5">
+                  Sambungkan transaksi voucher ini langsung ke Pos Anggaran Proyek (Accurate Style) agar realisasi biaya otomatis tercatat di dashboard RAB.
+                </p>
+              </div>
+            </div>
+
+            {projectId && (
+              <button
+                type="button"
+                onClick={() => {
+                  setProjectId('');
+                  setProjectName('');
+                  setProjectCode('');
+                  setProjectRabItemId('');
+                  setProjectRabItemName('');
+                  setProjectAccountCode('');
+                  setProjectAccountName('');
+                }}
+                className="text-[11px] font-bold text-stone-500 hover:text-rose-600 px-2.5 py-1 rounded-lg hover:bg-rose-50 border border-transparent hover:border-rose-200 transition cursor-pointer"
+              >
+                ✕ Lepas Hubungan Proyek
+              </button>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-3">
+            {/* Dropdown 1: Pilih Proyek */}
+            <div>
+              <label className="block text-xs font-bold text-stone-700 mb-1 flex items-center justify-between">
+                <span className="flex items-center gap-1">
+                  <Building2 size={13} className="text-emerald-600" />
+                  <span>Pilih Proyek Terkait</span>
+                </span>
+                {projects.length > 0 && (
+                  <span className="text-[10px] font-mono font-normal text-stone-400">
+                    {projects.length} Proyek Aktif
+                  </span>
+                )}
+              </label>
+              <select
+                className="w-full bg-white border border-stone-250 rounded-xl py-2 px-3 text-xs font-bold text-stone-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                value={projectId}
+                onChange={(e) => {
+                  const pId = e.target.value;
+                  setProjectId(pId);
+                  const foundProj = projects.find(p => p.id === pId);
+                  if (foundProj) {
+                    setProjectName(foundProj.name);
+                    setProjectCode(foundProj.code);
+                  } else {
+                    setProjectName('');
+                    setProjectCode('');
+                  }
+                  // Reset rab item when project changes
+                  setProjectRabItemId('');
+                  setProjectRabItemName('');
+                  setProjectAccountCode('');
+                  setProjectAccountName('');
+                }}
+              >
+                <option value="">-- Tidak Terhubung ke Proyek (Biaya Kantor HO) --</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    [{p.code}] {p.name} {p.location ? `• ${p.location}` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Dropdown 2: Pilih Akun & Item RAB */}
+            <div>
+              <label className="block text-xs font-bold text-stone-700 mb-1 flex items-center justify-between">
+                <span className="flex items-center gap-1">
+                  <Calculator size={13} className="text-amber-600" />
+                  <span>Pilih Pos Anggaran / Akun RAB Proyek</span>
+                </span>
+                {projectId && (
+                  <span className="text-[10px] font-mono font-bold text-amber-800">
+                    {projectRab.filter(r => r.projectId === projectId).length} Pos Akun RAB
+                  </span>
+                )}
+              </label>
+              <select
+                disabled={!projectId}
+                className="w-full bg-white border border-stone-250 rounded-xl py-2 px-3 text-xs font-bold text-stone-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:bg-stone-100 disabled:text-stone-400"
+                value={projectRabItemId}
+                onChange={(e) => {
+                  const rId = e.target.value;
+                  setProjectRabItemId(rId);
+                  const foundRab = projectRab.find(r => r.id === rId);
+                  if (foundRab) {
+                    setProjectRabItemName(foundRab.name);
+                    setProjectAccountCode(foundRab.accountCode || '');
+                    setProjectAccountName(foundRab.accountName || '');
+                  } else {
+                    setProjectRabItemName('');
+                    setProjectAccountCode('');
+                    setProjectAccountName('');
+                  }
+                }}
+              >
+                <option value="">{projectId ? '-- Pilih Pos RAB / Akun COA --' : '-- Pilih Proyek terlebih dahulu --'}</option>
+                {projectRab
+                  .filter(r => r.projectId === projectId)
+                  .map((r) => (
+                    <option key={r.id} value={r.id}>
+                      [{r.accountCode || 'COA'}] {r.name} ({r.accountName || r.category}) - Budget: Rp {formatRupiah(r.totalBudget || 0)}
+                    </option>
+                  ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Connected RAB details banner and 1-click apply button */}
+          {projectId && projectRabItemId && (() => {
+            const activeRabItem = projectRab.find(r => r.id === projectRabItemId);
+            if (!activeRabItem) return null;
+            const budgetAmt = activeRabItem.totalBudget || 0;
+            const spentAmt = activeRabItem.actualSpent || (activeRabItem as any).spentBudget || 0;
+            const remaining = budgetAmt - spentAmt;
+
+            return (
+              <div className="mt-3 p-3 bg-white/90 border border-emerald-200 rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-xs">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-extrabold text-emerald-950 font-sans">
+                      {activeRabItem.name}
+                    </span>
+                    <span className="text-[10px] font-mono bg-emerald-100 text-emerald-900 font-bold px-1.5 py-0.5 rounded border border-emerald-300">
+                      Akun: {activeRabItem.accountCode} • {activeRabItem.accountName}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3 font-mono text-[11px] text-stone-600 flex-wrap">
+                    <span>Anggaran: <strong>Rp {formatRupiah(budgetAmt)}</strong></span>
+                    <span>•</span>
+                    <span>Realisasi Saat Ini: <strong className="text-amber-700">Rp {formatRupiah(spentAmt)}</strong></span>
+                    <span>•</span>
+                    <span>Sisa: <strong className={remaining < 0 ? 'text-rose-700 font-black' : 'text-emerald-700'}>Rp {formatRupiah(remaining)}</strong></span>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (items.length > 0) {
+                      const updated = [...items];
+                      updated[0] = {
+                        ...updated[0],
+                        item: `${activeRabItem.name} (${activeRabItem.accountName || activeRabItem.category})`,
+                        keterangan: `Realisasi Pos RAB [${activeRabItem.accountCode}] Proyek ${projectName || projectCode}`
+                      };
+                      setItems(updated);
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs shadow-xs transition cursor-pointer shrink-0"
+                  title="Salin nama pos RAB dan kode akun ke baris item transaksi voucher pertama"
+                >
+                  <Sparkles size={13} className="text-amber-300" />
+                  <span>Terapkan ke Item Pertama</span>
+                </button>
+              </div>
+            );
+          })()}
         </div>
 
         {/* DP / Cicilan Detail Panel */}
