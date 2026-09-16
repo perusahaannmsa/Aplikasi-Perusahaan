@@ -1372,29 +1372,42 @@ app.post("/api/shared-state", (req, res) => {
         mergedWeeklyReports = weeklyReports;
       } else {
         const repMap = new Map<string, any>();
+        // Group by weekStartDate so a single period never has duplicate entries
         (currentState.weeklyReports || []).forEach((r: any) => {
-          if (r && (r.id || r.weekStartDate)) repMap.set(r.id || r.weekStartDate, r);
+          if (r) {
+            const key = r.weekStartDate ? `${r.weekStartDate}_${r.weekEndDate || ''}` : (r.id || '');
+            if (key) repMap.set(key, r);
+          }
         });
         weeklyReports.forEach((r: any) => {
-          if (r && (r.id || r.weekStartDate)) {
-            const key = r.id || r.weekStartDate;
+          if (r) {
+            const key = r.weekStartDate ? `${r.weekStartDate}_${r.weekEndDate || ''}` : (r.id || '');
+            if (!key) return;
             const existing = repMap.get(key);
             if (!existing) {
               repMap.set(key, r);
             } else {
+              const timeExisting = new Date(existing.submittedAt || 0).getTime();
+              const timeCurrent = new Date(r.submittedAt || 0).getTime();
+              const [newer, older] = timeCurrent >= timeExisting ? [r, existing] : [existing, r];
               repMap.set(key, {
-                ...existing,
-                ...r,
-                records: (r.records && r.records.length > 0) ? r.records : existing.records,
-                sheetsUrl: r.sheetsUrl || existing.sheetsUrl,
-                pdfDriveUrl: r.pdfDriveUrl || existing.pdfDriveUrl
+                ...newer,
+                id: newer.id || older.id,
+                records: (newer.records && newer.records.length > 0) ? newer.records : older.records,
+                sheetsUrl: newer.sheetsUrl || older.sheetsUrl,
+                pdfDriveUrl: newer.pdfDriveUrl || older.pdfDriveUrl,
+                driveFileId: newer.driveFileId || older.driveFileId,
+                driveUrl: newer.driveUrl || older.driveUrl
               });
             }
           }
         });
-        mergedWeeklyReports = Array.from(repMap.values()).sort((a: any, b: any) =>
-          new Date(b.submittedAt || b.weekStartDate || 0).getTime() - new Date(a.submittedAt || a.weekStartDate || 0).getTime()
-        );
+        // Sort from newest to oldest (Terbaru -> Terlama)
+        mergedWeeklyReports = Array.from(repMap.values()).sort((a: any, b: any) => {
+          const timeA = new Date(a.weekStartDate || a.submittedAt || 0).getTime();
+          const timeB = new Date(b.weekStartDate || b.submittedAt || 0).getTime();
+          return timeB - timeA; // Terbaru -> Terlama
+        });
       }
     }
 
@@ -3389,109 +3402,265 @@ function escapeXml(unsafe: string): string {
     .replace(/'/g, "&apos;");
 }
 
+function terbilangServer(nominal: number): string {
+  if (!nominal || nominal === 0) return "Nol Rupiah";
+  const angka = ["", "Satu", "Dua", "Tiga", "Empat", "Lima", "Enam", "Tujuh", "Delapan", "Sembilan", "Sepuluh", "Sebelas"];
+  function eja(n: number): string {
+    n = Math.floor(Math.abs(n));
+    if (n < 12) return " " + angka[n];
+    if (n < 20) return eja(n - 10) + " Belas";
+    if (n < 100) return eja(Math.floor(n / 10)) + " Puluh" + eja(n % 10);
+    if (n < 200) return " Seratus" + eja(n - 100);
+    if (n < 1000) return eja(Math.floor(n / 100)) + " Ratus" + eja(n % 100);
+    if (n < 2000) return " Seribu" + eja(n - 1000);
+    if (n < 1000000) return eja(Math.floor(n / 1000)) + " Ribu" + eja(n % 1000);
+    if (n < 1000000000) return eja(Math.floor(n / 1000000)) + " Juta" + eja(n % 1000000);
+    if (n < 1000000000000) return eja(Math.floor(n / 1000000000)) + " Miliar" + eja(n % 1000000000);
+    return eja(Math.floor(n / 1000000000000)) + " Triliun" + eja(n % 1000000000000);
+  }
+  return (eja(nominal).trim() + " Rupiah").replace(/\s+/g, " ");
+}
+
+function formatIndoDateServer(dateStr?: string): string {
+  if (!dateStr) return "-";
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return String(dateStr);
+    const months = [
+      "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+      "Juli", "Agustus", "September", "Oktober", "November", "Desember"
+    ];
+    return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
+  } catch {
+    return String(dateStr);
+  }
+}
+
 app.get("/api/share-image", async (req, res) => {
   try {
-    const id = String(req.query.id || "");
+    const id = String(req.query.id || "").trim();
+    const cleanId = id.toLowerCase();
     const state = readState();
-    const sub = (state.submissions || []).find((s: any) => s.id === id);
+    const sub = (state.submissions || []).find((s: any) => 
+      String(s.id || "").toLowerCase() === cleanId ||
+      String(s.kode || "").toLowerCase() === cleanId ||
+      (req.query.kode && String(s.kode || "").toLowerCase() === String(req.query.kode).toLowerCase())
+    );
 
     const jenis = (sub?.jenisPengajuan || req.query.transaksi || "Dokumen Transaksi").toString();
     const kode = (sub?.kode || req.query.kode || (id ? `DOC-${id.slice(0, 8).toUpperCase()}` : "DOC-TX")).toString();
-    const kepada = (sub?.dibayarkanKepada || req.query.kepada || "Penerima").toString();
-    const rawNominal = sub ? ((sub.items || []).reduce((acc: number, it: any) => acc + (Number(it.nominal) || 0), 0) || sub.total || 0) : (Number(req.query.nominal) || 0);
-    const nominalStr = "Rp " + (Number(rawNominal) || 0).toLocaleString("id-ID");
-    const isLunas = (sub?.status || req.query.status || "").toString().toLowerCase() === "lunas" || (sub?.dibayarkanDengan === "Cek/Transfer");
+    const kepada = (sub?.dibayarkanKepada || req.query.kepada || "Pihak Terkait").toString();
+    const rawDate = (sub?.tanggal || req.query.tanggal || new Date().toISOString().split("T")[0]).toString();
+    const tanggal = formatIndoDateServer(rawDate);
+    const dibayarkanDengan = (sub?.dibayarkanDengan || req.query.bayar || "Cek/Transfer").toString();
+
+    // Parse items list
+    let itemsList: Array<{ item: string; total: number; volume?: string }> = [];
+    if (Array.isArray(sub?.items) && sub.items.length > 0) {
+      itemsList = sub.items.map((it: any) => ({
+        item: String(it.item || it.nama || jenis),
+        total: Number(it.total) || Number(it.nominal) || 0,
+        volume: String(it.jumlahVolume || it.volume || "-")
+      }));
+    } else if (req.query.items) {
+      try {
+        const rawItems = JSON.parse(String(req.query.items));
+        if (Array.isArray(rawItems) && rawItems.length > 0) {
+          itemsList = rawItems.map((it: any) => ({
+            item: String(it.item || it.nama || jenis),
+            total: Number(it.total) || Number(it.nominal) || 0,
+            volume: String(it.jumlahVolume || it.volume || "-")
+          }));
+        }
+      } catch (e) {}
+    }
+
+    // Determine total nominal
+    let rawNominal = 0;
+    if (itemsList.length > 0) {
+      rawNominal = itemsList.reduce((sum, it) => sum + (it.total || 0), 0);
+    }
+    if (!rawNominal || rawNominal === 0) {
+      rawNominal = Number(req.query.nominal) || sub?.total || 0;
+    }
+
+    if (itemsList.length === 0) {
+      itemsList = [{
+        item: jenis,
+        total: rawNominal,
+        volume: "1 Dokumen"
+      }];
+    }
+
+    const nominalStr = "Rp " + Number(rawNominal).toLocaleString("id-ID");
+    const terbilangStr = terbilangServer(rawNominal);
+    const isLunas = (sub?.status || req.query.status || "").toString().toLowerCase() === "lunas" || dibayarkanDengan === "Cek/Transfer";
     const statusText = isLunas ? "LUNAS" : "BELUM LUNAS";
-    const statusBg = isLunas ? "#059669" : "#DC2626";
-    const tanggal = (sub?.tanggal || req.query.tanggal || new Date().toISOString().split("T")[0]).toString();
+    const statusBg = isLunas ? "#059669" : "#D97706";
+
+    // Build Table Rows (max 3-4 rows for high legibility in 1200x630)
+    const maxVisibleRows = 3;
+    const displayItems = itemsList.slice(0, maxVisibleRows);
+    const remainingCount = itemsList.length - maxVisibleRows;
+    const remainingTotal = remainingCount > 0 
+      ? itemsList.slice(maxVisibleRows).reduce((sum, it) => sum + (it.total || 0), 0)
+      : 0;
+
+    let itemRowsSvg = "";
+    const startY = 278;
+    const rowHeight = 36;
+    displayItems.forEach((it, idx) => {
+      const y = startY + (idx * rowHeight);
+      const itName = it.item.length > 70 ? it.item.slice(0, 68) + "..." : it.item;
+      const itTotal = "Rp " + Number(it.total).toLocaleString("id-ID");
+      const itVol = it.volume && it.volume !== "-" ? it.volume : "1 Keg.";
+      itemRowsSvg += `
+        <rect x="50" y="${y - 18}" width="1100" height="${rowHeight}" fill="${idx % 2 === 0 ? "#F8FAFC" : "#FFFFFF"}" />
+        <line x1="50" y1="${y + 18}" x2="1150" y2="${y + 18}" stroke="#E2E8F0" stroke-width="1" />
+        <text x="75" y="${y + 5}" font-family="Liberation Sans, sans-serif" font-size="14" font-weight="bold" fill="#64748B">${idx + 1}</text>
+        <text x="120" y="${y + 5}" font-family="Liberation Sans, sans-serif" font-size="14" font-weight="600" fill="#1E293B">${escapeXml(itName)}</text>
+        <text x="880" y="${y + 5}" font-family="Liberation Sans, sans-serif" font-size="13" font-weight="500" fill="#64748B" text-anchor="middle">${escapeXml(itVol)}</text>
+        <text x="1125" y="${y + 5}" font-family="Liberation Sans, sans-serif" font-size="15" font-weight="bold" fill="#0F172A" text-anchor="end">${escapeXml(itTotal)}</text>
+      `;
+    });
+
+    if (remainingCount > 0) {
+      const y = startY + (displayItems.length * rowHeight);
+      const remTotalStr = "Rp " + Number(remainingTotal).toLocaleString("id-ID");
+      itemRowsSvg += `
+        <rect x="50" y="${y - 18}" width="1100" height="${rowHeight}" fill="#F1F5F9" />
+        <line x1="50" y1="${y + 18}" x2="1150" y2="${y + 18}" stroke="#E2E8F0" stroke-width="1" />
+        <text x="75" y="${y + 5}" font-family="Liberation Sans, sans-serif" font-size="14" font-weight="bold" fill="#64748B">•</text>
+        <text x="120" y="${y + 5}" font-family="Liberation Sans, sans-serif" font-size="13" font-weight="bold" fill="#475569" font-style="italic">+ ${remainingCount} Rincian Item Transaksi Lainnya</text>
+        <text x="880" y="${y + 5}" font-family="Liberation Sans, sans-serif" font-size="13" font-weight="500" fill="#64748B" text-anchor="middle">${remainingCount} Item</text>
+        <text x="1125" y="${y + 5}" font-family="Liberation Sans, sans-serif" font-size="14" font-weight="bold" fill="#0F172A" text-anchor="end">${escapeXml(remTotalStr)}</text>
+      `;
+    }
 
     const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
       <defs>
-        <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stop-color="#0c0e14" />
-          <stop offset="50%" stop-color="#141923" />
-          <stop offset="100%" stop-color="#1b212f" />
-        </linearGradient>
-        <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" stop-color="#F59E0B" />
-          <stop offset="100%" stop-color="#FCD34D" />
+        <linearGradient id="goldBar" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stop-color="#D97706" />
+          <stop offset="50%" stop-color="#F59E0B" />
+          <stop offset="100%" stop-color="#D97706" />
         </linearGradient>
       </defs>
 
-      <!-- Background -->
-      <rect width="1200" height="630" fill="url(#bgGrad)" />
+      <!-- Clean Document Canvas Background -->
+      <rect width="1200" height="630" fill="#F1F5F9" />
+      
+      <!-- Authentic Physical Voucher Paper Sheet -->
+      <rect x="25" y="16" width="1150" height="598" rx="16" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5" />
+      <rect x="25" y="16" width="1150" height="7" rx="3" fill="url(#goldBar)" />
 
-      <!-- Geometric Accent Borders -->
-      <rect x="24" y="24" width="1152" height="582" rx="28" fill="none" stroke="#2a3346" stroke-width="2" />
-      <rect x="30" y="30" width="1140" height="570" rx="24" fill="none" stroke="#F59E0B" stroke-width="1" stroke-opacity="0.25" />
+      <!-- Company Header Section -->
+      <g transform="translate(55, 38)">
+        <!-- Emblem Logo -->
+        <rect x="0" y="0" width="56" height="56" rx="12" fill="#D97706" fill-opacity="0.12" stroke="#D97706" stroke-width="1.5" />
+        <text x="28" y="38" font-family="Liberation Sans, sans-serif" font-size="30" font-weight="bold" fill="#B45309" text-anchor="middle">N</text>
 
-      <!-- Top Company Brand Bar -->
-      <g transform="translate(60, 65)">
-        <rect x="0" y="0" width="56" height="56" rx="14" fill="#D97706" fill-opacity="0.15" stroke="#D97706" stroke-width="1.5" />
-        <text x="28" y="37" font-family="system-ui, -apple-system, sans-serif" font-size="28" font-weight="900" fill="#F59E0B" text-anchor="middle">N</text>
-        
-        <text x="74" y="26" font-family="system-ui, -apple-system, sans-serif" font-size="16" font-weight="900" fill="#F59E0B" letter-spacing="2">PT NUSANTARA MINERAL SUKSES ABADI</text>
-        <text x="74" y="48" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#94A3B8" letter-spacing="1">SISTEM KEUANGAN &amp; PENGELUARAN KAS / BANK</text>
+        <!-- Company Name & Category -->
+        <text x="70" y="24" font-family="Liberation Sans, sans-serif" font-size="20" font-weight="bold" fill="#0F172A" letter-spacing="1">PT NUSANTARA MINERAL SUKSES ABADI</text>
+        <text x="70" y="46" font-family="Liberation Sans, sans-serif" font-size="12" font-weight="600" fill="#64748B" letter-spacing="0.5">GENERAL TRADING, NICKEL ORE MINING &amp; MINERALS INDUSTRY</text>
       </g>
 
-      <!-- Top Right Badges -->
-      <g transform="translate(860, 68)">
+      <!-- Top Right Meta & Status -->
+      <g transform="translate(850, 36)">
+        <!-- Voucher Code Box -->
+        <rect x="0" y="0" width="170" height="44" rx="8" fill="#F8FAFC" stroke="#0F172A" stroke-width="1.5" />
+        <text x="85" y="17" font-family="Liberation Sans, sans-serif" font-size="10" font-weight="bold" fill="#64748B" text-anchor="middle">NO. VOUCHER</text>
+        <text x="85" y="36" font-family="Liberation Sans, sans-serif" font-size="14" font-weight="bold" fill="#0F172A" text-anchor="middle">${escapeXml(kode)}</text>
+
         <!-- Status Badge -->
-        <rect x="180" y="0" width="120" height="42" rx="10" fill="${statusBg}" />
-        <text x="240" y="27" font-family="system-ui, -apple-system, monospace" font-size="14" font-weight="800" fill="#FFFFFF" text-anchor="middle" letter-spacing="1.5">${escapeXml(statusText)}</text>
-        
-        <!-- Kode Badge -->
-        <rect x="0" y="0" width="168" height="42" rx="10" fill="#1E293B" stroke="#475569" stroke-width="1.5" />
-        <text x="84" y="26" font-family="system-ui, -apple-system, monospace" font-size="13" font-weight="700" fill="#E2E8F0" text-anchor="middle">${escapeXml(kode)}</text>
+        <rect x="180" y="0" width="115" height="44" rx="8" fill="${statusBg}" />
+        <text x="237" y="28" font-family="Liberation Sans, sans-serif" font-size="13" font-weight="bold" fill="#FFFFFF" text-anchor="middle" letter-spacing="1">${escapeXml(statusText)}</text>
       </g>
 
-      <!-- Divider line -->
-      <line x1="60" y1="150" x2="1140" y2="150" stroke="#334155" stroke-width="1.5" />
+      <!-- Official Title Banner -->
+      <rect x="50" y="106" width="1100" height="38" rx="6" fill="#0F172A" />
+      <text x="600" y="131" font-family="Liberation Sans, sans-serif" font-size="15" font-weight="bold" fill="#FFFFFF" text-anchor="middle" letter-spacing="2">
+        BUKTI PENGELUARAN KAS / BANK (VOUCHER)
+      </text>
 
-      <!-- Center Content Card -->
-      <g transform="translate(60, 180)">
-        <!-- Label Voucher Pengeluaran -->
-        <rect x="0" y="0" width="180" height="28" rx="8" fill="#F59E0B" fill-opacity="0.15" />
-        <text x="12" y="19" font-family="system-ui, -apple-system, monospace" font-size="11" font-weight="800" fill="#FBBF24" letter-spacing="1.5">BUKTI TRANSAKSI VOUCHER</text>
+      <!-- Voucher Metadata Grid -->
+      <rect x="50" y="152" width="1100" height="68" rx="8" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1.2" />
+      
+      <!-- Metadata Row 1: Dibayarkan Kepada & Tanggal -->
+      <text x="70" y="176" font-family="Liberation Sans, sans-serif" font-size="11" font-weight="bold" fill="#64748B">DIBAYARKAN KEPADA :</text>
+      <text x="235" y="176" font-family="Liberation Sans, sans-serif" font-size="14" font-weight="bold" fill="#0F172A">${escapeXml(kepada)}</text>
+      
+      <text x="670" y="176" font-family="Liberation Sans, sans-serif" font-size="11" font-weight="bold" fill="#64748B">TANGGAL TRANSAKSI :</text>
+      <text x="825" y="176" font-family="Liberation Sans, sans-serif" font-size="14" font-weight="bold" fill="#0F172A">${escapeXml(tanggal)}</text>
 
-        <!-- Transaction Title -->
-        <text x="0" y="78" font-family="system-ui, -apple-system, sans-serif" font-size="38" font-weight="900" fill="#FFFFFF" letter-spacing="-0.5">
-          ${escapeXml(jenis)}
-        </text>
+      <!-- Metadata Row 2: Jenis Pengajuan & Pembayaran -->
+      <text x="70" y="204" font-family="Liberation Sans, sans-serif" font-size="11" font-weight="bold" fill="#64748B">JENIS PENGAJUAN :</text>
+      <text x="235" y="204" font-family="Liberation Sans, sans-serif" font-size="13" font-weight="600" fill="#334155">${escapeXml(jenis)}</text>
 
-        <!-- Dibayarkan Kepada Info -->
-        <text x="0" y="125" font-family="system-ui, -apple-system, sans-serif" font-size="20" font-weight="600" fill="#94A3B8">
-          Dibayarkan Kepada: <tspan fill="#F1F5F9" font-weight="800">${escapeXml(kepada)}</tspan>
-        </text>
+      <text x="670" y="204" font-family="Liberation Sans, sans-serif" font-size="11" font-weight="bold" fill="#64748B">METODE BAYAR :</text>
+      <text x="825" y="204" font-family="Liberation Sans, sans-serif" font-size="13" font-weight="bold" fill="#059669">${escapeXml(dibayarkanDengan)}</text>
 
-        <!-- Big Nominal Box -->
-        <g transform="translate(0, 160)">
-          <rect x="0" y="0" width="1080" height="130" rx="20" fill="#0F172A" stroke="#334155" stroke-width="1.5" />
-          <text x="32" y="44" font-family="system-ui, -apple-system, monospace" font-size="13" font-weight="700" fill="#64748B" letter-spacing="2">TOTAL NOMINAL PEMBAYARAN:</text>
-          <text x="32" y="104" font-family="system-ui, -apple-system, sans-serif" font-size="54" font-weight="900" fill="url(#goldGrad)" letter-spacing="-1">${escapeXml(nominalStr)}</text>
-          
-          <rect x="910" y="45" width="138" height="40" rx="10" fill="#1E293B" stroke="#F59E0B" stroke-width="1" />
-          <text x="979" y="70" font-family="system-ui, -apple-system, monospace" font-size="12" font-weight="700" fill="#F59E0B" text-anchor="middle">TERVERIFIKASI</text>
-        </g>
-      </g>
+      <!-- Table Header (Isi Transaksi) -->
+      <rect x="50" y="230" width="1100" height="30" fill="#E2E8F0" stroke="#CBD5E1" stroke-width="1" />
+      <text x="75" y="250" font-family="Liberation Sans, sans-serif" font-size="11" font-weight="bold" fill="#334155">NO</text>
+      <text x="120" y="250" font-family="Liberation Sans, sans-serif" font-size="11" font-weight="bold" fill="#334155">ISI TRANSAKSI / RINCIAN URAIAN</text>
+      <text x="880" y="250" font-family="Liberation Sans, sans-serif" font-size="11" font-weight="bold" fill="#334155" text-anchor="middle">VOLUME</text>
+      <text x="1125" y="250" font-family="Liberation Sans, sans-serif" font-size="11" font-weight="bold" fill="#334155" text-anchor="end">TOTAL (RP)</text>
 
-      <!-- Bottom Footer Info -->
-      <g transform="translate(60, 560)">
-        <text x="0" y="0" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="500" fill="#64748B">
-          Tanggal: <tspan fill="#94A3B8" font-weight="700">${escapeXml(tanggal)}</tspan>  •  Tersinkronisasi Cloud &amp; Google Drive PT Nusantara Mineral Sukses Abadi
-        </text>
-        <text x="1080" y="0" font-family="system-ui, -apple-system, monospace" font-size="12" font-weight="700" fill="#F59E0B" text-anchor="end">
-          NUSANTARA FINANCIAL SYSTEM
-        </text>
+      <!-- Table Body Rows -->
+      ${itemRowsSvg}
+
+      <!-- Total Jumlah Highlight Banner -->
+      <rect x="50" y="418" width="1100" height="88" rx="10" fill="#FFFBEB" stroke="#FCD34D" stroke-width="2" />
+      <text x="75" y="445" font-family="Liberation Sans, sans-serif" font-size="12" font-weight="bold" fill="#92400E" letter-spacing="1">TOTAL JUMLAH PEMBAYARAN :</text>
+      <text x="75" y="485" font-family="Liberation Sans, sans-serif" font-size="34" font-weight="bold" fill="#B45309">${escapeXml(nominalStr)}</text>
+      
+      <!-- Terbilang Text Inside Total Box -->
+      <text x="440" y="482" font-family="Liberation Sans, sans-serif" font-size="13" font-style="italic" fill="#78350F">Terbilang: &quot;${escapeXml(terbilangStr.length > 55 ? terbilangStr.slice(0, 52) + "..." : terbilangStr)}&quot;</text>
+
+      <!-- Verification Badge -->
+      <rect x="940" y="438" width="185" height="46" rx="8" fill="#D97706" />
+      <text x="1032" y="466" font-family="Liberation Sans, sans-serif" font-size="13" font-weight="bold" fill="#FFFFFF" text-anchor="middle" letter-spacing="1">TERVERIFIKASI</text>
+
+      <!-- Official Authorization / Signatures Block -->
+      <g transform="translate(50, 520)">
+        <!-- Signature 1: Pembuat -->
+        <rect x="0" y="0" width="345" height="66" rx="6" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1" />
+        <text x="172" y="19" font-family="Liberation Sans, sans-serif" font-size="10" font-weight="bold" fill="#64748B" text-anchor="middle">DIBUAT OLEH</text>
+        <line x1="25" y1="42" x2="320" y2="42" stroke="#CBD5E1" stroke-dasharray="3,3" />
+        <text x="172" y="55" font-family="Liberation Sans, sans-serif" font-size="12" font-weight="bold" fill="#0F172A" text-anchor="middle">STAFF FINANCE / KASIR</text>
+
+        <!-- Signature 2: Pemeriksa -->
+        <rect x="377" y="0" width="345" height="66" rx="6" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1" />
+        <text x="550" y="19" font-family="Liberation Sans, sans-serif" font-size="10" font-weight="bold" fill="#64748B" text-anchor="middle">DIPERIKSA OLEH</text>
+        <line x1="402" y1="42" x2="697" y2="42" stroke="#CBD5E1" stroke-dasharray="3,3" />
+        <text x="550" y="55" font-family="Liberation Sans, sans-serif" font-size="12" font-weight="bold" fill="#0F172A" text-anchor="middle">ANDI DHIYA SALSABILA</text>
+
+        <!-- Signature 3: Pengesah -->
+        <rect x="755" y="0" width="345" height="66" rx="6" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1" />
+        <text x="927" y="19" font-family="Liberation Sans, sans-serif" font-size="10" font-weight="bold" fill="#64748B" text-anchor="middle">DISAHKAN OLEH</text>
+        <line x1="780" y1="42" x2="1075" y2="42" stroke="#CBD5E1" stroke-dasharray="3,3" />
+        <text x="927" y="55" font-family="Liberation Sans, sans-serif" font-size="12" font-weight="bold" fill="#0F172A" text-anchor="middle">ANDI NURSYAM HALID</text>
       </g>
     </svg>
     `;
 
     try {
       const { Resvg } = await import("@resvg/resvg-js");
+      const fontFiles = [
+        path.join(process.cwd(), "server", "fonts", "LiberationSans-Bold.ttf"),
+        path.join(process.cwd(), "server", "fonts", "LiberationSans-Regular.ttf"),
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+      ].filter(f => fs.existsSync(f));
+
       const resvg = new Resvg(svg, {
-        fitTo: { mode: "width", value: 1200 }
+        fitTo: { mode: "width", value: 1200 },
+        font: {
+          loadSystemFonts: true,
+          fontFiles: fontFiles.length > 0 ? fontFiles : undefined,
+          defaultFontFamily: "Liberation Sans"
+        }
       });
       const pngData = resvg.render();
       const pngBuffer = pngData.asPng();
@@ -3513,21 +3682,47 @@ app.get("/api/share-image", async (req, res) => {
 // Public Share Link HTML Pre-renderer with Open Graph tags
 app.get(["/shared-view*", "/voucher/:id*"], async (req, res, next) => {
   try {
-    const id = (req.params as any)?.id || String(req.query.id || "");
+    const id = (req.params as any)?.id || String(req.query.id || "").trim();
+    const cleanId = id.toLowerCase();
     const state = readState();
-    const sub = (state.submissions || []).find((s: any) => s.id === id);
+    const sub = (state.submissions || []).find((s: any) => 
+      String(s.id || "").toLowerCase() === cleanId ||
+      String(s.kode || "").toLowerCase() === cleanId ||
+      (req.query.kode && String(s.kode || "").toLowerCase() === String(req.query.kode).toLowerCase())
+    );
 
     const jenis = (sub?.jenisPengajuan || req.query.transaksi || "Dokumen Transaksi").toString();
-    const kode = (sub?.kode || req.query.kode || "DOC").toString();
+    const kode = (sub?.kode || req.query.kode || (id ? `DOC-${id.slice(0, 8).toUpperCase()}` : "DOC-TX")).toString();
     const kepada = (sub?.dibayarkanKepada || req.query.kepada || "").toString();
-    const rawNominal = sub ? ((sub.items || []).reduce((acc: number, it: any) => acc + (Number(it.nominal) || 0), 0) || sub.total || 0) : (Number(req.query.nominal) || 0);
+    const rawNominal = sub 
+      ? ((sub.items || []).reduce((acc: number, it: any) => acc + (Number(it.total) || Number(it.nominal) || 0), 0) || sub.total || 0) 
+      : (Number(req.query.nominal) || 0);
     const nominalStr = "Rp " + (Number(rawNominal) || 0).toLocaleString("id-ID");
+    const rawDate = (sub?.tanggal || req.query.tanggal || new Date().toISOString().split("T")[0]).toString();
+    const tanggal = formatIndoDateServer(rawDate);
 
-    const pageTitle = `${jenis} - ${nominalStr} | PT. Nusantara Mineral Sukses Abadi`;
-    const pageDesc = `Voucher: ${kode}${kepada ? ` • Kepada: ${kepada}` : ""} • Total: ${nominalStr}. Klik untuk melihat rincian transaksi & lampiran voucher resmi.`;
+    const pageTitle = `Voucher ${kode}: ${jenis} (${nominalStr}) | PT. Nusantara Mineral Sukses Abadi`;
+    const pageDesc = `BUKTI PENGELUARAN KAS / BANK • No. Voucher: ${kode} • Dibayarkan Kepada: ${kepada || '-'} • Tanggal: ${tanggal} • Total: ${nominalStr}. Klik untuk melihat rincian isi transaksi & bukti bayar resmi.`;
     const host = req.get("host") || "localhost:3000";
-    const protocol = req.protocol || "http";
-    const imageUrl = `${protocol}://${host}/api/share-image?id=${encodeURIComponent(id)}&transaksi=${encodeURIComponent(jenis)}&nominal=${encodeURIComponent(rawNominal)}`;
+    const protocol = (req.headers["x-forwarded-proto"] as string) || req.protocol || "http";
+
+    // Forward complete parameters to share-image
+    const imgParams = new URLSearchParams();
+    if (id) imgParams.set("id", id);
+    if (kode) imgParams.set("kode", kode);
+    if (kepada) imgParams.set("kepada", kepada);
+    if (rawDate) imgParams.set("tanggal", rawDate);
+    if (jenis) imgParams.set("transaksi", jenis);
+    if (rawNominal) imgParams.set("nominal", String(rawNominal));
+    if (req.query.status || sub?.status) imgParams.set("status", String(req.query.status || sub?.status || "LUNAS"));
+    if (req.query.bayar || sub?.dibayarkanDengan) imgParams.set("bayar", String(req.query.bayar || sub?.dibayarkanDengan || "Cek/Transfer"));
+    if (sub?.items) {
+      imgParams.set("items", JSON.stringify(sub.items.slice(0, 5)));
+    } else if (req.query.items) {
+      imgParams.set("items", String(req.query.items));
+    }
+
+    const imageUrl = `${protocol}://${host}/api/share-image?${imgParams.toString()}`;
 
     const indexPath = process.env.NODE_ENV === "production" 
       ? path.join(process.cwd(), "dist", "index.html")
@@ -3543,6 +3738,7 @@ app.get(["/shared-view*", "/voucher/:id*"], async (req, res, next) => {
     <meta property="og:title" content="${escapeXml(pageTitle)}" />
     <meta property="og:description" content="${escapeXml(pageDesc)}" />
     <meta property="og:image" content="${imageUrl}" />
+    <meta property="og:image:type" content="image/png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />

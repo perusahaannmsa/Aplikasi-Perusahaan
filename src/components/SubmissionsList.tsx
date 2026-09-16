@@ -3760,14 +3760,38 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
         const grandTotal = shareModalSub.items.reduce((sum, item) => sum + item.total, 0);
         const cleanSlug = (text: string) => (text || 'transaksi').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
         const shareSlug = cleanSlug(shareModalSub.jenisPengajuan);
-        const shareUrl = `${window.location.origin}/shared-view?id=${shareModalSub.id}&transaksi=${encodeURIComponent(shareSlug)}&nominal=${grandTotal}`;
-        const shareImageUrl = `/api/share-image?id=${encodeURIComponent(shareModalSub.id)}&transaksi=${encodeURIComponent(shareModalSub.jenisPengajuan || '')}&nominal=${grandTotal}&kode=${encodeURIComponent(shareModalSub.kode || '')}&kepada=${encodeURIComponent(shareModalSub.dibayarkanKepada || '')}`;
         const isLunas = (shareModalSub.status || '').toLowerCase() === 'lunas' || shareModalSub.dibayarkanDengan === 'Cek/Transfer';
-        const waText = `*${shareModalSub.jenisPengajuan || 'Dokumen Transaksi'} - Rp ${grandTotal.toLocaleString('id-ID')}*\n` +
-          `*Nomor Voucher:* ${shareModalSub.kode}\n` +
-          `*Dibayarkan Kepada:* ${shareModalSub.dibayarkanKepada}\n` +
-          `*Tanggal:* ${formatDateIndonesian(shareModalSub.tanggal)}\n` +
-          `*Status:* ${isLunas ? 'Lunas' : 'Belum Lunas'}\n\n` +
+
+        const shareParams = new URLSearchParams({
+          id: shareModalSub.id,
+          kode: shareModalSub.kode || '',
+          transaksi: shareSlug,
+          nominal: String(grandTotal),
+          kepada: shareModalSub.dibayarkanKepada || '',
+          tanggal: shareModalSub.tanggal || '',
+          status: isLunas ? 'LUNAS' : 'BELUM LUNAS',
+          bayar: shareModalSub.dibayarkanDengan || 'Cek/Transfer',
+        });
+        const itemsJson = JSON.stringify((shareModalSub.items || []).slice(0, 5));
+        const shareUrl = `${window.location.origin}/shared-view?${shareParams.toString()}&items=${encodeURIComponent(itemsJson)}`;
+        const shareImageUrl = `/api/share-image?${shareParams.toString()}&items=${encodeURIComponent(itemsJson)}`;
+
+        const itemsListText = (shareModalSub.items || [])
+          .slice(0, 5)
+          .map((it, idx) => `   ${idx + 1}. ${it.item} (Rp ${(it.total || 0).toLocaleString('id-ID')})`)
+          .join('\n');
+
+        const waText = `🧾 *BUKTI PENGELUARAN KAS / BANK (VOUCHER)*\n` +
+          `*PT NUSANTARA MINERAL SUKSES ABADI*\n` +
+          `─────────────────────────────\n` +
+          `• *No. Voucher:* ${shareModalSub.kode}\n` +
+          `• *Dibayarkan Kepada:* ${shareModalSub.dibayarkanKepada}\n` +
+          `• *Tanggal:* ${formatDateIndonesian(shareModalSub.tanggal)}\n` +
+          `• *Jenis Pengajuan:* ${shareModalSub.jenisPengajuan || 'Dokumen Transaksi'}\n` +
+          `• *Isi Transaksi:*\n${itemsListText || `   1. ${shareModalSub.jenisPengajuan || 'Transaksi'} (Rp ${grandTotal.toLocaleString('id-ID')})`}\n` +
+          `• *Total Jumlah:* Rp ${grandTotal.toLocaleString('id-ID')}\n` +
+          `• *Status:* ${isLunas ? '✅ Lunas' : '⏳ Belum Lunas'}\n` +
+          `─────────────────────────────\n\n` +
           `Silakan klik tautan di bawah ini untuk melihat detail lengkap transaksi beserta gambar voucher & bukti bayar:\n` +
           `${shareUrl}`;
 
@@ -3799,21 +3823,21 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
 
               <div className="p-5 overflow-y-auto space-y-4">
                 {/* Visual Card Preview */}
-                <div className="rounded-2xl border border-stone-200 bg-stone-50 overflow-hidden shadow-xs">
-                  <div className="aspect-[1200/630] w-full bg-stone-900 relative overflow-hidden flex items-center justify-center">
+                <div className="rounded-2xl border border-stone-250 bg-stone-50 overflow-hidden shadow-xs">
+                  <div className="aspect-[1200/630] w-full bg-stone-100 relative overflow-hidden flex items-center justify-center border-b border-stone-200">
                     <img
                       src={shareImageUrl}
                       alt={shareModalSub.jenisPengajuan}
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-contain"
                       onError={(e) => {
                         (e.target as HTMLElement).style.display = 'none';
                       }}
                     />
-                    <div className="absolute top-2 left-2 px-2.5 py-1 bg-stone-900/80 backdrop-blur-xs border border-stone-700 text-[#D4AF37] text-[10px] font-mono font-bold rounded-lg">
+                    <div className="absolute top-2 left-2 px-2.5 py-1 bg-white/95 backdrop-blur-xs border border-stone-300 text-stone-900 text-[10px] font-mono font-bold rounded-lg shadow-xs">
                       {shareModalSub.kode}
                     </div>
                   </div>
-                  <div className="p-3.5 space-y-1">
+                  <div className="p-3.5 space-y-1.5 bg-white">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[10px] font-mono font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
                         {shareModalSub.jenisPengajuan || 'Transaksi'}
@@ -3822,12 +3846,18 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                         {isLunas ? 'LUNAS' : 'BELUM LUNAS'}
                       </span>
                     </div>
-                    <p className="text-xs font-bold text-stone-850 truncate">
-                      {shareModalSub.dibayarkanKepada}
-                    </p>
-                    <p className="text-base font-black font-mono text-stone-900">
-                      Rp {formatRupiah(grandTotal)}
-                    </p>
+                    <div className="flex items-baseline justify-between gap-2">
+                      <div>
+                        <p className="text-[10px] text-stone-500 font-medium">Dibayarkan Kepada:</p>
+                        <p className="text-xs font-bold text-stone-900 truncate">{shareModalSub.dibayarkanKepada}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[10px] text-stone-500 font-medium">Total Jumlah:</p>
+                        <p className="text-base font-black font-mono text-stone-900">
+                          Rp {formatRupiah(grandTotal)}
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 </div>
 

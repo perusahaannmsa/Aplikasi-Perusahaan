@@ -551,6 +551,42 @@ export function getDynamicHolidayInfo(name: string, workerId: string, dateYMD: s
   return HOLIDAY_TEMPLATES[index](name || "Karyawan", dateYMD, reason || "Hari Libur");
 }
 
+// Helper to deduplicate weekly reports by period (weekStartDate) and sort newest -> oldest
+export function deduplicateWeeklyReports(reports: WeeklyReport[]): WeeklyReport[] {
+  if (!Array.isArray(reports)) return [];
+  const map = new Map<string, WeeklyReport>();
+  reports.forEach((r) => {
+    if (!r) return;
+    const periodKey = r.weekStartDate ? `${r.weekStartDate}_${r.weekEndDate || ''}` : (r.id || '');
+    if (!periodKey) return;
+    const existing = map.get(periodKey);
+    if (!existing) {
+      map.set(periodKey, r);
+    } else {
+      // If two records share the same period, keep the newer submission but merge links/data
+      const timeExisting = new Date(existing.submittedAt || 0).getTime();
+      const timeCurrent = new Date(r.submittedAt || 0).getTime();
+      const [newer, older] = timeCurrent >= timeExisting ? [r, existing] : [existing, r];
+      map.set(periodKey, {
+        ...newer,
+        id: newer.id || older.id,
+        records: (newer.records && newer.records.length > 0) ? newer.records : older.records,
+        sheetsUrl: newer.sheetsUrl || older.sheetsUrl,
+        pdfDriveUrl: newer.pdfDriveUrl || older.pdfDriveUrl,
+        driveFileId: newer.driveFileId || older.driveFileId,
+        driveUrl: newer.driveUrl || older.driveUrl,
+      });
+    }
+  });
+
+  // Urutkan dari periode TERBARU ke TERLAMA (Newest to Oldest)
+  return Array.from(map.values()).sort((a, b) => {
+    const timeA = new Date(a.weekStartDate || a.submittedAt || 0).getTime();
+    const timeB = new Date(b.weekStartDate || b.submittedAt || 0).getTime();
+    return timeB - timeA; // Terbaru -> Terlama
+  });
+}
+
 interface AbsensiHarianNmsaProps {
   onClose?: () => void;
   pettyCashHolders?: string[];
@@ -597,7 +633,9 @@ export function AbsensiHarianNmsa({
                     localStorage.getItem("weekly_reports");
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return deduplicateWeeklyReports(parsed);
+        }
       }
     } catch (e) {}
     return [];
@@ -616,10 +654,14 @@ export function AbsensiHarianNmsa({
 
   useEffect(() => {
     if (weeklyReports && weeklyReports.length > 0) {
+      const deduped = deduplicateWeeklyReports(weeklyReports);
+      if (deduped.length !== weeklyReports.length) {
+        setWeeklyReports(deduped);
+      }
       try {
-        localStorage.setItem("laporan_uang_makan_log", JSON.stringify(weeklyReports));
-        localStorage.setItem("weekly_reports_nmsa", JSON.stringify(weeklyReports));
-        localStorage.setItem("weekly_reports", JSON.stringify(weeklyReports));
+        localStorage.setItem("laporan_uang_makan_log", JSON.stringify(deduped));
+        localStorage.setItem("weekly_reports_nmsa", JSON.stringify(deduped));
+        localStorage.setItem("weekly_reports", JSON.stringify(deduped));
       } catch (e) {}
     }
   }, [weeklyReports]);
@@ -1801,11 +1843,7 @@ export function AbsensiHarianNmsa({
           }
           if (data.weeklyReports && Array.isArray(data.weeklyReports)) {
             setWeeklyReports((prevLocal) => {
-              const reportMap = new Map<string, WeeklyReport>();
-              // 1. Preserve local reports first
-              (prevLocal || []).forEach(r => {
-                if (r && (r.id || r.weekStartDate)) reportMap.set(r.id || r.weekStartDate, r);
-              });
+              const combined: WeeklyReport[] = [...(prevLocal || [])];
               // Also check localStorage
               try {
                 const stored = localStorage.getItem("laporan_uang_makan_log") || 
@@ -1814,37 +1852,14 @@ export function AbsensiHarianNmsa({
                 if (stored) {
                   const parsed = JSON.parse(stored);
                   if (Array.isArray(parsed)) {
-                    parsed.forEach((r: WeeklyReport) => {
-                      if (r && (r.id || r.weekStartDate) && !reportMap.has(r.id || r.weekStartDate)) {
-                        reportMap.set(r.id || r.weekStartDate, r);
-                      }
-                    });
+                    combined.push(...parsed);
                   }
                 }
               } catch (e) {}
 
-              // 2. Merge server reports
-              data.weeklyReports.forEach((r: WeeklyReport) => {
-                if (r && (r.id || r.weekStartDate)) {
-                  const key = r.id || r.weekStartDate;
-                  if (!reportMap.has(key)) {
-                    reportMap.set(key, r);
-                  } else {
-                    const existing = reportMap.get(key)!;
-                    reportMap.set(key, {
-                      ...existing,
-                      ...r,
-                      records: (existing.records && existing.records.length > 0) ? existing.records : r.records,
-                      sheetsUrl: r.sheetsUrl || existing.sheetsUrl,
-                      pdfDriveUrl: r.pdfDriveUrl || existing.pdfDriveUrl
-                    });
-                  }
-                }
-              });
-
-              const merged = Array.from(reportMap.values()).sort((a, b) =>
-                new Date(b.submittedAt || b.weekStartDate || 0).getTime() - new Date(a.submittedAt || a.weekStartDate || 0).getTime()
-              );
+              // Add server reports
+              combined.push(...data.weeklyReports);
+              const merged = deduplicateWeeklyReports(combined);
 
               try {
                 localStorage.setItem("laporan_uang_makan_log", JSON.stringify(merged));
@@ -2405,7 +2420,8 @@ export function AbsensiHarianNmsa({
 
     if (!window.confirm(confirmMsg)) return;
 
-    const reportId = "REP-" + Math.floor(Math.random() * 900000 + 100000);
+    const existingForWeek = weeklyReports.find(r => r.weekStartDate === weekStart);
+    const reportId = existingForWeek?.id || ("REP-" + Math.floor(Math.random() * 900000 + 100000));
     const newReport: WeeklyReport = {
       id: reportId,
       weekStartDate: weekStart,
@@ -2413,6 +2429,10 @@ export function AbsensiHarianNmsa({
       records: thisWeeksRecords,
       isSubmitted: true,
       submittedAt: new Date().toISOString(),
+      sheetsUrl: existingForWeek?.sheetsUrl,
+      pdfDriveUrl: existingForWeek?.pdfDriveUrl,
+      driveFileId: existingForWeek?.driveFileId,
+      driveUrl: existingForWeek?.driveUrl,
     };
 
     // Export and local PDF download immediately
@@ -2444,11 +2464,11 @@ export function AbsensiHarianNmsa({
       }
     }
 
-    // Persist immediately to state and all storage keys
-    const updatedReports = [
+    // Persist immediately to state and all storage keys without duplicates
+    const updatedReports = deduplicateWeeklyReports([
       newReport,
       ...weeklyReports.filter(r => r.id !== newReport.id && r.weekStartDate !== newReport.weekStartDate)
-    ];
+    ]);
     setWeeklyReports(updatedReports);
 
     try {
@@ -2627,10 +2647,15 @@ export function AbsensiHarianNmsa({
       }
     }
 
-    const updatedList = weeklyReports.map(r => r.id === report.id ? updatedReport : r);
+    const updatedList = deduplicateWeeklyReports(
+      weeklyReports.map(r => (r.id === report.id || r.weekStartDate === report.weekStartDate) ? updatedReport : r)
+    );
     setWeeklyReports(updatedList);
-    localStorage.setItem("weekly_reports_nmsa", JSON.stringify(updatedList));
-    localStorage.setItem("weekly_reports", JSON.stringify(updatedList));
+    try {
+      localStorage.setItem("laporan_uang_makan_log", JSON.stringify(updatedList));
+      localStorage.setItem("weekly_reports_nmsa", JSON.stringify(updatedList));
+      localStorage.setItem("weekly_reports", JSON.stringify(updatedList));
+    } catch (e) {}
 
     try {
       const { db } = await import('../lib/firebaseAbsen');
@@ -7016,19 +7041,15 @@ export function AbsensiHarianNmsa({
             {/* PAST SUBMITTED REPORTS LOG (WEEKLY REPORTS ACCORDION) */}
             <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs">
               {(() => {
-                // Urutkan dari periode terlama - terbaru
-                const sortedWeeklyReports = [...weeklyReports].sort((a, b) => {
-                  const timeA = new Date(a.weekStartDate || a.submittedAt || 0).getTime();
-                  const timeB = new Date(b.weekStartDate || b.submittedAt || 0).getTime();
-                  return timeA - timeB; // Terlama -> Terbaru
-                });
+                // Deduplikasi per periode dan urutkan dari periode TERBARU ke TERLAMA (Newest to Oldest)
+                const sortedWeeklyReports = deduplicateWeeklyReports(weeklyReports);
 
-                // Tampilkan 3 periode terakhir secara default, namun semua periode tetap bisa diakses & discroll
+                // Tampilkan 3 periode terbaru atau semua periode yang dapat discroll
                 const displayedReports = reportDisplayMode === 'last3' && sortedWeeklyReports.length > 3
-                  ? sortedWeeklyReports.slice(-3)
+                  ? sortedWeeklyReports.slice(0, 3)
                   : sortedWeeklyReports;
 
-                const last3Ids = new Set(sortedWeeklyReports.slice(-3).map(r => r.id));
+                const last3Ids = new Set(sortedWeeklyReports.slice(0, 3).map(r => r.id));
 
                 return (
                   <>
@@ -7036,10 +7057,10 @@ export function AbsensiHarianNmsa({
                       <div>
                         <h3 className="text-base font-bold text-slate-900 font-display flex items-center gap-2">
                           <FileCheck className="w-5 h-5 text-indigo-600" />
-                          <span>Riwayat Laporan Jumat (Terlama &rarr; Terbaru)</span>
+                          <span>Riwayat Laporan Jumat (Terbaru &rarr; Terlama)</span>
                         </h3>
                         <p className="text-xs text-slate-500 mt-0.5">
-                          Semua riwayat periode tersimpan aman dan terintegrasi otomatis ke Google Drive.
+                          Setiap periode tersimpan satu kali tanpa duplikasi data, berurutan dari periode terbaru ke terlama, dan terintegrasi otomatis ke Google Drive.
                         </p>
                       </div>
 
@@ -7056,7 +7077,7 @@ export function AbsensiHarianNmsa({
                                   : 'text-slate-600 hover:text-slate-900'
                               }`}
                             >
-                              3 Periode Terakhir
+                              3 Periode Terbaru
                             </button>
                             <button
                               type="button"
@@ -7156,7 +7177,7 @@ export function AbsensiHarianNmsa({
                                   <span className="text-xs text-slate-600 font-bold">Periode: {report.weekStartDate} s/d {report.weekEndDate}</span>
                                   {isRecent3 && (
                                     <span className="text-[9px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full border border-amber-200">
-                                      3 Periode Terakhir
+                                      3 Periode Terbaru
                                     </span>
                                   )}
                                 </div>

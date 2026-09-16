@@ -1237,16 +1237,34 @@ export default function App() {
             dibukukanJabatan: 'Accounting',
             diketahuiOleh: 'Direksi',
             createdAt: new Date().toISOString(),
-            items: [
-              {
-                id: `item-${Date.now()}`,
-                no: 1,
-                item: formattedJenis,
-                jumlahVolume: '1 Dokumen',
-                total: rawNom,
-                keterangan: 'Dokumen Transaksi'
+            items: (() => {
+              const itemsParam = sp.get('items');
+              if (itemsParam) {
+                try {
+                  const arr = JSON.parse(decodeURIComponent(itemsParam));
+                  if (Array.isArray(arr) && arr.length > 0) {
+                    return arr.map((it: any, idx: number) => ({
+                      id: `item-${idx + 1}`,
+                      no: idx + 1,
+                      item: it.item || it.nama || formattedJenis,
+                      jumlahVolume: it.volume || it.jumlahVolume || '1 Item',
+                      total: Number(it.total) || Number(it.nominal) || 0,
+                      keterangan: it.keterangan || '-'
+                    }));
+                  }
+                } catch (e) {}
               }
-            ],
+              return [
+                {
+                  id: `item-${Date.now()}`,
+                  no: 1,
+                  item: formattedJenis,
+                  jumlahVolume: '1 Dokumen',
+                  total: rawNom,
+                  keterangan: 'Dokumen Transaksi'
+                }
+              ];
+            })(),
             status: 'Lunas',
             notes: 'Dokumen transaksi resmi PT Nusantara Mineral Sukses Abadi.'
           };
