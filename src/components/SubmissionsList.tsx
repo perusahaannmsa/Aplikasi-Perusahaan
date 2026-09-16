@@ -3762,19 +3762,17 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
         const shareSlug = cleanSlug(shareModalSub.jenisPengajuan);
         const isLunas = (shareModalSub.status || '').toLowerCase() === 'lunas' || shareModalSub.dibayarkanDengan === 'Cek/Transfer';
 
-        const shareParams = new URLSearchParams({
-          id: shareModalSub.id,
-          kode: shareModalSub.kode || '',
-          transaksi: shareSlug,
-          nominal: String(grandTotal),
-          kepada: shareModalSub.dibayarkanKepada || '',
-          tanggal: shareModalSub.tanggal || '',
-          status: isLunas ? 'LUNAS' : 'BELUM LUNAS',
-          bayar: shareModalSub.dibayarkanDengan || 'Cek/Transfer',
-        });
-        const itemsJson = JSON.stringify((shareModalSub.items || []).slice(0, 5));
-        const shareUrl = `${window.location.origin}/shared-view?${shareParams.toString()}&items=${encodeURIComponent(itemsJson)}`;
-        const shareImageUrl = `/api/share-image?${shareParams.toString()}&items=${encodeURIComponent(itemsJson)}`;
+        const shareUrl = `${window.location.origin}/shared-view?id=${shareModalSub.id}&transaksi=${encodeURIComponent(shareSlug)}&nominal=${grandTotal}`;
+        const shareImageUrl = `/api/share-image?id=${encodeURIComponent(shareModalSub.id)}&transaksi=${encodeURIComponent(shareSlug)}&nominal=${grandTotal}`;
+
+        // Ensure backend memory and persistent store has the latest submission record for share-image
+        try {
+          fetch('/api/sync-submissions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ submission: shareModalSub })
+          }).catch(() => {});
+        } catch (_) {}
 
         const itemsListText = (shareModalSub.items || [])
           .slice(0, 5)

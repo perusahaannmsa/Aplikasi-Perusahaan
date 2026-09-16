@@ -2178,16 +2178,6 @@ export default function App() {
                     </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => window.print()}
-                    className="flex items-center gap-1.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-3.5 py-1.5 rounded-xl text-xs transition cursor-pointer"
-                  >
-                    <Printer size={13} />
-                    <span>Cetak Lembar Dokumen</span>
-                  </button>
-                </div>
               </div>
 
               <PrintDocument

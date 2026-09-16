@@ -3026,17 +3026,32 @@ app.get(["/api/data", "/api/vouchers", "/api/summary"], (req, res) => {
   });
 });
 
-// POST /api/sync-submissions (Frontend syncs all submissions to backend memory)
+// POST /api/sync-submissions (Frontend syncs all submissions or single submission to backend memory)
 app.post("/api/sync-submissions", (req, res) => {
   try {
-    const { submissions } = req.body;
+    const { submissions, submission } = req.body;
+    const state = readState();
+    if (!state.submissions) state.submissions = [];
+
     if (Array.isArray(submissions)) {
-      const state = readState();
-      state.submissions = submissions;
+      const map = new Map<string, any>();
+      (state.submissions || []).forEach((s: any) => { if (s && s.id) map.set(String(s.id).toLowerCase(), s); });
+      submissions.forEach((s: any) => { if (s && s.id) map.set(String(s.id).toLowerCase(), s); });
+      state.submissions = Array.from(map.values());
       writeState(state);
-      res.json({ success: true, count: submissions.length });
+      return res.json({ success: true, count: state.submissions.length });
+    } else if (submission && submission.id) {
+      const subId = String(submission.id).toLowerCase();
+      const idx = state.submissions.findIndex((s: any) => String(s.id).toLowerCase() === subId);
+      if (idx >= 0) {
+        state.submissions[idx] = submission;
+      } else {
+        state.submissions.push(submission);
+      }
+      writeState(state);
+      return res.json({ success: true, id: submission.id });
     } else {
-      res.status(400).json({ error: "Payload submissions harus berupa array." });
+      return res.status(400).json({ error: "Payload submissions harus berupa array atau objek submission valid." });
     }
   } catch (err: any) {
     res.status(500).json({ error: err.message });

@@ -178,10 +178,23 @@ export async function generateF1PdfBytes(submission: any, grandTotal: number): P
 
   let curY = 530;
   const items = submission.items || [];
+  
+  // Calculate total required height and scaling factor to fit within 290pt
+  const rawItems = items.map(item => {
+    const lines = wrapText(item.item || '', 340, fontRegular, 9);
+    const h = lines.length * 14 + 14;
+    return { lines, rawH: h };
+  });
+  const totalItemsHeight = rawItems.reduce((acc, r) => acc + r.rawH, 0);
+  const maxTableHeight = 290;
+  const scale = totalItemsHeight > maxTableHeight ? Math.max(0.48, maxTableHeight / totalItemsHeight) : 1;
+  const itemFontSize = Math.max(6.5, 9 * scale);
+  const lineSpacing = Math.max(8, 12 * scale);
+
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
-    const itemTextWrapped = wrapText(item.item || '', 350, fontRegular, 9);
-    const rowHeight = itemTextWrapped.length * 14 + 15;
+    const { lines, rawH } = rawItems[i];
+    const rowHeight = Math.max(14, rawH * scale);
     
     page.drawRectangle({
       x: 40,
@@ -194,11 +207,12 @@ export async function generateF1PdfBytes(submission: any, grandTotal: number): P
     // col check line
     page.drawLine({ start: { x: 390, y: curY }, end: { x: 390, y: curY - rowHeight }, thickness: 1 });
 
-    for (let l = 0; l < itemTextWrapped.length; l++) {
-      page.drawText(itemTextWrapped[l], { x: 50, y: curY - 15 - (l * 12), size: 9, font: fontBold });
+    const textOffsetY = scale < 0.75 ? 10 : 14;
+    for (let l = 0; l < lines.length; l++) {
+      page.drawText(lines[l], { x: 48, y: curY - textOffsetY - (l * lineSpacing), size: itemFontSize, font: fontBold });
     }
     
-    page.drawText('Rp ' + formatRupiah(item.total), { x: 400, y: curY - 15, size: 10, font: fontBold });
+    page.drawText('Rp ' + formatRupiah(item.total), { x: 400, y: curY - textOffsetY, size: Math.max(7, 10 * scale), font: fontBold });
     curY -= rowHeight;
   }
 
@@ -364,11 +378,23 @@ export async function generateF2PdfBytes(submission: any, grandTotal: number): P
   let curY = 575;
   const items = submission.items || [];
   
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i];
+  // Calculate total required height and scaling factor to fit within 350pt
+  const rawF2Items = items.map(item => {
     const descWrapped = wrapText(item.item || '', 240, fontRegular, 8);
     const ketWrapped = wrapText(item.keterangan || '-', 70, fontRegular, 8);
-    const rowHeight = Math.max(descWrapped.length, ketWrapped.length, 1) * 12 + 10;
+    const rawH = Math.max(descWrapped.length, ketWrapped.length, 1) * 12 + 10;
+    return { descWrapped, ketWrapped, rawH };
+  });
+  const totalF2Height = rawF2Items.reduce((acc, r) => acc + r.rawH, 0);
+  const maxF2Height = 350;
+  const scaleF2 = totalF2Height > maxF2Height ? Math.max(0.48, maxF2Height / totalF2Height) : 1;
+  const f2FontSize = Math.max(6, 8 * scaleF2);
+  const f2LineSpacing = Math.max(7.5, 11 * scaleF2);
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const { descWrapped, ketWrapped, rawH } = rawF2Items[i];
+    const rowHeight = Math.max(14, rawH * scaleF2);
     
     // Draw row rectangle
     page.drawRectangle({
@@ -386,18 +412,19 @@ export async function generateF2PdfBytes(submission: any, grandTotal: number): P
     page.drawLine({ start: { x: 390, y: curY }, end: { x: 390, y: curY - rowHeight }, thickness: 1 });
     page.drawLine({ start: { x: 470, y: curY }, end: { x: 470, y: curY - rowHeight }, thickness: 1 });
 
+    const textOffsetY = scaleF2 < 0.75 ? 10 : 14;
     // Fill row texts
-    page.drawText(String(i + 1), { x: 48, y: curY - 15, size: 8, font: fontMono });
+    page.drawText(String(i + 1), { x: 48, y: curY - textOffsetY, size: f2FontSize, font: fontMono });
     
     for (let dLine = 0; dLine < descWrapped.length; dLine++) {
-      page.drawText(descWrapped[dLine], { x: 75, y: curY - 15 - (dLine * 11), size: 8, font: fontBold });
+      page.drawText(descWrapped[dLine], { x: 75, y: curY - textOffsetY - (dLine * f2LineSpacing), size: f2FontSize, font: fontBold });
     }
     
-    page.drawText(cleanSingleLine(item.jumlahVolume || '-'), { x: 325, y: curY - 15, size: 8, font: fontRegular });
-    page.drawText(formatRupiah(item.total), { x: 395, y: curY - 15, size: 8, font: fontBold });
+    page.drawText(cleanSingleLine(item.jumlahVolume || '-'), { x: 325, y: curY - textOffsetY, size: f2FontSize, font: fontRegular });
+    page.drawText(formatRupiah(item.total), { x: 395, y: curY - textOffsetY, size: f2FontSize, font: fontBold });
     
     for (let kLine = 0; kLine < ketWrapped.length; kLine++) {
-      page.drawText(ketWrapped[kLine], { x: 475, y: curY - 15 - (kLine * 11), size: 8, font: fontRegular });
+      page.drawText(ketWrapped[kLine], { x: 475, y: curY - textOffsetY - (kLine * f2LineSpacing), size: Math.max(5.5, f2FontSize * 0.95), font: fontRegular });
     }
     
     curY -= rowHeight;

@@ -1804,19 +1804,17 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
         const shareSlug = cleanSlug(submission.jenisPengajuan);
         const isLunas = (submission.status || '').toLowerCase() === 'lunas' || submission.dibayarkanDengan === 'Cek/Transfer';
 
-        const shareParams = new URLSearchParams({
-          id: submission.id,
-          kode: submission.kode || '',
-          transaksi: shareSlug,
-          nominal: String(grandTotal),
-          kepada: submission.dibayarkanKepada || '',
-          tanggal: submission.tanggal || '',
-          status: isLunas ? 'LUNAS' : 'BELUM LUNAS',
-          bayar: submission.dibayarkanDengan || 'Cek/Transfer',
-        });
-        const itemsJson = JSON.stringify((submission.items || []).slice(0, 5));
-        const shareUrl = `${window.location.origin}/shared-view?${shareParams.toString()}&items=${encodeURIComponent(itemsJson)}`;
-        const shareImageUrl = `/api/share-image?${shareParams.toString()}&items=${encodeURIComponent(itemsJson)}`;
+        const shareUrl = `${window.location.origin}/shared-view?id=${submission.id}&transaksi=${encodeURIComponent(shareSlug)}&nominal=${grandTotal}`;
+        const shareImageUrl = `/api/share-image?id=${encodeURIComponent(submission.id)}&transaksi=${encodeURIComponent(shareSlug)}&nominal=${grandTotal}`;
+
+        // Ensure backend memory and persistent store has the latest submission record for share-image
+        try {
+          fetch('/api/sync-submissions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ submission })
+          }).catch(() => {});
+        } catch (_) {}
 
         const itemsListText = (submission.items || [])
           .slice(0, 5)
@@ -1995,167 +1993,180 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
         );
       })()}
 
+      {/* DENSITY CALCULATION FOR SINGLE-PAGE GUARANTEE */}
+      {(() => {
+        return null;
+      })()}
+
       {/* DOCUMENT PAGE HOLDER */}
-      <div className="flex flex-col items-center space-y-8 print:space-y-0 print:bg-white">
-          {/* ================= PAGE 1: BUKTI PENGELUARAN KAS / BANK ================= */}
-        {/* ================= PAGE 1: BUKTI PENGELUARAN KAS / BANK (STANDARD 100% LAYOUT) ================= */}
-        {printLayoutMode === 'standard' && (activeTab === 'both' || activeTab === 'pengajuan') && (
-          <PageScaleWrapper isLandscape={false} isLastPage={!hasMoreAfterF1}>
-            <div className="w-[210mm] min-h-[297mm] bg-white p-[15mm] border border-stone-250 shadow-md rounded-xl print:shadow-none print:border-none print:rounded-none print:!p-0 print:!m-0 page-break">
-              
-              {/* Header Block Left (Logo) & Right (Code & Tanggal) */}
-              <div className="flex justify-between items-start mb-6">
-                <NusantaraLogo size="md" className="items-start text-left" companyName={userProfile?.companyName} />
+      {(() => {
+        const itemCount = submission.items?.length || 0;
+        const totalItemLines = (submission.items || []).reduce((acc, it) => acc + Math.ceil((it.item?.length || 0) / 45), 0);
+        const isDenseF1 = itemCount >= 2 || totalItemLines >= 3;
+        const isVeryDenseF1 = itemCount >= 4 || totalItemLines >= 6;
+        const isUltraDenseF1 = itemCount >= 7 || totalItemLines >= 10;
 
-                <div className="flex flex-col items-end pt-2">
-                  <div className="border border-black px-8 py-1.5 font-bold text-base text-black bg-stone-50 mb-2 min-w-[120px] text-center font-mono">
-                    {submission.kode}
-                  </div>
-                  <div className="text-xs text-black font-semibold">
-                    Tanggal : <span className="font-normal">{formatDateIndonesian(submission.tanggal)}</span>
-                  </div>
-                </div>
-              </div>
-
-            {/* Document Title Block */}
-            <div className="border-[2px] border-black bg-white py-2.5 text-center mb-6">
-              <h1 className="text-sm font-bold text-black font-sans uppercase tracking-[1.5px]">
-                BUKTI PENGELUARAN KAS / BANK
-              </h1>
-            </div>
-
-            {/* Metadata Fields Area */}
-            <div className="text-sm font-sans space-y-2 mb-6 px-1">
-              <div className="grid grid-cols-[140px_10px_1fr] gap-y-3">
-                <span className="font-semibold text-black">Dibayarkan Kepada</span>
-                <span className="text-black">:</span>
-                <span className="text-black font-bold">{submission.dibayarkanKepada}</span>
-
-                {submission.isPettyCash && (
-                  <>
-                    <span className="font-semibold text-black">Pemegang Petty Cash</span>
-                    <span className="text-black">:</span>
-                    <span className="text-black font-bold text-violet-800">{submission.pettyCashCustodian}</span>
-                  </>
-                )}
-
-                <span className="font-semibold text-black">Jenis Pengajuan</span>
-                <span className="text-black">:</span>
-                <span className="text-black">{submission.jenisPengajuan}</span>
-
-                <span className="font-semibold text-black">Kode</span>
-                <span className="text-black">:</span>
-                <span className="text-black font-mono">{submission.kode}</span>
-
-                <span className="font-semibold text-black">Dibayarkan dengan</span>
-                <span className="text-black">:</span>
-                <div className="flex items-center gap-6">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-5 border border-black flex items-center justify-center font-bold text-black bg-stone-50 font-mono">
-                      {submission.dibayarkanDengan === 'Tunai' ? 'X' : ''}
-                    </div>
-                    <span>Tunai</span>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-5 border border-black flex items-center justify-center font-bold text-black bg-stone-50 font-mono">
-                      {submission.dibayarkanDengan === 'Cek/Transfer' ? 'X' : ''}
-                    </div>
-                    <span>Cek / Transfer</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Table Voucher */}
-            <div className="mb-6">
-              <table className="w-full border-collapse border-[1.5px] border-black text-sm">
-                <thead>
-                  <tr className="bg-white border-b-[1.5px] border-black text-black font-bold uppercase text-xs">
-                    <th className="border-r border-black py-2.5 px-4 text-left">JENIS PENGAJUAN</th>
-                    <th className="py-2.5 px-4 text-right w-64">JUMLAH</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {submission.items.map((item) => (
-                    <tr key={item.id} className="border-b border-black text-black min-h-[70px]">
-                      <td className="border-r border-black py-5 px-4 leading-relaxed font-semibold">
-                        {item.item}
-                      </td>
-                      <td className="py-5 px-4 text-right font-mono font-bold text-base">
-                        Rp <span className="float-right">{formatRupiah(item.total)}</span>
-                      </td>
-                    </tr>
-                  ))}
+        return (
+          <div className="flex flex-col items-center space-y-8 print:space-y-0 print:bg-white">
+            {/* ================= PAGE 1: BUKTI PENGELUARAN KAS / BANK ================= */}
+            {/* ================= PAGE 1: BUKTI PENGELUARAN KAS / BANK (STANDARD 100% LAYOUT) ================= */}
+            {printLayoutMode === 'standard' && (activeTab === 'both' || activeTab === 'pengajuan') && (
+              <PageScaleWrapper isLandscape={false} isLastPage={!hasMoreAfterF1}>
+                <div className={`w-[210mm] ${isUltraDenseF1 ? 'min-h-[297mm] p-[8mm] sm:p-[10mm]' : isDenseF1 ? 'min-h-[297mm] p-[10mm] sm:p-[12mm]' : 'min-h-[297mm] p-[14mm] sm:p-[15mm]'} bg-white border border-stone-250 shadow-md rounded-xl print:shadow-none print:border-none print:rounded-none print:!p-0 print:!m-0 print:!min-h-0 print:!h-auto page-break`}>
                   
-                  <tr className="border-t-[1.5px] border-black font-bold text-black">
-                    <td className="border-r border-black py-2 px-4 bg-stone-50"></td>
-                    <td className="py-2.5 px-4 text-right font-mono text-base font-bold bg-[#fcfcfc]">
-                      Rp <span className="float-right">{formatRupiah(grandTotal)}</span>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+                  {/* Header Block Left (Logo) & Right (Code & Tanggal) */}
+                  <div className={`flex justify-between items-start ${isUltraDenseF1 ? 'mb-2' : isDenseF1 ? 'mb-3' : 'mb-5'}`}>
+                    <NusantaraLogo size={isUltraDenseF1 ? 'sm' : 'md'} className="items-start text-left" companyName={userProfile?.companyName} />
 
-            {/* Terbilang block */}
-            <div className="border border-black p-3.5 mb-8 bg-stone-50/30 text-sm flex gap-2">
-              <span className="font-bold text-black">Terbilang :</span>
-              <span className="text-black italic font-medium">
-                "{numberToTerbilang(grandTotal)}"
-              </span>
-            </div>
+                    <div className="flex flex-col items-end pt-1">
+                      <div className={`border border-black ${isUltraDenseF1 ? 'px-4 py-1 text-xs' : isDenseF1 ? 'px-6 py-1 text-sm' : 'px-8 py-1.5 text-base'} font-bold text-black bg-stone-50 mb-1.5 min-w-[120px] text-center font-mono`}>
+                        {submission.kode}
+                      </div>
+                      <div className={`${isUltraDenseF1 ? 'text-[11px]' : 'text-xs'} text-black font-semibold`}>
+                        Tanggal : <span className="font-normal">{formatDateIndonesian(submission.tanggal)}</span>
+                      </div>
+                    </div>
+                  </div>
 
-            {/* 3 Signers Row */}
-            <div className="flex justify-between text-sm text-black mt-12 px-6">
-              <div className="flex flex-col items-center w-52 text-center">
-                <span className="font-sans font-medium uppercase text-xs mb-16">Diajukan</span>
-                <span className="border-b border-black pb-0.5 px-3 font-bold tracking-wide uppercase text-xs truncate max-w-full">
-                  {submission.diajukanOleh || 'Andi Dhiya Salsabila'}
-                </span>
-                <span className="text-xs text-stone-600 font-mono mt-1 uppercase">
-                  {submission.diajukanJabatan || 'Keuangan'}
-                </span>
-              </div>
+                  {/* Document Title Block */}
+                  <div className={`border-[2px] border-black bg-white ${isUltraDenseF1 ? 'py-1 mb-2' : isDenseF1 ? 'py-1.5 mb-3' : 'py-2 mb-4'} text-center`}>
+                    <h1 className={`${isUltraDenseF1 ? 'text-xs tracking-[1px]' : 'text-sm tracking-[1.5px]'} font-bold text-black font-sans uppercase`}>
+                      BUKTI PENGELUARAN KAS / BANK
+                    </h1>
+                  </div>
 
-              <div className="flex flex-col items-center w-52 text-center">
-                <span className="font-sans font-medium uppercase text-xs mb-16">Diverifikasi</span>
-                <span className="border-b border-black pb-0.5 px-3 font-bold tracking-wide uppercase text-xs truncate max-w-full">
-                  {f1Verifier === 'nursyam'
-                    ? 'Andi Nursyam Halid'
-                    : ((submission.diverifikasiOleh && submission.diverifikasiOleh !== 'Andi Dhiya Salsabila') ? submission.diverifikasiOleh : 'Andi Muhammad Rifki')}
-                </span>
-                <span className="text-xs text-stone-600 font-mono mt-1 uppercase">
-                  {f1Verifier === 'nursyam'
-                    ? 'Direktur Utama'
-                    : ((submission.diverifikasiJabatan && submission.diverifikasiJabatan !== 'Keuangan') ? submission.diverifikasiJabatan : 'Direktur')}
-                </span>
-              </div>
+                  {/* Metadata Fields Area */}
+                  <div className={`${isUltraDenseF1 ? 'text-[11px] mb-2 space-y-1' : isDenseF1 ? 'text-xs mb-3 space-y-1.5' : 'text-sm mb-4 space-y-2'} font-sans px-1`}>
+                    <div className={`grid grid-cols-[140px_10px_1fr] ${isUltraDenseF1 ? 'gap-y-0.5' : isDenseF1 ? 'gap-y-1' : 'gap-y-2'}`}>
+                      <span className="font-semibold text-black">Dibayarkan Kepada</span>
+                      <span className="text-black">:</span>
+                      <span className="text-black font-bold">{submission.dibayarkanKepada}</span>
 
-              <div className="flex flex-col items-center w-52 text-center">
-                <span className="font-sans font-medium uppercase text-xs mb-16">Disetujui</span>
-                <span className="border-b border-black pb-0.5 px-3 font-bold tracking-wide uppercase text-xs truncate max-w-full">
-                  {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? submission.disetujuiOleh2 : 'Harijon'}
-                </span>
-                <span className="text-xs text-stone-600 font-mono mt-1 uppercase">
-                  {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? (submission.disetujuiJabatan2 || 'Direktur Keuangan') : 'Direktur Keuangan'}
-                </span>
-              </div>
-            </div>
+                      {submission.isPettyCash && (
+                        <>
+                          <span className="font-semibold text-black">Pemegang Petty Cash</span>
+                          <span className="text-black">:</span>
+                          <span className="text-black font-bold text-violet-800">{submission.pettyCashCustodian}</span>
+                        </>
+                      )}
 
-            {/* Notes Section */}
-            <div className="mt-8">
-              <span className="block text-xs font-bold text-black tracking-wide uppercase mb-1">
-                NOTE :
-              </span>
-              <div className="border-[1.5px] border-black p-4 min-h-[70px] rounded-xs text-sm text-stone-800 leading-relaxed font-sans bg-stone-50/30">
-                {submission.notes ? submission.notes : ""}
-              </div>
-            </div>
+                      <span className="font-semibold text-black">Jenis Pengajuan</span>
+                      <span className="text-black">:</span>
+                      <span className="text-black">{submission.jenisPengajuan}</span>
 
-            </div>
-          </PageScaleWrapper>
-        )}
+                      <span className="font-semibold text-black">Kode</span>
+                      <span className="text-black">:</span>
+                      <span className="text-black font-mono">{submission.kode}</span>
+
+                      <span className="font-semibold text-black">Dibayarkan dengan</span>
+                      <span className="text-black">:</span>
+                      <div className="flex items-center gap-6">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-5 border border-black flex items-center justify-center font-bold text-black bg-stone-50 font-mono">
+                            {submission.dibayarkanDengan === 'Tunai' ? 'X' : ''}
+                          </div>
+                          <span>Tunai</span>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-5 border border-black flex items-center justify-center font-bold text-black bg-stone-50 font-mono">
+                            {submission.dibayarkanDengan === 'Cek/Transfer' ? 'X' : ''}
+                          </div>
+                          <span>Cek / Transfer</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Table Voucher */}
+                  <div className={isUltraDenseF1 ? 'mb-2' : isDenseF1 ? 'mb-3' : 'mb-4'}>
+                    <table className="w-full border-collapse border-[1.5px] border-black text-sm">
+                      <thead>
+                        <tr className="bg-white border-b-[1.5px] border-black text-black font-bold uppercase text-xs">
+                          <th className="border-r border-black py-1.5 px-3 text-left">JENIS PENGAJUAN</th>
+                          <th className="py-1.5 px-3 text-right w-64">JUMLAH</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {submission.items.map((item) => (
+                          <tr key={item.id} className="border-b border-black text-black">
+                            <td className={`border-r border-black ${isUltraDenseF1 ? 'py-1 px-2.5 text-[11px]' : isDenseF1 ? 'py-1.5 px-3 text-xs' : 'py-3 px-4 text-sm'} leading-snug font-semibold`}>
+                              {item.item}
+                            </td>
+                            <td className={`py-1.5 px-3 text-right font-mono font-bold ${isUltraDenseF1 ? 'text-xs' : isDenseF1 ? 'text-sm' : 'text-base'}`}>
+                              Rp <span className="float-right">{formatRupiah(item.total)}</span>
+                            </td>
+                          </tr>
+                        ))}
+                        
+                        <tr className="border-t-[1.5px] border-black font-bold text-black">
+                          <td className="border-r border-black py-1.5 px-3 bg-stone-50"></td>
+                          <td className={`py-1.5 px-3 text-right font-mono font-bold bg-[#fcfcfc] ${isUltraDenseF1 ? 'text-xs' : isDenseF1 ? 'text-sm' : 'text-base'}`}>
+                            Rp <span className="float-right">{formatRupiah(grandTotal)}</span>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Terbilang block */}
+                  <div className={`border border-black ${isUltraDenseF1 ? 'p-1.5 mb-2 text-[11px]' : isDenseF1 ? 'p-2 mb-3 text-xs' : 'p-3 mb-4 text-sm'} bg-stone-50/30 flex gap-2`}>
+                    <span className="font-bold text-black shrink-0">Terbilang :</span>
+                    <span className="text-black italic font-medium leading-tight">
+                      "{numberToTerbilang(grandTotal)}"
+                    </span>
+                  </div>
+
+                  {/* 3 Signers Row */}
+                  <div className={`flex justify-between text-sm text-black ${isUltraDenseF1 ? 'mt-2 mb-1' : isDenseF1 ? 'mt-4 mb-2' : 'mt-6 mb-3'} px-6`}>
+                    <div className="flex flex-col items-center w-52 text-center">
+                      <span className={`font-sans font-medium uppercase ${isUltraDenseF1 ? 'text-[11px] mb-6' : isDenseF1 ? 'text-xs mb-8' : 'text-xs mb-12'}`}>Diajukan</span>
+                      <span className="border-b border-black pb-0.5 px-3 font-bold tracking-wide uppercase text-xs truncate max-w-full">
+                        {submission.diajukanOleh || 'Andi Dhiya Salsabila'}
+                      </span>
+                      <span className="text-[11px] text-stone-600 font-mono mt-0.5 uppercase">
+                        {submission.diajukanJabatan || 'Keuangan'}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-col items-center w-52 text-center">
+                      <span className={`font-sans font-medium uppercase ${isUltraDenseF1 ? 'text-[11px] mb-6' : isDenseF1 ? 'text-xs mb-8' : 'text-xs mb-12'}`}>Diverifikasi</span>
+                      <span className="border-b border-black pb-0.5 px-3 font-bold tracking-wide uppercase text-xs truncate max-w-full">
+                        {f1Verifier === 'nursyam'
+                          ? 'Andi Nursyam Halid'
+                          : ((submission.diverifikasiOleh && submission.diverifikasiOleh !== 'Andi Dhiya Salsabila') ? submission.diverifikasiOleh : 'Andi Muhammad Rifki')}
+                      </span>
+                      <span className="text-[11px] text-stone-600 font-mono mt-0.5 uppercase">
+                        {f1Verifier === 'nursyam'
+                          ? 'Direktur Utama'
+                          : ((submission.diverifikasiJabatan && submission.diverifikasiJabatan !== 'Keuangan') ? submission.diverifikasiJabatan : 'Direktur')}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-col items-center w-52 text-center">
+                      <span className={`font-sans font-medium uppercase ${isUltraDenseF1 ? 'text-[11px] mb-6' : isDenseF1 ? 'text-xs mb-8' : 'text-xs mb-12'}`}>Disetujui</span>
+                      <span className="border-b border-black pb-0.5 px-3 font-bold tracking-wide uppercase text-xs truncate max-w-full">
+                        {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? submission.disetujuiOleh2 : 'Harijon'}
+                      </span>
+                      <span className="text-[11px] text-stone-600 font-mono mt-0.5 uppercase">
+                        {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? (submission.disetujuiJabatan2 || 'Direktur Keuangan') : 'Direktur Keuangan'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Notes Section */}
+                  <div className={isUltraDenseF1 ? 'mt-1.5' : isDenseF1 ? 'mt-2.5' : 'mt-4'}>
+                    <span className="block text-[10px] font-bold text-black tracking-wide uppercase mb-0.5">
+                      NOTE :
+                    </span>
+                    <div className={`border-[1.5px] border-black p-2 rounded-xs text-xs text-stone-800 leading-snug font-sans bg-stone-50/30 ${isUltraDenseF1 ? 'min-h-[30px]' : isDenseF1 ? 'min-h-[38px]' : 'min-h-[50px]'}`}>
+                      {submission.notes ? submission.notes : ""}
+                    </div>
+                  </div>
+
+                </div>
+              </PageScaleWrapper>
+            )}
 
         {/* ================= PAGE 1: BUKTI PENGELUARAN KAS / BANK (COMPACT TOP LAYOUT) ================= */}
         {printLayoutMode === 'compact_70' && (activeTab === 'both' || activeTab === 'pengajuan') && (
@@ -2303,128 +2314,134 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
         )}
 
         {/* ================= PAGE 2: FORMULIR PENGAJUAN HO (STANDARD 100% LAYOUT) ================= */}
-        {showF2 && printLayoutMode === 'standard' && (activeTab === 'both' || activeTab === 'pengajuan') && (
-          <PageScaleWrapper isLandscape={false} isLastPage={!hasMoreAfterF2}>
-            <div className="w-[210mm] min-h-[297mm] bg-white p-[15mm] border border-stone-250 shadow-md rounded-xl print:shadow-none print:border-none print:rounded-none print:!p-0 print:!m-0 page-break">
-              
-              {/* Header Area */}
-              <div className="flex justify-between items-start mb-6">
-                <NusantaraLogo size="md" className="items-start text-left" companyName={userProfile?.companyName} />
-              </div>
+        {showF2 && printLayoutMode === 'standard' && (activeTab === 'both' || activeTab === 'pengajuan') && (() => {
+          const isDenseF2 = itemCount >= 3 || totalItemLines >= 4;
+          const isVeryDenseF2 = itemCount >= 6 || totalItemLines >= 8;
+          const isUltraDenseF2 = itemCount >= 10 || totalItemLines >= 12;
 
-            {/* Document Title Block */}
-            <div className="border-[2px] border-black bg-[#D9D9D9] py-2.5 text-center mb-6">
-              <h1 className="text-base font-bold text-black font-sans uppercase tracking-[1px]">
-                FORMULIR PENGAJUAN DANA
-              </h1>
-            </div>
-
-            {/* Metadata Fields Box */}
-            <div className="border border-black p-4 mb-6 text-sm font-sans">
-              <div className="grid grid-cols-[140px_10px_1fr] gap-y-2">
-                <span className="font-semibold text-black">Lokasi</span>
-                <span className="text-black">:</span>
-                <span className="text-black">{submission.lokasi}</span>
-
-                <span className="font-semibold text-black">Tanggal</span>
-                <span className="text-black">:</span>
-                <span className="text-black">{formatDateIndonesian(submission.tanggal)}</span>
-
-                <span className="font-semibold text-black">Jenis Pengajuan</span>
-                <span className="text-black">:</span>
-                <span className="text-black">{submission.jenisPengajuan}</span>
-
-                <span className="font-semibold text-black">Kode</span>
-                <span className="text-black">:</span>
-                <span className="text-black font-mono">{submission.kode}</span>
-              </div>
-            </div>
-
-            {/* Main Items Table */}
-            <div className="mb-6">
-              <table className="w-full border-collapse border-[1.5px] border-black text-sm table-fixed">
-                <thead>
-                  <tr className="bg-[#D9D9D9]/30 border-b-[1.5px] border-black text-black font-bold uppercase text-xs">
-                    <th className="border-r border-black py-2.5 px-1 text-center w-[5%]">NO</th>
-                    <th className="border-r border-black py-2.5 px-3 text-left w-[41%]">ITEM DETIL (INVOICE / DESKRIPSI)</th>
-                    <th className="border-r border-black py-2.5 px-2 text-center w-[8%]">VOL</th>
-                    <th className="border-r border-black py-2.5 px-3 text-center w-[24%]">TOTAL (RP)</th>
-                    <th className="py-2.5 px-3 text-left w-[22%]">KETERANGAN</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {submission.items.map((item, idx) => (
-                    <tr key={item.id} className="border-b border-black align-top text-black">
-                      <td className="border-r border-black py-3 px-1 text-center font-mono text-xs">{idx + 1}</td>
-                      <td className="border-r border-black py-3 px-3 font-semibold text-xs leading-relaxed break-words whitespace-pre-wrap text-stone-900">{formatDisplayItemTitle(item.item)}</td>
-                      <td className="border-r border-black py-3 px-2 text-center text-xs text-stone-800">{item.jumlahVolume || '-'}</td>
-                      <td className="border-r border-black py-3 px-3 text-right font-mono font-bold text-xs font-semibold">
-                        {formatRupiah(item.total)}
-                      </td>
-                      <td className="py-3 px-3 text-stone-700 text-[10px] italic break-all break-words whitespace-pre-wrap leading-tight text-left">{item.keterangan || '-'}</td>
-                    </tr>
-                  ))}
-                  
-                  {/* Total Row */}
-                  <tr className="border-t-[1.5px] border-black font-bold text-black bg-stone-50">
-                    <td colSpan={3} className="border-r border-black py-3 px-4 text-center uppercase tracking-wider text-xs">
-                       TOTAL PENYERAHAN
-                    </td>
-                    <td className="border-r border-black py-3 px-3 text-right font-mono text-sm font-bold bg-amber-50/10">
-                      {formatRupiah(grandTotal)}
-                    </td>
-                    <td className="py-3 px-3 bg-stone-50"></td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-
-            {/* Signatures Row */}
-            {f2ApprovedBy === 'none' ? (
-              <div className="flex justify-center text-sm text-black mb-8 mt-12">
-                <div className="flex flex-col items-center w-60 text-center">
-                  <span className="font-sans font-medium mb-16">Dibuat Oleh</span>
-                  <span className="border-b border-black pb-0.5 px-4 font-bold tracking-wide">
-                    {submission.dibuatOleh || 'Nur Wahyudi'}
-                  </span>
-                  <span className="text-xs text-stone-600 font-mono mt-1">Staff Keuangan</span>
-                </div>
-              </div>
-            ) : (
-              <div className="flex justify-between text-sm text-black px-10 mb-8 mt-12">
-                <div className="flex flex-col items-center w-60 text-center">
-                  <span className="font-sans font-medium mb-16">Dibuat Oleh</span>
-                  <span className="border-b border-black pb-0.5 px-4 font-bold tracking-wide">
-                    {submission.dibuatOleh || 'Nur Wahyudi'}
-                  </span>
-                  <span className="text-xs text-stone-600 font-mono mt-1">Staff Keuangan</span>
-                </div>
+          return (
+            <PageScaleWrapper isLandscape={false} isLastPage={!hasMoreAfterF2}>
+              <div className={`w-[210mm] ${isUltraDenseF2 ? 'min-h-[297mm] p-[8mm] sm:p-[10mm]' : isDenseF2 ? 'min-h-[297mm] p-[10mm] sm:p-[12mm]' : 'min-h-[297mm] p-[14mm] sm:p-[15mm]'} bg-white border border-stone-250 shadow-md rounded-xl print:shadow-none print:border-none print:rounded-none print:!p-0 print:!m-0 print:!min-h-0 print:!h-auto page-break`}>
                 
-                <div className="flex flex-col items-center w-60 text-center">
-                  <span className="font-sans font-medium mb-16">Diajukan</span>
-                  <span className="border-b border-black pb-0.5 px-4 font-bold tracking-wide">
-                    {submission.diajukanOleh || 'Andi Dhiya Salsabila'}
-                  </span>
-                  <span className="text-xs text-stone-600 font-mono mt-1">
-                    {submission.diajukanJabatan || 'Keuangan'}
-                  </span>
+                {/* Header Area */}
+                <div className={`flex justify-between items-start ${isUltraDenseF2 ? 'mb-2' : isDenseF2 ? 'mb-3' : 'mb-5'}`}>
+                  <NusantaraLogo size={isUltraDenseF2 ? 'sm' : 'md'} className="items-start text-left" companyName={userProfile?.companyName} />
                 </div>
-              </div>
-            )}
 
-            {/* Notes Section */}
-            <div className="mt-8">
-              <span className="block text-xs font-bold text-black tracking-wide uppercase mb-1">
-                NOTE :
-              </span>
-              <div className="border-[1.5px] border-black p-4 min-h-[70px] rounded-xs text-sm text-stone-800 leading-relaxed font-sans bg-stone-50/30">
-                {submission.notes ? submission.notes : ""}
-              </div>
-            </div>
+                {/* Document Title Block */}
+                <div className={`border-[2px] border-black bg-[#D9D9D9] ${isUltraDenseF2 ? 'py-1 mb-2' : isDenseF2 ? 'py-1.5 mb-3' : 'py-2 mb-4'} text-center`}>
+                  <h1 className={`${isUltraDenseF2 ? 'text-sm' : 'text-base'} font-bold text-black font-sans uppercase tracking-[1px]`}>
+                    FORMULIR PENGAJUAN DANA
+                  </h1>
+                </div>
 
-            </div>
-          </PageScaleWrapper>
-        )}
+                {/* Metadata Fields Box */}
+                <div className={`border border-black ${isUltraDenseF2 ? 'p-2 mb-2 text-xs' : isDenseF2 ? 'p-3 mb-3 text-xs' : 'p-3.5 mb-4 text-sm'} font-sans`}>
+                  <div className={`grid grid-cols-[140px_10px_1fr] ${isUltraDenseF2 ? 'gap-y-0.5' : isDenseF2 ? 'gap-y-1' : 'gap-y-1.5'}`}>
+                    <span className="font-semibold text-black">Lokasi</span>
+                    <span className="text-black">:</span>
+                    <span className="text-black">{submission.lokasi}</span>
+
+                    <span className="font-semibold text-black">Tanggal</span>
+                    <span className="text-black">:</span>
+                    <span className="text-black">{formatDateIndonesian(submission.tanggal)}</span>
+
+                    <span className="font-semibold text-black">Jenis Pengajuan</span>
+                    <span className="text-black">:</span>
+                    <span className="text-black">{submission.jenisPengajuan}</span>
+
+                    <span className="font-semibold text-black">Kode</span>
+                    <span className="text-black">:</span>
+                    <span className="text-black font-mono">{submission.kode}</span>
+                  </div>
+                </div>
+
+                {/* Main Items Table */}
+                <div className={isUltraDenseF2 ? 'mb-2' : isDenseF2 ? 'mb-3' : 'mb-4'}>
+                  <table className="w-full border-collapse border-[1.5px] border-black text-sm table-fixed">
+                    <thead>
+                      <tr className="bg-[#D9D9D9]/30 border-b-[1.5px] border-black text-black font-bold uppercase text-xs">
+                        <th className="border-r border-black py-1.5 px-1 text-center w-[5%]">NO</th>
+                        <th className="border-r border-black py-1.5 px-2 text-left w-[41%]">ITEM DETIL (INVOICE / DESKRIPSI)</th>
+                        <th className="border-r border-black py-1.5 px-1 text-center w-[8%]">VOL</th>
+                        <th className="border-r border-black py-1.5 px-2 text-center w-[24%]">TOTAL (RP)</th>
+                        <th className="py-1.5 px-2 text-left w-[22%]">KETERANGAN</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {submission.items.map((item, idx) => (
+                        <tr key={item.id} className="border-b border-black align-top text-black">
+                          <td className={`border-r border-black ${isUltraDenseF2 ? 'py-1 px-1 text-[10px]' : isDenseF2 ? 'py-1.5 px-1 text-xs' : 'py-2 px-1 text-xs'} text-center font-mono`}>{idx + 1}</td>
+                          <td className={`border-r border-black ${isUltraDenseF2 ? 'py-1 px-2 text-[11px]' : isDenseF2 ? 'py-1.5 px-2 text-xs' : 'py-2 px-3 text-xs'} font-semibold leading-snug break-words whitespace-pre-wrap text-stone-900`}>{formatDisplayItemTitle(item.item)}</td>
+                          <td className={`border-r border-black ${isUltraDenseF2 ? 'py-1 px-1 text-[11px]' : isDenseF2 ? 'py-1.5 px-1 text-xs' : 'py-2 px-2 text-xs'} text-center text-stone-800`}>{item.jumlahVolume || '-'}</td>
+                          <td className={`border-r border-black ${isUltraDenseF2 ? 'py-1 px-2 text-[11px]' : isDenseF2 ? 'py-1.5 px-2 text-xs' : 'py-2 px-3 text-xs'} text-right font-mono font-bold`}>
+                            {formatRupiah(item.total)}
+                          </td>
+                          <td className={`py-1 px-2 text-stone-700 ${isUltraDenseF2 ? 'text-[9px]' : 'text-[10px]'} italic break-all break-words whitespace-pre-wrap leading-tight text-left`}>{item.keterangan || '-'}</td>
+                        </tr>
+                      ))}
+                      
+                      {/* Total Row */}
+                      <tr className="border-t-[1.5px] border-black font-bold text-black bg-stone-50">
+                        <td colSpan={3} className="border-r border-black py-2 px-3 text-center uppercase tracking-wider text-xs">
+                           TOTAL PENYERAHAN
+                        </td>
+                        <td className={`border-r border-black py-2 px-2 text-right font-mono font-bold bg-amber-50/10 ${isUltraDenseF2 ? 'text-xs' : 'text-sm'}`}>
+                          {formatRupiah(grandTotal)}
+                        </td>
+                        <td className="py-2 px-2 bg-stone-50"></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Signatures Row */}
+                {f2ApprovedBy === 'none' ? (
+                  <div className={`flex justify-center text-sm text-black ${isUltraDenseF2 ? 'mt-2 mb-1' : isDenseF2 ? 'mt-4 mb-2' : 'mt-6 mb-4'}`}>
+                    <div className="flex flex-col items-center w-60 text-center">
+                      <span className={`font-sans font-medium uppercase ${isUltraDenseF2 ? 'text-[11px] mb-6' : isDenseF2 ? 'text-xs mb-8' : 'text-xs mb-12'}`}>Dibuat Oleh</span>
+                      <span className="border-b border-black pb-0.5 px-4 font-bold tracking-wide uppercase text-xs truncate max-w-full">
+                        {submission.dibuatOleh || 'Nur Wahyudi'}
+                      </span>
+                      <span className="text-[11px] text-stone-600 font-mono mt-0.5 uppercase">Staff Keuangan</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className={`flex justify-between text-sm text-black px-10 ${isUltraDenseF2 ? 'mt-2 mb-1' : isDenseF2 ? 'mt-4 mb-2' : 'mt-6 mb-4'}`}>
+                    <div className="flex flex-col items-center w-60 text-center">
+                      <span className={`font-sans font-medium uppercase ${isUltraDenseF2 ? 'text-[11px] mb-6' : isDenseF2 ? 'text-xs mb-8' : 'text-xs mb-12'}`}>Dibuat Oleh</span>
+                      <span className="border-b border-black pb-0.5 px-4 font-bold tracking-wide uppercase text-xs truncate max-w-full">
+                        {submission.dibuatOleh || 'Nur Wahyudi'}
+                      </span>
+                      <span className="text-[11px] text-stone-600 font-mono mt-0.5 uppercase">Staff Keuangan</span>
+                    </div>
+                    
+                    <div className="flex flex-col items-center w-60 text-center">
+                      <span className={`font-sans font-medium uppercase ${isUltraDenseF2 ? 'text-[11px] mb-6' : isDenseF2 ? 'text-xs mb-8' : 'text-xs mb-12'}`}>Diajukan</span>
+                      <span className="border-b border-black pb-0.5 px-4 font-bold tracking-wide uppercase text-xs truncate max-w-full">
+                        {submission.diajukanOleh || 'Andi Dhiya Salsabila'}
+                      </span>
+                      <span className="text-[11px] text-stone-600 font-mono mt-0.5 uppercase">
+                        {submission.diajukanJabatan || 'Keuangan'}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Notes Section */}
+                <div className={isUltraDenseF2 ? 'mt-1.5' : isDenseF2 ? 'mt-2.5' : 'mt-4'}>
+                  <span className="block text-[10px] font-bold text-black tracking-wide uppercase mb-0.5">
+                    NOTE :
+                  </span>
+                  <div className={`border-[1.5px] border-black p-2 rounded-xs text-xs text-stone-800 leading-snug font-sans bg-stone-50/30 ${isUltraDenseF2 ? 'min-h-[30px]' : isDenseF2 ? 'min-h-[38px]' : 'min-h-[50px]'}`}>
+                    {submission.notes ? submission.notes : ""}
+                  </div>
+                </div>
+
+              </div>
+            </PageScaleWrapper>
+          );
+        })()}
 
         {/* ================= PAGE 2: FORMULIR PENGAJUAN HO (COMPACT TOP LAYOUT) ================= */}
         {showF2 && printLayoutMode === 'compact_70' && (activeTab === 'both' || activeTab === 'pengajuan') && (
@@ -3301,18 +3318,20 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
           );
         })}
 
-      </div>
+          </div>
+        );
+      })()}
 
       {/* Styled inline media-print stylesheet to dynamically align perfectly fit elements */}
       <style>{`
         @media print {
           @page {
             size: A4 portrait;
-            margin: 12mm 15mm 12mm 15mm;
+            margin: 8mm 12mm 8mm 12mm;
           }
           @page landscape-page {
             size: A4 landscape;
-            margin: 12mm 15mm 12mm 15mm;
+            margin: 8mm 12mm 8mm 12mm;
           }
           html, body, #app-root, main, #app-root > main {
             background-color: white !important;
@@ -3345,7 +3364,11 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
             width: 100% !important;
             height: auto !important;
             min-height: 0 !important;
+            max-height: 280mm !important;
+            box-sizing: border-box !important;
             box-shadow: none !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
           }
           .page-break.is-image-page {
             height: 272mm !important;
@@ -3371,8 +3394,9 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
             break-after: page !important;
           }
           /* Ensure no cutoffs or overlapping content */
-          table {
-            page-break-inside: avoid;
+          table, tr, td, th {
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
           }
         }
       `}</style>
