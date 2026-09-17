@@ -1393,9 +1393,9 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
           dayStr = String(dateObj.getDate());
         }
 
-        // Force companyCode to always be 'nmsa' to guarantee folder structure remains inside NMSA company
-        const companyCode = 'nmsa';
-        const folderCompanyUpper = 'NMSA';
+        // Dynamic companyCode from userProfile so new companies have their own segregated Drive folder
+        const activeCompanyCode = (userProfile?.companyDetails?.code || userProfile?.companyId || 'nmsa').toLowerCase().trim();
+        const folderCompanyUpper = activeCompanyCode.toUpperCase();
         
         console.log('[Drive Upload] Memulai pembuatan struktur direktori:', { company: folderCompanyUpper, yearStr, monthStr, dayStr });
         

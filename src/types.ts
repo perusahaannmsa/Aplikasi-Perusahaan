@@ -444,5 +444,28 @@ export interface Project {
   updatedAt?: string;
 }
 
+export interface CompanyProfile {
+  id: string; // clean lowercase id, e.g. "nmsa", "pbm", "bbm"
+  code: string; // uppercase code, e.g. "NMSA", "PBM", "BBM"
+  name: string; // e.g. "PT Nusantara Mineral Sukses Abadi"
+  fullName: string; // e.g. "PT. Nusantara Mineral Sukses Abadi"
+  displayName?: string; // e.g. "Invoice-NMSA" or "NMSA Portal"
+  icon?: string; // e.g. "🏢"
+  defaultJenis?: string;
+  defaultKode?: string;
+  defaultLokasi?: string;
+  no_invoice_prefix?: string; // e.g. "BKK-NMSA"
+  sigAccounting?: string;
+  sigDibuat?: string;
+  sigDirKeuangan?: string;
+  sigDirektur?: string;
+  sigDisetujui?: string;
+  sigKeuangan?: string;
+  isActive?: boolean;
+  googleDrives?: any[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 
 

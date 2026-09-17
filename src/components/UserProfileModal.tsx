@@ -24,13 +24,15 @@ interface UserProfileModalProps {
   onClose: () => void;
   userProfile: any;
   authUser: any;
+  onOpenCompanySwitcher?: () => void;
 }
 
 export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   isOpen,
   onClose,
   userProfile,
-  authUser
+  authUser,
+  onOpenCompanySwitcher
 }) => {
   // Signatures configuration state
   const [creatorName, setCreatorName] = useState('');
@@ -235,9 +237,24 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
               <div className="space-y-1">
                 <span className="text-stone-400 block text-[9px] uppercase tracking-wider">Unit Bisnis Portal</span>
-                <div className="flex items-center gap-2 bg-stone-50 px-3 py-2.5 rounded-xl border border-stone-150">
-                  <Building2 size={13} className="text-stone-400" />
-                  <span className="text-stone-800 font-semibold">{companyName}</span>
+                <div className="flex items-center justify-between gap-2 bg-stone-50 px-3 py-2 rounded-xl border border-stone-150">
+                  <div className="flex items-center gap-2 truncate">
+                    <Building2 size={13} className="text-amber-700 shrink-0" />
+                    <span className="text-stone-800 font-semibold truncate">{companyName}</span>
+                  </div>
+                  {onOpenCompanySwitcher && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        onOpenCompanySwitcher();
+                      }}
+                      className="text-[10px] font-mono font-bold text-amber-800 bg-amber-100 hover:bg-amber-200 px-2 py-0.5 rounded-lg transition shrink-0 cursor-pointer"
+                      title="Ganti atau buat perusahaan baru"
+                    >
+                      Ganti / Tambah
+                    </button>
+                  )}
                 </div>
               </div>
 

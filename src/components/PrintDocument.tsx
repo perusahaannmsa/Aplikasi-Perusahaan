@@ -2038,15 +2038,15 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                     </div>
 
                     {/* Metadata Fields Area */}
-                    <div className={`${isUltraDenseF1 ? 'text-[11px] mb-2 space-y-1' : isDenseF1 ? 'text-xs mb-3 space-y-1.5' : isFewItems ? 'text-sm mb-6 space-y-2.5' : 'text-sm mb-5 space-y-2'} font-sans px-1`}>
-                      <div className={`grid grid-cols-[140px_10px_1fr] ${isUltraDenseF1 ? 'gap-y-0.5' : isDenseF1 ? 'gap-y-1.5' : 'gap-y-3'}`}>
+                    <div className={`${isUltraDenseF1 ? 'text-[11px] mb-2 space-y-1' : isDenseF1 ? 'text-xs mb-3 space-y-1.5' : 'text-sm mb-4 space-y-2'} font-sans px-1`}>
+                      <div className={`grid grid-cols-[165px_10px_1fr] ${isUltraDenseF1 ? 'gap-y-0.5' : isDenseF1 ? 'gap-y-1.5' : 'gap-y-2.5'}`}>
                         <span className="font-semibold text-black">Dibayarkan Kepada</span>
                         <span className="text-black">:</span>
                         <span className="text-black font-bold">{submission.dibayarkanKepada}</span>
 
                         {submission.isPettyCash && (
                           <>
-                            <span className="font-semibold text-black">Pemegang Petty Cash</span>
+                            <span className="font-semibold text-black whitespace-nowrap">Pemegang Petty Cash</span>
                             <span className="text-black">:</span>
                             <span className="text-black font-bold text-violet-800">{submission.pettyCashCustodian}</span>
                           </>
@@ -2081,30 +2081,46 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                     </div>
 
                     {/* Table Voucher */}
-                    <div className={isUltraDenseF1 ? 'mb-2' : isDenseF1 ? 'mb-3' : isFewItems ? 'mb-6' : 'mb-5'}>
+                    <div className={isUltraDenseF1 ? 'mb-2' : isDenseF1 ? 'mb-3' : 'mb-4'}>
                       <table className="w-full border-collapse border-[1.5px] border-black text-sm">
                         <thead>
-                          <tr className="bg-white border-b-[1.5px] border-black text-black font-bold uppercase text-xs">
-                            <th className="border-r border-black py-2.5 px-4 text-left">JENIS PENGAJUAN</th>
-                            <th className="py-2.5 px-4 text-right w-64">JUMLAH</th>
+                          <tr className="bg-stone-100 border-b-[1.5px] border-black text-black font-bold uppercase text-xs">
+                            <th className="border-l-[1.5px] border-r border-black py-2.5 px-4 text-left">JENIS PENGAJUAN</th>
+                            <th className="border-r-[1.5px] border-black py-2.5 px-4 text-right w-64">JUMLAH</th>
                           </tr>
                         </thead>
                         <tbody>
                           {submission.items.map((item) => (
                             <tr key={item.id} className="border-b border-black text-black">
-                              <td className={`border-r border-black ${isUltraDenseF1 ? 'py-1 px-2.5 text-[11px]' : isDenseF1 ? 'py-2 px-3 text-xs' : isFewItems ? 'py-6 px-4 text-sm min-h-[65px]' : 'py-4 px-4 text-sm'} leading-relaxed font-semibold`}>
+                              <td className={`border-l-[1.5px] border-r border-black ${isUltraDenseF1 ? 'py-1 px-2.5 text-[11px]' : isDenseF1 ? 'py-2 px-3 text-xs' : 'py-2.5 px-4 text-sm'} leading-relaxed font-semibold`}>
                                 {item.item}
                               </td>
-                              <td className={`py-2 px-4 text-right font-mono font-bold ${isUltraDenseF1 ? 'text-xs' : isDenseF1 ? 'text-sm' : 'text-base'}`}>
-                                Rp <span className="float-right">{formatRupiah(item.total)}</span>
+                              <td className={`border-r-[1.5px] border-black py-2 px-4 text-right font-mono font-bold ${isUltraDenseF1 ? 'text-xs' : isDenseF1 ? 'text-sm' : 'text-base'}`}>
+                                <div className="flex items-center justify-between">
+                                  <span>Rp</span>
+                                  <span>{formatRupiah(item.total)}</span>
+                                </div>
                               </td>
                             </tr>
                           ))}
+
+                          {/* Empty filler rows so voucher has clean, balanced ledger grid */}
+                          {Array.from({ length: Math.max(0, 4 - submission.items.length) }).map((_, idx) => (
+                            <tr key={`empty-f1-${idx}`} className="border-b border-black text-black">
+                              <td className={`border-l-[1.5px] border-r border-black ${isUltraDenseF1 ? 'py-1 px-2.5 text-[11px]' : isDenseF1 ? 'py-2 px-3 text-xs' : 'py-2.5 px-4 text-sm'}`}>&nbsp;</td>
+                              <td className={`border-r-[1.5px] border-black py-2 px-4 text-right font-mono ${isUltraDenseF1 ? 'text-xs' : isDenseF1 ? 'text-sm' : 'text-base'}`}>&nbsp;</td>
+                            </tr>
+                          ))}
                           
-                          <tr className="border-t-[1.5px] border-black font-bold text-black">
-                            <td className="border-r border-black py-2.5 px-4 bg-stone-50"></td>
-                            <td className={`py-2.5 px-4 text-right font-mono font-bold bg-[#fcfcfc] ${isUltraDenseF1 ? 'text-xs' : isDenseF1 ? 'text-sm' : 'text-base'}`}>
-                              Rp <span className="float-right">{formatRupiah(grandTotal)}</span>
+                          <tr className="border-t-[1.5px] border-b-[1.5px] border-black font-bold text-black bg-stone-50">
+                            <td className="border-l-[1.5px] border-r border-black py-2.5 px-4 text-center uppercase tracking-wider text-xs font-bold bg-stone-100">
+                              TOTAL
+                            </td>
+                            <td className={`border-r-[1.5px] border-black py-2.5 px-4 text-right font-mono font-bold bg-[#fcfcfc] ${isUltraDenseF1 ? 'text-xs' : isDenseF1 ? 'text-sm' : 'text-base'}`}>
+                              <div className="flex items-center justify-between">
+                                <span>Rp</span>
+                                <span>{formatRupiah(grandTotal)}</span>
+                              </div>
                             </td>
                           </tr>
                         </tbody>
@@ -2112,7 +2128,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                     </div>
 
                     {/* Terbilang block */}
-                    <div className={`border border-black ${isUltraDenseF1 ? 'p-1.5 mb-2 text-[11px]' : isDenseF1 ? 'p-2 mb-3 text-xs' : isFewItems ? 'p-3.5 mb-6 text-sm' : 'p-3 mb-5 text-sm'} bg-stone-50/30 flex gap-2`}>
+                    <div className={`border border-black ${isUltraDenseF1 ? 'p-1.5 mb-2 text-[11px]' : isDenseF1 ? 'p-2 mb-3 text-xs' : 'p-3 mb-4 text-sm'} bg-stone-50/30 flex gap-2`}>
                       <span className="font-bold text-black shrink-0">Terbilang :</span>
                       <span className="text-black italic font-medium leading-tight">
                         "{numberToTerbilang(grandTotal)}"
@@ -2121,11 +2137,11 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                   </div>
 
                   {/* Bottom Content: Spacious Signatures and Note */}
-                  <div className="mt-auto pt-3">
+                  <div className="mt-auto pt-2">
                     {/* 3 Signers Row */}
-                    <div className={`flex justify-between text-sm text-black ${isUltraDenseF1 ? 'mt-2 mb-1' : isDenseF1 ? 'mt-4 mb-2' : isFewItems ? 'mt-8 mb-4' : 'mt-6 mb-3'} px-4 sm:px-6`}>
+                    <div className={`flex justify-between text-sm text-black ${isUltraDenseF1 ? 'mt-2 mb-1' : isDenseF1 ? 'mt-3 mb-2' : 'mt-4 mb-2'} px-4 sm:px-6`}>
                       <div className="flex flex-col items-center w-56 text-center">
-                        <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px] mb-6' : isDenseF1 ? 'text-xs mb-8' : isFewItems ? 'text-xs sm:text-sm mb-24' : 'text-xs sm:text-sm mb-20'}`}>Diajukan</span>
+                        <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px] mb-5' : isDenseF1 ? 'text-xs mb-7' : 'text-xs sm:text-sm mb-14'}`}>Diajukan</span>
                         <span className="border-b-2 border-black pb-1 px-3 font-bold tracking-wide uppercase text-xs sm:text-sm truncate max-w-full">
                           {submission.diajukanOleh || 'Andi Dhiya Salsabila'}
                         </span>
@@ -2135,7 +2151,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                       </div>
 
                       <div className="flex flex-col items-center w-56 text-center">
-                        <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px] mb-6' : isDenseF1 ? 'text-xs mb-8' : isFewItems ? 'text-xs sm:text-sm mb-24' : 'text-xs sm:text-sm mb-20'}`}>Diverifikasi</span>
+                        <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px] mb-5' : isDenseF1 ? 'text-xs mb-7' : 'text-xs sm:text-sm mb-14'}`}>Diverifikasi</span>
                         <span className="border-b-2 border-black pb-1 px-3 font-bold tracking-wide uppercase text-xs sm:text-sm truncate max-w-full">
                           {f1Verifier === 'nursyam'
                             ? 'Andi Nursyam Halid'
@@ -2149,7 +2165,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                       </div>
 
                       <div className="flex flex-col items-center w-56 text-center">
-                        <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px] mb-6' : isDenseF1 ? 'text-xs mb-8' : isFewItems ? 'text-xs sm:text-sm mb-24' : 'text-xs sm:text-sm mb-20'}`}>Disetujui</span>
+                        <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px] mb-5' : isDenseF1 ? 'text-xs mb-7' : 'text-xs sm:text-sm mb-14'}`}>Disetujui</span>
                         <span className="border-b-2 border-black pb-1 px-3 font-bold tracking-wide uppercase text-xs sm:text-sm truncate max-w-full">
                           {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? submission.disetujuiOleh2 : 'Harijon'}
                         </span>
@@ -2160,11 +2176,11 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                     </div>
 
                     {/* Notes Section */}
-                    <div className={isUltraDenseF1 ? 'mt-1.5' : isDenseF1 ? 'mt-2.5' : isFewItems ? 'mt-6' : 'mt-5'}>
+                    <div className={isUltraDenseF1 ? 'mt-1' : isDenseF1 ? 'mt-2' : 'mt-3'}>
                       <span className="block text-[10px] font-bold text-black tracking-wide uppercase mb-0.5">
                         NOTE :
                       </span>
-                      <div className={`border-[1.5px] border-black p-3 rounded-xs text-xs sm:text-sm text-stone-800 leading-snug font-sans bg-stone-50/30 ${isUltraDenseF1 ? 'min-h-[30px]' : isDenseF1 ? 'min-h-[40px]' : isFewItems ? 'min-h-[85px]' : 'min-h-[65px]'}`}>
+                      <div className={`border-[1.5px] border-black p-2.5 rounded-xs text-xs text-stone-800 leading-snug font-sans bg-stone-50/30 ${isUltraDenseF1 ? 'min-h-[25px]' : isDenseF1 ? 'min-h-[35px]' : 'min-h-[45px]'}`}>
                         {submission.notes ? submission.notes : ""}
                       </div>
                     </div>
@@ -2223,22 +2239,22 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                   <table className="w-full border-collapse border border-black text-xs sm:text-sm mb-2">
                     <thead>
                       <tr className="bg-stone-100 border-b border-black font-bold uppercase text-xs">
-                        <th className="border-r border-black p-1.5 text-left">JENIS PENGAJUAN</th>
-                        <th className="p-1.5 text-right w-44">JUMLAH</th>
+                        <th className="border-l border-r border-black p-1.5 text-left">JENIS PENGAJUAN</th>
+                        <th className="border-r border-black p-1.5 text-right w-44">JUMLAH</th>
                       </tr>
                     </thead>
                     <tbody>
                       {submission.items.map((item) => (
                         <tr key={item.id} className="border-b border-black">
-                          <td className="border-r border-black p-1.5 font-semibold">{formatDisplayItemTitle(item.item)}</td>
-                          <td className="p-1.5 text-right font-mono font-bold">
+                          <td className="border-l border-r border-black p-1.5 font-semibold">{formatDisplayItemTitle(item.item)}</td>
+                          <td className="border-r border-black p-1.5 text-right font-mono font-bold">
                             Rp <span className="float-right">{formatRupiah(item.total)}</span>
                           </td>
                         </tr>
                       ))}
-                      <tr className="border-t border-black font-bold text-black bg-stone-50">
-                        <td className="border-r border-black p-1.5 uppercase">TOTAL</td>
-                        <td className="p-1.5 text-right font-mono font-bold">
+                      <tr className="border-t border-b border-black font-bold text-black bg-stone-50">
+                        <td className="border-l border-r border-black p-1.5 uppercase">TOTAL</td>
+                        <td className="border-r border-black p-1.5 text-right font-mono font-bold">
                           Rp <span className="float-right">{formatRupiah(grandTotal)}</span>
                         </td>
                       </tr>
@@ -2369,35 +2385,35 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                     <table className="w-full border-collapse border-[1.5px] border-black text-sm table-fixed">
                       <thead>
                         <tr className="bg-[#D9D9D9]/30 border-b-[1.5px] border-black text-black font-bold uppercase text-xs">
-                          <th className="border-r border-black py-2 px-1 text-center w-[5%]">NO</th>
+                          <th className="border-l-[1.5px] border-r border-black py-2 px-1 text-center w-[5%]">NO</th>
                           <th className="border-r border-black py-2 px-2 text-left w-[41%]">ITEM DETIL (INVOICE / DESKRIPSI)</th>
                           <th className="border-r border-black py-2 px-1 text-center w-[8%]">VOL</th>
                           <th className="border-r border-black py-2 px-2 text-center w-[24%]">TOTAL (RP)</th>
-                          <th className="py-2 px-2 text-left w-[22%]">KETERANGAN</th>
+                          <th className="border-r-[1.5px] border-black py-2 px-2 text-left w-[22%]">KETERANGAN</th>
                         </tr>
                       </thead>
                       <tbody>
                         {submission.items.map((item, idx) => (
                           <tr key={item.id} className="border-b border-black align-top text-black">
-                            <td className={`border-r border-black ${isUltraDenseF2 ? 'py-1 px-1 text-[10px]' : isDenseF2 ? 'py-1.5 px-1 text-xs' : isFewItemsF2 ? 'py-4 px-1 text-xs' : 'py-2.5 px-1 text-xs'} text-center font-mono`}>{idx + 1}</td>
+                            <td className={`border-l-[1.5px] border-r border-black ${isUltraDenseF2 ? 'py-1 px-1 text-[10px]' : isDenseF2 ? 'py-1.5 px-1 text-xs' : isFewItemsF2 ? 'py-4 px-1 text-xs' : 'py-2.5 px-1 text-xs'} text-center font-mono`}>{idx + 1}</td>
                             <td className={`border-r border-black ${isUltraDenseF2 ? 'py-1 px-2 text-[11px]' : isDenseF2 ? 'py-1.5 px-2 text-xs' : isFewItemsF2 ? 'py-4 px-3 text-xs' : 'py-2.5 px-3 text-xs'} font-semibold leading-relaxed break-words whitespace-pre-wrap text-stone-900`}>{formatDisplayItemTitle(item.item)}</td>
                             <td className={`border-r border-black ${isUltraDenseF2 ? 'py-1 px-1 text-[11px]' : isDenseF2 ? 'py-1.5 px-1 text-xs' : isFewItemsF2 ? 'py-4 px-2 text-xs' : 'py-2.5 px-2 text-xs'} text-center text-stone-800`}>{item.jumlahVolume || '-'}</td>
                             <td className={`border-r border-black ${isUltraDenseF2 ? 'py-1 px-2 text-[11px]' : isDenseF2 ? 'py-1.5 px-2 text-xs' : isFewItemsF2 ? 'py-4 px-3 text-xs' : 'py-2.5 px-3 text-xs'} text-right font-mono font-bold`}>
                               {formatRupiah(item.total)}
                             </td>
-                            <td className={`py-1 px-2 text-stone-700 ${isUltraDenseF2 ? 'text-[9px]' : isDenseF2 ? 'text-[10px]' : 'text-[10px]'} italic break-all break-words whitespace-pre-wrap leading-tight text-left`}>{item.keterangan || '-'}</td>
+                            <td className={`border-r-[1.5px] border-black py-1 px-2 text-stone-700 ${isUltraDenseF2 ? 'text-[9px]' : isDenseF2 ? 'text-[10px]' : 'text-[10px]'} italic break-all break-words whitespace-pre-wrap leading-tight text-left`}>{item.keterangan || '-'}</td>
                           </tr>
                         ))}
                         
                         {/* Total Row */}
-                        <tr className="border-t-[1.5px] border-black font-bold text-black bg-stone-50">
-                          <td colSpan={3} className="border-r border-black py-2.5 px-3 text-center uppercase tracking-wider text-xs">
+                        <tr className="border-t-[1.5px] border-b-[1.5px] border-black font-bold text-black bg-stone-50">
+                          <td colSpan={3} className="border-l-[1.5px] border-r border-black py-2.5 px-3 text-center uppercase tracking-wider text-xs">
                              TOTAL PENYERAHAN
                           </td>
                           <td className={`border-r border-black py-2.5 px-2 text-right font-mono font-bold bg-amber-50/10 ${isUltraDenseF2 ? 'text-xs' : 'text-sm'}`}>
                             {formatRupiah(grandTotal)}
                           </td>
-                          <td className="py-2.5 px-2 bg-stone-50"></td>
+                          <td className="border-r-[1.5px] border-black py-2.5 px-2 bg-stone-50"></td>
                         </tr>
                       </tbody>
                     </table>
@@ -2630,22 +2646,22 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                   <table className="w-full border-collapse border border-black text-xs sm:text-sm mb-2">
                     <thead>
                       <tr className="bg-stone-100 border-b border-black font-bold uppercase text-xs">
-                        <th className="border-r border-black p-1.5 text-left">JENIS PENGAJUAN</th>
-                        <th className="p-1.5 text-right w-44">JUMLAH</th>
+                        <th className="border-l border-r border-black p-1.5 text-left">JENIS PENGAJUAN</th>
+                        <th className="border-r border-black p-1.5 text-right w-44">JUMLAH</th>
                       </tr>
                     </thead>
                     <tbody>
                       {submission.items.map((item) => (
                         <tr key={item.id} className="border-b border-black">
-                          <td className="border-r border-black p-1.5 font-semibold">{formatDisplayItemTitle(item.item)}</td>
-                          <td className="p-1.5 text-right font-mono font-bold">
+                          <td className="border-l border-r border-black p-1.5 font-semibold">{formatDisplayItemTitle(item.item)}</td>
+                          <td className="border-r border-black p-1.5 text-right font-mono font-bold">
                             Rp <span className="float-right">{formatRupiah(item.total)}</span>
                           </td>
                         </tr>
                       ))}
-                      <tr className="border-t border-black font-bold text-black bg-stone-50">
-                        <td className="border-r border-black p-1.5 uppercase">TOTAL</td>
-                        <td className="p-1.5 text-right font-mono font-bold">
+                      <tr className="border-t border-b border-black font-bold text-black bg-stone-50">
+                        <td className="border-l border-r border-black p-1.5 uppercase">TOTAL</td>
+                        <td className="border-r border-black p-1.5 text-right font-mono font-bold">
                           Rp <span className="float-right">{formatRupiah(grandTotal)}</span>
                         </td>
                       </tr>

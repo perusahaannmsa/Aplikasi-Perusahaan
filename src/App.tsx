@@ -29,6 +29,7 @@ import { WhatsAppAiModal } from './components/WhatsAppAiModal';
 import { LiveClock } from './components/LiveClock';
 import { Pph23BupotRecap } from './components/Pph23BupotRecap';
 import { ProjectBudgetRab } from './components/ProjectBudgetRab';
+import { CompanySwitcherModal } from './components/CompanySwitcherModal';
 import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, syncInvoiceSubmissionToAgenda, formatDateIndonesian } from './utils';
 import { areNamesSimilar, toTitleCase } from './utils/nameConsolidation';
 import { 
@@ -56,7 +57,9 @@ import {
   getMasterDriveEmail,
   getActiveGoogleDriveAccount,
   subscribeToCompanySettingsFromFirestore,
-  saveCompanySettingsToFirestore
+  saveCompanySettingsToFirestore,
+  switchUserCompany,
+  setActiveCompanyId
 } from './firebase';
 import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell, MessageSquare, Bot, Sparkles, BookOpen, Wrench, Building2 } from 'lucide-react';
 
@@ -1011,12 +1014,88 @@ export default function App() {
   const [authUser, setAuthUser] = useState<any>(null);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isCompanyModalOpen, setIsCompanyModalOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isDashboardNavOpen, setIsDashboardNavOpen] = useState(false);
   const [isCloudModalOpen, setIsCloudModalOpen] = useState(false);
   const [isGoogleDriveSettingsOpen, setIsGoogleDriveSettingsOpen] = useState(false);
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
   const [masterDriveEmail, setMasterDriveEmailState] = useState<string>(() => getMasterDriveEmail());
+
+  // Multi-Company switching handler with strictly segregated Firestore & local storage
+  const handleSwitchCompany = async (newCompanyId: string, newCompanyName: string) => {
+    const cleanId = newCompanyId.toLowerCase().trim();
+    setActiveCompanyId(cleanId);
+    try {
+      localStorage.setItem('NUSANTARA_ACTIVE_COMPANY_ID', cleanId);
+      localStorage.setItem('NUSANTARA_ACTIVE_COMPANY_NAME', newCompanyName);
+    } catch (e) {}
+
+    try {
+      // 1. Fetch company profile details from Firestore
+      let compDetails = await getCompanyProfileFromFirestore(cleanId);
+      if (!compDetails) {
+        compDetails = {
+          id: cleanId,
+          code: cleanId.toUpperCase(),
+          name: newCompanyName,
+          fullName: newCompanyName,
+          displayName: newCompanyName,
+          defaultJenis: 'Operasional Kantor',
+          defaultKode: `BKK-${cleanId.toUpperCase()}/V/2026/10001`,
+          defaultLokasi: 'Lt. 1',
+          no_invoice_prefix: `BKK-${cleanId.toUpperCase()}`,
+          sigAccounting: 'Sri Ekowati',
+          sigDibuat: userProfile?.fullName || 'Nur Wahyudi',
+          sigDirKeuangan: 'Harijon',
+          sigDirektur: 'Andi Nursyam Halid',
+          sigDisetujui: 'Harijon',
+          sigKeuangan: 'Andi Dhiya Salsabila',
+          icon: '🏢',
+          isActive: true
+        };
+      }
+
+      // 2. Update user profile state
+      const updatedProfile = {
+        ...(userProfile || {}),
+        companyId: cleanId,
+        companyName: newCompanyName,
+        companyDetails: compDetails
+      };
+      setUserProfile(updatedProfile);
+
+      // 3. Persist to active user document in Firestore if logged in
+      if (authUser?.uid) {
+        await switchUserCompany(authUser.uid, cleanId, newCompanyName);
+      }
+
+      // 4. Strictly load submissions belonging to this company from Firestore
+      const companySubmissions = await loadSubmissionsFromFirestore(cleanId);
+      setSubmissions(companySubmissions);
+      try {
+        localStorage.setItem('NUSANTARA_HO_SUBMISSIONS', JSON.stringify(companySubmissions));
+        localStorage.setItem(`NUSANTARA_HO_SUBMISSIONS_${cleanId}`, JSON.stringify(companySubmissions));
+      } catch (e) {}
+
+      // 5. Activity log
+      try {
+        await saveActivityLogToFirestore(
+          'Ganti Perusahaan',
+          `Beralih ke ruang kerja perusahaan ${newCompanyName} (${cleanId.toUpperCase()}). Database voucher dimuat terpisah (${companySubmissions.length} transaksi).`,
+          'info',
+          undefined,
+          undefined,
+          updatedProfile
+        );
+      } catch (e) {}
+
+      console.log(`✅ Berhasil beralih ke perusahaan: ${cleanId}, memuat ${companySubmissions.length} transaksi.`);
+    } catch (err) {
+      console.error('Gagal beralih perusahaan:', err);
+      throw err;
+    }
+  };
 
   useEffect(() => {
     const handleDriveUpdated = () => {
@@ -1367,10 +1446,14 @@ export default function App() {
           };
         }
 
-        const companyId = profile.companyId || 'nmsa';
+        // Determine active company from localStorage or user profile
+        const storedActiveCompId = localStorage.getItem('NUSANTARA_ACTIVE_COMPANY_ID');
+        const companyId = (storedActiveCompId || profile.companyId || 'nmsa').toLowerCase().trim();
+        setActiveCompanyId(companyId);
+
         let companyDetails = await getCompanyProfileFromFirestore(companyId);
         
-        // If not found, fall back to Nusantara Mineral default template
+        // If not found, fall back to default template
         if (!companyDetails) {
           companyDetails = {
             id: companyId,
@@ -1401,14 +1484,12 @@ export default function App() {
         };
         setUserProfile(combinedProfile);
 
-        // Fetch submissions automatically from Firestore
+        // Fetch submissions automatically from Firestore strictly scoped to active company
         try {
-          const cloudData = await loadSubmissionsFromFirestore(profile?.companyId);
+          const cloudData = await loadSubmissionsFromFirestore(companyId);
           if (cloudData && cloudData.length > 0) {
-            // MERGE behavior instead of blind overwrite!
-            // This prevents locally added/edited entries (such as the 101st item) from being wiped out
-            // by a slightly stale/delayed cloud set or temporary syncing delay.
-            const storedLocal = localStorage.getItem('NUSANTARA_HO_SUBMISSIONS');
+            // MERGE behavior scoped to company
+            const storedLocal = localStorage.getItem(`NUSANTARA_HO_SUBMISSIONS_${companyId}`) || localStorage.getItem('NUSANTARA_HO_SUBMISSIONS');
             let localList: Submission[] = [];
             try {
               localList = storedLocal ? JSON.parse(storedLocal) : [];
@@ -1417,13 +1498,15 @@ export default function App() {
             }
 
             const mergedMap = new Map<string, Submission>();
-            // Load current state / local list first holding edits/creations
             localList.forEach(sub => {
               if (sub && sub.id) {
-                mergedMap.set(sub.id, sub);
+                // Only merge if matching companyId
+                const subComp = (sub.companyId || 'nmsa').toLowerCase().trim();
+                if (subComp === companyId) {
+                  mergedMap.set(sub.id, sub);
+                }
               }
             });
-            // Overwrite with incoming cloud items
             cloudData.forEach(sub => {
               if (sub && sub.id) {
                 mergedMap.set(sub.id, sub);
@@ -1434,17 +1517,29 @@ export default function App() {
             mergedList.sort((a, b) => new Date(b.tanggal).getTime() - new Date(a.tanggal).getTime());
 
             saveSubmissionsToStorage(mergedList);
+            try {
+              localStorage.setItem(`NUSANTARA_HO_SUBMISSIONS_${companyId}`, JSON.stringify(mergedList));
+            } catch (e) {}
           } else {
-            const stored = localStorage.getItem('NUSANTARA_HO_SUBMISSIONS');
-            if (stored) {
+            // For companies with 0 cloud items, if it's NOT nmsa, clear list so data from NMSA is not leaked
+            if (companyId !== 'nmsa') {
+              setSubmissions([]);
               try {
-                const parsed = JSON.parse(stored);
-                setSubmissions(Array.isArray(parsed) ? parsed : (parsed?.updatedSubmissions || []));
-              } catch {
+                localStorage.setItem('NUSANTARA_HO_SUBMISSIONS', JSON.stringify([]));
+                localStorage.setItem(`NUSANTARA_HO_SUBMISSIONS_${companyId}`, JSON.stringify([]));
+              } catch (e) {}
+            } else {
+              const stored = localStorage.getItem('NUSANTARA_HO_SUBMISSIONS');
+              if (stored) {
+                try {
+                  const parsed = JSON.parse(stored);
+                  setSubmissions(Array.isArray(parsed) ? parsed : (parsed?.updatedSubmissions || []));
+                } catch {
+                  setSubmissions([]);
+                }
+              } else {
                 setSubmissions([]);
               }
-            } else {
-              setSubmissions([]);
             }
           }
         } catch (e) {
@@ -2312,6 +2407,22 @@ export default function App() {
               </div>
 
               <div className="flex items-center gap-2.5">
+                {/* Company Switcher Pill / Badge */}
+                <button
+                  type="button"
+                  onClick={() => setIsCompanyModalOpen(true)}
+                  className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-950 transition cursor-pointer shadow-3xs font-sans text-xs font-bold"
+                  title="Kelola & Ganti Perusahaan (Data Transaksi Terpisah)"
+                >
+                  <Building2 size={13} className="text-amber-700 shrink-0" />
+                  <span className="truncate max-w-[120px]">
+                    {userProfile?.companyDetails?.code || userProfile?.companyId?.toUpperCase() || 'NMSA'}
+                  </span>
+                  <span className="text-[9px] bg-amber-200/90 text-amber-900 px-1.5 py-0.2 rounded font-mono font-bold shrink-0">
+                    Ganti
+                  </span>
+                </button>
+
                 {/* Master Google Drive 24/7 Status Header Badge */}
                 <button
                   type="button"
@@ -2371,6 +2482,23 @@ export default function App() {
                         </div>
 
                         <div className="mt-3 space-y-1.5">
+                          {/* Company Switcher */}
+                          <button
+                            onClick={() => {
+                              setIsUserMenuOpen(false);
+                              setIsCompanyModalOpen(true);
+                            }}
+                            className="w-full bg-amber-500/10 hover:bg-amber-500/20 text-amber-900 border border-amber-300 font-bold px-3 py-2 rounded-xl text-xs transition cursor-pointer flex items-center justify-between font-sans shadow-3xs"
+                          >
+                            <div className="flex items-center gap-2 truncate">
+                              <Building2 size={15} className="text-amber-700 shrink-0" />
+                              <span className="truncate">Ganti / Tambah Perusahaan</span>
+                            </div>
+                            <span className="text-[9px] font-mono bg-amber-200 text-amber-900 px-1.5 py-0.5 rounded font-bold shrink-0">
+                              {userProfile?.companyDetails?.code || userProfile?.companyId?.toUpperCase() || 'NMSA'}
+                            </span>
+                          </button>
+
                           {/* Master Drive Quick Access */}
                           <button
                             onClick={() => {
@@ -2513,6 +2641,22 @@ export default function App() {
                   </h1>
                 </div>
               </div>
+
+              {/* Company Switcher Pill / Badge */}
+              <button
+                type="button"
+                onClick={() => setIsCompanyModalOpen(true)}
+                className="hidden lg:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-950 transition cursor-pointer shadow-3xs font-sans text-xs font-bold"
+                title="Kelola & Ganti Perusahaan (Data Transaksi Firestore Terpisah)"
+              >
+                <Building2 size={13} className="text-amber-700 shrink-0" />
+                <span className="truncate max-w-[130px]">
+                  {userProfile?.companyDetails?.code || userProfile?.companyId?.toUpperCase() || 'NMSA'}
+                </span>
+                <span className="text-[9px] bg-amber-200/90 text-amber-900 px-1.5 py-0.2 rounded font-mono font-bold shrink-0">
+                  Ganti
+                </span>
+              </button>
 
               {/* Dashboard Nav Dropdown Selector */}
               <div className="relative ml-2 pl-2 sm:ml-4 sm:pl-4 border-l border-stone-200" ref={dashboardNavRef}>
@@ -2973,6 +3117,23 @@ export default function App() {
                       </div>
 
                       <div className="mt-3 space-y-1.5">
+                        {/* Company Switcher */}
+                        <button
+                          onClick={() => {
+                            setIsUserMenuOpen(false);
+                            setIsCompanyModalOpen(true);
+                          }}
+                          className="w-full bg-amber-500/10 hover:bg-amber-500/20 text-amber-900 border border-amber-300 font-bold px-3 py-2 rounded-xl text-xs transition cursor-pointer flex items-center justify-between font-sans shadow-3xs"
+                        >
+                          <div className="flex items-center gap-2 truncate">
+                            <Building2 size={15} className="text-amber-700 shrink-0" />
+                            <span className="truncate">Ganti / Tambah Perusahaan</span>
+                          </div>
+                          <span className="text-[9px] font-mono bg-amber-200 text-amber-900 px-1.5 py-0.5 rounded font-bold shrink-0">
+                            {userProfile?.companyDetails?.code || userProfile?.companyId?.toUpperCase() || 'NMSA'}
+                          </span>
+                        </button>
+
                         {/* Master Drive Quick Access */}
                         <button
                           onClick={() => {
@@ -3384,6 +3545,16 @@ export default function App() {
         onClose={() => setIsProfileOpen(false)}
         userProfile={userProfile}
         authUser={authUser}
+        onOpenCompanySwitcher={() => setIsCompanyModalOpen(true)}
+      />
+
+      {/* Multi-Tenant Firebase Company Switcher & Creation Modal */}
+      <CompanySwitcherModal
+        isOpen={isCompanyModalOpen}
+        onClose={() => setIsCompanyModalOpen(false)}
+        currentCompanyId={userProfile?.companyId || 'nmsa'}
+        onSelectCompany={handleSwitchCompany}
+        currentUserName={userProfile?.fullName || 'Nur Wahyudi'}
       />
 
       {/* Master List Pemegang Petty Cash Modal */}

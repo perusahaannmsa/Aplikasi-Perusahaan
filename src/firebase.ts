@@ -25,7 +25,7 @@ import {
   GoogleAuthProvider,
   signInWithPopup
 } from 'firebase/auth';
-import { Submission, SubmissionItem, ActivityLog, NpwpRecord } from './types';
+import { Submission, SubmissionItem, ActivityLog, NpwpRecord, CompanyProfile } from './types';
 import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission } from './utils';
 
 export enum OperationType {
@@ -456,6 +456,72 @@ export const loadAllCompaniesFromFirestore = async (): Promise<any[]> => {
     console.warn('Silent read rejection - failed to fetch companies:', err);
   }
   return [];
+};
+
+// Save or create a new company profile in Firestore
+export const saveCompanyProfileToFirestore = async (company: Partial<CompanyProfile>): Promise<void> => {
+  if (!isFirebaseConfigured() || !firestoreDb) {
+    throw new Error('Firebase belum terkonfigurasi. Pastikan koneksi Firebase aktif.');
+  }
+
+  const rawCode = company.code || company.id || 'company';
+  const cleanId = (company.id || rawCode).toLowerCase().trim().replace(/[^a-z0-9_-]/g, '');
+  const cleanCode = rawCode.toUpperCase().trim();
+  const companyName = (company.name || company.fullName || cleanCode).trim();
+  
+  const companyRef = doc(firestoreDb, 'companies', cleanId);
+  
+  const payload = {
+    id: cleanId,
+    code: cleanCode,
+    name: companyName,
+    fullName: company.fullName || companyName,
+    displayName: company.displayName || companyName,
+    defaultJenis: company.defaultJenis || 'Operasional Kantor',
+    defaultKode: company.defaultKode || `BKK-${cleanCode}/V/2026/10001`,
+    defaultLokasi: company.defaultLokasi || 'Lt.1',
+    no_invoice_prefix: company.no_invoice_prefix || `BKK-${cleanCode}`,
+    sigDibuat: company.sigDibuat || 'Nur Wahyudi',
+    sigDisetujui: company.sigDisetujui || 'Harijon',
+    sigKeuangan: company.sigKeuangan || 'Andi Dhiya Salsabila',
+    sigDirektur: company.sigDirektur || 'Andi Nursyam Halid',
+    sigAccounting: company.sigAccounting || 'Sri Ekowati',
+    sigDirKeuangan: company.sigDirKeuangan || 'Harijon',
+    icon: company.icon || '🏢',
+    isActive: company.isActive ?? true,
+    updatedAt: new Date().toISOString(),
+    createdAt: company.createdAt || new Date().toISOString()
+  };
+
+  await setDoc(companyRef, cleanUndefined(payload), { merge: true });
+  setActiveCompanyId(cleanId);
+  console.log(`🏬 Profil perusahaan [${cleanCode} - ${cleanId}] berhasil disimpan di Firestore.`);
+};
+
+// Switch active user company and sync with Firestore user document
+export const switchUserCompany = async (
+  uid: string,
+  companyId: string,
+  companyName: string
+): Promise<void> => {
+  const cleanId = companyId.toLowerCase().trim();
+  setActiveCompanyId(cleanId);
+  localStorage.setItem('NUSANTARA_ACTIVE_COMPANY_ID', cleanId);
+  localStorage.setItem('NUSANTARA_ACTIVE_COMPANY_NAME', companyName);
+
+  if (isFirebaseConfigured() && firestoreDb && uid) {
+    try {
+      const userRef = doc(firestoreDb, 'users', uid);
+      await setDoc(userRef, {
+        companyId: cleanId,
+        companyName: companyName,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+      console.log(`👤 User [${uid}] company switched to [${cleanId} - ${companyName}]`);
+    } catch (e) {
+      console.warn('Silent user company update warning:', e);
+    }
+  }
 };
 
 export const registerUserToFirebase = async (
@@ -1768,7 +1834,7 @@ export const googleDriveLogin = async (
 
 // ═════════ FIRESTORE REST DATA OPERATION IMPLEMENTATIONS ═════════
 
-// Fetch submissions from Firestore, optionally filtered by user's companyId to achieve database segregation
+// Fetch submissions from Firestore, strictly filtered by user's companyId to achieve complete database segregation
 export const loadSubmissionsFromFirestore = async (companyId?: string): Promise<Submission[]> => {
   if (!isFirebaseConfigured() || !firestoreDb) {
     throw new Error('Firebase is not initialized. Please provide correct configuration.');
@@ -1779,14 +1845,18 @@ export const loadSubmissionsFromFirestore = async (companyId?: string): Promise<
     const q = query(collection(firestoreDb, path), orderBy('tanggal', 'desc'));
     const snapshot = await getDocs(q);
     const list: Submission[] = [];
+    const targetComp = (companyId || '').toLowerCase().trim();
     
     snapshot.forEach(docSnap => {
       // Apply mapping from user schema (with items details and timestamps) to our rich interface
       const data = docSnap.data();
       const mapped = mapFirestoreToSubmission(docSnap.id, data);
       
-      // Filter by companyId client-side to be 100% immune from missing index errors
-      if (!companyId || data.companyId === companyId || data.company_id === companyId) {
+      // Strict data segregation per company
+      // Legacy submissions without explicit companyId belong to default 'nmsa'
+      const docComp = (data.companyId || data.company_id || (targetComp === 'nmsa' ? 'nmsa' : '')).toLowerCase().trim();
+      
+      if (!targetComp || docComp === targetComp) {
         list.push(mapped);
       }
     });
