@@ -355,14 +355,14 @@ const PageScaleWrapper: React.FC<{ children: React.ReactNode; isLandscape?: bool
     return (
       <div 
         ref={containerRef} 
-        className={`w-full flex flex-col items-center justify-center print:!block print:!w-auto print:!h-auto print:!overflow-visible ${!isLastPage ? "print-force-page-break" : ""}`}
+        className={`w-full flex flex-col items-center justify-center print:!block print:!w-full print:!max-w-full print:!h-auto print:!overflow-visible ${!isLastPage ? "print-force-page-break" : ""}`}
       >
         <div 
           style={{ 
             width: `${targetWidth * scale}px`,
             height: `${targetHeight * scale}px`,
           }}
-          className="relative overflow-hidden flex items-start justify-start print:!w-auto print:!h-auto print:!overflow-visible print:!block"
+          className="relative overflow-hidden flex items-start justify-start print:!w-full print:!max-w-full print:!h-auto print:!overflow-visible print:!block"
         >
           <div 
             style={{ 
@@ -371,7 +371,7 @@ const PageScaleWrapper: React.FC<{ children: React.ReactNode; isLandscape?: bool
               width: `${targetWidth}px`,
               height: `${targetHeight}px`,
             }}
-            className="origin-top-left shrink-0 print:!transform-none print:!w-auto print:!h-auto print:!overflow-visible print:!block print:!p-0 print:!m-0"
+            className="origin-top-left shrink-0 print:!transform-none print:!w-full print:!max-w-full print:!h-auto print:!overflow-visible print:!block print:!p-0 print:!m-0"
           >
             {children}
           </div>
@@ -382,8 +382,8 @@ const PageScaleWrapper: React.FC<{ children: React.ReactNode; isLandscape?: bool
 
   // Normal scale (no scaling needed)
   return (
-    <div ref={containerRef} className={`w-full flex flex-col items-center print:!block print:!w-auto ${!isLastPage ? "print-force-page-break" : ""}`}>
-      <div className="shrink-0 print:!block print:!w-auto print:!h-auto print:!overflow-visible">
+    <div ref={containerRef} className={`w-full flex flex-col items-center print:!block print:!w-full print:!max-w-full ${!isLastPage ? "print-force-page-break" : ""}`}>
+      <div className="shrink-0 print:!block print:!w-full print:!max-w-full print:!h-auto print:!overflow-visible">
         {children}
       </div>
     </div>
@@ -2012,26 +2012,26 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
             {/* ================= PAGE 1: BUKTI PENGELUARAN KAS / BANK (STANDARD 100% LAYOUT) ================= */}
             {printLayoutMode === 'standard' && (activeTab === 'both' || activeTab === 'pengajuan') && (
               <PageScaleWrapper isLandscape={false} isLastPage={!hasMoreAfterF1}>
-                <div className={`w-[210mm] ${isUltraDenseF1 ? 'min-h-[297mm] p-[8mm] sm:p-[10mm]' : isDenseF1 ? 'min-h-[297mm] p-[10mm] sm:p-[12mm]' : 'min-h-[297mm] p-[14mm] sm:p-[15mm]'} bg-white border border-stone-250 shadow-md rounded-xl print:shadow-none print:border-none print:rounded-none print:!p-0 print:!m-0 print:!min-h-0 print:!h-auto page-break flex flex-col justify-between`}>
+                <div className={`w-[210mm] max-w-full print:!w-full print:!max-w-full ${isUltraDenseF1 ? 'min-h-[297mm] p-[8mm] sm:p-[10mm]' : isDenseF1 ? 'min-h-[297mm] p-[10mm] sm:p-[12mm]' : 'min-h-[297mm] p-[14mm] sm:p-[15mm]'} bg-white border border-stone-250 shadow-md rounded-xl print:shadow-none print:border-none print:rounded-none print:!p-0 print:!m-0 print:!min-h-0 print:!h-auto page-break flex flex-col justify-between box-border`}>
                   
                   {/* Top Content: Header, Meta, Table & Terbilang */}
                   <div className="flex-1 flex flex-col justify-start">
                     {/* Header Block Left (Logo) & Right (Code & Tanggal) */}
-                    <div className={`flex justify-between items-start ${isUltraDenseF1 ? 'mb-2' : isDenseF1 ? 'mb-3' : isFewItems ? 'mb-6' : 'mb-5'}`}>
+                    <div className={`flex justify-between items-start ${isUltraDenseF1 ? 'mb-2' : isDenseF1 ? 'mb-3' : isFewItems ? 'mb-5' : 'mb-4'}`}>
                       <NusantaraLogo size={isUltraDenseF1 ? 'sm' : 'md'} className="items-start text-left" companyName={userProfile?.companyName} />
 
                       <div className="flex flex-col items-end pt-1">
                         <div className={`border border-black ${isUltraDenseF1 ? 'px-4 py-1 text-xs' : isDenseF1 ? 'px-6 py-1 text-sm' : 'px-8 py-1.5 text-base'} font-bold text-black bg-stone-50 mb-1.5 min-w-[120px] text-center font-mono`}>
                           {submission.kode}
                         </div>
-                        <div className={`${isUltraDenseF1 ? 'text-[11px]' : 'text-xs'} text-black font-semibold`}>
+                        <div className={`${isUltraDenseF1 ? 'text-[11px]' : 'text-xs'} text-black font-semibold whitespace-nowrap`}>
                           Tanggal : <span className="font-normal">{formatDateIndonesian(submission.tanggal)}</span>
                         </div>
                       </div>
                     </div>
 
                     {/* Document Title Block */}
-                    <div className={`border-[2px] border-black bg-white ${isUltraDenseF1 ? 'py-1 mb-2' : isDenseF1 ? 'py-1.5 mb-3' : isFewItems ? 'py-2.5 mb-6' : 'py-2 mb-5'} text-center`}>
+                    <div className={`border-[2px] border-black bg-white ${isUltraDenseF1 ? 'py-1 mb-2' : isDenseF1 ? 'py-1.5 mb-3' : isFewItems ? 'py-2 mb-4' : 'py-2 mb-4'} text-center`}>
                       <h1 className={`${isUltraDenseF1 ? 'text-xs tracking-[1px]' : 'text-sm tracking-[1.5px]'} font-bold text-black font-sans uppercase`}>
                         BUKTI PENGELUARAN KAS / BANK
                       </h1>
@@ -2039,7 +2039,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
 
                     {/* Metadata Fields Area */}
                     <div className={`${isUltraDenseF1 ? 'text-[11px] mb-2 space-y-1' : isDenseF1 ? 'text-xs mb-3 space-y-1.5' : 'text-sm mb-4 space-y-2'} font-sans px-1`}>
-                      <div className={`grid grid-cols-[165px_10px_1fr] ${isUltraDenseF1 ? 'gap-y-0.5' : isDenseF1 ? 'gap-y-1.5' : 'gap-y-2.5'}`}>
+                      <div className={`grid grid-cols-[165px_10px_1fr] ${isUltraDenseF1 ? 'gap-y-0.5' : isDenseF1 ? 'gap-y-1.5' : 'gap-y-2'}`}>
                         <span className="font-semibold text-black">Dibayarkan Kepada</span>
                         <span className="text-black">:</span>
                         <span className="text-black font-bold">{submission.dibayarkanKepada}</span>
@@ -2103,14 +2103,6 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                               </td>
                             </tr>
                           ))}
-
-                          {/* Empty filler rows so voucher has clean, balanced ledger grid */}
-                          {Array.from({ length: Math.max(0, 4 - submission.items.length) }).map((_, idx) => (
-                            <tr key={`empty-f1-${idx}`} className="border-b border-black text-black">
-                              <td className={`border-l-[1.5px] border-r border-black ${isUltraDenseF1 ? 'py-1 px-2.5 text-[11px]' : isDenseF1 ? 'py-2 px-3 text-xs' : 'py-2.5 px-4 text-sm'}`}>&nbsp;</td>
-                              <td className={`border-r-[1.5px] border-black py-2 px-4 text-right font-mono ${isUltraDenseF1 ? 'text-xs' : isDenseF1 ? 'text-sm' : 'text-base'}`}>&nbsp;</td>
-                            </tr>
-                          ))}
                           
                           <tr className="border-t-[1.5px] border-b-[1.5px] border-black font-bold text-black bg-stone-50">
                             <td className="border-l-[1.5px] border-r border-black py-2.5 px-4 text-center uppercase tracking-wider text-xs font-bold bg-stone-100">
@@ -2141,7 +2133,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                     {/* 3 Signers Row */}
                     <div className={`flex justify-between text-sm text-black ${isUltraDenseF1 ? 'mt-2 mb-1' : isDenseF1 ? 'mt-3 mb-2' : 'mt-4 mb-2'} px-4 sm:px-6`}>
                       <div className="flex flex-col items-center w-56 text-center">
-                        <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px] mb-5' : isDenseF1 ? 'text-xs mb-7' : 'text-xs sm:text-sm mb-14'}`}>Diajukan</span>
+                        <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px] mb-5' : isDenseF1 ? 'text-xs mb-7' : 'text-xs sm:text-sm mb-10 sm:mb-12'}`}>Diajukan</span>
                         <span className="border-b-2 border-black pb-1 px-3 font-bold tracking-wide uppercase text-xs sm:text-sm truncate max-w-full">
                           {submission.diajukanOleh || 'Andi Dhiya Salsabila'}
                         </span>
@@ -2151,7 +2143,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                       </div>
 
                       <div className="flex flex-col items-center w-56 text-center">
-                        <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px] mb-5' : isDenseF1 ? 'text-xs mb-7' : 'text-xs sm:text-sm mb-14'}`}>Diverifikasi</span>
+                        <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px] mb-5' : isDenseF1 ? 'text-xs mb-7' : 'text-xs sm:text-sm mb-10 sm:mb-12'}`}>Diverifikasi</span>
                         <span className="border-b-2 border-black pb-1 px-3 font-bold tracking-wide uppercase text-xs sm:text-sm truncate max-w-full">
                           {f1Verifier === 'nursyam'
                             ? 'Andi Nursyam Halid'
@@ -2165,7 +2157,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                       </div>
 
                       <div className="flex flex-col items-center w-56 text-center">
-                        <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px] mb-5' : isDenseF1 ? 'text-xs mb-7' : 'text-xs sm:text-sm mb-14'}`}>Disetujui</span>
+                        <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px] mb-5' : isDenseF1 ? 'text-xs mb-7' : 'text-xs sm:text-sm mb-10 sm:mb-12'}`}>Disetujui</span>
                         <span className="border-b-2 border-black pb-1 px-3 font-bold tracking-wide uppercase text-xs sm:text-sm truncate max-w-full">
                           {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? submission.disetujuiOleh2 : 'Harijon'}
                         </span>
@@ -2175,15 +2167,17 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                       </div>
                     </div>
 
-                    {/* Notes Section */}
-                    <div className={isUltraDenseF1 ? 'mt-1' : isDenseF1 ? 'mt-2' : 'mt-3'}>
-                      <span className="block text-[10px] font-bold text-black tracking-wide uppercase mb-0.5">
-                        NOTE :
-                      </span>
-                      <div className={`border-[1.5px] border-black p-2.5 rounded-xs text-xs text-stone-800 leading-snug font-sans bg-stone-50/30 ${isUltraDenseF1 ? 'min-h-[25px]' : isDenseF1 ? 'min-h-[35px]' : 'min-h-[45px]'}`}>
-                        {submission.notes ? submission.notes : ""}
+                    {/* Notes Section - only render if note exists */}
+                    {submission.notes && submission.notes.trim() !== '' && (
+                      <div className={isUltraDenseF1 ? 'mt-1' : isDenseF1 ? 'mt-1.5' : 'mt-2'}>
+                        <span className="block text-[10px] font-bold text-black tracking-wide uppercase mb-0.5">
+                          NOTE :
+                        </span>
+                        <div className="border-[1.5px] border-black p-2 rounded-xs text-xs text-stone-800 leading-snug font-sans bg-stone-50/30">
+                          {formatDisplayNoteText(submission.notes)}
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </div>
 
                 </div>
@@ -2343,7 +2337,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
 
           return (
             <PageScaleWrapper isLandscape={false} isLastPage={!hasMoreAfterF2}>
-              <div className={`w-[210mm] ${isUltraDenseF2 ? 'min-h-[297mm] p-[8mm] sm:p-[10mm]' : isDenseF2 ? 'min-h-[297mm] p-[10mm] sm:p-[12mm]' : 'min-h-[297mm] p-[14mm] sm:p-[15mm]'} bg-white border border-stone-250 shadow-md rounded-xl print:shadow-none print:border-none print:rounded-none print:!p-0 print:!m-0 print:!min-h-0 print:!h-auto page-break flex flex-col justify-between`}>
+              <div className={`w-[210mm] max-w-full print:!w-full print:!max-w-full ${isUltraDenseF2 ? 'min-h-[297mm] p-[8mm] sm:p-[10mm]' : isDenseF2 ? 'min-h-[297mm] p-[10mm] sm:p-[12mm]' : 'min-h-[297mm] p-[14mm] sm:p-[15mm]'} bg-white border border-stone-250 shadow-md rounded-xl print:shadow-none print:border-none print:rounded-none print:!p-0 print:!m-0 print:!min-h-0 print:!h-auto page-break flex flex-col justify-between box-border`}>
                 
                 {/* Top Content: Header, Meta & Table */}
                 <div className="flex-1 flex flex-col justify-start">
@@ -2455,15 +2449,17 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                     </div>
                   )}
 
-                  {/* Notes Section */}
-                  <div className={isUltraDenseF2 ? 'mt-1.5' : isDenseF2 ? 'mt-2.5' : isFewItemsF2 ? 'mt-6' : 'mt-5'}>
-                    <span className="block text-[10px] font-bold text-black tracking-wide uppercase mb-0.5">
-                      NOTE :
-                    </span>
-                    <div className={`border-[1.5px] border-black p-3 rounded-xs text-xs sm:text-sm text-stone-800 leading-snug font-sans bg-stone-50/30 ${isUltraDenseF2 ? 'min-h-[30px]' : isDenseF2 ? 'min-h-[40px]' : isFewItemsF2 ? 'min-h-[85px]' : 'min-h-[65px]'}`}>
-                      {submission.notes ? submission.notes : ""}
+                  {/* Notes Section - only render if note exists */}
+                  {submission.notes && submission.notes.trim() !== '' && (
+                    <div className={isUltraDenseF2 ? 'mt-1.5' : isDenseF2 ? 'mt-2' : isFewItemsF2 ? 'mt-4' : 'mt-3'}>
+                      <span className="block text-[10px] font-bold text-black tracking-wide uppercase mb-0.5">
+                        NOTE :
+                      </span>
+                      <div className="border-[1.5px] border-black p-2.5 rounded-xs text-xs sm:text-sm text-stone-800 leading-snug font-sans bg-stone-50/30">
+                        {formatDisplayNoteText(submission.notes)}
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
 
               </div>
@@ -2874,7 +2870,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                 </div>
               )}
               <PageScaleWrapper isLandscape={false} isLastPage={activeTab === 'slip_gaji' || !hasMoreAfterSalarySlip}>
-                <div className="w-[210mm] min-h-[297mm] bg-white p-[15mm] border border-stone-250 shadow-md rounded-xl print:shadow-none print:border-none print:rounded-none print:!p-0 print:!m-0 page-break">
+                <div className="w-[210mm] max-w-full print:!w-full print:!max-w-full min-h-[297mm] bg-white p-[15mm] border border-stone-250 shadow-md rounded-xl print:shadow-none print:border-none print:rounded-none print:!p-0 print:!m-0 page-break box-border">
                   
                   {/* Header */}
                   <div className="flex justify-between items-start mb-6 border-b border-black pb-4">
