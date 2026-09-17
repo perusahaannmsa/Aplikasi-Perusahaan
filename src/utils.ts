@@ -249,8 +249,8 @@ export async function generateF1PdfBytes(submission: any, grandTotal: number): P
   }
   curY -= 45;
 
-  // Signatures Row (3 Signers for F1: Diajukan, Diverifikasi, Disetujui)
-  const blockW = 515 / 3;
+  // Signatures Row (4 Signers for F1: Diajukan, Diverifikasi, Mengetahui, Disetujui)
+  const blockW = 515 / 4;
   // Generous signing height for normal vouchers
   const sigGap = scale < 0.75 ? 65 : (items.length <= 3 ? 90 : 80);
   const sigY = curY - sigGap;
@@ -278,25 +278,34 @@ export async function generateF1PdfBytes(submission: any, grandTotal: number): P
         : 'Direktur')
   );
 
-  // Title Headers ("Diajukan", "Diverifikasi", "Disetujui")
+  const knowingName = cleanSingleLine(submission.mengetahuiOleh || 'ABDUL AZIZ HALID');
+  const knowingRole = cleanSingleLine(submission.mengetahuiJabatan || 'Direktur');
+
+  // Title Headers ("Diajukan", "Diverifikasi", "Mengetahui", "Disetujui")
   page.drawText('Diajukan', { x: 40 + (blockW / 2) - 18, y: curY - 20, size: 9, font: fontRegular });
   page.drawText('Diverifikasi', { x: 40 + blockW + (blockW / 2) - 22, y: curY - 20, size: 9, font: fontRegular });
-  page.drawText('Disetujui', { x: 40 + blockW * 2 + (blockW / 2) - 18, y: curY - 20, size: 9, font: fontRegular });
+  page.drawText('Mengetahui', { x: 40 + blockW * 2 + (blockW / 2) - 22, y: curY - 20, size: 9, font: fontRegular });
+  page.drawText('Disetujui', { x: 40 + blockW * 3 + (blockW / 2) - 18, y: curY - 20, size: 9, font: fontRegular });
 
   // Diajukan Name & Line & Role
-  page.drawText(applicantName, { x: 40 + (blockW / 2) - (applicantName.length * 2.3), y: sigY, size: 9, font: fontBold });
-  page.drawLine({ start: { x: 40 + 20, y: sigY - 2 }, end: { x: 40 + blockW - 20, y: sigY - 2 }, thickness: 1 });
-  page.drawText(applicantRole, { x: 40 + (blockW / 2) - (applicantRole.length * 2), y: sigY - 14, size: 8, font: fontRegular });
+  page.drawText(applicantName, { x: 40 + (blockW / 2) - (applicantName.length * 2.1), y: sigY, size: 8, font: fontBold });
+  page.drawLine({ start: { x: 40 + 10, y: sigY - 2 }, end: { x: 40 + blockW - 10, y: sigY - 2 }, thickness: 1 });
+  page.drawText(applicantRole, { x: 40 + (blockW / 2) - (applicantRole.length * 1.9), y: sigY - 14, size: 7.5, font: fontRegular });
 
   // Diverifikasi Name & Line & Role
-  page.drawText(verifierName, { x: 40 + blockW + (blockW / 2) - (verifierName.length * 2.3), y: sigY, size: 9, font: fontBold });
-  page.drawLine({ start: { x: 40 + blockW + 20, y: sigY - 2 }, end: { x: 40 + blockW * 2 - 20, y: sigY - 2 }, thickness: 1 });
-  page.drawText(verifierRole, { x: 40 + blockW + (blockW / 2) - (verifierRole.length * 2), y: sigY - 14, size: 8, font: fontRegular });
+  page.drawText(verifierName, { x: 40 + blockW + (blockW / 2) - (verifierName.length * 2.1), y: sigY, size: 8, font: fontBold });
+  page.drawLine({ start: { x: 40 + blockW + 10, y: sigY - 2 }, end: { x: 40 + blockW * 2 - 10, y: sigY - 2 }, thickness: 1 });
+  page.drawText(verifierRole, { x: 40 + blockW + (blockW / 2) - (verifierRole.length * 1.9), y: sigY - 14, size: 7.5, font: fontRegular });
+
+  // Mengetahui Name & Line & Role
+  page.drawText(knowingName, { x: 40 + blockW * 2 + (blockW / 2) - (knowingName.length * 2.1), y: sigY, size: 8, font: fontBold });
+  page.drawLine({ start: { x: 40 + blockW * 2 + 10, y: sigY - 2 }, end: { x: 40 + blockW * 3 - 10, y: sigY - 2 }, thickness: 1 });
+  page.drawText(knowingRole, { x: 40 + blockW * 2 + (blockW / 2) - (knowingRole.length * 1.9), y: sigY - 14, size: 7.5, font: fontRegular });
 
   // Disetujui Name & Line & Role
-  page.drawText(approverName, { x: 40 + blockW * 2 + (blockW / 2) - (approverName.length * 2.3), y: sigY, size: 9, font: fontBold });
-  page.drawLine({ start: { x: 40 + blockW * 2 + 20, y: sigY - 2 }, end: { x: 40 + 515 - 20, y: sigY - 2 }, thickness: 1 });
-  page.drawText(approverRole, { x: 40 + blockW * 2 + (blockW / 2) - (approverRole.length * 2), y: sigY - 14, size: 8, font: fontRegular });
+  page.drawText(approverName, { x: 40 + blockW * 3 + (blockW / 2) - (approverName.length * 2.1), y: sigY, size: 8, font: fontBold });
+  page.drawLine({ start: { x: 40 + blockW * 3 + 10, y: sigY - 2 }, end: { x: 40 + 515 - 10, y: sigY - 2 }, thickness: 1 });
+  page.drawText(approverRole, { x: 40 + blockW * 3 + (blockW / 2) - (approverRole.length * 1.9), y: sigY - 14, size: 7.5, font: fontRegular });
 
   // Notes block
   const noteY = sigY - (scale < 0.75 ? 40 : 50);

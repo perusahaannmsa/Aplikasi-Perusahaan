@@ -384,6 +384,9 @@ function getServiceAccountCredentials(): { clientEmail: string; privateKey: stri
   if (process.env.GOOGLE_CREDENTIALS) {
     try {
       let rawJson = process.env.GOOGLE_CREDENTIALS.trim();
+      if (rawJson.startsWith("GOOGLE_CREDENTIALS=")) {
+        rawJson = rawJson.slice("GOOGLE_CREDENTIALS=".length).trim();
+      }
       while (
         (rawJson.startsWith('"') && rawJson.endsWith('"')) ||
         (rawJson.startsWith("'") && rawJson.endsWith("'"))
@@ -556,6 +559,10 @@ app.post("/api/service-account/save", async (req, res) => {
   }
 });
 
+// In-memory flags to prevent repeated error logs when Google Drive API is disabled in GCP Console
+let isServiceAccountDriveApiDisabled = false;
+let hasLoggedDriveApiDisabledNotice = false;
+
 // 3. Test Service Account connection against Google Drive API
 app.post("/api/service-account/test", async (req, res) => {
   try {
@@ -577,11 +584,33 @@ app.post("/api/service-account/test", async (req, res) => {
 
     // Call Google Drive API About to check storage/status
     const drive = google.drive({ version: "v3", auth: jwtClient });
+    let isApiDisabled = false;
+    let activationUrl: string | null = null;
+
     const aboutRes = await drive.about.get({ fields: "user, storageQuota" }).catch((err) => {
-      console.warn("drive.about.get warning (check if Drive API enabled in GCP console):", err?.message || err);
+      const errMsg = String(err?.message || '');
+      const errStr = JSON.stringify(err?.response?.data || '');
+      if (errMsg.includes("has not been used in project") || errMsg.includes("it is disabled") || errStr.includes("SERVICE_DISABLED") || errStr.includes("accessNotConfigured")) {
+        isApiDisabled = true;
+        isServiceAccountDriveApiDisabled = true;
+        const match = errMsg.match(/https:\/\/console\.developers\.google\.com[^\s]+/);
+        if (match) activationUrl = match[0];
+      }
       return null;
     });
 
+    if (isApiDisabled) {
+      return res.json({
+        success: false,
+        apiDisabled: true,
+        message: "Kredensial Service Account valid, namun Google Drive API belum diaktifkan di Google Cloud Console untuk project ini. Aktifkan API di GCP Console agar Service Account dapat mengakses Google Drive.",
+        activationUrl: activationUrl || `https://console.developers.google.com/apis/api/drive.googleapis.com/overview?project=${creds.projectId}`,
+        clientEmail: creds.clientEmail,
+        projectId: creds.projectId
+      });
+    }
+
+    isServiceAccountDriveApiDisabled = false;
     return res.json({
       success: true,
       message: "Koneksi Google Drive Service Account 100% Aktif & Berfungsi Normal!",
@@ -668,7 +697,7 @@ app.get("/api/drive-proxy", async (req, res) => {
 
   if (userToken) {
     try {
-      const driveRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+      const driveRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`, {
         headers: {
           Authorization: `Bearer ${userToken}`,
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -684,37 +713,61 @@ app.get("/api/drive-proxy", async (req, res) => {
         }
       }
     } catch (errUserToken: any) {
-      console.warn("User token download failed, trying service account or public fallbacks...", errUserToken?.message || errUserToken);
+      // Proceed to Service Account or public fallbacks
     }
   }
 
-  // 2. Check if Service Account credentials exist
-  try {
-    const creds = getServiceAccountCredentials();
-    if (creds && creds.clientEmail && creds.privateKey) {
-      const jwtClient = new google.auth.JWT({
-        email: creds.clientEmail,
-        key: creds.privateKey,
-        scopes: [
-          "https://www.googleapis.com/auth/drive.readonly",
-          "https://www.googleapis.com/auth/drive"
-        ]
-      });
-      const drive = google.drive({ version: 'v3', auth: jwtClient });
-      try {
-        const driveRes = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'arraybuffer' });
-        const metadata = await drive.files.get({ fileId, fields: 'mimeType, name' }).catch(() => null);
+  // 2. Check if Service Account credentials exist and Drive API is enabled in GCP
+  if (!isServiceAccountDriveApiDisabled) {
+    try {
+      const creds = getServiceAccountCredentials();
+      if (creds && creds.clientEmail && creds.privateKey) {
+        const jwtClient = new google.auth.JWT({
+          email: creds.clientEmail,
+          key: creds.privateKey,
+          scopes: [
+            "https://www.googleapis.com/auth/drive.readonly",
+            "https://www.googleapis.com/auth/drive"
+          ]
+        });
+        const drive = google.drive({ version: 'v3', auth: jwtClient });
+        try {
+          const driveRes = await drive.files.get({ 
+            fileId, 
+            alt: 'media',
+            supportsAllDrives: true,
+            acknowledgeAbuse: true
+          }, { responseType: 'arraybuffer' });
+          const metadata = await drive.files.get({ 
+            fileId, 
+            fields: 'mimeType, name',
+            supportsAllDrives: true
+          }).catch(() => null);
 
-        const mimeType = metadata?.data?.mimeType || 'application/pdf';
-        res.setHeader("Content-Type", mimeType);
-        res.setHeader("Cache-Control", "public, max-age=86400");
-        return res.send(Buffer.from(driveRes.data as ArrayBuffer));
-      } catch (errDrive: any) {
-        console.warn("Drive Service Account download failed, trying public URLs...", errDrive?.message || errDrive);
+          const mimeType = metadata?.data?.mimeType || 'application/pdf';
+          res.setHeader("Content-Type", mimeType);
+          res.setHeader("Cache-Control", "public, max-age=86400");
+          return res.send(Buffer.from(driveRes.data as ArrayBuffer));
+        } catch (errDrive: any) {
+          const errMsg = String(errDrive?.message || '');
+          const errDataStr = JSON.stringify(errDrive?.response?.data || '');
+          const isGcpDisabled = errMsg.includes("has not been used in project") || 
+                                errMsg.includes("it is disabled") || 
+                                errDataStr.includes("SERVICE_DISABLED") || 
+                                errDataStr.includes("accessNotConfigured");
+          if (isGcpDisabled) {
+            isServiceAccountDriveApiDisabled = true;
+            if (!hasLoggedDriveApiDisabledNotice) {
+              hasLoggedDriveApiDisabledNotice = true;
+              console.info("[Google Drive] Info: Google Drive API belum diaktifkan di GCP Console untuk Service Account. Menggunakan jalur unduhan publik & token pengguna secara otomatis.");
+            }
+          }
+          // Do not log warning on 403/404 to avoid false error alarms, cleanly fall back to public URLs
+        }
       }
+    } catch (saErr: any) {
+      // Proceed to public URLs
     }
-  } catch (saErr: any) {
-    console.warn("Service account initialization error:", saErr?.message || saErr);
   }
 
   // 3. Fallback to resilient public Google Drive URLs
@@ -751,7 +804,7 @@ app.get("/api/drive-proxy", async (req, res) => {
         }
       }
     } catch (urlErr) {
-      console.warn(`Failed candidate URL ${candidateUrl}:`, urlErr);
+      // Try next candidate URL
     }
   }
 

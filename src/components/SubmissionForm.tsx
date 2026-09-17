@@ -1571,7 +1571,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
 
             // Set permissions
             try {
-              await fetch(`https://www.googleapis.com/drive/v3/files/${fileData.id}/permissions`, {
+              await fetch(`https://www.googleapis.com/drive/v3/files/${fileData.id}/permissions?supportsAllDrives=true`, {
                 method: 'POST',
                 headers: {
                   Authorization: `Bearer ${driveToken}`,

@@ -3,7 +3,7 @@ import { Submission } from '../types';
 import { formatRupiah, formatDateIndonesian, numberToTerbilang } from '../utils';
 import { NusantaraLogo } from './NusantaraLogo';
 import { Printer, ArrowLeft, Layers, FileText, CheckCircle, Cloud, Loader2, Lock, ShieldAlert, RefreshCw, Share2, Copy, Check, Send, Edit2, Trash, Trash2, RotateCw, Coins, ExternalLink } from 'lucide-react';
-import { getStoredGoogleDriveToken, googleDriveLogin, saveSubmissionToFirestore } from '../firebase';
+import { getStoredGoogleDriveToken, ensureValidDriveToken, googleDriveLogin, saveSubmissionToFirestore } from '../firebase';
 import { SppdSheetContent } from './PrintSppdDocument';
 import { SPPDRecord } from './SppdManager';
 
@@ -803,7 +803,14 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
       setRenderedPages([]);
 
       try {
-        const token = getStoredGoogleDriveToken();
+        let token = getStoredGoogleDriveToken();
+        if (!token) {
+          try {
+            token = await ensureValidDriveToken();
+          } catch (e) {
+            // Proceed if token cannot be discovered silently
+          }
+        }
         const tempPages: RenderedPage[] = [];
 
         for (let i = 0; i < attachmentFiles.length; i++) {
@@ -920,7 +927,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                   const headers: HeadersInit = {
                     'Authorization': `Bearer ${token}`
                   };
-                  const fileRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, { headers });
+                  const fileRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`, { headers });
                   if (fileRes.ok) {
                     fileBlob = await fileRes.blob();
                   } else {
@@ -2130,11 +2137,11 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
 
                   {/* Bottom Content: Spacious Signatures and Note */}
                   <div className="mt-auto pt-2">
-                    {/* 3 Signers Row */}
-                    <div className={`flex justify-between text-sm text-black ${isUltraDenseF1 ? 'mt-2 mb-1' : isDenseF1 ? 'mt-3 mb-2' : 'mt-4 mb-2'} px-4 sm:px-6`}>
-                      <div className="flex flex-col items-center w-56 text-center">
+                    {/* 4 Signers Row */}
+                    <div className={`flex justify-between text-sm text-black ${isUltraDenseF1 ? 'mt-2 mb-1' : isDenseF1 ? 'mt-3 mb-2' : 'mt-4 mb-2'} px-2 sm:px-4 gap-2`}>
+                      <div className="flex flex-col items-center flex-1 min-w-0 text-center">
                         <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px] mb-5' : isDenseF1 ? 'text-xs mb-7' : 'text-xs sm:text-sm mb-10 sm:mb-12'}`}>Diajukan</span>
-                        <span className="border-b-2 border-black pb-1 px-3 font-bold tracking-wide uppercase text-xs sm:text-sm truncate max-w-full">
+                        <span className="border-b-2 border-black pb-1 px-1 font-bold tracking-wide uppercase text-xs sm:text-sm truncate max-w-full">
                           {submission.diajukanOleh || 'Andi Dhiya Salsabila'}
                         </span>
                         <span className="text-xs text-stone-700 font-mono mt-1 uppercase font-medium">
@@ -2142,9 +2149,9 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                         </span>
                       </div>
 
-                      <div className="flex flex-col items-center w-56 text-center">
+                      <div className="flex flex-col items-center flex-1 min-w-0 text-center">
                         <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px] mb-5' : isDenseF1 ? 'text-xs mb-7' : 'text-xs sm:text-sm mb-10 sm:mb-12'}`}>Diverifikasi</span>
-                        <span className="border-b-2 border-black pb-1 px-3 font-bold tracking-wide uppercase text-xs sm:text-sm truncate max-w-full">
+                        <span className="border-b-2 border-black pb-1 px-1 font-bold tracking-wide uppercase text-xs sm:text-sm truncate max-w-full">
                           {f1Verifier === 'nursyam'
                             ? 'Andi Nursyam Halid'
                             : ((submission.diverifikasiOleh && submission.diverifikasiOleh !== 'Andi Dhiya Salsabila') ? submission.diverifikasiOleh : 'Andi Muhammad Rifki')}
@@ -2156,9 +2163,19 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                         </span>
                       </div>
 
-                      <div className="flex flex-col items-center w-56 text-center">
+                      <div className="flex flex-col items-center flex-1 min-w-0 text-center">
+                        <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px] mb-5' : isDenseF1 ? 'text-xs mb-7' : 'text-xs sm:text-sm mb-10 sm:mb-12'}`}>Mengetahui</span>
+                        <span className="border-b-2 border-black pb-1 px-1 font-bold tracking-wide uppercase text-xs sm:text-sm truncate max-w-full">
+                          {submission.mengetahuiOleh || 'ABDUL AZIZ HALID'}
+                        </span>
+                        <span className="text-xs text-stone-700 font-mono mt-1 uppercase font-medium">
+                          {submission.mengetahuiJabatan || 'Direktur'}
+                        </span>
+                      </div>
+
+                      <div className="flex flex-col items-center flex-1 min-w-0 text-center">
                         <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px] mb-5' : isDenseF1 ? 'text-xs mb-7' : 'text-xs sm:text-sm mb-10 sm:mb-12'}`}>Disetujui</span>
-                        <span className="border-b-2 border-black pb-1 px-3 font-bold tracking-wide uppercase text-xs sm:text-sm truncate max-w-full">
+                        <span className="border-b-2 border-black pb-1 px-1 font-bold tracking-wide uppercase text-xs sm:text-sm truncate max-w-full">
                           {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? submission.disetujuiOleh2 : 'Harijon'}
                         </span>
                         <span className="text-xs text-stone-700 font-mono mt-1 uppercase font-medium">
@@ -2262,10 +2279,10 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                 </div>
 
                 <div>
-                  <div className="flex justify-between px-6 mt-2 mb-1 text-xs sm:text-sm text-black">
-                    <div className="flex flex-col items-center text-center w-1/3">
+                  <div className="flex justify-between px-2 sm:px-4 mt-2 mb-1 text-xs sm:text-sm text-black gap-2">
+                    <div className="flex flex-col items-center text-center w-1/4">
                       <span className="font-sans font-medium mb-10 uppercase text-xs">Diajukan</span>
-                      <span className="border-b border-black pb-0.5 px-2 font-bold uppercase text-xs whitespace-nowrap">
+                      <span className="border-b border-black pb-0.5 px-1 font-bold uppercase text-[11px] sm:text-xs whitespace-nowrap truncate max-w-full">
                         {submission.diajukanOleh || 'Andi Dhiya Salsabila'}
                       </span>
                       <span className="text-xs text-stone-600 font-mono mt-0.5 uppercase">
@@ -2273,9 +2290,9 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                       </span>
                     </div>
 
-                    <div className="flex flex-col items-center text-center w-1/3">
+                    <div className="flex flex-col items-center text-center w-1/4">
                       <span className="font-sans font-medium mb-10 uppercase text-xs">Diverifikasi</span>
-                      <span className="border-b border-black pb-0.5 px-2 font-bold uppercase text-xs whitespace-nowrap">
+                      <span className="border-b border-black pb-0.5 px-1 font-bold uppercase text-[11px] sm:text-xs whitespace-nowrap truncate max-w-full">
                         {(submission.diverifikasiOleh && submission.diverifikasiOleh !== 'Andi Dhiya Salsabila')
                           ? submission.diverifikasiOleh
                           : (submission.disetujuiOleh2?.toLowerCase().includes('nursyam') ? 'Andi Nursyam Halid' : 'Andi Rifki Naufal')}
@@ -2287,9 +2304,19 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                       </span>
                     </div>
 
-                    <div className="flex flex-col items-center text-center w-1/3">
+                    <div className="flex flex-col items-center text-center w-1/4">
+                      <span className="font-sans font-medium mb-10 uppercase text-xs">Mengetahui</span>
+                      <span className="border-b border-black pb-0.5 px-1 font-bold uppercase text-[11px] sm:text-xs whitespace-nowrap truncate max-w-full">
+                        {submission.mengetahuiOleh || 'ABDUL AZIZ HALID'}
+                      </span>
+                      <span className="text-xs text-stone-600 font-mono mt-0.5 uppercase">
+                        {submission.mengetahuiJabatan || 'Direktur'}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-col items-center text-center w-1/4">
                       <span className="font-sans font-medium mb-10 uppercase text-xs">Disetujui</span>
-                      <span className="border-b border-black pb-0.5 px-2 font-bold uppercase text-xs whitespace-nowrap">
+                      <span className="border-b border-black pb-0.5 px-1 font-bold uppercase text-[11px] sm:text-xs whitespace-nowrap truncate max-w-full">
                         {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? submission.disetujuiOleh2 : 'Harijon'}
                       </span>
                       <span className="text-xs text-stone-600 font-mono mt-0.5 uppercase">
@@ -2671,10 +2698,10 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                 </div>
 
                 <div>
-                  <div className="flex justify-between px-6 mt-2 mb-1 text-xs sm:text-sm text-black">
-                    <div className="flex flex-col items-center text-center w-1/3">
+                  <div className="flex justify-between px-2 sm:px-4 mt-2 mb-1 text-xs sm:text-sm text-black gap-2">
+                    <div className="flex flex-col items-center text-center w-1/4">
                       <span className="font-sans font-medium mb-10 uppercase text-xs">Diajukan</span>
-                      <span className="border-b border-black pb-0.5 px-2 font-bold uppercase text-xs whitespace-nowrap">
+                      <span className="border-b border-black pb-0.5 px-1 font-bold uppercase text-[11px] sm:text-xs whitespace-nowrap truncate max-w-full">
                         {submission.diajukanOleh || 'Andi Dhiya Salsabila'}
                       </span>
                       <span className="text-xs text-stone-600 font-mono mt-0.5 uppercase">
@@ -2682,9 +2709,9 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                       </span>
                     </div>
 
-                    <div className="flex flex-col items-center text-center w-1/3">
+                    <div className="flex flex-col items-center text-center w-1/4">
                       <span className="font-sans font-medium mb-10 uppercase text-xs">Diverifikasi</span>
-                      <span className="border-b border-black pb-0.5 px-2 font-bold uppercase text-xs whitespace-nowrap">
+                      <span className="border-b border-black pb-0.5 px-1 font-bold uppercase text-[11px] sm:text-xs whitespace-nowrap truncate max-w-full">
                         {(submission.diverifikasiOleh && submission.diverifikasiOleh !== 'Andi Dhiya Salsabila')
                           ? submission.diverifikasiOleh
                           : (submission.disetujuiOleh2?.toLowerCase().includes('nursyam') ? 'Andi Nursyam Halid' : 'Andi Rifki Naufal')}
@@ -2696,9 +2723,19 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                       </span>
                     </div>
 
-                    <div className="flex flex-col items-center text-center w-1/3">
+                    <div className="flex flex-col items-center text-center w-1/4">
+                      <span className="font-sans font-medium mb-10 uppercase text-xs">Mengetahui</span>
+                      <span className="border-b border-black pb-0.5 px-1 font-bold uppercase text-[11px] sm:text-xs whitespace-nowrap truncate max-w-full">
+                        {submission.mengetahuiOleh || 'ABDUL AZIZ HALID'}
+                      </span>
+                      <span className="text-xs text-stone-600 font-mono mt-0.5 uppercase">
+                        {submission.mengetahuiJabatan || 'Direktur'}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-col items-center text-center w-1/4">
                       <span className="font-sans font-medium mb-10 uppercase text-xs">Disetujui</span>
-                      <span className="border-b border-black pb-0.5 px-2 font-bold uppercase text-xs whitespace-nowrap">
+                      <span className="border-b border-black pb-0.5 px-1 font-bold uppercase text-[11px] sm:text-xs whitespace-nowrap truncate max-w-full">
                         {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? submission.disetujuiOleh2 : 'Harijon'}
                       </span>
                       <span className="text-xs text-stone-600 font-mono mt-0.5 uppercase">

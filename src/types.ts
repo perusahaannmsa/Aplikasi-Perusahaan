@@ -109,6 +109,8 @@ export interface Submission {
   diajukanJabatan?: string; // e.g. "Keuangan"
   diverifikasiOleh: string; // e.g. "Andi Muhammad Rifki"
   diverifikasiJabatan: string; // e.g. "Direktur"
+  mengetahuiOleh?: string; // e.g. "ABDUL AZIZ HALID"
+  mengetahuiJabatan?: string; // e.g. "Direktur"
   disetujuiOleh2: string; // e.g. "Harijon"
   disetujuiJabatan2: string; // e.g. "Direktur Keuangan"
   dibukukanOleh: string; // e.g. "Sri Ekowati"
