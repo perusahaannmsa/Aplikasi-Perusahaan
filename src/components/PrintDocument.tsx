@@ -2141,31 +2141,35 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
 
                   {/* Bottom Content: Spacious Signatures and Note */}
                   <div className="mt-auto pt-2">
-                    {/* 4 Signers: 2 on Top Row, 2 on Bottom Row with generous spacing like F2 */}
-                    <div className={`${isUltraDenseF1 ? 'space-y-4 my-2' : isDenseF1 ? 'space-y-5 my-3' : 'space-y-6 sm:space-y-8 my-4'}`}>
+                    {/* 4 Signers: 2 on Top Row, 2 on Bottom Row with generous spacing and uniform underline widths */}
+                    <div className={`${isUltraDenseF1 ? 'space-y-4 my-2' : isDenseF1 ? 'space-y-6 my-3' : 'space-y-8 sm:space-y-10 my-4 sm:my-6'}`}>
                       {/* Row 1 (Atas): Diajukan (Kiri) & Diverifikasi (Kanan) */}
-                      <div className="flex justify-between text-sm text-black px-6 sm:px-14">
-                        <div className="flex flex-col items-center w-60 sm:w-64 text-center">
-                          <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px] mb-5' : isDenseF1 ? 'text-xs mb-7' : 'text-xs sm:text-sm mb-12 sm:mb-14'}`}>
+                      <div className="flex justify-between text-sm text-black px-1 sm:px-2">
+                        <div className="flex flex-col items-center w-56 sm:w-64 text-center">
+                          <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px] mb-4' : isDenseF1 ? 'text-xs mb-6' : 'text-xs sm:text-sm mb-7 sm:mb-9'}`}>
                             Diajukan
                           </span>
-                          <span className="border-b-2 border-black pb-1 px-4 font-bold tracking-wide uppercase text-xs sm:text-sm whitespace-nowrap">
-                            {submission.diajukanOleh || 'Andi Dhiya Salsabila'}
-                          </span>
+                          <div className="w-56 sm:w-64 border-b-2 border-black pb-1 flex items-center justify-center">
+                            <span className="font-bold tracking-wide uppercase text-xs sm:text-sm whitespace-nowrap">
+                              {submission.diajukanOleh || 'Andi Dhiya Salsabila'}
+                            </span>
+                          </div>
                           <span className="text-xs text-stone-700 font-mono mt-1 uppercase font-medium leading-tight">
                             {submission.diajukanJabatan || 'Keuangan'}
                           </span>
                         </div>
 
-                        <div className="flex flex-col items-center w-60 sm:w-64 text-center">
-                          <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px] mb-5' : isDenseF1 ? 'text-xs mb-7' : 'text-xs sm:text-sm mb-12 sm:mb-14'}`}>
+                        <div className="flex flex-col items-center w-56 sm:w-64 text-center">
+                          <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px] mb-4' : isDenseF1 ? 'text-xs mb-6' : 'text-xs sm:text-sm mb-7 sm:mb-9'}`}>
                             Diverifikasi
                           </span>
-                          <span className="border-b-2 border-black pb-1 px-4 font-bold tracking-wide uppercase text-xs sm:text-sm whitespace-nowrap">
-                            {f1Verifier === 'nursyam'
-                              ? 'Andi Nursyam Halid'
-                              : ((submission.diverifikasiOleh && submission.diverifikasiOleh !== 'Andi Dhiya Salsabila') ? submission.diverifikasiOleh : 'Andi Muhammad Rifki')}
-                          </span>
+                          <div className="w-56 sm:w-64 border-b-2 border-black pb-1 flex items-center justify-center">
+                            <span className="font-bold tracking-wide uppercase text-xs sm:text-sm whitespace-nowrap">
+                              {f1Verifier === 'nursyam'
+                                ? 'Andi Nursyam Halid'
+                                : ((submission.diverifikasiOleh && submission.diverifikasiOleh !== 'Andi Dhiya Salsabila') ? submission.diverifikasiOleh : 'Andi Muhammad Rifki')}
+                            </span>
+                          </div>
                           <span className="text-xs text-stone-700 font-mono mt-1 uppercase font-medium leading-tight">
                             {f1Verifier === 'nursyam'
                               ? 'Direktur Utama'
@@ -2175,26 +2179,30 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                       </div>
 
                       {/* Row 2 (Bawah): Disetujui (Kiri) & Mengetahui (Kanan) */}
-                      <div className="flex justify-between text-sm text-black px-6 sm:px-14">
-                        <div className="flex flex-col items-center w-60 sm:w-64 text-center">
-                          <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px] mb-5' : isDenseF1 ? 'text-xs mb-7' : 'text-xs sm:text-sm mb-12 sm:mb-14'}`}>
+                      <div className="flex justify-between text-sm text-black px-1 sm:px-2">
+                        <div className="flex flex-col items-center w-56 sm:w-64 text-center">
+                          <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px] mb-4' : isDenseF1 ? 'text-xs mb-6' : 'text-xs sm:text-sm mb-7 sm:mb-9'}`}>
                             Disetujui
                           </span>
-                          <span className="border-b-2 border-black pb-1 px-4 font-bold tracking-wide uppercase text-xs sm:text-sm whitespace-nowrap">
-                            {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? submission.disetujuiOleh2 : 'Harijon'}
-                          </span>
+                          <div className="w-56 sm:w-64 border-b-2 border-black pb-1 flex items-center justify-center">
+                            <span className="font-bold tracking-wide uppercase text-xs sm:text-sm whitespace-nowrap">
+                              {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? submission.disetujuiOleh2 : 'Harijon'}
+                            </span>
+                          </div>
                           <span className="text-xs text-stone-700 font-mono mt-1 uppercase font-medium leading-tight">
                             {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? (submission.disetujuiJabatan2 || 'Direktur Keuangan') : 'Direktur Keuangan'}
                           </span>
                         </div>
 
-                        <div className="flex flex-col items-center w-60 sm:w-64 text-center">
-                          <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px] mb-5' : isDenseF1 ? 'text-xs mb-7' : 'text-xs sm:text-sm mb-12 sm:mb-14'}`}>
+                        <div className="flex flex-col items-center w-56 sm:w-64 text-center">
+                          <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px] mb-4' : isDenseF1 ? 'text-xs mb-6' : 'text-xs sm:text-sm mb-7 sm:mb-9'}`}>
                             Mengetahui
                           </span>
-                          <span className="border-b-2 border-black pb-1 px-4 font-bold tracking-wide uppercase text-xs sm:text-sm whitespace-nowrap">
-                            {submission.mengetahuiOleh || 'ABDUL AZIZ HALID'}
-                          </span>
+                          <div className="w-56 sm:w-64 border-b-2 border-black pb-1 flex items-center justify-center">
+                            <span className="font-bold tracking-wide uppercase text-xs sm:text-sm whitespace-nowrap">
+                              {submission.mengetahuiOleh || 'ABDUL AZIZ HALID'}
+                            </span>
+                          </div>
                           <span className="text-xs text-stone-700 font-mono mt-1 uppercase font-medium leading-tight">
                             {submission.mengetahuiJabatan || 'Direktur'}
                           </span>
@@ -2297,27 +2305,31 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                 </div>
 
                 <div>
-                  {/* 4 Signers: 2 on Top Row, 2 on Bottom Row */}
-                  <div className="space-y-4 my-2 text-xs sm:text-sm text-black">
+                  {/* 4 Signers: 2 on Top Row, 2 on Bottom Row with generous spacing and uniform underline widths */}
+                  <div className="space-y-6 sm:space-y-8 my-3 text-xs sm:text-sm text-black">
                     {/* Row 1 (Atas): Diajukan & Diverifikasi */}
-                    <div className="flex justify-between px-6 sm:px-12">
+                    <div className="flex justify-between px-1 sm:px-2">
                       <div className="flex flex-col items-center text-center w-52 sm:w-60">
-                        <span className="font-sans font-medium mb-6 uppercase text-xs">Diajukan</span>
-                        <span className="border-b border-black pb-0.5 px-3 font-bold text-xs sm:text-sm whitespace-nowrap">
-                          {submission.diajukanOleh || 'Andi Dhiya Salsabila'}
-                        </span>
+                        <span className="font-sans font-medium mb-5 sm:mb-7 uppercase text-xs">Diajukan</span>
+                        <div className="w-52 sm:w-60 border-b-2 border-black pb-1 flex items-center justify-center">
+                          <span className="font-bold text-xs sm:text-sm whitespace-nowrap">
+                            {submission.diajukanOleh || 'Andi Dhiya Salsabila'}
+                          </span>
+                        </div>
                         <span className="text-xs text-stone-600 font-mono mt-0.5 uppercase leading-tight">
                           {submission.diajukanJabatan || 'Keuangan'}
                         </span>
                       </div>
 
                       <div className="flex flex-col items-center text-center w-52 sm:w-60">
-                        <span className="font-sans font-medium mb-6 uppercase text-xs">Diverifikasi</span>
-                        <span className="border-b border-black pb-0.5 px-3 font-bold text-xs sm:text-sm whitespace-nowrap">
-                          {(submission.diverifikasiOleh && submission.diverifikasiOleh !== 'Andi Dhiya Salsabila')
-                            ? submission.diverifikasiOleh
-                            : (submission.disetujuiOleh2?.toLowerCase().includes('nursyam') ? 'Andi Nursyam Halid' : 'Andi Rifki Naufal')}
-                        </span>
+                        <span className="font-sans font-medium mb-5 sm:mb-7 uppercase text-xs">Diverifikasi</span>
+                        <div className="w-52 sm:w-60 border-b-2 border-black pb-1 flex items-center justify-center">
+                          <span className="font-bold text-xs sm:text-sm whitespace-nowrap">
+                            {(submission.diverifikasiOleh && submission.diverifikasiOleh !== 'Andi Dhiya Salsabila')
+                              ? submission.diverifikasiOleh
+                              : (submission.disetujuiOleh2?.toLowerCase().includes('nursyam') ? 'Andi Nursyam Halid' : 'Andi Rifki Naufal')}
+                          </span>
+                        </div>
                         <span className="text-xs text-stone-600 font-mono mt-0.5 uppercase leading-tight">
                           {(submission.diverifikasiOleh?.toLowerCase().includes('nursyam') || submission.disetujuiOleh2?.toLowerCase().includes('nursyam'))
                             ? 'Direktur Utama'
@@ -2327,22 +2339,26 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                     </div>
 
                     {/* Row 2 (Bawah): Disetujui & Mengetahui */}
-                    <div className="flex justify-between px-6 sm:px-12">
+                    <div className="flex justify-between px-1 sm:px-2">
                       <div className="flex flex-col items-center text-center w-52 sm:w-60">
-                        <span className="font-sans font-medium mb-6 uppercase text-xs">Disetujui</span>
-                        <span className="border-b border-black pb-0.5 px-3 font-bold text-xs sm:text-sm whitespace-nowrap">
-                          {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? submission.disetujuiOleh2 : 'Harijon'}
-                        </span>
+                        <span className="font-sans font-medium mb-5 sm:mb-7 uppercase text-xs">Disetujui</span>
+                        <div className="w-52 sm:w-60 border-b-2 border-black pb-1 flex items-center justify-center">
+                          <span className="font-bold text-xs sm:text-sm whitespace-nowrap">
+                            {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? submission.disetujuiOleh2 : 'Harijon'}
+                          </span>
+                        </div>
                         <span className="text-xs text-stone-600 font-mono mt-0.5 uppercase leading-tight">
                           {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? (submission.disetujuiJabatan2 || 'Direktur Keuangan') : 'Direktur Keuangan'}
                         </span>
                       </div>
 
                       <div className="flex flex-col items-center text-center w-52 sm:w-60">
-                        <span className="font-sans font-medium mb-6 uppercase text-xs">Mengetahui</span>
-                        <span className="border-b border-black pb-0.5 px-3 font-bold text-xs sm:text-sm whitespace-nowrap">
-                          {submission.mengetahuiOleh || 'ABDUL AZIZ HALID'}
-                        </span>
+                        <span className="font-sans font-medium mb-5 sm:mb-7 uppercase text-xs">Mengetahui</span>
+                        <div className="w-52 sm:w-60 border-b-2 border-black pb-1 flex items-center justify-center">
+                          <span className="font-bold text-xs sm:text-sm whitespace-nowrap">
+                            {submission.mengetahuiOleh || 'ABDUL AZIZ HALID'}
+                          </span>
+                        </div>
                         <span className="text-xs text-stone-600 font-mono mt-0.5 uppercase leading-tight">
                           {submission.mengetahuiJabatan || 'Direktur'}
                         </span>
@@ -2723,27 +2739,31 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                 </div>
 
                 <div>
-                  {/* 4 Signers: 2 on Top Row, 2 on Bottom Row */}
-                  <div className="space-y-3.5 my-2 text-xs sm:text-sm text-black">
+                  {/* 4 Signers: 2 on Top Row, 2 on Bottom Row with generous spacing and uniform underline widths */}
+                  <div className="space-y-5 sm:space-y-6 my-2 text-xs sm:text-sm text-black">
                     {/* Row 1 (Atas): Diajukan & Diverifikasi */}
-                    <div className="flex justify-between px-6 sm:px-12">
+                    <div className="flex justify-between px-1 sm:px-2">
                       <div className="flex flex-col items-center text-center w-52 sm:w-60">
-                        <span className="font-sans font-medium mb-5 uppercase text-xs">Diajukan</span>
-                        <span className="border-b border-black pb-0.5 px-3 font-bold text-xs sm:text-sm whitespace-nowrap">
-                          {submission.diajukanOleh || 'Andi Dhiya Salsabila'}
-                        </span>
+                        <span className="font-sans font-medium mb-4 sm:mb-5 uppercase text-xs">Diajukan</span>
+                        <div className="w-52 sm:w-60 border-b-2 border-black pb-1 flex items-center justify-center">
+                          <span className="font-bold text-xs sm:text-sm whitespace-nowrap">
+                            {submission.diajukanOleh || 'Andi Dhiya Salsabila'}
+                          </span>
+                        </div>
                         <span className="text-xs text-stone-600 font-mono mt-0.5 uppercase leading-tight">
                           {submission.diajukanJabatan || 'Keuangan'}
                         </span>
                       </div>
 
                       <div className="flex flex-col items-center text-center w-52 sm:w-60">
-                        <span className="font-sans font-medium mb-5 uppercase text-xs">Diverifikasi</span>
-                        <span className="border-b border-black pb-0.5 px-3 font-bold text-xs sm:text-sm whitespace-nowrap">
-                          {(submission.diverifikasiOleh && submission.diverifikasiOleh !== 'Andi Dhiya Salsabila')
-                            ? submission.diverifikasiOleh
-                            : (submission.disetujuiOleh2?.toLowerCase().includes('nursyam') ? 'Andi Nursyam Halid' : 'Andi Rifki Naufal')}
-                        </span>
+                        <span className="font-sans font-medium mb-4 sm:mb-5 uppercase text-xs">Diverifikasi</span>
+                        <div className="w-52 sm:w-60 border-b-2 border-black pb-1 flex items-center justify-center">
+                          <span className="font-bold text-xs sm:text-sm whitespace-nowrap">
+                            {(submission.diverifikasiOleh && submission.diverifikasiOleh !== 'Andi Dhiya Salsabila')
+                              ? submission.diverifikasiOleh
+                              : (submission.disetujuiOleh2?.toLowerCase().includes('nursyam') ? 'Andi Nursyam Halid' : 'Andi Rifki Naufal')}
+                          </span>
+                        </div>
                         <span className="text-xs text-stone-600 font-mono mt-0.5 uppercase leading-tight">
                           {(submission.diverifikasiOleh?.toLowerCase().includes('nursyam') || submission.disetujuiOleh2?.toLowerCase().includes('nursyam'))
                             ? 'Direktur Utama'
@@ -2753,22 +2773,26 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                     </div>
 
                     {/* Row 2 (Bawah): Disetujui & Mengetahui */}
-                    <div className="flex justify-between px-6 sm:px-12">
+                    <div className="flex justify-between px-1 sm:px-2">
                       <div className="flex flex-col items-center text-center w-52 sm:w-60">
-                        <span className="font-sans font-medium mb-5 uppercase text-xs">Disetujui</span>
-                        <span className="border-b border-black pb-0.5 px-3 font-bold text-xs sm:text-sm whitespace-nowrap">
-                          {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? submission.disetujuiOleh2 : 'Harijon'}
-                        </span>
+                        <span className="font-sans font-medium mb-4 sm:mb-5 uppercase text-xs">Disetujui</span>
+                        <div className="w-52 sm:w-60 border-b-2 border-black pb-1 flex items-center justify-center">
+                          <span className="font-bold text-xs sm:text-sm whitespace-nowrap">
+                            {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? submission.disetujuiOleh2 : 'Harijon'}
+                          </span>
+                        </div>
                         <span className="text-xs text-stone-600 font-mono mt-0.5 uppercase leading-tight">
                           {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? (submission.disetujuiJabatan2 || 'Direktur Keuangan') : 'Direktur Keuangan'}
                         </span>
                       </div>
 
                       <div className="flex flex-col items-center text-center w-52 sm:w-60">
-                        <span className="font-sans font-medium mb-5 uppercase text-xs">Mengetahui</span>
-                        <span className="border-b border-black pb-0.5 px-3 font-bold text-xs sm:text-sm whitespace-nowrap">
-                          {submission.mengetahuiOleh || 'ABDUL AZIZ HALID'}
-                        </span>
+                        <span className="font-sans font-medium mb-4 sm:mb-5 uppercase text-xs">Mengetahui</span>
+                        <div className="w-52 sm:w-60 border-b-2 border-black pb-1 flex items-center justify-center">
+                          <span className="font-bold text-xs sm:text-sm whitespace-nowrap">
+                            {submission.mengetahuiOleh || 'ABDUL AZIZ HALID'}
+                          </span>
+                        </div>
                         <span className="text-xs text-stone-600 font-mono mt-0.5 uppercase leading-tight">
                           {submission.mengetahuiJabatan || 'Direktur'}
                         </span>
