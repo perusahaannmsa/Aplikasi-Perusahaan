@@ -4,9 +4,15 @@ interface LogoProps {
   className?: string;
   size?: 'xs' | 'sm' | 'md' | 'lg';
   companyName?: string;
+  logoUrl?: string;
 }
 
-export const NusantaraLogo: React.FC<LogoProps> = ({ className = '', size = 'md', companyName }) => {
+export const NusantaraLogo: React.FC<LogoProps> = ({ 
+  className = '', 
+  size = 'md', 
+  companyName,
+  logoUrl: customLogoUrl 
+}) => {
   const dimensions = {
     xs: 'h-8 w-auto max-w-[110px]',
     sm: 'h-12 w-auto max-w-[150px]',
@@ -16,16 +22,24 @@ export const NusantaraLogo: React.FC<LogoProps> = ({ className = '', size = 'md'
 
   const dimClass = dimensions[size] || dimensions.md;
 
-  // Official corporate company logo provided by the user
-  const logoUrl = 'https://i.ibb.co.com/TqgprgPT/Logo-Nusantara-Mineral-Abadi.webp';
+  // Default corporate company logo
+  const defaultLogoUrl = 'https://i.ibb.co.com/TqgprgPT/Logo-Nusantara-Mineral-Abadi.webp';
+  const effectiveLogoUrl = (customLogoUrl && customLogoUrl.trim() !== '') ? customLogoUrl.trim() : defaultLogoUrl;
 
   return (
     <div className={`flex items-center select-none ${className}`}>
       <img
-        src={logoUrl}
+        src={effectiveLogoUrl}
         alt={companyName || 'PT Nusantara Mineral Sukses Abadi'}
         className={`company-logo-img ${dimClass} object-contain`}
         referrerPolicy="no-referrer"
+        onError={(e) => {
+          // Graceful fallback if custom logo fails to load
+          const target = e.currentTarget;
+          if (target.src !== defaultLogoUrl) {
+            target.src = defaultLogoUrl;
+          }
+        }}
       />
     </div>
   );

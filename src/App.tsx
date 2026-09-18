@@ -1061,6 +1061,7 @@ export default function App() {
         ...(userProfile || {}),
         companyId: cleanId,
         companyName: newCompanyName,
+        companyLogoUrl: compDetails?.logoUrl || userProfile?.companyLogoUrl || '',
         companyDetails: compDetails
       };
       setUserProfile(updatedProfile);
@@ -1480,6 +1481,7 @@ export default function App() {
           ...profile,
           companyId,
           companyName: companyDetails.name || companyDetails.fullName || 'PT Nusantara Mineral Sukses Abadi',
+          companyLogoUrl: companyDetails?.logoUrl || profile?.companyLogoUrl || '',
           companyDetails
         };
         setUserProfile(combinedProfile);

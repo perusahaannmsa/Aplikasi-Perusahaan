@@ -34,6 +34,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
   const [regPassword, setRegPassword] = useState('');
   const [regCompanyId, setRegCompanyId] = useState('');
   const [regCompanyName, setRegCompanyName] = useState('');
+  const [regLogoUrl, setRegLogoUrl] = useState('');
   const [regAppId, setRegAppId] = useState('');
 
   // Form Fields - Firebase Config
@@ -228,7 +229,8 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
         regFullName.trim(),
         regRole.trim(),
         activeCompanyId,
-        activeCompanyName
+        activeCompanyName,
+        regLogoUrl.trim()
       );
 
       setStatusMsg({
@@ -544,6 +546,58 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
                     className="w-full px-3 py-2 bg-stone-50 border border-stone-250 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-amber-500 focus:bg-white text-stone-850 placeholder:text-stone-300 transition"
                   />
                 </div>
+              </div>
+
+              {/* Link Gambar Logo Perusahaan (ImgBB / URL) */}
+              <div className="space-y-1.5 bg-stone-50/80 p-2.5 rounded-xl border border-stone-200">
+                <div className="flex items-center justify-between">
+                  <label className="block text-[10px] font-mono font-black text-stone-700 uppercase tracking-widest">
+                    LINK LOGO PERUSAHAAN (IMGBB / URL GAMBAR)
+                  </label>
+                  {regLogoUrl.trim() && (
+                    <button
+                      type="button"
+                      onClick={() => setRegLogoUrl('')}
+                      className="text-[9px] text-stone-400 hover:text-stone-600 font-mono underline"
+                    >
+                      Hapus
+                    </button>
+                  )}
+                </div>
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="url"
+                    value={regLogoUrl}
+                    onChange={(e) => setRegLogoUrl(e.target.value)}
+                    placeholder="https://i.ibb.co.com/gFHNJ1JD/LOGO-NH.png"
+                    disabled={isLoading}
+                    className="flex-1 px-3 py-2 bg-white border border-stone-250 rounded-lg text-xs font-mono focus:outline-none focus:ring-1 focus:ring-amber-500 text-stone-850 placeholder:text-stone-350 transition"
+                  />
+                  {regLogoUrl.trim() ? (
+                    <div className="w-10 h-10 rounded-lg border border-stone-250 bg-white p-1 flex items-center justify-center shrink-0 overflow-hidden shadow-2xs">
+                      <img
+                        src={regLogoUrl.trim()}
+                        alt="Logo Preview"
+                        className="max-h-full max-w-full object-contain"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).src = 'https://i.ibb.co.com/gFHNJ1JD/LOGO-NH.png';
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setRegLogoUrl('https://i.ibb.co.com/gFHNJ1JD/LOGO-NH.png')}
+                      className="px-2.5 py-2 bg-stone-200 hover:bg-stone-300 text-stone-700 rounded-lg text-[10px] font-mono font-semibold transition shrink-0 whitespace-nowrap"
+                      title="Gunakan link contoh ImgBB"
+                    >
+                      Contoh ImgBB
+                    </button>
+                  )}
+                </div>
+                <p className="text-[10px] text-stone-500 leading-tight">
+                  Masukkan link gambar ImgBB atau web agar kop cetak surat menggunakan logo resmi perusahaan Anda.
+                </p>
               </div>
 
               <div className="space-y-1">

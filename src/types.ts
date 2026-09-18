@@ -102,6 +102,7 @@ export interface Submission {
   diketahuiOleh?: string;
   companyId?: string;
   companyName?: string;
+  companyLogoUrl?: string;
   rekeningTujuan?: string;
 
   // Signatures for Bukti Pengeluaran Kas/Bank (F1)
@@ -453,6 +454,7 @@ export interface CompanyProfile {
   fullName: string; // e.g. "PT. Nusantara Mineral Sukses Abadi"
   displayName?: string; // e.g. "Invoice-NMSA" or "NMSA Portal"
   icon?: string; // e.g. "🏢"
+  logoUrl?: string; // e.g. ImgBB link "https://i.ibb.co.com/gFHNJ1JD/LOGO-NH.png"
   defaultJenis?: string;
   defaultKode?: string;
   defaultLokasi?: string;

@@ -48,6 +48,7 @@ export const CompanySwitcherModal: React.FC<CompanySwitcherModalProps> = ({
   const [newCode, setNewCode] = useState('');
   const [newName, setNewName] = useState('');
   const [newDisplayName, setNewDisplayName] = useState('');
+  const [newLogoUrl, setNewLogoUrl] = useState('');
   const [newPrefix, setNewPrefix] = useState('');
   const [newLokasi, setNewLokasi] = useState('Lt. 1');
   const [newJenis, setNewJenis] = useState('Operasional Kantor');
@@ -156,6 +157,7 @@ export const CompanySwitcherModal: React.FC<CompanySwitcherModalProps> = ({
       name: newName.trim(),
       fullName: newName.trim(),
       displayName: newDisplayName.trim() || newName.trim(),
+      logoUrl: newLogoUrl.trim(),
       defaultJenis: newJenis,
       defaultKode: `${newPrefix || `BKK-${newCode.toUpperCase()}`}/V/2026/10001`,
       defaultLokasi: newLokasi,
@@ -181,6 +183,7 @@ export const CompanySwitcherModal: React.FC<CompanySwitcherModalProps> = ({
       setNewCode('');
       setNewName('');
       setNewDisplayName('');
+      setNewLogoUrl('');
       setNewPrefix('');
 
       // Refresh list
@@ -364,12 +367,23 @@ export const CompanySwitcherModal: React.FC<CompanySwitcherModalProps> = ({
                     >
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                         <div className="flex items-start gap-3">
-                          <div className={`w-11 h-11 rounded-2xl flex items-center justify-center text-lg font-bold shrink-0 ${
+                          <div className={`w-11 h-11 rounded-2xl flex items-center justify-center text-lg font-bold shrink-0 overflow-hidden ${
                             isActive 
-                              ? 'bg-amber-600 text-white shadow-3xs' 
-                              : 'bg-stone-100 text-stone-700 border border-stone-200'
+                              ? 'bg-white border-2 border-amber-500 shadow-3xs' 
+                              : 'bg-stone-50 text-stone-700 border border-stone-200'
                           }`}>
-                            {comp.icon || '🏢'}
+                            {comp.logoUrl ? (
+                              <img
+                                src={comp.logoUrl}
+                                alt={comp.name || compId}
+                                className="w-9 h-9 object-contain"
+                                onError={(e) => {
+                                  (e.currentTarget as HTMLImageElement).style.display = 'none';
+                                }}
+                              />
+                            ) : (
+                              comp.icon || '🏢'
+                            )}
                           </div>
                           <div>
                             <div className="flex items-center gap-2 flex-wrap">
@@ -520,6 +534,66 @@ export const CompanySwitcherModal: React.FC<CompanySwitcherModalProps> = ({
                 onChange={(e) => setNewDisplayName(e.target.value)}
                 className="w-full px-3.5 py-2.5 text-xs font-sans bg-white border border-stone-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
               />
+            </div>
+
+            {/* Input Link ImgBB / Logo Perusahaan Baru */}
+            <div className="border border-stone-250 bg-stone-50/70 p-4 rounded-2xl space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-bold text-stone-800 font-sans">
+                  Link Gambar Logo Perusahaan (ImgBB / URL Web)
+                </label>
+                {newLogoUrl.trim() && (
+                  <button
+                    type="button"
+                    onClick={() => setNewLogoUrl('')}
+                    className="text-[10px] text-stone-400 hover:text-stone-700 font-mono underline cursor-pointer"
+                  >
+                    Kosongkan Link
+                  </button>
+                )}
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-2.5 items-start sm:items-center">
+                <input
+                  type="url"
+                  placeholder="https://i.ibb.co.com/gFHNJ1JD/LOGO-NH.png"
+                  value={newLogoUrl}
+                  onChange={(e) => setNewLogoUrl(e.target.value)}
+                  className="w-full flex-1 px-3.5 py-2.5 text-xs font-mono bg-white border border-stone-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:border-amber-500 text-stone-900 placeholder:text-stone-400"
+                />
+
+                <button
+                  type="button"
+                  onClick={() => setNewLogoUrl('https://i.ibb.co.com/gFHNJ1JD/LOGO-NH.png')}
+                  className="w-full sm:w-auto px-3 py-2.5 bg-stone-200 hover:bg-stone-300 text-stone-800 font-mono text-[11px] font-bold rounded-xl transition shrink-0 whitespace-nowrap cursor-pointer shadow-3xs"
+                  title="Gunakan link ImgBB contoh"
+                >
+                  Gunakan Link Contoh ImgBB
+                </button>
+              </div>
+
+              {newLogoUrl.trim() ? (
+                <div className="flex items-center gap-3 mt-1.5 p-2 bg-white rounded-xl border border-stone-250">
+                  <div className="w-12 h-12 rounded-lg border border-stone-200 bg-stone-50 p-1 flex items-center justify-center shrink-0 overflow-hidden">
+                    <img
+                      src={newLogoUrl.trim()}
+                      alt="Logo Preview"
+                      className="max-h-full max-w-full object-contain"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).alt = 'Gambar gagal dimuat';
+                      }}
+                    />
+                  </div>
+                  <div className="text-[11px] text-stone-600 font-sans">
+                    <div className="font-bold text-stone-800">Preview Logo Terdeteksi</div>
+                    <div className="text-stone-400 truncate max-w-xs sm:max-w-md font-mono text-[10px]">{newLogoUrl.trim()}</div>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-[11px] text-stone-500 font-sans">
+                  Masukkan tautan langsung gambar dari ImgBB (contoh: <code className="font-mono bg-stone-200/80 px-1 py-0.5 rounded text-stone-700">https://i.ibb.co.com/gFHNJ1JD/LOGO-NH.png</code>) untuk mengkustomisasi logo kop surat voucher &amp; dokumen pengajuan perusahaan ini.
+                </p>
+              )}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

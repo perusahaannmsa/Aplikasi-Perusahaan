@@ -488,6 +488,7 @@ export const saveCompanyProfileToFirestore = async (company: Partial<CompanyProf
     sigAccounting: company.sigAccounting || 'Sri Ekowati',
     sigDirKeuangan: company.sigDirKeuangan || 'Harijon',
     icon: company.icon || '🏢',
+    logoUrl: company.logoUrl || '',
     isActive: company.isActive ?? true,
     updatedAt: new Date().toISOString(),
     createdAt: company.createdAt || new Date().toISOString()
@@ -530,7 +531,8 @@ export const registerUserToFirebase = async (
   fullName: string, 
   role: string,
   companyId: string = 'nmsa',
-  companyName: string = 'PT Nusantara Mineral Sukses Abadi'
+  companyName: string = 'PT Nusantara Mineral Sukses Abadi',
+  logoUrl: string = ''
 ): Promise<User> => {
   if (!firebaseAuth) {
     throw new Error('Firebase Auth is not initialized. Please configure credentials first.');
@@ -550,6 +552,7 @@ export const registerUserToFirebase = async (
       role: role ?? 'User',
       companyId: companyId.toLowerCase().trim(),
       companyName: companyName,
+      companyLogoUrl: logoUrl.trim(),
       createdAt: new Date().toISOString()
     });
 
@@ -569,6 +572,7 @@ export const registerUserToFirebase = async (
         defaultLokasi: 'Lt.1',
         displayName: `Invoice-${companyCleanId.toUpperCase()}`,
         icon: '🏢',
+        logoUrl: logoUrl.trim(),
         isActive: true,
         no_invoice_prefix: `BKK-${companyCleanId.toUpperCase()}`,
         sigAccounting: role.toLowerCase().includes('accounting') || role.toLowerCase().includes('finance') ? fullName : 'Sri Ekowati',
@@ -580,6 +584,12 @@ export const registerUserToFirebase = async (
         updatedAt: new Date().toISOString()
       });
       console.log(`🏬 Company metadata workspace created for [${companyCleanId}]`);
+    } else if (logoUrl.trim()) {
+      // If company already exists but new custom logo is provided, update it
+      await setDoc(companyRef, {
+        logoUrl: logoUrl.trim(),
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
     }
 
     return user;
