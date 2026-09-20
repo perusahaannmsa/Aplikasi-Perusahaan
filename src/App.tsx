@@ -787,25 +787,9 @@ export default function App() {
     };
   }, []);
 
-  const [view, setViewInternal] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab'>(() => {
-    try {
-      const stored = sessionStorage.getItem('NUSANTARA_ACTIVE_VIEW') || localStorage.getItem('NUSANTARA_ACTIVE_VIEW');
-      if (stored && ['list', 'form', 'print', 'sppd', 'absen', 'npwp', 'accurate', 'agenda', 'ledger', 'pph23', 'rab'].includes(stored)) {
-        return stored as any;
-      }
-    } catch (e) {}
-    return 'list';
-  });
+  const [view, setViewInternal] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab'>('list');
 
-  const [previousView, setPreviousView] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab'>(() => {
-    try {
-      const stored = sessionStorage.getItem('NUSANTARA_PREVIOUS_VIEW');
-      if (stored && ['list', 'form', 'print', 'sppd', 'absen', 'npwp', 'accurate', 'agenda', 'ledger', 'pph23', 'rab'].includes(stored)) {
-        return stored as any;
-      }
-    } catch (e) {}
-    return 'list';
-  });
+  const [previousView, setPreviousView] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab'>('list');
 
   const setView = (
     newView: 'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab',
@@ -994,6 +978,13 @@ export default function App() {
   const [targetSppdId, setTargetSppdId] = useState<string | null>(null);
   const [activeSubmission, setActiveSubmission] = useState<Submission | null>(null);
 
+  // Pengaman otomatis: jika view print aktif tetapi tidak ada submission aktif, segera kembali ke daftar Voucher HO
+  useEffect(() => {
+    if (view === 'print' && !activeSubmission) {
+      setViewInternal('list');
+    }
+  }, [view, activeSubmission]);
+
   const handleOpenSppdEditor = (sub: Submission) => {
     try {
       const stored = localStorage.getItem('sppd_records_v1');
@@ -1016,7 +1007,6 @@ export default function App() {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isCompanyModalOpen, setIsCompanyModalOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
-  const [isDashboardNavOpen, setIsDashboardNavOpen] = useState(false);
   const [isCloudModalOpen, setIsCloudModalOpen] = useState(false);
   const [isGoogleDriveSettingsOpen, setIsGoogleDriveSettingsOpen] = useState(false);
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
@@ -1135,7 +1125,6 @@ export default function App() {
   }, [agendaItems]);
 
   const userMenuRef = useRef<HTMLDivElement>(null);
-  const dashboardNavRef = useRef<HTMLDivElement>(null);
   const toolsDropdownRef = useRef<HTMLDivElement>(null);
   const [isToolsDropdownOpen, setIsToolsDropdownOpen] = useState(false);
 
@@ -1143,9 +1132,6 @@ export default function App() {
     function handleClickOutside(event: MouseEvent) {
       if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
         setIsUserMenuOpen(false);
-      }
-      if (dashboardNavRef.current && !dashboardNavRef.current.contains(event.target as Node)) {
-        setIsDashboardNavOpen(false);
       }
       if (toolsDropdownRef.current && !toolsDropdownRef.current.contains(event.target as Node)) {
         setIsToolsDropdownOpen(false);
@@ -1929,7 +1915,10 @@ export default function App() {
   const handleLogout = async () => {
     try {
       sessionStorage.removeItem('NUSANTARA_SESSION_ACTIVE');
+      sessionStorage.removeItem('NUSANTARA_ACTIVE_VIEW');
       localStorage.removeItem('NUSANTARA_HO_SUBMISSIONS');
+      localStorage.removeItem('NUSANTARA_ACTIVE_VIEW');
+      setViewInternal('list');
       setSubmissions([]);
       setUserProfile(null);
       setAuthUser(null);
@@ -2364,6 +2353,11 @@ export default function App() {
         onLoginSuccess={(user, initialData) => {
           sessionStorage.setItem('NUSANTARA_SESSION_ACTIVE', 'true');
           setAuthUser(user);
+          setViewInternal('list');
+          try {
+            sessionStorage.setItem('NUSANTARA_ACTIVE_VIEW', 'list');
+            localStorage.setItem('NUSANTARA_ACTIVE_VIEW', 'list');
+          } catch (e) {}
           if (initialData && initialData.length > 0) {
             saveSubmissionsToStorage(initialData);
           } else {
@@ -2660,231 +2654,6 @@ export default function App() {
                 </span>
               </button>
 
-              {/* Dashboard Nav Dropdown Selector */}
-              <div className="relative ml-2 pl-2 sm:ml-4 sm:pl-4 border-l border-stone-200" ref={dashboardNavRef}>
-                <button
-                  onClick={() => setIsDashboardNavOpen(!isDashboardNavOpen)}
-                  className="flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-stone-900 text-white hover:bg-stone-800 transition cursor-pointer shadow-3xs border border-stone-800 font-sans"
-                >
-                  <LayoutGrid size={14} className="text-amber-400 shrink-0" />
-                  <div className="flex items-center gap-1.5 text-xs font-extrabold">
-                    <span>
-                      {view === 'list' && (
-                        layoutMode === 'standard' ? 'Voucher HO (Standar)' :
-                        layoutMode === 'invoice_recap' ? 'Voucher HO (Rekap Invoice)' :
-                        layoutMode === 'petty_cash_recap' ? 'Voucher HO (Petty Cash)' :
-                        'Voucher HO'
-                      )}
-                      {view === 'pph23' && 'Bukti Potong PPh 23 (Tagihan)'}
-                      {view === 'rab' && 'RAB & Anggaran Proyek'}
-                      {view === 'absen' && 'Absen Harian NMSA'}
-                      {view === 'npwp' && 'Master NPWP & Vendor'}
-                      {view === 'accurate' && 'Pemetaan Akun'}
-                      {view === 'form' && 'Form Pengajuan Payment'}
-                      {view === 'print' && 'Cetak Dokumen F1/F2'}
-                      {view === 'sppd' && 'Data SPPD & Perjalanan'}
-                      {view === 'agenda' && 'Agenda Kerja'}
-                      {view === 'ledger' && 'Buku Besar Sub-Jenis'}
-                    </span>
-                    <ChevronDown size={14} className={`text-stone-300 transition-transform duration-200 ${isDashboardNavOpen ? 'rotate-180' : ''}`} />
-                  </div>
-                </button>
-
-                {/* Navigation Dropdown List */}
-                {isDashboardNavOpen && (
-                  <div className="absolute left-0 top-full mt-2 w-72 sm:w-80 bg-white rounded-2xl shadow-xl border border-stone-200 z-50 overflow-hidden p-2 animate-in fade-in zoom-in-95 duration-150 font-sans max-h-[85vh] overflow-y-auto">
-                    <div className="px-3 py-1 text-[10px] font-mono font-bold text-stone-400 uppercase tracking-wider mb-1">
-                      Pilihan Menu Dashboard:
-                    </div>
-
-                    {/* 1. VOUCHER HO */}
-                    <button
-                      onClick={() => {
-                        setView('list');
-                        setIsDashboardNavOpen(false);
-                      }}
-                      className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer text-left mb-1.5 ${
-                        view === 'list' ? 'bg-stone-900 text-white font-black' : 'text-stone-800 hover:bg-stone-100'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <Database size={15} className={view === 'list' ? 'text-amber-400' : 'text-stone-600'} />
-                        <div className="flex flex-col">
-                          <span className="leading-snug">Voucher HO</span>
-                          <span className={`text-[10px] font-normal leading-none ${view === 'list' ? 'text-stone-300' : 'text-stone-400'}`}>
-                            Daftar Transaksi & Pengajuan Kas/Bank
-                          </span>
-                        </div>
-                      </div>
-                    </button>
-
-                    {/* 1.1 BUKTI POTONG PPH 23 (BIAYA PSI & JASA) - CORETAX READY */}
-                    <button
-                      onClick={() => {
-                        setView('pph23');
-                        setIsDashboardNavOpen(false);
-                      }}
-                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer text-left mb-1 ${
-                        view === 'pph23' ? 'bg-amber-500 text-stone-950 font-black' : 'text-stone-800 hover:bg-amber-50'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <Receipt size={15} className={view === 'pph23' ? 'text-stone-950' : 'text-amber-600'} />
-                        <div className="flex flex-col">
-                          <span>Bukti Potong PPh 23 (Transaksi Tagihan)</span>
-                          <span className={`text-[10px] font-normal ${view === 'pph23' ? 'text-stone-900' : 'text-stone-400'}`}>
-                            Pemotongan Pajak PPh 23 Tagihan & NPWP (Coretax DJP)
-                          </span>
-                        </div>
-                      </div>
-                      <span className="text-[9px] font-mono bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded font-bold">
-                        Coretax
-                      </span>
-                    </button>
-
-                    {/* 2. ABSEN HARIAN NMSA */}
-                    <button
-                      onClick={() => { setView('absen'); setIsDashboardNavOpen(false); }}
-                      className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer text-left mb-1 ${
-                        view === 'absen' ? 'bg-emerald-700 text-white font-black' : 'text-stone-700 hover:bg-stone-100'
-                      }`}
-                    >
-                      <Users size={15} className={view === 'absen' ? 'text-emerald-200' : 'text-emerald-600'} />
-                      <div className="flex flex-col">
-                        <span>Absen Harian NMSA</span>
-                        <span className={`text-[10px] font-normal ${view === 'absen' ? 'text-emerald-100' : 'text-stone-400'}`}>
-                          Kehadiran & Absensi Karyawan
-                        </span>
-                      </div>
-                    </button>
-
-                    {/* 3. MASTER NPWP */}
-                    <button
-                      onClick={() => { setView('npwp'); setIsDashboardNavOpen(false); }}
-                      className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer text-left mb-1 ${
-                        view === 'npwp' ? 'bg-indigo-800 text-white font-black' : 'text-stone-700 hover:bg-stone-100'
-                      }`}
-                    >
-                      <Receipt size={15} className={view === 'npwp' ? 'text-indigo-200' : 'text-indigo-600'} />
-                      <div className="flex flex-col">
-                        <span>Master NPWP & Vendor</span>
-                        <span className={`text-[10px] font-normal ${view === 'npwp' ? 'text-indigo-100' : 'text-stone-400'}`}>
-                          Database NPWP & Rekening
-                        </span>
-                      </div>
-                    </button>
-
-                    {/* 4. PEMETAAN AKUN (ACCURATE & SPPD) */}
-                    <button
-                      onClick={() => { setView('accurate'); setIsDashboardNavOpen(false); }}
-                      className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer text-left mb-1 ${
-                        view === 'accurate' ? 'bg-emerald-900 text-white font-black' : 'text-stone-700 hover:bg-stone-100'
-                      }`}
-                    >
-                      <Layers size={15} className={view === 'accurate' ? 'text-amber-400' : 'text-emerald-700'} />
-                      <div className="flex flex-col">
-                        <span>Pemetaan Akun</span>
-                        <span className={`text-[10px] font-normal ${view === 'accurate' ? 'text-emerald-200' : 'text-stone-400'}`}>
-                          Accurate (Petty Cash) & SPPD Dinas
-                        </span>
-                      </div>
-                    </button>
-
-                    {/* 5. SURAT PERINTAH PERJALANAN DINAS (SPPD) */}
-                    <button
-                      onClick={() => { setView('sppd'); setIsDashboardNavOpen(false); }}
-                      className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer text-left mb-1 ${
-                        view === 'sppd' ? 'bg-amber-600 text-white font-black' : 'text-stone-700 hover:bg-stone-100'
-                      }`}
-                    >
-                      <Briefcase size={15} className={view === 'sppd' ? 'text-amber-200' : 'text-amber-600'} />
-                      <div className="flex flex-col">
-                        <span>Formulir & SPPD Dinas</span>
-                        <span className={`text-[10px] font-normal ${view === 'sppd' ? 'text-amber-100' : 'text-stone-400'}`}>
-                          Surat Tugas & Biaya Dinas
-                        </span>
-                      </div>
-                    </button>
-
-                    {/* 6. PENGINGAT & AGENDA KERJA */}
-                    <button
-                      onClick={() => { setView('agenda'); setIsDashboardNavOpen(false); }}
-                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer text-left mb-1 ${
-                        view === 'agenda' ? 'bg-amber-500 text-stone-950 font-black' : 'text-stone-700 hover:bg-stone-100'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <Calendar size={15} className={view === 'agenda' ? 'text-stone-950' : 'text-amber-600'} />
-                        <div className="flex flex-col">
-                          <span>Pengingat &amp; Agenda Kerja</span>
-                          <span className={`text-[10px] font-normal ${view === 'agenda' ? 'text-stone-900' : 'text-stone-400'}`}>
-                            Jadwal Pajak, Gaji, SPPD &amp; Tugas
-                          </span>
-                        </div>
-                      </div>
-                      {agendaDueCount > 0 && (
-                        <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-black ${
-                          view === 'agenda' ? 'bg-rose-700 text-white' : 'bg-rose-600 text-white'
-                        }`}>
-                          {agendaDueCount}
-                        </span>
-                      )}
-                    </button>
-
-                    {/* 7. BUKU BESAR DARI SUB-JENIS PENGAJUAN */}
-                    <button
-                      onClick={() => { setView('ledger'); setIsDashboardNavOpen(false); }}
-                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer text-left mb-1 ${
-                        view === 'ledger' ? 'bg-amber-500 text-stone-950 font-black' : 'text-stone-700 hover:bg-stone-100'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <BookOpen size={15} className={view === 'ledger' ? 'text-stone-950' : 'text-amber-600'} />
-                        <div className="flex flex-col">
-                          <span>Buku Besar Sub-Jenis</span>
-                          <span className={`text-[10px] font-normal ${view === 'ledger' ? 'text-stone-900' : 'text-stone-400'}`}>
-                            Mutasi &amp; Rekap per Akun / Uraian
-                          </span>
-                        </div>
-                      </div>
-                      <span className="text-[9px] font-mono bg-stone-100 text-stone-700 px-1.5 py-0.5 rounded font-bold">
-                        Akuntansi
-                      </span>
-                    </button>
-
-                    {/* 8. RAB & ANGGARAN PROYEK (ACCURATE STYLE) */}
-                    <button
-                      onClick={() => { setView('rab'); setIsDashboardNavOpen(false); }}
-                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer text-left mb-1 ${
-                        view === 'rab' ? 'bg-amber-500 text-stone-950 font-black' : 'text-stone-700 hover:bg-stone-100'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <Building2 size={15} className={view === 'rab' ? 'text-stone-950' : 'text-emerald-600'} />
-                        <div className="flex flex-col">
-                          <span>RAB &amp; Anggaran Proyek</span>
-                          <span className={`text-[10px] font-normal ${view === 'rab' ? 'text-stone-900' : 'text-stone-400'}`}>
-                            RAB Proyek &amp; Realisasi Pengeluaran
-                          </span>
-                        </div>
-                      </div>
-                      <span className="text-[9px] font-mono bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-bold">
-                        Accurate
-                      </span>
-                    </button>
-
-                    {(view === 'form' || view === 'print' || view === 'sppd' || view === 'agenda' || view === 'ledger' || view === 'pph23' || view === 'rab') && (
-                      <button
-                        onClick={() => { setView('list'); setIsDashboardNavOpen(false); }}
-                        className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer text-left text-amber-700 bg-amber-50 hover:bg-amber-100 mt-1 border border-amber-200"
-                      >
-                        <ArrowRight size={14} className="rotate-180" />
-                        <span>Kembali ke Voucher HO</span>
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
             </div>
 
             {/* HEADER RIGHT ACTIONS: CLEAN, COMPACT & PROFESSIONAL */}
@@ -2918,18 +2687,21 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setIsToolsDropdownOpen(!isToolsDropdownOpen)}
-                  className="flex items-center gap-1.5 py-1.5 px-3 rounded-xl bg-stone-50 hover:bg-stone-100 border border-stone-200 text-stone-800 transition cursor-pointer shadow-3xs text-xs font-bold font-sans"
-                  title="Pusat Layanan Terhubung: WhatsApp AI, Cloud Drive, & Alat Keuangan"
+                  className="flex items-center gap-1.5 py-1.5 px-3 rounded-xl bg-stone-50 hover:bg-stone-100 border border-stone-200 text-stone-850 transition cursor-pointer shadow-3xs text-xs font-bold font-sans"
+                  title="Pusat Alat, Pengaturan & Layanan Cloud NMSA"
                 >
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
-                  <Wrench size={13} className="text-amber-600 shrink-0" />
-                  <span className="hidden sm:inline font-sans">Layanan &amp; Alat</span>
+                  <div className="flex items-center -space-x-1 text-amber-600 shrink-0">
+                    <Settings size={13} />
+                    <Wrench size={13} className="text-stone-700" />
+                  </div>
+                  <span className="hidden sm:inline font-sans">Menu &amp; Alat</span>
                   <ChevronDown size={13} className={`text-stone-400 transition-transform duration-200 ${isToolsDropdownOpen ? 'rotate-180' : ''}`} />
                 </button>
 
                 {/* Dropdown Popover */}
                 {isToolsDropdownOpen && (
-                  <div className="absolute right-0 top-full mt-2 w-72 sm:w-80 bg-white rounded-2xl shadow-xl border border-stone-200 z-50 overflow-hidden p-2.5 animate-in fade-in zoom-in-95 duration-150 font-sans space-y-2">
+                  <div className="absolute right-0 top-full mt-2 w-80 sm:w-88 bg-white rounded-2xl shadow-xl border border-stone-200 z-50 overflow-hidden p-2.5 animate-in fade-in zoom-in-95 duration-150 font-sans space-y-2 max-h-[85vh] overflow-y-auto">
                     <div className="px-2.5 py-1 border-b border-stone-150 flex items-center justify-between">
                       <span className="text-[10px] font-mono font-bold text-stone-400 uppercase tracking-wider">
                         Layanan &amp; Integrasi Cloud
@@ -2988,64 +2760,118 @@ export default function App() {
                       </button>
                     </div>
 
-                    {/* Quick Access Menu Items */}
-                    <div className="pt-1 border-t border-stone-150 space-y-1">
-                      {/* Buku Besar */}
+                    {/* Quick Access Menu Items - All Modules */}
+                    <div className="pt-1.5 border-t border-stone-150 space-y-1">
+                      <div className="px-2 py-0.5 text-[10px] font-mono font-bold text-stone-400 uppercase tracking-wider">
+                        Semua Menu Dashboard &amp; Modul:
+                      </div>
+
+                      {/* 1. Voucher HO */}
                       <button
                         type="button"
                         onClick={() => {
                           setIsToolsDropdownOpen(false);
-                          setView('ledger');
+                          setView('list');
                         }}
-                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs font-bold text-stone-700 hover:bg-stone-100 transition cursor-pointer"
+                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+                          view === 'list' ? 'bg-amber-100 text-amber-950 border border-amber-300 font-black' : 'text-stone-750 hover:bg-stone-100'
+                        }`}
                       >
                         <div className="flex items-center gap-2">
-                          <BookOpen size={14} className="text-amber-600" />
-                          <span>Buku Besar Sub-Jenis</span>
+                          <Database size={14} className={view === 'list' ? 'text-amber-700' : 'text-amber-600'} />
+                          <span>Voucher HO (Kas &amp; Bank)</span>
                         </div>
-                        <span className="text-[9px] font-mono text-stone-400">Akuntansi</span>
+                        <span className="text-[9px] font-mono text-stone-400">Utama</span>
                       </button>
 
-                      {/* Bukti Potong PPh 23 Coretax */}
+                      {/* 2. Absen Harian NMSA */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsToolsDropdownOpen(false);
+                          setView('absen');
+                        }}
+                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+                          view === 'absen' ? 'bg-emerald-100 text-emerald-950 border border-emerald-300 font-black' : 'text-stone-750 hover:bg-stone-100'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Users size={14} className="text-emerald-600" />
+                          <span>Absen Harian NMSA</span>
+                        </div>
+                        <span className="text-[9px] font-mono text-stone-400">Absensi</span>
+                      </button>
+
+                      {/* 3. Pemetaan Akun Accurate & SPPD */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsToolsDropdownOpen(false);
+                          setView('accurate');
+                        }}
+                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+                          view === 'accurate' ? 'bg-emerald-100 text-emerald-950 border border-emerald-300 font-black' : 'text-stone-750 hover:bg-stone-100'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Layers size={14} className="text-emerald-700" />
+                          <span>Pemetaan Akun Accurate &amp; SPPD</span>
+                        </div>
+                        <span className="text-[9px] font-mono text-stone-400">Akun</span>
+                      </button>
+
+                      {/* 4. Pengingat & Agenda Kerja */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsToolsDropdownOpen(false);
+                          setView('agenda');
+                        }}
+                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+                          view === 'agenda' ? 'bg-amber-100 text-amber-950 border border-amber-300 font-black' : 'text-stone-750 hover:bg-stone-100'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Calendar size={14} className="text-amber-600" />
+                          <span>Pengingat &amp; Agenda Kerja</span>
+                        </div>
+                        {agendaDueCount > 0 ? (
+                          <span className="text-[9px] font-mono bg-rose-600 text-white px-1.5 py-0.2 rounded-full font-bold">
+                            {agendaDueCount}
+                          </span>
+                        ) : (
+                          <span className="text-[9px] font-mono text-stone-400">Jadwal</span>
+                        )}
+                      </button>
+
+                      {/* 5. Bukti Potong PPh 23 Coretax */}
                       <button
                         type="button"
                         onClick={() => {
                           setIsToolsDropdownOpen(false);
                           setView('pph23');
                         }}
-                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs font-bold text-stone-700 hover:bg-amber-50 transition cursor-pointer"
+                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+                          view === 'pph23' ? 'bg-amber-100 text-amber-950 border border-amber-300 font-black' : 'text-stone-750 hover:bg-amber-50'
+                        }`}
                       >
                         <div className="flex items-center gap-2">
                           <Receipt size={14} className="text-amber-600" />
-                          <span>Bukti Potong PPh 23 (PSi &amp; Jasa)</span>
+                          <span>Bukti Potong PPh 23 (Tagihan)</span>
                         </div>
                         <span className="text-[9px] font-mono text-amber-800 bg-amber-100 px-1.5 rounded font-bold">Coretax</span>
                       </button>
 
-                      {/* RAB & Anggaran Proyek Accurate */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsToolsDropdownOpen(false);
-                          setView('rab');
-                        }}
-                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs font-bold text-stone-700 hover:bg-emerald-50 transition cursor-pointer"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Building2 size={14} className="text-emerald-600" />
-                          <span>RAB &amp; Anggaran Proyek</span>
-                        </div>
-                        <span className="text-[9px] font-mono text-emerald-800 bg-emerald-100 px-1.5 rounded font-bold">Accurate</span>
-                      </button>
-
-                      {/* Master NPWP */}
+                      {/* 6. Master NPWP & Vendor */}
                       <button
                         type="button"
                         onClick={() => {
                           setIsToolsDropdownOpen(false);
                           setView('npwp');
                         }}
-                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs font-bold text-stone-700 hover:bg-stone-100 transition cursor-pointer"
+                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+                          view === 'npwp' ? 'bg-indigo-100 text-indigo-950 border border-indigo-300 font-black' : 'text-stone-750 hover:bg-stone-100'
+                        }`}
                       >
                         <div className="flex items-center gap-2">
                           <Receipt size={14} className="text-indigo-600" />
@@ -3054,14 +2880,16 @@ export default function App() {
                         <span className="text-[9px] font-mono text-stone-400">Pajak</span>
                       </button>
 
-                      {/* SPPD Dinas */}
+                      {/* 7. SPPD Dinas */}
                       <button
                         type="button"
                         onClick={() => {
                           setIsToolsDropdownOpen(false);
                           setView('sppd');
                         }}
-                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs font-bold text-stone-700 hover:bg-stone-100 transition cursor-pointer"
+                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+                          view === 'sppd' ? 'bg-amber-100 text-amber-950 border border-amber-300 font-black' : 'text-stone-750 hover:bg-stone-100'
+                        }`}
                       >
                         <div className="flex items-center gap-2">
                           <Briefcase size={14} className="text-amber-600" />
@@ -3069,6 +2897,75 @@ export default function App() {
                         </div>
                         <span className="text-[9px] font-mono text-stone-400">Tugas</span>
                       </button>
+
+                      {/* 8. Buku Besar Sub-Jenis */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsToolsDropdownOpen(false);
+                          setView('ledger');
+                        }}
+                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+                          view === 'ledger' ? 'bg-amber-100 text-amber-950 border border-amber-300 font-black' : 'text-stone-750 hover:bg-stone-100'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <BookOpen size={14} className="text-amber-600" />
+                          <span>Buku Besar Sub-Jenis</span>
+                        </div>
+                        <span className="text-[9px] font-mono text-stone-400">Akuntansi</span>
+                      </button>
+
+                      {/* 9. RAB & Anggaran Proyek Accurate */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsToolsDropdownOpen(false);
+                          setView('rab');
+                        }}
+                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+                          view === 'rab' ? 'bg-emerald-100 text-emerald-950 border border-emerald-300 font-black' : 'text-stone-750 hover:bg-emerald-50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Building2 size={14} className="text-emerald-600" />
+                          <span>RAB &amp; Anggaran Proyek</span>
+                        </div>
+                        <span className="text-[9px] font-mono text-emerald-800 bg-emerald-100 px-1.5 rounded font-bold">Accurate</span>
+                      </button>
+
+                      {/* 10. Pengaturan & Switcher Perusahaan */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsToolsDropdownOpen(false);
+                          setIsCompanyModalOpen(true);
+                        }}
+                        className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold text-amber-900 bg-amber-50 hover:bg-amber-100 transition cursor-pointer border border-amber-200/80 mt-1"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Building2 size={14} className="text-amber-700" />
+                          <span>Kelola &amp; Ganti Perusahaan</span>
+                        </div>
+                        <span className="text-[9px] font-mono bg-amber-200/80 text-amber-900 px-1.5 py-0.5 rounded font-bold">
+                          Multi-PT
+                        </span>
+                      </button>
+
+                      {/* Tombol Cepat Kembali ke Voucher HO jika berada di menu lain */}
+                      {view !== 'list' && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsToolsDropdownOpen(false);
+                            setView('list');
+                          }}
+                          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs font-black transition cursor-pointer text-amber-950 bg-amber-200 hover:bg-amber-300 mt-2 border border-amber-400 shadow-3xs"
+                        >
+                          <ArrowRight size={14} className="rotate-180 text-amber-950" />
+                          <span>Kembali ke Voucher HO</span>
+                        </button>
+                      )}
                     </div>
                   </div>
                 )}
