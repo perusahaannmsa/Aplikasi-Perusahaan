@@ -1,11 +1,81 @@
 import React, { useState, useEffect, useMemo } from 'react'; 
+import QRCode from 'qrcode';
 import { Submission } from '../types';
 import { formatRupiah, formatDateIndonesian, numberToTerbilang } from '../utils';
 import { NusantaraLogo } from './NusantaraLogo';
-import { Printer, ArrowLeft, Layers, FileText, CheckCircle, Cloud, Loader2, Lock, ShieldAlert, RefreshCw, Share2, Copy, Check, Send, Edit2, Trash, Trash2, RotateCw, Coins, ExternalLink } from 'lucide-react';
+import { Printer, ArrowLeft, Layers, FileText, CheckCircle, Cloud, Loader2, Lock, ShieldAlert, RefreshCw, Share2, Copy, Check, Send, Edit2, Trash, Trash2, RotateCw, Coins, ExternalLink, QrCode } from 'lucide-react';
 import { getStoredGoogleDriveToken, ensureValidDriveToken, googleDriveLogin, saveSubmissionToFirestore } from '../firebase';
 import { SppdSheetContent } from './PrintSppdDocument';
 import { SPPDRecord } from './SppdManager';
+
+/**
+ * QR Code component for immediate digital verification and online access of the voucher
+ */
+export const VoucherOnlineQr: React.FC<{
+  submission: Submission;
+  size?: number;
+  showLabel?: boolean;
+  className?: string;
+}> = ({ submission, size = 52, showLabel = true, className = '' }) => {
+  const [qrSrc, setQrSrc] = useState<string>('');
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const cleanSlug = (submission.jenisPengajuan || 'transaksi').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+  const grandTotal = (submission.items || []).reduce((sum, item) => sum + (item.total || 0), 0);
+  const targetUrl = `${origin}/shared-view?id=${encodeURIComponent(submission.id)}&kode=${encodeURIComponent(submission.kode || '')}&transaksi=${encodeURIComponent(cleanSlug)}&nominal=${grandTotal}`;
+
+  useEffect(() => {
+    let isMounted = true;
+    QRCode.toDataURL(targetUrl, {
+      width: Math.max(160, Math.round(size * 3)),
+      margin: 1,
+      errorCorrectionLevel: 'M',
+      color: {
+        dark: '#000000',
+        light: '#ffffff',
+      },
+    }).then((url: string) => {
+      if (isMounted) setQrSrc(url);
+    }).catch((err: any) => {
+      console.warn('QR Code generation error:', err);
+    });
+    return () => { isMounted = false; };
+  }, [targetUrl, size]);
+
+  if (!qrSrc) {
+    return (
+      <div
+        style={{ width: size, height: size }}
+        className={`bg-stone-50 border border-stone-300 rounded-xs flex flex-col items-center justify-center text-[7px] text-stone-400 font-mono ${className}`}
+      >
+        <span>QR</span>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={`inline-flex flex-col items-center justify-center bg-white border border-black p-0.5 sm:p-1 rounded-xs shadow-3xs cursor-pointer hover:border-stone-800 transition print:shadow-none print:border-black shrink-0 ${className}`}
+      title={`Scan dengan kamera smartphone untuk melihat dokumen online resmi (${submission.kode})`}
+      onClick={() => {
+        if (typeof window !== 'undefined') {
+          window.open(targetUrl, '_blank');
+        }
+      }}
+    >
+      <img
+        src={qrSrc}
+        alt={`QR Akses Online ${submission.kode}`}
+        style={{ width: `${size}px`, height: `${size}px` }}
+        className="block"
+      />
+      {showLabel && (
+        <span className="text-[7px] sm:text-[7.5px] font-bold font-mono tracking-tight text-black uppercase mt-0.5 whitespace-nowrap leading-none">
+          Akses Online
+        </span>
+      )}
+    </div>
+  );
+};
 
 interface PrintDocumentProps {
   submission: Submission;
@@ -2031,12 +2101,15 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                     <div className={`flex justify-between items-start ${isUltraDenseF1 ? 'mb-2' : isDenseF1 ? 'mb-3' : isFewItems ? 'mb-5' : 'mb-4'}`}>
                       <NusantaraLogo size={isUltraDenseF1 ? 'sm' : 'md'} className="items-start text-left" companyName={userProfile?.companyName} logoUrl={effectiveLogoUrl} />
 
-                      <div className="flex flex-col items-end pt-1">
-                        <div className={`border border-black ${isUltraDenseF1 ? 'px-4 py-1 text-xs' : isDenseF1 ? 'px-6 py-1 text-sm' : 'px-8 py-1.5 text-base'} font-bold text-black bg-stone-50 mb-1.5 min-w-[120px] text-center font-mono`}>
-                          {submission.kode}
-                        </div>
-                        <div className={`${isUltraDenseF1 ? 'text-[11px]' : 'text-xs'} text-black font-semibold whitespace-nowrap`}>
-                          Tanggal : <span className="font-normal">{formatDateIndonesian(submission.tanggal)}</span>
+                      <div className="flex items-center gap-2.5 sm:gap-3.5 pt-0.5">
+                        <VoucherOnlineQr submission={submission} size={isUltraDenseF1 ? 48 : isDenseF1 ? 52 : 56} />
+                        <div className="flex flex-col items-end">
+                          <div className={`border border-black ${isUltraDenseF1 ? 'px-4 py-1 text-xs' : isDenseF1 ? 'px-6 py-1 text-sm' : 'px-8 py-1.5 text-base'} font-bold text-black bg-stone-50 mb-1 min-w-[120px] text-center font-mono`}>
+                            {submission.kode}
+                          </div>
+                          <div className={`${isUltraDenseF1 ? 'text-[11px]' : 'text-xs'} text-black font-semibold whitespace-nowrap`}>
+                            Tanggal : <span className="font-normal">{formatDateIndonesian(submission.tanggal)}</span>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -2142,13 +2215,14 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                   {/* Bottom Content: Spacious Signatures and Note */}
                   <div className="mt-auto pt-2">
                     {/* 4 Signers: 2 on Top Row, 2 on Bottom Row with generous spacing and uniform underline widths */}
-                    <div className={`${isUltraDenseF1 ? 'space-y-4 my-2' : isDenseF1 ? 'space-y-6 my-3' : 'space-y-8 sm:space-y-10 my-4 sm:my-6'}`}>
+                    <div className={`${isUltraDenseF1 ? 'space-y-4 my-2' : isDenseF1 ? 'space-y-6 my-3' : isFewItems ? 'space-y-8 sm:space-y-10 my-4 sm:my-6' : 'space-y-7 sm:space-y-9 my-3 sm:my-5'}`}>
                       {/* Row 1 (Atas): Diajukan (Kiri) & Diverifikasi (Kanan) */}
                       <div className="flex justify-between text-sm text-black px-1 sm:px-2">
                         <div className="flex flex-col items-center w-56 sm:w-64 text-center">
-                          <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px] mb-4' : isDenseF1 ? 'text-xs mb-6' : 'text-xs sm:text-sm mb-7 sm:mb-9'}`}>
+                          <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px]' : isDenseF1 ? 'text-xs' : 'text-xs sm:text-sm'}`}>
                             Diajukan
                           </span>
+                          <div className={`w-full ${isUltraDenseF1 ? 'h-8' : isDenseF1 ? 'h-11' : isFewItems ? 'h-20 sm:h-24' : 'h-16 sm:h-20'}`} />
                           <div className="w-56 sm:w-64 border-b-2 border-black pb-1 flex items-center justify-center">
                             <span className="font-bold tracking-wide uppercase text-xs sm:text-sm whitespace-nowrap">
                               {submission.diajukanOleh || 'Andi Dhiya Salsabila'}
@@ -2160,9 +2234,10 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                         </div>
 
                         <div className="flex flex-col items-center w-56 sm:w-64 text-center">
-                          <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px] mb-4' : isDenseF1 ? 'text-xs mb-6' : 'text-xs sm:text-sm mb-7 sm:mb-9'}`}>
+                          <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px]' : isDenseF1 ? 'text-xs' : 'text-xs sm:text-sm'}`}>
                             Diverifikasi
                           </span>
+                          <div className={`w-full ${isUltraDenseF1 ? 'h-8' : isDenseF1 ? 'h-11' : isFewItems ? 'h-20 sm:h-24' : 'h-16 sm:h-20'}`} />
                           <div className="w-56 sm:w-64 border-b-2 border-black pb-1 flex items-center justify-center">
                             <span className="font-bold tracking-wide uppercase text-xs sm:text-sm whitespace-nowrap">
                               {f1Verifier === 'nursyam'
@@ -2181,9 +2256,10 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                       {/* Row 2 (Bawah): Disetujui (Kiri) & Mengetahui (Kanan) */}
                       <div className="flex justify-between text-sm text-black px-1 sm:px-2">
                         <div className="flex flex-col items-center w-56 sm:w-64 text-center">
-                          <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px] mb-4' : isDenseF1 ? 'text-xs mb-6' : 'text-xs sm:text-sm mb-7 sm:mb-9'}`}>
+                          <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px]' : isDenseF1 ? 'text-xs' : 'text-xs sm:text-sm'}`}>
                             Disetujui
                           </span>
+                          <div className={`w-full ${isUltraDenseF1 ? 'h-8' : isDenseF1 ? 'h-11' : isFewItems ? 'h-20 sm:h-24' : 'h-16 sm:h-20'}`} />
                           <div className="w-56 sm:w-64 border-b-2 border-black pb-1 flex items-center justify-center">
                             <span className="font-bold tracking-wide uppercase text-xs sm:text-sm whitespace-nowrap">
                               {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? submission.disetujuiOleh2 : 'Harijon'}
@@ -2195,9 +2271,10 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                         </div>
 
                         <div className="flex flex-col items-center w-56 sm:w-64 text-center">
-                          <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px] mb-4' : isDenseF1 ? 'text-xs mb-6' : 'text-xs sm:text-sm mb-7 sm:mb-9'}`}>
+                          <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF1 ? 'text-[11px]' : isDenseF1 ? 'text-xs' : 'text-xs sm:text-sm'}`}>
                             Mengetahui
                           </span>
+                          <div className={`w-full ${isUltraDenseF1 ? 'h-8' : isDenseF1 ? 'h-11' : isFewItems ? 'h-20 sm:h-24' : 'h-16 sm:h-20'}`} />
                           <div className="w-56 sm:w-64 border-b-2 border-black pb-1 flex items-center justify-center">
                             <span className="font-bold tracking-wide uppercase text-xs sm:text-sm whitespace-nowrap">
                               {submission.mengetahuiOleh || 'ABDUL AZIZ HALID'}
@@ -2237,12 +2314,15 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                 <div>
                   <div className="flex justify-between items-start mb-2">
                     <NusantaraLogo size="md" className="items-start text-left" companyName={userProfile?.companyName} logoUrl={effectiveLogoUrl} />
-                    <div className="flex flex-col items-end">
-                      <div className="border border-black px-3 py-1 font-bold text-xs text-black bg-stone-50 mb-1 font-mono">
-                        {submission.kode}
-                      </div>
-                      <div className="text-xs text-black font-semibold">
-                        Tanggal : <span className="font-normal">{formatDateIndonesian(submission.tanggal)}</span>
+                    <div className="flex items-center gap-2.5">
+                      <VoucherOnlineQr submission={submission} size={46} />
+                      <div className="flex flex-col items-end">
+                        <div className="border border-black px-3 py-1 font-bold text-xs text-black bg-stone-50 mb-1 font-mono">
+                          {submission.kode}
+                        </div>
+                        <div className="text-xs text-black font-semibold">
+                          Tanggal : <span className="font-normal">{formatDateIndonesian(submission.tanggal)}</span>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -2310,7 +2390,8 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                     {/* Row 1 (Atas): Diajukan & Diverifikasi */}
                     <div className="flex justify-between px-1 sm:px-2">
                       <div className="flex flex-col items-center text-center w-52 sm:w-60">
-                        <span className="font-sans font-medium mb-5 sm:mb-7 uppercase text-xs">Diajukan</span>
+                        <span className="font-sans font-medium uppercase text-xs">Diajukan</span>
+                        <div className="w-full h-12 sm:h-14" />
                         <div className="w-52 sm:w-60 border-b-2 border-black pb-1 flex items-center justify-center">
                           <span className="font-bold text-xs sm:text-sm whitespace-nowrap">
                             {submission.diajukanOleh || 'Andi Dhiya Salsabila'}
@@ -2322,7 +2403,8 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                       </div>
 
                       <div className="flex flex-col items-center text-center w-52 sm:w-60">
-                        <span className="font-sans font-medium mb-5 sm:mb-7 uppercase text-xs">Diverifikasi</span>
+                        <span className="font-sans font-medium uppercase text-xs">Diverifikasi</span>
+                        <div className="w-full h-12 sm:h-14" />
                         <div className="w-52 sm:w-60 border-b-2 border-black pb-1 flex items-center justify-center">
                           <span className="font-bold text-xs sm:text-sm whitespace-nowrap">
                             {(submission.diverifikasiOleh && submission.diverifikasiOleh !== 'Andi Dhiya Salsabila')
@@ -2341,7 +2423,8 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                     {/* Row 2 (Bawah): Disetujui & Mengetahui */}
                     <div className="flex justify-between px-1 sm:px-2">
                       <div className="flex flex-col items-center text-center w-52 sm:w-60">
-                        <span className="font-sans font-medium mb-5 sm:mb-7 uppercase text-xs">Disetujui</span>
+                        <span className="font-sans font-medium uppercase text-xs">Disetujui</span>
+                        <div className="w-full h-12 sm:h-14" />
                         <div className="w-52 sm:w-60 border-b-2 border-black pb-1 flex items-center justify-center">
                           <span className="font-bold text-xs sm:text-sm whitespace-nowrap">
                             {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? submission.disetujuiOleh2 : 'Harijon'}
@@ -2353,7 +2436,8 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                       </div>
 
                       <div className="flex flex-col items-center text-center w-52 sm:w-60">
-                        <span className="font-sans font-medium mb-5 sm:mb-7 uppercase text-xs">Mengetahui</span>
+                        <span className="font-sans font-medium uppercase text-xs">Mengetahui</span>
+                        <div className="w-full h-12 sm:h-14" />
                         <div className="w-52 sm:w-60 border-b-2 border-black pb-1 flex items-center justify-center">
                           <span className="font-bold text-xs sm:text-sm whitespace-nowrap">
                             {submission.mengetahuiOleh || 'ABDUL AZIZ HALID'}
@@ -2412,6 +2496,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                   {/* Header Area */}
                   <div className={`flex justify-between items-start ${isUltraDenseF2 ? 'mb-2' : isDenseF2 ? 'mb-3' : isFewItemsF2 ? 'mb-6' : 'mb-5'}`}>
                     <NusantaraLogo size={isUltraDenseF2 ? 'sm' : 'md'} className="items-start text-left" companyName={userProfile?.companyName} logoUrl={effectiveLogoUrl} />
+                    <VoucherOnlineQr submission={submission} size={isUltraDenseF2 ? 46 : 52} />
                   </div>
 
                   {/* Document Title Block */}
@@ -2671,12 +2756,15 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                 <div>
                   <div className="flex justify-between items-start mb-2">
                     <NusantaraLogo size="md" className="items-start text-left" companyName={userProfile?.companyName} logoUrl={effectiveLogoUrl} />
-                    <div className="flex flex-col items-end">
-                      <div className="border border-black px-3 py-1 font-bold text-xs text-black bg-stone-50 mb-1 font-mono">
-                        {submission.kode}
-                      </div>
-                      <div className="text-xs text-black font-semibold">
-                        Tanggal : <span className="font-normal">{formatDateIndonesian(submission.tanggal)}</span>
+                    <div className="flex items-center gap-2.5">
+                      <VoucherOnlineQr submission={submission} size={46} />
+                      <div className="flex flex-col items-end">
+                        <div className="border border-black px-3 py-1 font-bold text-xs text-black bg-stone-50 mb-1 font-mono">
+                          {submission.kode}
+                        </div>
+                        <div className="text-xs text-black font-semibold">
+                          Tanggal : <span className="font-normal">{formatDateIndonesian(submission.tanggal)}</span>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -2744,7 +2832,8 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                     {/* Row 1 (Atas): Diajukan & Diverifikasi */}
                     <div className="flex justify-between px-1 sm:px-2">
                       <div className="flex flex-col items-center text-center w-52 sm:w-60">
-                        <span className="font-sans font-medium mb-4 sm:mb-5 uppercase text-xs">Diajukan</span>
+                        <span className="font-sans font-medium uppercase text-xs">Diajukan</span>
+                        <div className="w-full h-10 sm:h-12" />
                         <div className="w-52 sm:w-60 border-b-2 border-black pb-1 flex items-center justify-center">
                           <span className="font-bold text-xs sm:text-sm whitespace-nowrap">
                             {submission.diajukanOleh || 'Andi Dhiya Salsabila'}
@@ -2756,7 +2845,8 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                       </div>
 
                       <div className="flex flex-col items-center text-center w-52 sm:w-60">
-                        <span className="font-sans font-medium mb-4 sm:mb-5 uppercase text-xs">Diverifikasi</span>
+                        <span className="font-sans font-medium uppercase text-xs">Diverifikasi</span>
+                        <div className="w-full h-10 sm:h-12" />
                         <div className="w-52 sm:w-60 border-b-2 border-black pb-1 flex items-center justify-center">
                           <span className="font-bold text-xs sm:text-sm whitespace-nowrap">
                             {(submission.diverifikasiOleh && submission.diverifikasiOleh !== 'Andi Dhiya Salsabila')
@@ -2775,7 +2865,8 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                     {/* Row 2 (Bawah): Disetujui & Mengetahui */}
                     <div className="flex justify-between px-1 sm:px-2">
                       <div className="flex flex-col items-center text-center w-52 sm:w-60">
-                        <span className="font-sans font-medium mb-4 sm:mb-5 uppercase text-xs">Disetujui</span>
+                        <span className="font-sans font-medium uppercase text-xs">Disetujui</span>
+                        <div className="w-full h-10 sm:h-12" />
                         <div className="w-52 sm:w-60 border-b-2 border-black pb-1 flex items-center justify-center">
                           <span className="font-bold text-xs sm:text-sm whitespace-nowrap">
                             {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? submission.disetujuiOleh2 : 'Harijon'}
@@ -2787,7 +2878,8 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                       </div>
 
                       <div className="flex flex-col items-center text-center w-52 sm:w-60">
-                        <span className="font-sans font-medium mb-4 sm:mb-5 uppercase text-xs">Mengetahui</span>
+                        <span className="font-sans font-medium uppercase text-xs">Mengetahui</span>
+                        <div className="w-full h-10 sm:h-12" />
                         <div className="w-52 sm:w-60 border-b-2 border-black pb-1 flex items-center justify-center">
                           <span className="font-bold text-xs sm:text-sm whitespace-nowrap">
                             {submission.mengetahuiOleh || 'ABDUL AZIZ HALID'}
@@ -2820,12 +2912,15 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                   <div>
                     <div className="flex justify-between items-start mb-2">
                       <NusantaraLogo size="md" className="items-start text-left" companyName={userProfile?.companyName} logoUrl={effectiveLogoUrl} />
-                      <div className="flex flex-col items-end">
-                        <div className="border border-black px-3 py-1 font-bold text-xs text-black bg-stone-50 mb-1 font-mono">
-                          {submission.kode}
-                        </div>
-                        <div className="text-xs text-black font-semibold">
-                          Tanggal : <span className="font-normal">{formatDateIndonesian(submission.tanggal)}</span>
+                      <div className="flex items-center gap-2.5">
+                        <VoucherOnlineQr submission={submission} size={46} />
+                        <div className="flex flex-col items-end">
+                          <div className="border border-black px-3 py-1 font-bold text-xs text-black bg-stone-50 mb-1 font-mono">
+                            {submission.kode}
+                          </div>
+                          <div className="text-xs text-black font-semibold">
+                            Tanggal : <span className="font-normal">{formatDateIndonesian(submission.tanggal)}</span>
+                          </div>
                         </div>
                       </div>
                     </div>

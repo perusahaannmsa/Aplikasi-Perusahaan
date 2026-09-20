@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Submission, ActivityLog } from '../types';
 import { formatRupiah, formatDateIndonesian, isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, sortSubmissionsDescending } from '../utils';
-import { Search, Eye, Edit2, Trash2, Calendar, MapPin, DollarSign, Plus, Copy, RefreshCw, Cloud, FileText, Database, History, FileSpreadsheet, CheckCircle, AlertCircle, Printer, Check, ExternalLink, Coins, User, Bell, ChevronDown, Sparkles, Share2, Send, MoreVertical, Receipt, Building2 } from 'lucide-react';
+import { Search, Eye, Edit2, Trash2, Calendar, MapPin, DollarSign, Plus, Copy, RefreshCw, Cloud, FileText, Database, History, FileSpreadsheet, CheckCircle, AlertCircle, Printer, Check, ExternalLink, Coins, User, Bell, ChevronDown, Sparkles, Share2, Send, MoreVertical, Receipt, Building2, X } from 'lucide-react';
 import { loadActivityLogsFromFirestore, isFirebaseConfigured } from '../firebase';
 import { LiveClock } from './LiveClock';
 
@@ -53,8 +53,8 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   const [statusFilter, setStatusFilter] = useState<string>(() => {
     try { return sessionStorage.getItem('sublist_statusFilter') || 'All'; } catch (e) { return 'All'; }
   });
-  const [jenisFilter, setJenisFilter] = useState<string>(() => {
-    try { return sessionStorage.getItem('sublist_jenisFilter') || ''; } catch (e) { return ''; }
+  const [searchCategory, setSearchCategory] = useState<string>(() => {
+    try { return sessionStorage.getItem('sublist_searchCategory') || 'all'; } catch (e) { return 'all'; }
   });
   
   const currentNow = new Date();
@@ -207,9 +207,9 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   useEffect(() => {
     try {
       sessionStorage.setItem('sublist_searchTerm', searchTerm);
+      sessionStorage.setItem('sublist_searchCategory', searchCategory);
       sessionStorage.setItem('sublist_methodFilter', methodFilter);
       sessionStorage.setItem('sublist_statusFilter', statusFilter);
-      sessionStorage.setItem('sublist_jenisFilter', jenisFilter);
       sessionStorage.setItem('sublist_yearFilter', yearFilter);
       sessionStorage.setItem('sublist_monthFilter', monthFilter);
       sessionStorage.setItem('sublist_dateFilter', dateFilter);
@@ -224,7 +224,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
       sessionStorage.setItem('sublist_invoiceStatusFilter', invoiceStatusFilter);
     } catch (e) {}
   }, [
-    searchTerm, methodFilter, statusFilter, jenisFilter, yearFilter, monthFilter,
+    searchTerm, searchCategory, methodFilter, statusFilter, yearFilter, monthFilter,
     dateFilter, layoutMode, pettyCashSearchQuery, pettyCashCustodianFilter,
     pettyCashMonthFilter, unpaidSearchTerm, unpaidLocationFilter,
     invoiceMonthFilter, invoiceSearchQuery, invoiceStatusFilter
@@ -347,19 +347,74 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
 
   // Filter logic
   const filteredSubmissions = useMemo(() => {
+    const query = searchTerm.toLowerCase().trim();
+    const numericQuery = query.replace(/[^\d]/g, '');
+
     const list = submissions.filter((sub) => {
-      const matchSearch =
-        sub.dibayarkanKepada.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        sub.jenisPengajuan.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        sub.lokasi.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        sub.kode.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        sub.items.some((item) => item.item.toLowerCase().includes(searchTerm.toLowerCase()));
+      // Helper to check if submission matches numeric values (subTotal, items, DP)
+      const matchNominal = (s: Submission) => {
+        const subTotal = (s.items || []).reduce((sum, item) => sum + (item.total || 0), 0);
+        const totalStr = String(subTotal);
+        const formattedTotal = formatRupiah(subTotal).toLowerCase();
+        
+        if (numericQuery && totalStr.includes(numericQuery)) return true;
+        if (formattedTotal.includes(query)) return true;
+        if (s.dpAmount) {
+          if (numericQuery && String(s.dpAmount).includes(numericQuery)) return true;
+          if (formatRupiah(s.dpAmount).toLowerCase().includes(query)) return true;
+        }
+        return (s.items || []).some(item => {
+          const val = item.total || item.nominal || 0;
+          const itTotal = String(val);
+          return (numericQuery && itTotal.includes(numericQuery)) ||
+            formatRupiah(val).toLowerCase().includes(query);
+        });
+      };
+
+      let matchSearch = true;
+      if (query) {
+        switch (searchCategory) {
+          case 'penerima':
+            matchSearch = (sub.dibayarkanKepada || '').toLowerCase().includes(query) ||
+              (!!sub.pettyCashCustodian && sub.pettyCashCustodian.toLowerCase().includes(query));
+            break;
+          case 'jenis':
+            matchSearch = (sub.jenisPengajuan || '').toLowerCase().includes(query);
+            break;
+          case 'transaksi':
+            matchSearch = (sub.items || []).some((item) => 
+              (item.item && item.item.toLowerCase().includes(query)) ||
+              (item.keterangan && item.keterangan.toLowerCase().includes(query))
+            ) || (!!sub.notes && sub.notes.toLowerCase().includes(query));
+            break;
+          case 'nominal':
+            matchSearch = matchNominal(sub);
+            break;
+          case 'kode':
+            matchSearch = (sub.kode || '').toLowerCase().includes(query);
+            break;
+          case 'all':
+          default:
+            const matchText =
+              (sub.dibayarkanKepada || '').toLowerCase().includes(query) ||
+              (sub.jenisPengajuan || '').toLowerCase().includes(query) ||
+              (sub.lokasi || '').toLowerCase().includes(query) ||
+              (sub.kode || '').toLowerCase().includes(query) ||
+              (!!sub.pettyCashCustodian && sub.pettyCashCustodian.toLowerCase().includes(query)) ||
+              (!!sub.notes && sub.notes.toLowerCase().includes(query)) ||
+              (sub.items || []).some((item) => 
+                (item.item && item.item.toLowerCase().includes(query)) ||
+                (item.keterangan && item.keterangan.toLowerCase().includes(query))
+              );
+            const matchNum = numericQuery.length >= 2 ? matchNominal(sub) : false;
+            matchSearch = matchText || matchNum;
+            break;
+        }
+      }
 
       const matchMethod = methodFilter === 'All' || sub.dibayarkanDengan === methodFilter;
       const subStatus = sub.status || (sub.dibayarkanDengan === 'Cek/Transfer' ? 'Lunas' : 'Belum Lunas');
       const matchStatus = statusFilter === 'All' || subStatus === statusFilter;
-      const matchJenis = !jenisFilter.trim() || 
-        sub.jenisPengajuan.toLowerCase().includes(jenisFilter.trim().toLowerCase());
 
       // Filter by Date, Month, Year
       let matchDate = true;
@@ -375,7 +430,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
         matchDate = yearFilter === 'All' && monthFilter === 'All' && !dateFilter;
       }
 
-      return matchSearch && matchMethod && matchStatus && matchJenis && matchDate;
+      return matchSearch && matchMethod && matchStatus && matchDate;
     });
 
     // Sort descending by tanggal (latest date first), with logical tie-breakers
@@ -404,7 +459,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
       // 4. Fallback to ID
       return b.id.localeCompare(a.id);
     });
-  }, [submissions, searchTerm, methodFilter, statusFilter, jenisFilter, yearFilter, monthFilter, dateFilter]);
+  }, [submissions, searchTerm, searchCategory, methodFilter, statusFilter, yearFilter, monthFilter, dateFilter]);
 
   const spreadsheetFilteredSubmissions = useMemo(() => {
     if (activeSheetTab === 'Data Sinkron') {
@@ -1158,33 +1213,60 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
           {/* Row 1: General search & core criteria */}
           <div className="p-5 flex flex-col xl:flex-row xl:items-center justify-between gap-4">
             <div className="flex-1 flex flex-col md:flex-row items-stretch gap-3">
-              {/* Text Search */}
+              {/* Dropdown Kategori Pencarian */}
+              <div className="relative md:w-56 shrink-0">
+                <select
+                  value={searchCategory}
+                  onChange={(e) => setSearchCategory(e.target.value)}
+                  className="w-full pl-3.5 pr-8 py-2.5 bg-stone-50 border border-stone-250 rounded-xl text-sm font-semibold text-stone-800 focus:outline-none focus:ring-2 focus:ring-stone-400 cursor-pointer shadow-3xs"
+                  title="Pilih kategori pencarian"
+                >
+                  <option value="all">🔍 Semua Kategori</option>
+                  <option value="penerima">👤 Nama Penerima</option>
+                  <option value="jenis">📂 Jenis Pengajuan</option>
+                  <option value="transaksi">📝 Isi Transaksi</option>
+                  <option value="nominal">💰 Nominal (Angka)</option>
+                  <option value="kode">🏷️ No. Voucher / Kode</option>
+                </select>
+              </div>
+
+              {/* Single Search Input with dynamic placeholder & clear button */}
               <div className="relative flex-1">
                 <Search className="absolute left-3.5 top-1/2 transform -translate-y-1/2 text-stone-400" size={18} />
                 <input
                   type="text"
-                  placeholder="Cari penerima, items, lokasi, atau kode..."
-                  className="w-full pl-10 pr-4 py-2.5 bg-stone-50 border border-stone-250 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-stone-400 transition text-stone-900"
+                  placeholder={
+                    searchCategory === 'penerima'
+                      ? 'Cari nama penerima (dibayarkan kepada)...'
+                      : searchCategory === 'jenis'
+                      ? 'Cari jenis pengajuan (e.g. Petty Cash, Gaji, Operasional)...'
+                      : searchCategory === 'transaksi'
+                      ? 'Cari isi transaksi, nama barang, atau keterangan...'
+                      : searchCategory === 'nominal'
+                      ? 'Cari nominal (contoh: 59600000 atau 59.600)...'
+                      : searchCategory === 'kode'
+                      ? 'Cari no. voucher / kode pengajuan...'
+                      : 'Cari penerima, jenis, transaksi, nominal, atau kode...'
+                  }
+                  className="w-full pl-10 pr-10 py-2.5 bg-stone-50 border border-stone-250 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-stone-400 transition text-stone-900 font-medium"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
-              </div>
-
-              {/* Jenis Filter Input */}
-              <div className="relative flex-1">
-                <Search className="absolute left-3.5 top-1/2 transform -translate-y-1/2 text-stone-400" size={18} />
-                <input
-                  type="text"
-                  placeholder="Filter jenis pengajuan (e.g. Petty Cash, Gaji)..."
-                  className="w-full pl-10 pr-4 py-2.5 bg-stone-50 border border-stone-250 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-stone-400 transition text-stone-900"
-                  value={jenisFilter}
-                  onChange={(e) => setJenisFilter(e.target.value)}
-                />
+                {searchTerm && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchTerm('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-700 p-1 rounded-full hover:bg-stone-200 transition cursor-pointer"
+                    title="Hapus pencarian"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
               </div>
 
               {/* Status Filter */}
               <select
-                className="px-4 py-2.5 bg-stone-50 border border-stone-250 rounded-xl text-sm focus:ring-2 focus:ring-stone-400 focus:outline-none md:w-48 text-stone-700 font-medium"
+                className="px-4 py-2.5 bg-stone-50 border border-stone-250 rounded-xl text-sm focus:ring-2 focus:ring-stone-400 focus:outline-none md:w-44 text-stone-700 font-medium cursor-pointer"
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
               >
