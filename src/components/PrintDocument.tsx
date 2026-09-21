@@ -526,7 +526,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
   const effectiveLogoUrl = submission.companyLogoUrl || userProfile?.companyDetails?.logoUrl || userProfile?.companyLogoUrl;
 
   const [printLayoutMode, setPrintLayoutMode] = useState<'standard' | 'compact_70' | 'eco_1page'>('standard');
-  const [showF2, setShowF2] = useState<boolean>(true);
+  const [showF2, setShowF2] = useState<boolean>(false);
   const [f1Verifier, setF1Verifier] = useState<'rifki' | 'nursyam'>(() => {
     if (submission.diverifikasiOleh?.toLowerCase().includes('nursyam')) return 'nursyam';
     return 'rifki';
@@ -2219,11 +2219,11 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                           <div className={`w-full ${isUltraDenseF1 ? 'h-8' : isDenseF1 ? 'h-11' : isFewItems ? 'h-20 sm:h-24' : 'h-16 sm:h-20'}`} />
                           <div className="w-56 sm:w-64 border-b-2 border-black pb-1 flex items-center justify-center">
                             <span className="font-bold tracking-wide uppercase text-xs sm:text-sm whitespace-nowrap">
-                              {submission.diajukanOleh || 'Andi Dhiya Salsabila'}
+                              {submission.diajukanOleh || 'Sri Ekowati'}
                             </span>
                           </div>
                           <span className="text-xs text-stone-700 font-mono mt-1 uppercase font-medium leading-tight">
-                            {submission.diajukanJabatan || 'Keuangan'}
+                            {submission.diajukanJabatan || 'Manager Keuangan'}
                           </span>
                         </div>
 
@@ -2236,7 +2236,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                             <span className="font-bold tracking-wide uppercase text-xs sm:text-sm whitespace-nowrap">
                               {f1Verifier === 'nursyam'
                                 ? 'Andi Nursyam Halid'
-                                : ((submission.diverifikasiOleh && submission.diverifikasiOleh !== 'Andi Dhiya Salsabila') ? submission.diverifikasiOleh : 'Andi Muhammad Rifki')}
+                                : ((submission.diverifikasiOleh && submission.diverifikasiOleh !== 'Andi Dhiya Salsabila' && submission.diverifikasiOleh !== 'Sri Ekowati') ? submission.diverifikasiOleh : 'Andi Muhammad Rifki')}
                             </span>
                           </div>
                           <span className="text-xs text-stone-700 font-mono mt-1 uppercase font-medium leading-tight">
@@ -2275,7 +2275,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                             </span>
                           </div>
                           <span className="text-xs text-stone-700 font-mono mt-1 uppercase font-medium leading-tight">
-                            {submission.mengetahuiJabatan || 'Direktur'}
+                            {submission.mengetahuiJabatan || 'Direktur Operasional'}
                           </span>
                         </div>
                       </div>
@@ -2388,11 +2388,11 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                         <div className="w-full h-12 sm:h-14" />
                         <div className="w-52 sm:w-60 border-b-2 border-black pb-1 flex items-center justify-center">
                           <span className="font-bold text-xs sm:text-sm whitespace-nowrap">
-                            {submission.diajukanOleh || 'Andi Dhiya Salsabila'}
+                            {submission.diajukanOleh || 'Sri Ekowati'}
                           </span>
                         </div>
                         <span className="text-xs text-stone-600 font-mono mt-0.5 uppercase leading-tight">
-                          {submission.diajukanJabatan || 'Keuangan'}
+                          {submission.diajukanJabatan || 'Manager Keuangan'}
                         </span>
                       </div>
 
@@ -2401,7 +2401,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                         <div className="w-full h-12 sm:h-14" />
                         <div className="w-52 sm:w-60 border-b-2 border-black pb-1 flex items-center justify-center">
                           <span className="font-bold text-xs sm:text-sm whitespace-nowrap">
-                            {(submission.diverifikasiOleh && submission.diverifikasiOleh !== 'Andi Dhiya Salsabila')
+                            {(submission.diverifikasiOleh && submission.diverifikasiOleh !== 'Andi Dhiya Salsabila' && submission.diverifikasiOleh !== 'Sri Ekowati')
                               ? submission.diverifikasiOleh
                               : (submission.disetujuiOleh2?.toLowerCase().includes('nursyam') ? 'Andi Nursyam Halid' : 'Andi Rifki Naufal')}
                           </span>
@@ -2438,7 +2438,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                           </span>
                         </div>
                         <span className="text-xs text-stone-600 font-mono mt-0.5 uppercase leading-tight">
-                          {submission.mengetahuiJabatan || 'Direktur'}
+                          {submission.mengetahuiJabatan || 'Direktur Operasional'}
                         </span>
                       </div>
                     </div>
@@ -2587,10 +2587,10 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                       <div className="flex flex-col items-center w-64 text-center">
                         <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF2 ? 'text-[11px] mb-6' : isDenseF2 ? 'text-xs mb-8' : isFewItemsF2 ? 'text-xs sm:text-sm mb-24' : 'text-xs sm:text-sm mb-20'}`}>Diajukan</span>
                         <span className="border-b-2 border-black pb-1 px-4 font-bold tracking-wide uppercase text-xs sm:text-sm truncate max-w-full">
-                          {submission.diajukanOleh || 'Andi Dhiya Salsabila'}
+                          {submission.diajukanOleh || 'Sri Ekowati'}
                         </span>
                         <span className="text-xs text-stone-700 font-mono mt-1 uppercase font-medium">
-                          {submission.diajukanJabatan || 'Keuangan'}
+                          {submission.diajukanJabatan || 'Manager Keuangan'}
                         </span>
                       </div>
                     </div>
@@ -2707,10 +2707,10 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                       <div className="flex flex-col items-center text-center">
                         <span className="mb-10 font-medium uppercase text-xs">Diajukan</span>
                         <span className="border-b border-black pb-0.5 px-3 font-bold">
-                          {submission.diajukanOleh || 'Andi Dhiya Salsabila'}
+                          {submission.diajukanOleh || 'Sri Ekowati'}
                         </span>
                         <span className="text-xs text-stone-600 font-mono mt-0.5">
-                          {submission.diajukanJabatan || 'Keuangan'}
+                          {submission.diajukanJabatan || 'Manager Keuangan'}
                         </span>
                       </div>
                     </div>
@@ -2830,11 +2830,11 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                         <div className="w-full h-10 sm:h-12" />
                         <div className="w-52 sm:w-60 border-b-2 border-black pb-1 flex items-center justify-center">
                           <span className="font-bold text-xs sm:text-sm whitespace-nowrap">
-                            {submission.diajukanOleh || 'Andi Dhiya Salsabila'}
+                            {submission.diajukanOleh || 'Sri Ekowati'}
                           </span>
                         </div>
                         <span className="text-xs text-stone-600 font-mono mt-0.5 uppercase leading-tight">
-                          {submission.diajukanJabatan || 'Keuangan'}
+                          {submission.diajukanJabatan || 'Manager Keuangan'}
                         </span>
                       </div>
 
@@ -2843,7 +2843,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                         <div className="w-full h-10 sm:h-12" />
                         <div className="w-52 sm:w-60 border-b-2 border-black pb-1 flex items-center justify-center">
                           <span className="font-bold text-xs sm:text-sm whitespace-nowrap">
-                            {(submission.diverifikasiOleh && submission.diverifikasiOleh !== 'Andi Dhiya Salsabila')
+                            {(submission.diverifikasiOleh && submission.diverifikasiOleh !== 'Andi Dhiya Salsabila' && submission.diverifikasiOleh !== 'Sri Ekowati')
                               ? submission.diverifikasiOleh
                               : (submission.disetujuiOleh2?.toLowerCase().includes('nursyam') ? 'Andi Nursyam Halid' : 'Andi Rifki Naufal')}
                           </span>
@@ -2880,7 +2880,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                           </span>
                         </div>
                         <span className="text-xs text-stone-600 font-mono mt-0.5 uppercase leading-tight">
-                          {submission.mengetahuiJabatan || 'Direktur'}
+                          {submission.mengetahuiJabatan || 'Direktur Operasional'}
                         </span>
                       </div>
                     </div>
@@ -2992,10 +2992,10 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                         <div className="flex flex-col items-center text-center">
                           <span className="mb-10 font-medium uppercase text-xs">Diajukan</span>
                           <span className="border-b border-black pb-0.5 px-3 font-bold">
-                            {submission.diajukanOleh || 'Andi Dhiya Salsabila'}
+                            {submission.diajukanOleh || 'Sri Ekowati'}
                           </span>
                           <span className="text-xs text-stone-600 font-mono mt-0.5">
-                            {submission.diajukanJabatan || 'Keuangan'}
+                            {submission.diajukanJabatan || 'Manager Keuangan'}
                           </span>
                         </div>
                       </div>

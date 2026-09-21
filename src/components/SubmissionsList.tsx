@@ -23,6 +23,7 @@ interface SubmissionsListProps {
   onOpenConsolidateModal?: () => void;
   onOpenPph23View?: () => void;
   onOpenRabView?: () => void;
+  onCreateMemo?: (submission: Submission) => void;
 }
 
 export const SubmissionsList: React.FC<SubmissionsListProps> = ({
@@ -43,6 +44,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   onOpenConsolidateModal,
   onOpenPph23View,
   onOpenRabView,
+  onCreateMemo,
 }) => {
   const [searchTerm, setSearchTerm] = useState(() => {
     try { return sessionStorage.getItem('sublist_searchTerm') || ''; } catch (e) { return ''; }
@@ -1489,6 +1491,21 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                                     >
                                       <FileText size={15} className="text-amber-700 shrink-0" />
                                       <span>Form SPPD</span>
+                                    </button>
+                                  )}
+
+                                  {/* Buat Internal Memo Resmi */}
+                                  {onCreateMemo && (
+                                    <button
+                                      onClick={() => {
+                                        setOpenActionMenuId(null);
+                                        onCreateMemo(sub);
+                                      }}
+                                      className="w-full px-3.5 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-50 flex items-center gap-2.5 transition text-left cursor-pointer"
+                                      title="Buat Internal Memo Direksi untuk pembayaran voucher ini"
+                                    >
+                                      <FileText size={15} className="text-amber-600 shrink-0" />
+                                      <span>Buat Internal Memo</span>
                                     </button>
                                   )}
 

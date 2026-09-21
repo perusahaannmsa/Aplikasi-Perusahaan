@@ -32,7 +32,7 @@ interface SubmissionFormProps {
 const COMMON_NAMES = {
   dibuatOleh: ['Nur Wahyudi', 'Indra Wijaya', 'Sri Utami'],
   disetujuiOleh: ['Harijon', 'Andi Nursyam Halid', 'Tanpa Disetujui'],
-  diverifikasiOleh: ['Andi Muhammad Rifki', 'Andi Nursyam Halid', 'Andi Dhiya Salsabila', 'Andi Rifki Naufal'],
+  diverifikasiOleh: ['Andi Muhammad Rifki', 'Andi Nursyam Halid', 'Sri Ekowati', 'Andi Rifki Naufal'],
   disetujuiOleh2: ['Harijon', 'Andi Nursyam Halid'],
   dibukukanOleh: ['Sri Ekowati', 'Dewi Lestari'],
   lokasi: ['Lt. 1', 'Lt. 2', 'Lt. 3', 'Gedung Utama', 'Gudang Utama'],
@@ -46,7 +46,7 @@ const COMMON_NAMES = {
     'Perlengkapan Kantor',
     'Transportasi'
   ],
-  penerima: ['ANDI DHIYA SALSABILA', 'MANDIRI STATIONERY', 'CV ABADI TEKNIK', 'PRATAMA SECURITY', 'KANTIN SEHAT', 'SURYO PRANOTO', 'MUHAMMAD AKBAR']
+  penerima: ['SRI EKOWATI', 'MANDIRI STATIONERY', 'CV ABADI TEKNIK', 'PRATAMA SECURITY', 'KANTIN SEHAT', 'SURYO PRANOTO', 'MUHAMMAD AKBAR']
 };
 
 const extractGoogleDriveFileId = (url: string): string | null => {

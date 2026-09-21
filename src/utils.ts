@@ -255,8 +255,8 @@ export async function generateF1PdfBytes(submission: any, grandTotal: number): P
   const sigGap = scale < 0.75 ? 65 : (items.length <= 3 ? 90 : 80);
   const sigY = curY - sigGap;
 
-  const applicantName = cleanSingleLine(submission.diajukanOleh || 'Andi Dhiya Salsabila');
-  const applicantRole = cleanSingleLine(submission.diajukanJabatan || 'Keuangan');
+  const applicantName = cleanSingleLine(submission.diajukanOleh || 'Sri Ekowati');
+  const applicantRole = cleanSingleLine(submission.diajukanJabatan || 'Manager Keuangan');
 
   const rawApprover2 = submission.disetujuiOleh2;
   const isNursyam = rawApprover2 && rawApprover2.toLowerCase().includes('nursyam');
@@ -266,7 +266,7 @@ export async function generateF1PdfBytes(submission: any, grandTotal: number): P
   const verifierRaw = submission.diverifikasiOleh;
   const isVerifierNursyam = verifierRaw?.toLowerCase().includes('nursyam') || isNursyam;
   const verifierName = cleanSingleLine(
-    verifierRaw && verifierRaw !== 'Andi Dhiya Salsabila'
+    verifierRaw && verifierRaw !== 'Andi Dhiya Salsabila' && verifierRaw !== 'Sri Ekowati'
       ? verifierRaw
       : (isNursyam ? 'Andi Nursyam Halid' : 'Andi Rifki Naufal')
   );
@@ -279,7 +279,7 @@ export async function generateF1PdfBytes(submission: any, grandTotal: number): P
   );
 
   const knowingName = cleanSingleLine(submission.mengetahuiOleh || 'ABDUL AZIZ HALID');
-  const knowingRole = cleanSingleLine(submission.mengetahuiJabatan || 'Direktur');
+  const knowingRole = cleanSingleLine(submission.mengetahuiJabatan || 'Direktur Operasional');
 
   // Title Headers ("Diajukan", "Diverifikasi", "Mengetahui", "Disetujui")
   page.drawText('Diajukan', { x: 40 + (blockW / 2) - 18, y: curY - 20, size: 9, font: fontRegular });
@@ -464,8 +464,8 @@ export async function generateF2PdfBytes(submission: any, grandTotal: number): P
   const f2SigGap = scaleF2 < 0.75 ? 65 : (items.length <= 4 ? 90 : 80);
   const sigY = curY - f2SigGap;
   const f2Dibuat = cleanSingleLine(submission.dibuatOleh || 'Nur Wahyudi');
-  const f2DiajukanName = cleanSingleLine(submission.diajukanOleh || 'Andi Dhiya Salsabila');
-  const f2DiajukanRole = cleanSingleLine(submission.diajukanJabatan || 'Keuangan');
+  const f2DiajukanName = cleanSingleLine(submission.diajukanOleh || 'Sri Ekowati');
+  const f2DiajukanRole = cleanSingleLine(submission.diajukanJabatan || 'Manager Keuangan');
 
   page.drawText('Dibuat Oleh', { x: 90, y: curY - 25, size: 10, font: fontRegular });
   page.drawText(f2Dibuat, { x: 70, y: sigY, size: 10, font: fontBold });

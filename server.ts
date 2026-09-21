@@ -62,8 +62,78 @@ app.post("/api/gemini/parse-receipt", async (req, res) => {
 
     const parsedData = JSON.parse(response.text || "{}");
     return res.json({ success: true, result: parsedData });
-  } catch (error) {
+  } catch (error: any) {
     return res.status(500).json({ error: "Gagal memproses kwitansi.", details: error.message });
+  }
+});
+
+app.post("/api/gemini/refine-memo", async (req, res) => {
+  try {
+    const { draftText, perihal, kepada, nominal, dari, voucherKode } = req.body;
+    if (!process.env.GEMINI_API_KEY) {
+      return res.status(500).json({ error: "GEMINI_API_KEY tidak dikonfigurasi di server." });
+    }
+    const ai = getGeminiClient();
+    const promptText = `Anda adalah asisten eksekutif senior dan sekretaris direksi di PT. Nusantara Mineral Sukses Abadi.
+Tugas Anda adalah menyusun atau menyempurnakan paragraf isi surat "Internal Memo" permohonan pembayaran agar terdengar SANGAT FORMAL, LUGAS, BERWIBAWA, SANTUN, dan ELEGAN sesuai standar korespondensi resmi direksi korporat Indonesia.
+
+Informasi Konteks:
+- Pengirim (Dari): ${dari || 'H. A. Nursyam Halid – Direktur Utama'}
+- Ditujukan Kepada: ${kepada || 'Harijon – Direktur Keuangan'}
+- Perihal: ${perihal || 'Pembayaran Operasional Batubara'}
+${voucherKode ? `- Referensi Voucher: ${voucherKode}` : ''}
+${nominal ? `- Nominal Pengajuan: ${nominal}` : ''}
+- Draf awal isi surat dari pengguna:
+"${draftText || 'Mohon dilakukan pembayaran dana operasional secepatnya.'}"
+
+Ketentuan Penulisan:
+1. Mulai langsung dengan kalimat "Sehubungan dengan..."
+2. Jelaskan pokok permohonan pencairan/pembayaran dana dengan bahasa lugas, berwibawa, dan sangat jelas.
+3. Sebutkan nomor referensi faktur/invoice/voucher atau keterangan kegiatan jika disebutkan pada draf.
+4. Akhiri paragraf dengan kalimat persis: "dapat di transfer ke :"
+5. JANGAN menyertakan kop surat, nomor memo, kata "Dengan Hormat,", rincian nomor rekening, kata "Demikian,", atau tanda tangan (karena elemen-elemen tersebut sudah memiliki tempat tersendiri di template formulir).
+6. Kembalikan HANYA teks isi paragraf tersebut tanpa tanda kutip pembungkus dan tanpa penjelasan tambahan apa pun.`;
+
+    const modelsToTry = [
+      "gemini-2.5-flash",
+      "gemini-3.5-flash",
+      "gemini-2.5-pro",
+      "gemini-3.1-flash-lite",
+      "gemini-flash-latest"
+    ];
+
+    let response: any = null;
+    let lastError: any = null;
+
+    for (const modelName of modelsToTry) {
+      try {
+        response = await ai.models.generateContent({
+          model: modelName,
+          contents: [{ text: promptText }],
+          config: {
+            temperature: 0.3,
+          },
+        });
+        if (response && response.text) {
+          break;
+        }
+      } catch (err: any) {
+        lastError = err;
+      }
+    }
+
+    if (!response || !response.text) {
+      throw lastError || new Error("Gagal mendapatkan respons AI dari seluruh model.");
+    }
+
+    let refined = response.text.trim();
+    // Clean potential quote wrapping
+    refined = refined.replace(/^["']|["']$/g, '').trim();
+
+    return res.json({ success: true, text: refined });
+  } catch (error: any) {
+    console.error("Error in /api/gemini/refine-memo:", error);
+    return res.status(500).json({ error: "Gagal menyempurnakan teks memo dengan AI.", details: error?.message });
   }
 });
 

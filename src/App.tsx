@@ -30,6 +30,7 @@ import { LiveClock } from './components/LiveClock';
 import { Pph23BupotRecap } from './components/Pph23BupotRecap';
 import { ProjectBudgetRab } from './components/ProjectBudgetRab';
 import { CompanySwitcherModal } from './components/CompanySwitcherModal';
+import { InternalMemoManager } from './components/InternalMemoManager';
 import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, syncInvoiceSubmissionToAgenda, formatDateIndonesian } from './utils';
 import { areNamesSimilar, toTitleCase } from './utils/nameConsolidation';
 import { 
@@ -787,12 +788,14 @@ export default function App() {
     };
   }, []);
 
-  const [view, setViewInternal] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab'>('list');
+  const [view, setViewInternal] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab' | 'memo'>('list');
 
-  const [previousView, setPreviousView] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab'>('list');
+  const [previousView, setPreviousView] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab' | 'memo'>('list');
+
+  const [memoSubmissionTarget, setMemoSubmissionTarget] = useState<Submission | null>(null);
 
   const setView = (
-    newView: 'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab',
+    newView: 'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab' | 'memo',
     options?: { preservePrevious?: boolean }
   ) => {
     setViewInternal((current) => {
@@ -1291,9 +1294,9 @@ export default function App() {
             dibayarkanKepada: sp.get('kepada') || 'Pihak Terkait / Vendor',
             dibayarkanDengan: 'Cek/Transfer',
             lokasi: 'Head Office',
-            diajukanOleh: 'Andi Dhiya Salsabila',
-            diajukanJabatan: 'Keuangan',
-            dibuatOleh: 'Andi Dhiya Salsabila',
+            diajukanOleh: 'Sri Ekowati',
+            diajukanJabatan: 'Manager Keuangan',
+            dibuatOleh: 'Nur Wahyudi',
             diverifikasiOleh: 'Andi Muhammad Rifki',
             diverifikasiJabatan: 'Direktur',
             disetujuiOleh: 'Direktur Utama',
@@ -1301,6 +1304,8 @@ export default function App() {
             disetujuiJabatan2: 'Direktur Keuangan',
             dibukukanOleh: 'Sri Ekowati',
             dibukukanJabatan: 'Accounting',
+            mengetahuiOleh: 'ABDUL AZIZ HALID',
+            mengetahuiJabatan: 'Direktur Operasional',
             diketahuiOleh: 'Direksi',
             createdAt: new Date().toISOString(),
             items: (() => {
@@ -2934,7 +2939,26 @@ export default function App() {
                         <span className="text-[9px] font-mono text-emerald-800 bg-emerald-100 px-1.5 rounded font-bold">Accurate</span>
                       </button>
 
-                      {/* 10. Pengaturan & Switcher Perusahaan */}
+                      {/* 10. Internal Memo Resmi Direksi */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsToolsDropdownOpen(false);
+                          setMemoSubmissionTarget(null);
+                          setView('memo');
+                        }}
+                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+                          view === 'memo' ? 'bg-amber-100 text-amber-950 border border-amber-300 font-black' : 'text-stone-750 hover:bg-stone-100'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <FileText size={14} className="text-amber-600" />
+                          <span>Internal Memo Direksi</span>
+                        </div>
+                        <span className="text-[9px] font-mono bg-amber-200 text-amber-900 px-1.5 rounded font-bold">Resmi</span>
+                      </button>
+
+                      {/* 11. Pengaturan & Switcher Perusahaan */}
                       <button
                         type="button"
                         onClick={() => {
@@ -3201,6 +3225,11 @@ export default function App() {
               navigateTo('#/input-bukti-transfer');
             }}
             onMarkAsPaid={handleMarkAsPaid}
+            onCreateMemo={(sub) => {
+              try { sessionStorage.setItem('sublist_scrollPos', window.scrollY.toString()); } catch (e) {}
+              setMemoSubmissionTarget(sub);
+              setView('memo');
+            }}
           />
 
           {/* Backup / Export-Import Section */}
@@ -3421,6 +3450,16 @@ export default function App() {
               }
             }}
             onBackToVoucher={() => setView('list')}
+          />
+        )}
+
+        {/* VIEW 12: Internal Memo Resmi Direksi */}
+        {view === 'memo' && (
+          <InternalMemoManager
+            submissions={submissions}
+            initialSubmissionForMemo={memoSubmissionTarget}
+            onBackToList={() => setView('list')}
+            userProfile={userProfile}
           />
         )}
 

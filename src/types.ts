@@ -471,5 +471,43 @@ export interface CompanyProfile {
   updatedAt?: string;
 }
 
+export interface BankAccountMaster {
+  id: string;
+  bankName: string;
+  accountNumber: string;
+  accountHolder: string;
+  isDefault?: boolean;
+}
+
+export interface InternalMemo {
+  id: string;
+  nomorMemo: string;
+  tanggal: string;
+  hariTanggalDisplay: string;
+  dari: string;
+  kepada: string;
+  perihal: string;
+  isiSurat: string;
+  bankName: string;
+  accountNumber: string;
+  accountHolder: string;
+  penutup: string;
+  salamPenutup: string;
+  penandatanganNama: string;
+  penandatanganJabatan: string;
+  linkedSubmissionId?: string;
+  linkedSubmissionKode?: string;
+  linkedAmount?: number;
+  companyName?: string;
+  companyAddress?: string;
+  companyContact?: string;
+  companyLogoUrl?: string;
+  companyHeaderUrl?: string;
+  useImageHeader?: boolean;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+
 
 
