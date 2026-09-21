@@ -415,61 +415,93 @@ export const setActiveCompanyId = (id: string) => {
 };
 
 export const getCompanyProfileFromFirestore = async (companyId: string): Promise<any> => {
-  if (!isFirebaseConfigured() || !firestoreDb) return null;
   const cleanId = companyId.toLowerCase().trim();
   setActiveCompanyId(cleanId);
-  try {
-    const docRef = doc(firestoreDb, 'companies', cleanId);
-    const snap = await getDoc(docRef);
-    if (snap.exists()) {
-      const data = snap.data();
-      // Auto-load shared Google Drive settings from Firestore to achieve zero-friction default connection!
-      if (Array.isArray(data.googleDrives) && data.googleDrives.length > 0) {
-        console.log('🔄 Auto-loaded company-shared Google Drive settings from Firestore:', data.googleDrives.length, 'drives');
-        const mergedDrives = mergeDrivesWithLocal(data.googleDrives);
-        localStorage.setItem('NUSANTARA_CONNECTED_DRIVES', JSON.stringify(mergedDrives));
-        const activeDrive = mergedDrives.find((d: any) => isDriveTokenValid(d) && (d.quotaLimit - d.quotaUsed > 10 * 1024 * 1024));
-        const bestToken = activeDrive ? activeDrive.accessToken : (mergedDrives[0]?.accessToken || null);
-        if (bestToken) {
-          localStorage.setItem('NUSANTARA_GOOGLE_DRIVE_TOKEN', bestToken);
+  
+  // Try fetching from Firestore
+  if (isFirebaseConfigured() && firestoreDb) {
+    try {
+      const docRef = doc(firestoreDb, 'companies', cleanId);
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        const data = snap.data();
+        // Auto-load shared Google Drive settings from Firestore to achieve zero-friction default connection!
+        if (Array.isArray(data.googleDrives) && data.googleDrives.length > 0) {
+          console.log('🔄 Auto-loaded company-shared Google Drive settings from Firestore:', data.googleDrives.length, 'drives');
+          const mergedDrives = mergeDrivesWithLocal(data.googleDrives);
+          localStorage.setItem('NUSANTARA_CONNECTED_DRIVES', JSON.stringify(mergedDrives));
+          const activeDrive = mergedDrives.find((d: any) => isDriveTokenValid(d) && (d.quotaLimit - d.quotaUsed > 10 * 1024 * 1024));
+          const bestToken = activeDrive ? activeDrive.accessToken : (mergedDrives[0]?.accessToken || null);
+          if (bestToken) {
+            localStorage.setItem('NUSANTARA_GOOGLE_DRIVE_TOKEN', bestToken);
+          }
         }
+        return data;
       }
-      return data;
+    } catch (err) {
+      console.warn('Silent read rejection - failed to fetch company profile from Firestore:', err);
     }
-  } catch (err) {
-    console.warn('Silent read rejection - failed to fetch company profile:', err);
   }
+
+  // Fallback to locally saved companies
+  try {
+    const localRaw = localStorage.getItem('NUSANTARA_SAVED_COMPANIES');
+    if (localRaw) {
+      const list = JSON.parse(localRaw);
+      if (Array.isArray(list)) {
+        const match = list.find((c: any) => (c.id || c.code || '').toLowerCase().trim() === cleanId);
+        if (match) return match;
+      }
+    }
+  } catch (e) {
+    console.warn('Fallback local company read warning:', e);
+  }
+
   return null;
 };
 
 export const loadAllCompaniesFromFirestore = async (): Promise<any[]> => {
-  if (!isFirebaseConfigured() || !firestoreDb) return [];
-  try {
-    const colRef = collection(firestoreDb, 'companies');
-    const snap = await getDocs(colRef);
-    const result: any[] = [];
-    snap.forEach((doc) => {
-      result.push(doc.data());
-    });
-    return result;
-  } catch (err) {
-    console.warn('Silent read rejection - failed to fetch companies:', err);
+  const result: any[] = [];
+  
+  if (isFirebaseConfigured() && firestoreDb) {
+    try {
+      const colRef = collection(firestoreDb, 'companies');
+      const snap = await getDocs(colRef);
+      snap.forEach((doc) => {
+        result.push(doc.data());
+      });
+    } catch (err) {
+      console.warn('Silent read rejection - failed to fetch companies from Firestore:', err);
+    }
   }
-  return [];
+
+  // Merge with locally stored companies
+  try {
+    const localRaw = localStorage.getItem('NUSANTARA_SAVED_COMPANIES');
+    if (localRaw) {
+      const localList = JSON.parse(localRaw);
+      if (Array.isArray(localList)) {
+        localList.forEach((localComp: any) => {
+          const lId = (localComp.id || localComp.code || '').toLowerCase().trim();
+          if (!result.some(r => (r.id || r.code || '').toLowerCase().trim() === lId)) {
+            result.push(localComp);
+          }
+        });
+      }
+    }
+  } catch (e) {
+    console.warn('Local companies merge warning:', e);
+  }
+
+  return result;
 };
 
-// Save or create a new company profile in Firestore
+// Save or create a new company profile in Firestore with instant local backup
 export const saveCompanyProfileToFirestore = async (company: Partial<CompanyProfile>): Promise<void> => {
-  if (!isFirebaseConfigured() || !firestoreDb) {
-    throw new Error('Firebase belum terkonfigurasi. Pastikan koneksi Firebase aktif.');
-  }
-
   const rawCode = company.code || company.id || 'company';
   const cleanId = (company.id || rawCode).toLowerCase().trim().replace(/[^a-z0-9_-]/g, '');
   const cleanCode = rawCode.toUpperCase().trim();
   const companyName = (company.name || company.fullName || cleanCode).trim();
-  
-  const companyRef = doc(firestoreDb, 'companies', cleanId);
   
   const payload = {
     id: cleanId,
@@ -479,14 +511,22 @@ export const saveCompanyProfileToFirestore = async (company: Partial<CompanyProf
     displayName: company.displayName || companyName,
     defaultJenis: company.defaultJenis || 'Operasional Kantor',
     defaultKode: company.defaultKode || `BKK-${cleanCode}/V/2026/10001`,
-    defaultLokasi: company.defaultLokasi || 'Lt.1',
+    defaultLokasi: company.defaultLokasi || 'Lt. 1',
     no_invoice_prefix: company.no_invoice_prefix || `BKK-${cleanCode}`,
     sigDibuat: company.sigDibuat || 'Nur Wahyudi',
-    sigDisetujui: company.sigDisetujui || 'Harijon',
-    sigKeuangan: company.sigKeuangan || 'Andi Dhiya Salsabila',
-    sigDirektur: company.sigDirektur || 'Andi Nursyam Halid',
+    sigDibuatJabatan: company.sigDibuatJabatan || 'Staff Operasional',
     sigAccounting: company.sigAccounting || 'Sri Ekowati',
+    sigAccountingJabatan: company.sigAccountingJabatan || 'Manager Keuangan',
+    sigDiverifikasi: company.sigDiverifikasi || 'Andi Muhammad Rifki',
+    sigDiverifikasiJabatan: company.sigDiverifikasiJabatan || 'Direktur',
+    sigDisetujui: company.sigDisetujui || 'Harijon',
+    sigDisetujuiJabatan: company.sigDisetujuiJabatan || 'Direktur Keuangan',
+    sigMengetahui: company.sigMengetahui || 'ABDUL AZIZ HALID',
+    sigMengetahuiJabatan: company.sigMengetahuiJabatan || 'Direktur Operasional',
+    sigDirektur: company.sigDirektur || 'H. Andi Nursyam Halid',
+    sigDirekturJabatan: company.sigDirekturJabatan || 'Direktur Utama',
     sigDirKeuangan: company.sigDirKeuangan || 'Harijon',
+    sigKeuangan: company.sigKeuangan || 'Sri Ekowati',
     icon: company.icon || '🏢',
     logoUrl: company.logoUrl || '',
     isActive: company.isActive ?? true,
@@ -494,9 +534,42 @@ export const saveCompanyProfileToFirestore = async (company: Partial<CompanyProf
     createdAt: company.createdAt || new Date().toISOString()
   };
 
-  await setDoc(companyRef, cleanUndefined(payload), { merge: true });
+  // Always save to local storage immediately
+  try {
+    const localRaw = localStorage.getItem('NUSANTARA_SAVED_COMPANIES');
+    let list: any[] = [];
+    if (localRaw) {
+      try { list = JSON.parse(localRaw); } catch (e) { list = []; }
+    }
+    const idx = list.findIndex((c: any) => (c.id || c.code || '').toLowerCase().trim() === cleanId);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...payload };
+    } else {
+      list.push(payload);
+    }
+    localStorage.setItem('NUSANTARA_SAVED_COMPANIES', JSON.stringify(list));
+  } catch (e) {
+    console.warn('Local storage company backup warning:', e);
+  }
+
   setActiveCompanyId(cleanId);
-  console.log(`🏬 Profil perusahaan [${cleanCode} - ${cleanId}] berhasil disimpan di Firestore.`);
+
+  // Sync to Firestore if configured
+  if (isFirebaseConfigured() && firestoreDb) {
+    try {
+      const companyRef = doc(firestoreDb, 'companies', cleanId);
+      await setDoc(companyRef, cleanUndefined(payload), { merge: true });
+      console.log(`🏬 Profil perusahaan [${cleanCode} - ${cleanId}] berhasil disimpan di Firestore.`);
+    } catch (err: any) {
+      console.warn('Penyimpanan ke Firestore menemui kendala, tersimpan di cache lokal:', err);
+      // If it's a permission error, don't throw if we saved locally, but report to console
+      if (err?.code === 'permission-denied' || err?.message?.includes('permission')) {
+        console.warn('Izin Firestore terbatas, profil perusahaan diaktifkan secara lokal.');
+      } else {
+        throw err;
+      }
+    }
+  }
 };
 
 // Switch active user company and sync with Firestore user document

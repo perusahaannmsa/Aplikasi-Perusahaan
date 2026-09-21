@@ -53,13 +53,19 @@ export const CompanySwitcherModal: React.FC<CompanySwitcherModalProps> = ({
   const [newLokasi, setNewLokasi] = useState('Lt. 1');
   const [newJenis, setNewJenis] = useState('Operasional Kantor');
   
-  // Signatures
-  const [sigDibuat, setSigDibuat] = useState(currentUserName);
+  // Signatures State with the latest company structure
+  const [sigDibuat, setSigDibuat] = useState(currentUserName || 'Nur Wahyudi');
+  const [sigDibuatJabatan, setSigDibuatJabatan] = useState('Staff Operasional');
+  const [sigAccounting, setSigAccounting] = useState('Sri Ekowati');
+  const [sigAccountingJabatan, setSigAccountingJabatan] = useState('Manager Keuangan');
   const [sigDiverifikasi, setSigDiverifikasi] = useState('Andi Muhammad Rifki');
   const [sigDiverifikasiJabatan, setSigDiverifikasiJabatan] = useState('Direktur');
   const [sigDisetujui, setSigDisetujui] = useState('Harijon');
   const [sigDisetujuiJabatan, setSigDisetujuiJabatan] = useState('Direktur Keuangan');
-  const [sigAccounting, setSigAccounting] = useState('Sri Ekowati');
+  const [sigMengetahui, setSigMengetahui] = useState('ABDUL AZIZ HALID');
+  const [sigMengetahuiJabatan, setSigMengetahuiJabatan] = useState('Direktur Operasional');
+  const [sigDirektur, setSigDirektur] = useState('H. Andi Nursyam Halid');
+  const [sigDirekturJabatan, setSigDirekturJabatan] = useState('Direktur Utama');
 
   // Load companies from Firestore on open
   const fetchCompanies = async () => {
@@ -84,10 +90,19 @@ export const CompanySwitcherModal: React.FC<CompanySwitcherModalProps> = ({
           defaultLokasi: 'Lt. 1',
           no_invoice_prefix: 'BKK-NMSA',
           sigDibuat: 'Nur Wahyudi',
-          sigDisetujui: 'Harijon',
-          sigKeuangan: 'Andi Dhiya Salsabila',
-          sigDirektur: 'Andi Nursyam Halid',
+          sigDibuatJabatan: 'Staff Operasional',
           sigAccounting: 'Sri Ekowati',
+          sigAccountingJabatan: 'Manager Keuangan',
+          sigDiverifikasi: 'Andi Muhammad Rifki',
+          sigDiverifikasiJabatan: 'Direktur',
+          sigDisetujui: 'Harijon',
+          sigDisetujuiJabatan: 'Direktur Keuangan',
+          sigMengetahui: 'ABDUL AZIZ HALID',
+          sigMengetahuiJabatan: 'Direktur Operasional',
+          sigDirektur: 'H. Andi Nursyam Halid',
+          sigDirekturJabatan: 'Direktur Utama',
+          sigDirKeuangan: 'Harijon',
+          sigKeuangan: 'Sri Ekowati',
           icon: '🏢',
           isActive: true
         });
@@ -162,11 +177,20 @@ export const CompanySwitcherModal: React.FC<CompanySwitcherModalProps> = ({
       defaultKode: `${newPrefix || `BKK-${newCode.toUpperCase()}`}/V/2026/10001`,
       defaultLokasi: newLokasi,
       no_invoice_prefix: newPrefix || `BKK-${newCode.toUpperCase()}`,
-      sigDibuat: sigDibuat.trim() || currentUserName,
-      sigDisetujui: sigDisetujui.trim() || 'Harijon',
-      sigKeuangan: sigDiverifikasi.trim() || 'Keuangan',
-      sigDirektur: 'Andi Nursyam Halid',
+      sigDibuat: sigDibuat.trim() || currentUserName || 'Nur Wahyudi',
+      sigDibuatJabatan: sigDibuatJabatan.trim() || 'Staff Operasional',
       sigAccounting: sigAccounting.trim() || 'Sri Ekowati',
+      sigAccountingJabatan: sigAccountingJabatan.trim() || 'Manager Keuangan',
+      sigDiverifikasi: sigDiverifikasi.trim() || 'Andi Muhammad Rifki',
+      sigDiverifikasiJabatan: sigDiverifikasiJabatan.trim() || 'Direktur',
+      sigDisetujui: sigDisetujui.trim() || 'Harijon',
+      sigDisetujuiJabatan: sigDisetujuiJabatan.trim() || 'Direktur Keuangan',
+      sigMengetahui: sigMengetahui.trim() || 'ABDUL AZIZ HALID',
+      sigMengetahuiJabatan: sigMengetahuiJabatan.trim() || 'Direktur Operasional',
+      sigDirektur: sigDirektur.trim() || 'H. Andi Nursyam Halid',
+      sigDirekturJabatan: sigDirekturJabatan.trim() || 'Direktur Utama',
+      sigDirKeuangan: sigDisetujui.trim() || 'Harijon',
+      sigKeuangan: sigAccounting.trim() || 'Sri Ekowati',
       icon: '🏢',
       isActive: true,
       createdAt: new Date().toISOString()
@@ -176,7 +200,7 @@ export const CompanySwitcherModal: React.FC<CompanySwitcherModalProps> = ({
       await saveCompanyProfileToFirestore(payload);
       setFeedbackMsg({ 
         type: 'success', 
-        text: `Perusahaan "${newName}" berhasil ditambahkan ke Firebase! Mengaktifkan ruang kerja perusahaan...` 
+        text: `Perusahaan "${newName}" berhasil ditambahkan & diaktifkan!` 
       });
 
       // Reset form
@@ -194,13 +218,24 @@ export const CompanySwitcherModal: React.FC<CompanySwitcherModalProps> = ({
       
       setTimeout(() => {
         onClose();
-      }, 1200);
+      }, 1000);
     } catch (err: any) {
-      console.error('Error saat menyimpan perusahaan baru:', err);
-      setFeedbackMsg({ 
-        type: 'error', 
-        text: err?.message || 'Gagal menyimpan perusahaan ke Firestore. Periksa koneksi internet.' 
-      });
+      console.warn('Simpan ke Firestore peringatan, aktifkan via cache lokal:', err);
+      try {
+        await onSelectCompany(cleanId, newName.trim());
+        setFeedbackMsg({ 
+          type: 'success', 
+          text: `Perusahaan "${newName}" berhasil dibuat dan diaktifkan!` 
+        });
+        setTimeout(() => {
+          onClose();
+        }, 1000);
+      } catch (innerErr: any) {
+        setFeedbackMsg({ 
+          type: 'error', 
+          text: err?.message || 'Gagal menyimpan perusahaan. Silakan coba lagi.' 
+        });
+      }
     } finally {
       setIsSaving(false);
     }
@@ -628,46 +663,146 @@ export const CompanySwitcherModal: React.FC<CompanySwitcherModalProps> = ({
 
             {/* Default Signatures Accordion/Section */}
             <div className="border border-stone-200 rounded-2xl p-4 bg-stone-50/50 space-y-3">
-              <h4 className="text-xs font-bold text-stone-900 font-sans flex items-center gap-1.5">
-                <PenTool size={13} className="text-amber-700" />
-                <span>Pengaturan Pejabat Penandatangan Lembar Cetak (Default Signatures)</span>
-              </h4>
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold text-stone-900 font-sans flex items-center gap-1.5">
+                  <PenTool size={13} className="text-amber-700" />
+                  <span>Pengaturan Pejabat Penandatangan Lembar Cetak (Default Signatures Resmi)</span>
+                </h4>
+                <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full">
+                  Struktur Direksi Terbaru
+                </span>
+              </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] font-semibold text-stone-700 mb-0.5">Diajukan Oleh (Pembuat)</label>
+                {/* 1. Diajukan Oleh */}
+                <div className="bg-white p-2.5 rounded-xl border border-stone-200 space-y-1.5 shadow-3xs">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-bold text-stone-700">1. Diajukan Oleh (Pembuat)</label>
+                    <span className="text-[9px] font-mono text-stone-400">Pemohon</span>
+                  </div>
                   <input
                     type="text"
                     value={sigDibuat}
                     onChange={(e) => setSigDibuat(e.target.value)}
-                    className="w-full px-3 py-1.5 text-xs bg-white border border-stone-300 rounded-lg"
+                    placeholder="Nama Pembuat / Pemohon"
+                    className="w-full px-2.5 py-1.5 text-xs bg-stone-50/80 border border-stone-300 rounded-lg focus:bg-white font-medium"
+                  />
+                  <input
+                    type="text"
+                    value={sigDibuatJabatan}
+                    onChange={(e) => setSigDibuatJabatan(e.target.value)}
+                    placeholder="Jabatan (cth: Staff Operasional)"
+                    className="w-full px-2.5 py-1 text-[11px] text-stone-600 bg-white border border-stone-200 rounded-lg"
                   />
                 </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-stone-700 mb-0.5">Dibukukan Oleh (Accounting)</label>
+
+                {/* 2. Dibukukan / Diajukan (Keuangan) */}
+                <div className="bg-white p-2.5 rounded-xl border border-stone-200 space-y-1.5 shadow-3xs">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-bold text-stone-700">2. Dibukukan / Diajukan (Keuangan)</label>
+                    <span className="text-[9px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">Resmi Terkini</span>
+                  </div>
                   <input
                     type="text"
                     value={sigAccounting}
                     onChange={(e) => setSigAccounting(e.target.value)}
-                    className="w-full px-3 py-1.5 text-xs bg-white border border-stone-300 rounded-lg"
+                    placeholder="Nama Pejabat Keuangan"
+                    className="w-full px-2.5 py-1.5 text-xs bg-stone-50/80 border border-stone-300 rounded-lg focus:bg-white font-medium"
+                  />
+                  <input
+                    type="text"
+                    value={sigAccountingJabatan}
+                    onChange={(e) => setSigAccountingJabatan(e.target.value)}
+                    placeholder="Jabatan (cth: Manager Keuangan)"
+                    className="w-full px-2.5 py-1 text-[11px] text-stone-600 bg-white border border-stone-200 rounded-lg"
                   />
                 </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-stone-700 mb-0.5">Diverifikasi Oleh</label>
+
+                {/* 3. Diverifikasi Oleh */}
+                <div className="bg-white p-2.5 rounded-xl border border-stone-200 space-y-1.5 shadow-3xs">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-bold text-stone-700">3. Diverifikasi Oleh</label>
+                    <span className="text-[9px] font-mono text-stone-400">Verifikasi F1</span>
+                  </div>
                   <input
                     type="text"
                     value={sigDiverifikasi}
                     onChange={(e) => setSigDiverifikasi(e.target.value)}
-                    className="w-full px-3 py-1.5 text-xs bg-white border border-stone-300 rounded-lg"
+                    placeholder="Nama Pejabat Verifikasi"
+                    className="w-full px-2.5 py-1.5 text-xs bg-stone-50/80 border border-stone-300 rounded-lg focus:bg-white font-medium"
+                  />
+                  <input
+                    type="text"
+                    value={sigDiverifikasiJabatan}
+                    onChange={(e) => setSigDiverifikasiJabatan(e.target.value)}
+                    placeholder="Jabatan (cth: Direktur)"
+                    className="w-full px-2.5 py-1 text-[11px] text-stone-600 bg-white border border-stone-200 rounded-lg"
                   />
                 </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-stone-700 mb-0.5">Disetujui Oleh (Direksi)</label>
+
+                {/* 4. Disetujui Oleh */}
+                <div className="bg-white p-2.5 rounded-xl border border-stone-200 space-y-1.5 shadow-3xs">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-bold text-stone-700">4. Disetujui Oleh</label>
+                    <span className="text-[9px] font-mono text-stone-400">Persetujuan F2</span>
+                  </div>
                   <input
                     type="text"
                     value={sigDisetujui}
                     onChange={(e) => setSigDisetujui(e.target.value)}
-                    className="w-full px-3 py-1.5 text-xs bg-white border border-stone-300 rounded-lg"
+                    placeholder="Nama Pejabat Disetujui"
+                    className="w-full px-2.5 py-1.5 text-xs bg-stone-50/80 border border-stone-300 rounded-lg focus:bg-white font-medium"
+                  />
+                  <input
+                    type="text"
+                    value={sigDisetujuiJabatan}
+                    onChange={(e) => setSigDisetujuiJabatan(e.target.value)}
+                    placeholder="Jabatan (cth: Direktur Keuangan)"
+                    className="w-full px-2.5 py-1 text-[11px] text-stone-600 bg-white border border-stone-200 rounded-lg"
+                  />
+                </div>
+
+                {/* 5. Mengetahui Oleh */}
+                <div className="bg-white p-2.5 rounded-xl border border-stone-200 space-y-1.5 shadow-3xs">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-bold text-stone-700">5. Mengetahui Oleh</label>
+                    <span className="text-[9px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">Resmi Terkini</span>
+                  </div>
+                  <input
+                    type="text"
+                    value={sigMengetahui}
+                    onChange={(e) => setSigMengetahui(e.target.value)}
+                    placeholder="Nama Pejabat Mengetahui"
+                    className="w-full px-2.5 py-1.5 text-xs bg-stone-50/80 border border-stone-300 rounded-lg focus:bg-white font-medium"
+                  />
+                  <input
+                    type="text"
+                    value={sigMengetahuiJabatan}
+                    onChange={(e) => setSigMengetahuiJabatan(e.target.value)}
+                    placeholder="Jabatan (cth: Direktur Operasional)"
+                    className="w-full px-2.5 py-1 text-[11px] text-stone-600 bg-white border border-stone-200 rounded-lg"
+                  />
+                </div>
+
+                {/* 6. Direktur Utama */}
+                <div className="bg-white p-2.5 rounded-xl border border-stone-200 space-y-1.5 shadow-3xs">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-bold text-stone-700">6. Direktur Utama</label>
+                    <span className="text-[9px] font-mono text-stone-400">Pemberi Perintah / SPPD</span>
+                  </div>
+                  <input
+                    type="text"
+                    value={sigDirektur}
+                    onChange={(e) => setSigDirektur(e.target.value)}
+                    placeholder="Nama Direktur Utama"
+                    className="w-full px-2.5 py-1.5 text-xs bg-stone-50/80 border border-stone-300 rounded-lg focus:bg-white font-medium"
+                  />
+                  <input
+                    type="text"
+                    value={sigDirekturJabatan}
+                    onChange={(e) => setSigDirekturJabatan(e.target.value)}
+                    placeholder="Jabatan (cth: Direktur Utama)"
+                    className="w-full px-2.5 py-1 text-[11px] text-stone-600 bg-white border border-stone-200 rounded-lg"
                   />
                 </div>
               </div>

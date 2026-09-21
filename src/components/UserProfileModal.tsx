@@ -53,12 +53,12 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   const loadAllSettings = () => {
     setCreatorName(localStorage.getItem('NUSANTARA_DEFAULT_CREATOR_NAME') || userProfile?.fullName || 'Nur Wahyudi');
     setApproverName(localStorage.getItem('NUSANTARA_DEFAULT_APPROVER_NAME') || 'Harijon');
-    setVerifierName(localStorage.getItem('NUSANTARA_DEFAULT_VERIFIER_NAME') || 'Andi Dhiya Salsabila');
-    setVerifierJabatan(localStorage.getItem('NUSANTARA_DEFAULT_VERIFIER_JABATAN') || 'Keuangan');
-    setApprover2Name(localStorage.getItem('NUSANTARA_DEFAULT_APPROVER2_NAME') || 'H. A. Nursyam Halid');
+    setVerifierName(localStorage.getItem('NUSANTARA_DEFAULT_VERIFIER_NAME') || 'Andi Muhammad Rifki');
+    setVerifierJabatan(localStorage.getItem('NUSANTARA_DEFAULT_VERIFIER_JABATAN') || 'Direktur');
+    setApprover2Name(localStorage.getItem('NUSANTARA_DEFAULT_APPROVER2_NAME') || 'H. Andi Nursyam Halid');
     setApprover2Jabatan(localStorage.getItem('NUSANTARA_DEFAULT_APPROVER2_JABATAN') || 'Direktur Utama');
     setBookkeeperName(localStorage.getItem('NUSANTARA_DEFAULT_BOOKKEEPER_NAME') || 'Sri Ekowati');
-    setBookkeeperJabatan(localStorage.getItem('NUSANTARA_DEFAULT_BOOKKEEPER_JABATAN') || 'Accounting');
+    setBookkeeperJabatan(localStorage.getItem('NUSANTARA_DEFAULT_BOOKKEEPER_JABATAN') || 'Manager Keuangan');
 
     const list = getConnectedDrives();
     setDrives(list);

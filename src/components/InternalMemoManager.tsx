@@ -563,7 +563,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                           }))
                         }
                         className="px-2 py-1 bg-stone-100 hover:bg-stone-200 text-[10px] font-bold text-stone-600 rounded-lg transition shrink-0"
-                        title="Reset ke Kop Surat Resmi Kommodo"
+                        title="Reset ke Kop Surat Resmi NMSA"
                       >
                         Reset
                       </button>

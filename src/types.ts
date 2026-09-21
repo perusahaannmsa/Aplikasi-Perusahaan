@@ -460,10 +460,18 @@ export interface CompanyProfile {
   defaultLokasi?: string;
   no_invoice_prefix?: string; // e.g. "BKK-NMSA"
   sigAccounting?: string;
+  sigAccountingJabatan?: string;
   sigDibuat?: string;
+  sigDibuatJabatan?: string;
   sigDirKeuangan?: string;
   sigDirektur?: string;
+  sigDirekturJabatan?: string;
   sigDisetujui?: string;
+  sigDisetujuiJabatan?: string;
+  sigDiverifikasi?: string;
+  sigDiverifikasiJabatan?: string;
+  sigMengetahui?: string;
+  sigMengetahuiJabatan?: string;
   sigKeuangan?: string;
   isActive?: boolean;
   googleDrives?: any[];

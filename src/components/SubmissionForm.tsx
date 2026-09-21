@@ -35,6 +35,7 @@ const COMMON_NAMES = {
   diverifikasiOleh: ['Andi Muhammad Rifki', 'Andi Nursyam Halid', 'Sri Ekowati', 'Andi Rifki Naufal'],
   disetujuiOleh2: ['Harijon', 'Andi Nursyam Halid'],
   dibukukanOleh: ['Sri Ekowati', 'Dewi Lestari'],
+  mengetahuiOleh: ['ABDUL AZIZ HALID', 'Andi Muhammad Rifki'],
   lokasi: ['Lt. 1', 'Lt. 2', 'Lt. 3', 'Gedung Utama', 'Gudang Utama'],
   jenisPengajuan: [
     'Petty Cash Lapangan',
@@ -1219,13 +1220,13 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
       const storedDefaultBookkeeperJabatan = localStorage.getItem('NUSANTARA_DEFAULT_BOOKKEEPER_JABATAN');
 
       setDibuatOleh(storedDefaultCreator || details?.sigDibuat || userProfile?.fullName || 'Nur Wahyudi');
-      setDisetujuiOleh(storedDefaultApprover || details?.sigDisetujui || '');
-      setDiverifikasiOleh(storedDefaultVerifier || details?.sigKeuangan || 'Andi Muhammad Rifki');
-      setDiverifikasiJabatan(storedDefaultVerifierJabatan || 'Direktur');
-      setDisetujuiOleh2(storedDefaultApprover2 || details?.sigDirektur || 'H. A. Nursyam Halid');
-      setDisetujuiJabatan2(storedDefaultApprover2Jabatan || 'Direktur Utama');
+      setDisetujuiOleh(storedDefaultApprover || details?.sigDisetujui || 'Harijon');
+      setDiverifikasiOleh(storedDefaultVerifier || details?.sigDiverifikasi || details?.sigKeuangan || 'Andi Muhammad Rifki');
+      setDiverifikasiJabatan(storedDefaultVerifierJabatan || details?.sigDiverifikasiJabatan || 'Direktur');
+      setDisetujuiOleh2(storedDefaultApprover2 || details?.sigDirektur || 'H. Andi Nursyam Halid');
+      setDisetujuiJabatan2(storedDefaultApprover2Jabatan || details?.sigDirekturJabatan || 'Direktur Utama');
       setDibukukanOleh(storedDefaultBookkeeper || details?.sigAccounting || 'Sri Ekowati');
-      setDibukukanJabatan(storedDefaultBookkeeperJabatan || 'Accounting');
+      setDibukukanJabatan(storedDefaultBookkeeperJabatan || details?.sigAccountingJabatan || 'Manager Keuangan');
 
       setItems([
         { id: Math.random().toString(), no: 1, item: '', jumlahVolume: '', total: 0, keterangan: '' }
