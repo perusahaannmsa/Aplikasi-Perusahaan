@@ -126,15 +126,10 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
     if (onLayoutModeChange) onLayoutModeChange(mode);
   };
 
-  const [isModeDropdownOpen, setIsModeDropdownOpen] = useState(false);
-  const modeDropdownRef = useRef<HTMLDivElement>(null);
   const [openActionMenuId, setOpenActionMenuId] = useState<string | null>(null);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (modeDropdownRef.current && !modeDropdownRef.current.contains(event.target as Node)) {
-        setIsModeDropdownOpen(false);
-      }
       const target = event.target as HTMLElement | null;
       if (!target?.closest('.action-menu-dropdown-root')) {
         setOpenActionMenuId(null);
@@ -142,7 +137,6 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
     }
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
-        setIsModeDropdownOpen(false);
         setOpenActionMenuId(null);
       }
     }
@@ -956,153 +950,6 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Dynamic View Layout Switcher Bar - Compact Dropdown */}
-      <div className="bg-white border border-stone-200 rounded-2xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs print:hidden">
-        <div className="flex items-center gap-3">
-          <div className="relative" ref={modeDropdownRef}>
-            <button
-              onClick={() => setIsModeDropdownOpen(!isModeDropdownOpen)}
-              className="flex items-center gap-2.5 px-4 py-2 bg-stone-900 hover:bg-stone-850 text-white rounded-xl text-xs font-bold transition cursor-pointer shadow-3xs select-none"
-            >
-              {layoutMode === 'standard' && <Database size={15} className="text-amber-400" />}
-              {layoutMode === 'invoice_recap' && <FileSpreadsheet size={15} className="text-amber-400" />}
-              {layoutMode === 'petty_cash_recap' && <Coins size={15} className="text-violet-400" />}
-
-              <span className="font-extrabold font-display">
-                Mode Tampilan: {
-                  layoutMode === 'invoice_recap' ? 'Rekap & Bukti Invoice' :
-                  layoutMode === 'petty_cash_recap' ? 'Petty Cash Lapangan' :
-                  'Tampilan Standar'
-                }
-              </span>
-              <ChevronDown size={14} className={`text-stone-300 transition-transform duration-200 ${isModeDropdownOpen ? 'rotate-180' : ''}`} />
-            </button>
-
-            {/* Dropdown Options */}
-            {isModeDropdownOpen && (
-              <div className="absolute left-0 top-full mt-2 w-72 bg-white rounded-2xl shadow-xl border border-stone-200 z-50 p-1.5 space-y-1 animate-in fade-in zoom-in-95 duration-150 font-sans">
-                <button
-                  onClick={() => { handleSetLayoutMode('standard'); setIsModeDropdownOpen(false); }}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
-                    layoutMode === 'standard' ? 'bg-stone-900 text-white font-black' : 'text-stone-700 hover:bg-stone-100'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <Database size={14} className={layoutMode === 'standard' ? 'text-amber-400' : 'text-stone-500'} />
-                    <span>Tampilan Standar</span>
-                  </div>
-                  <span className="text-[10px] font-mono text-stone-400">Daftar Utama</span>
-                </button>
-
-                <button
-                  onClick={() => { handleSetLayoutMode('invoice_recap'); setIsModeDropdownOpen(false); }}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
-                    layoutMode === 'invoice_recap' ? 'bg-amber-600 text-white font-black' : 'text-stone-700 hover:bg-amber-50'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <FileSpreadsheet size={14} className={layoutMode === 'invoice_recap' ? 'text-white' : 'text-amber-600'} />
-                    <span>Rekap & Bukti Invoice</span>
-                  </div>
-                  <span className="text-[10px] font-mono text-amber-600 font-bold">Vendor</span>
-                </button>
-
-                <button
-                  onClick={() => { handleSetLayoutMode('petty_cash_recap'); setIsModeDropdownOpen(false); }}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
-                    layoutMode === 'petty_cash_recap' ? 'bg-violet-700 text-white font-black' : 'text-stone-700 hover:bg-violet-50'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <Coins size={14} className={layoutMode === 'petty_cash_recap' ? 'text-white' : 'text-violet-600'} />
-                    <span>Petty Cash Lapangan</span>
-                  </div>
-                  <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded font-bold ${
-                    layoutMode === 'petty_cash_recap' ? 'bg-white text-violet-800' : 'bg-violet-100 text-violet-800'
-                  }`}>
-                    {pettyCashSubmissions.length}
-                  </span>
-                </button>
-
-                {onOpenPph23View && (
-                  <button
-                    onClick={() => { setIsModeDropdownOpen(false); onOpenPph23View(); }}
-                    className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer text-stone-700 hover:bg-amber-50"
-                  >
-                    <div className="flex items-center gap-2">
-                      <Receipt size={14} className="text-amber-600" />
-                      <span>Bukti Potong PPh 23 (Tagihan)</span>
-                    </div>
-                    <span className="text-[9px] font-mono text-amber-900 font-bold bg-amber-100 px-1.5 py-0.2 rounded">
-                      Coretax
-                    </span>
-                  </button>
-                )}
-
-                {onOpenRabView && (
-                  <button
-                    onClick={() => { setIsModeDropdownOpen(false); onOpenRabView(); }}
-                    className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer text-stone-700 hover:bg-emerald-50"
-                  >
-                    <div className="flex items-center gap-2">
-                      <Building2 size={14} className="text-emerald-600" />
-                      <span>RAB &amp; Anggaran Proyek</span>
-                    </div>
-                    <span className="text-[9px] font-mono text-emerald-900 font-bold bg-emerald-100 px-1.5 py-0.2 rounded">
-                      Accurate
-                    </span>
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-
-          {onOpenPph23View && (
-            <button
-              onClick={onOpenPph23View}
-              className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-950 font-bold text-xs transition cursor-pointer shadow-3xs"
-              title="Rekapitulasi transaksi tagihan dengan pemotongan PPh 23, NPWP perusahaan, dan tautan dokumen"
-            >
-              <Receipt size={13} className="text-amber-700" />
-              <span>Bukti Potong PPh 23 (Tagihan)</span>
-              <span className="text-[9px] font-mono bg-amber-200 text-amber-900 px-1 rounded font-bold">DJP</span>
-            </button>
-          )}
-
-          {onOpenRabView && (
-            <button
-              onClick={onOpenRabView}
-              className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-950 font-bold text-xs transition cursor-pointer shadow-3xs"
-              title="Kelola Rencana Anggaran Biaya (RAB) proyek, anggaran biaya Accurate, dan realisasi pengeluaran dana"
-            >
-              <Building2 size={13} className="text-emerald-700" />
-              <span>RAB Proyek</span>
-              <span className="text-[9px] font-mono bg-emerald-200 text-emerald-900 px-1 rounded font-bold">Accurate</span>
-            </button>
-          )}
-
-          <div className="hidden sm:flex items-center gap-2 text-xs font-bold text-stone-500">
-            <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="font-mono text-[11px] text-stone-600 uppercase tracking-wide">
-              Database: Online
-            </span>
-          </div>
-        </div>
-        
-        <div className="flex items-center gap-3 text-right pr-2 select-none">
-          <LiveClock variant="compact" className="hidden md:inline-flex" />
-          <div className="flex items-center gap-2">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-            </span>
-            <span className="text-[10px] font-mono font-bold text-stone-400 uppercase tracking-widest">
-              Database: <span className="text-emerald-600 font-sans font-black">Online / Sinkron</span>
-            </span>
-          </div>
-        </div>
-      </div>
-
       {/* Persistent Missing Drive Archive Banner */}
       {(() => {
         const missingCount = submissions.filter(sub => {
@@ -1264,32 +1111,10 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 )}
               </div>
 
-              {/* Status Filter */}
-              <select
-                className="px-4 py-2.5 bg-stone-50 border border-stone-250 rounded-xl text-sm focus:ring-2 focus:ring-stone-400 focus:outline-none md:w-44 text-stone-700 font-medium cursor-pointer"
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-              >
-                <option value="All">Semua Status</option>
-                <option value="Lunas">Lunas</option>
-                <option value="DP / Cicilan">DP / Cicilan</option>
-                <option value="Belum Lunas">Belum Lunas</option>
-              </select>
             </div>
 
             {/* Action Button Container */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0">
-              {onOpenPph23View && (
-                <button
-                  onClick={onOpenPph23View}
-                  id="btn-open-tagihan-recap"
-                  className="flex items-center justify-center gap-1.5 px-3.5 py-2.5 border border-amber-300 bg-amber-50 hover:bg-amber-100 hover:border-amber-400 text-amber-900 font-bold rounded-xl transition shadow-3xs cursor-pointer text-xs"
-                  title="Tampilkan Rekap Transaksi Tagihan Rekanan & Potongan PPh 23"
-                >
-                  <Receipt size={14} className="text-amber-700" />
-                  <span>Transaksi Tagihan (PPh 23)</span>
-                </button>
-              )}
 
               {onOpenSppdManager && (
                 <button

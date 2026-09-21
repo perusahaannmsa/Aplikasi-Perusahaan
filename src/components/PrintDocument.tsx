@@ -14,9 +14,8 @@ import { SPPDRecord } from './SppdManager';
 export const VoucherOnlineQr: React.FC<{
   submission: Submission;
   size?: number;
-  showLabel?: boolean;
   className?: string;
-}> = ({ submission, size = 52, showLabel = true, className = '' }) => {
+}> = ({ submission, size = 52, className = '' }) => {
   const [qrSrc, setQrSrc] = useState<string>('');
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
   const cleanSlug = (submission.jenisPengajuan || 'transaksi').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
@@ -55,7 +54,7 @@ export const VoucherOnlineQr: React.FC<{
   return (
     <div
       className={`inline-flex flex-col items-center justify-center bg-white border border-black p-0.5 sm:p-1 rounded-xs shadow-3xs cursor-pointer hover:border-stone-800 transition print:shadow-none print:border-black shrink-0 ${className}`}
-      title={`Scan dengan kamera smartphone untuk melihat dokumen online resmi (${submission.kode})`}
+      title={`Scan barcode / QR untuk verifikasi dokumen resmi (${submission.kode})`}
       onClick={() => {
         if (typeof window !== 'undefined') {
           window.open(targetUrl, '_blank');
@@ -64,15 +63,10 @@ export const VoucherOnlineQr: React.FC<{
     >
       <img
         src={qrSrc}
-        alt={`QR Akses Online ${submission.kode}`}
+        alt={`Barcode / QR ${submission.kode}`}
         style={{ width: `${size}px`, height: `${size}px` }}
         className="block"
       />
-      {showLabel && (
-        <span className="text-[7px] sm:text-[7.5px] font-bold font-mono tracking-tight text-black uppercase mt-0.5 whitespace-nowrap leading-none">
-          Akses Online
-        </span>
-      )}
     </div>
   );
 };
@@ -2101,8 +2095,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                     <div className={`flex justify-between items-start ${isUltraDenseF1 ? 'mb-2' : isDenseF1 ? 'mb-3' : isFewItems ? 'mb-5' : 'mb-4'}`}>
                       <NusantaraLogo size={isUltraDenseF1 ? 'sm' : 'md'} className="items-start text-left" companyName={userProfile?.companyName} logoUrl={effectiveLogoUrl} />
 
-                      <div className="flex items-center gap-2.5 sm:gap-3.5 pt-0.5">
-                        <VoucherOnlineQr submission={submission} size={isUltraDenseF1 ? 48 : isDenseF1 ? 52 : 56} />
+                      <div className="flex items-start gap-2.5 sm:gap-3.5 pt-0.5">
                         <div className="flex flex-col items-end">
                           <div className={`border border-black ${isUltraDenseF1 ? 'px-4 py-1 text-xs' : isDenseF1 ? 'px-6 py-1 text-sm' : 'px-8 py-1.5 text-base'} font-bold text-black bg-stone-50 mb-1 min-w-[120px] text-center font-mono`}>
                             {submission.kode}
@@ -2111,6 +2104,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                             Tanggal : <span className="font-normal">{formatDateIndonesian(submission.tanggal)}</span>
                           </div>
                         </div>
+                        <VoucherOnlineQr submission={submission} size={isUltraDenseF1 ? 48 : isDenseF1 ? 52 : 56} />
                       </div>
                     </div>
 
@@ -2314,8 +2308,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                 <div>
                   <div className="flex justify-between items-start mb-2">
                     <NusantaraLogo size="md" className="items-start text-left" companyName={userProfile?.companyName} logoUrl={effectiveLogoUrl} />
-                    <div className="flex items-center gap-2.5">
-                      <VoucherOnlineQr submission={submission} size={46} />
+                    <div className="flex items-start gap-2.5">
                       <div className="flex flex-col items-end">
                         <div className="border border-black px-3 py-1 font-bold text-xs text-black bg-stone-50 mb-1 font-mono">
                           {submission.kode}
@@ -2324,6 +2317,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                           Tanggal : <span className="font-normal">{formatDateIndonesian(submission.tanggal)}</span>
                         </div>
                       </div>
+                      <VoucherOnlineQr submission={submission} size={46} />
                     </div>
                   </div>
 
@@ -2756,8 +2750,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                 <div>
                   <div className="flex justify-between items-start mb-2">
                     <NusantaraLogo size="md" className="items-start text-left" companyName={userProfile?.companyName} logoUrl={effectiveLogoUrl} />
-                    <div className="flex items-center gap-2.5">
-                      <VoucherOnlineQr submission={submission} size={46} />
+                    <div className="flex items-start gap-2.5">
                       <div className="flex flex-col items-end">
                         <div className="border border-black px-3 py-1 font-bold text-xs text-black bg-stone-50 mb-1 font-mono">
                           {submission.kode}
@@ -2766,6 +2759,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                           Tanggal : <span className="font-normal">{formatDateIndonesian(submission.tanggal)}</span>
                         </div>
                       </div>
+                      <VoucherOnlineQr submission={submission} size={46} />
                     </div>
                   </div>
 
@@ -2912,8 +2906,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                   <div>
                     <div className="flex justify-between items-start mb-2">
                       <NusantaraLogo size="md" className="items-start text-left" companyName={userProfile?.companyName} logoUrl={effectiveLogoUrl} />
-                      <div className="flex items-center gap-2.5">
-                        <VoucherOnlineQr submission={submission} size={46} />
+                      <div className="flex items-start gap-2.5">
                         <div className="flex flex-col items-end">
                           <div className="border border-black px-3 py-1 font-bold text-xs text-black bg-stone-50 mb-1 font-mono">
                             {submission.kode}
@@ -2922,6 +2915,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                             Tanggal : <span className="font-normal">{formatDateIndonesian(submission.tanggal)}</span>
                           </div>
                         </div>
+                        <VoucherOnlineQr submission={submission} size={46} />
                       </div>
                     </div>
 
