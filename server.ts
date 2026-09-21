@@ -6,6 +6,9 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import { google } from "googleapis";
 import dotenv from "dotenv";
+import { createRequire } from "module";
+const require = createRequire(import.meta.url);
+const { PDFParse } = require("pdf-parse");
 import { 
   initWhatsApp, 
   getWhatsAppStatus, 
@@ -137,24 +140,123 @@ Ketentuan Penulisan:
   }
 });
 
-app.post("/api/gemini/parse-petty-cash", async (req, res) => {
+async function extractTextFromPdfBuffer(buffer: Buffer): Promise<string> {
+  let parser: any = null;
   try {
-    const { fileBase64, mimeType, rawText, accounts } = req.body;
-    if (!process.env.GEMINI_API_KEY) {
-      return res.status(500).json({ error: "GEMINI_API_KEY tidak dikonfigurasi di server." });
+    parser = new PDFParse({ data: buffer });
+    await parser.load();
+    const res = await parser.getText();
+    return res?.text || '';
+  } catch (err: any) {
+    console.warn("PDF extraction error:", err?.message || err);
+    return '';
+  } finally {
+    if (parser) {
+      try { await parser.destroy(); } catch (_) {}
+    }
+  }
+}
+
+function heuristicParsePettyCashText(text: string, accounts: any[] = []) {
+  const lines = text.split(/\r?\n/);
+  const transactions: any[] = [];
+  
+  const dateRegex = /(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}|\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2})/;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line || line.length < 5) continue;
+    // Skip summary / header lines
+    if (/^\s*(total|saldo|grand\s*total|subtotal|periode|laporan|hal|page|no\b|tanggal\b|keterangan\b|jumlah\b)/i.test(line)) continue;
+
+    // extract date
+    const dateMatch = line.match(dateRegex);
+    let dateStr = dateMatch ? dateMatch[1] : '';
+    if (dateStr) {
+      const parts = dateStr.split(/[\/\-\.]/);
+      if (parts.length === 3) {
+        if (parts[0].length === 4) {
+          dateStr = `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+        } else if (parts[2].length === 4) {
+          dateStr = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+        }
+      }
+    }
+    
+    // extract amount
+    const numbers = line.match(/(?:Rp\.?\s*)?([0-9]{1,3}(?:\.[0-9]{3})+(?:,[0-9]+)?|[0-9]{4,})/g);
+    if (!numbers || numbers.length === 0) continue;
+    
+    const rawAmt = numbers[numbers.length - 1].replace(/Rp\.?\s*/g, '').replace(/\./g, '').replace(/,/g, '.');
+    const amount = parseFloat(rawAmt);
+    if (isNaN(amount) || amount <= 0) continue;
+
+    // description
+    let desc = line;
+    if (dateMatch) desc = desc.replace(dateMatch[0], '');
+    desc = desc.replace(numbers[numbers.length - 1], '').replace(/Rp\.?/g, '').trim();
+    desc = desc.replace(/^[\s\-\:\.\;\,\t\|0-9]+/, '').trim();
+    if (!desc || desc.length < 3) desc = 'Pengeluaran Petty Cash';
+
+    // match with accounts
+    let matchedAcc: any = null;
+    const descLower = desc.toLowerCase();
+    if (Array.isArray(accounts) && accounts.length > 0) {
+      for (const acc of accounts) {
+        if (acc.keywords && Array.isArray(acc.keywords)) {
+          for (const kw of acc.keywords) {
+            if (kw && descLower.includes(String(kw).toLowerCase())) {
+              matchedAcc = acc;
+              break;
+            }
+          }
+        }
+        if (matchedAcc) break;
+      }
+      if (!matchedAcc) {
+        matchedAcc = accounts.find((a: any) => a.code === '600099' || a.code === '5-1900' || (a.category && a.category.includes('Beban'))) || accounts[0];
+      }
     }
 
-    const ai = getGeminiClient();
-    const contents: any[] = [];
+    transactions.push({
+      date: dateStr || new Date().toISOString().split('T')[0],
+      description: desc,
+      amount: amount,
+      recipient: '',
+      accurateAccountCode: matchedAcc?.code || '600099',
+      accurateAccountName: matchedAcc?.name || 'Beban Operasional Lainnya',
+      confidence: matchedAcc ? 'high' : 'medium'
+    });
+  }
 
-    if (fileBase64 && mimeType) {
-      const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, "");
-      contents.push({ inlineData: { mimeType, data: cleanBase64 } });
-    }
+  const totalExpense = transactions.reduce((sum, t) => sum + t.amount, 0);
 
-    const coaPromptList = accounts && Array.isArray(accounts)
-      ? accounts.map((a: any) => `- Kode ${a.code}: ${a.name} (Kategori: ${a.category || 'Biaya'}${a.keywords ? `, Kata kunci: ${a.keywords.join(', ')}` : ''})`).join('\n')
-      : `
+  return {
+    reportTitle: 'Rekap Pemetaan Dokumen Petty Cash',
+    period: new Date().toISOString().substring(0, 7),
+    totalExpense,
+    transactions
+  };
+}
+
+app.post("/api/gemini/parse-petty-cash", async (req, res) => {
+  const { fileBase64, mimeType, rawText, accounts } = req.body;
+  let aiError: any = null;
+
+  // Try AI if API key is present
+  if (process.env.GEMINI_API_KEY) {
+    try {
+      const ai = getGeminiClient();
+      const contents: any[] = [];
+
+      if (fileBase64 && mimeType) {
+        const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, "");
+        contents.push({ inlineData: { mimeType, data: cleanBase64 } });
+      }
+
+      const coaPromptList = accounts && Array.isArray(accounts)
+        ? accounts.map((a: any) => `- Kode ${a.code}: ${a.name} (Kategori: ${a.category || 'Biaya'}${a.keywords ? `, Kata kunci: ${a.keywords.join(', ')}` : ''})`).join('\n')
+        : `
 - Kode 5-1100: Biaya Bahan Bakar Minyak (BBM, Solar, Pertamax, Pertalite, Dex)
 - Kode 5-1200: Biaya Perjalanan Dinas & SPPD (Hotel, Tiket, Makan Dinas, Transport)
 - Kode 5-1300: Biaya Konsumsi, Dapur & Entertainment (Makan pekerja, air minum galon, snack, konsumsi rapat, sembako)
@@ -166,27 +268,12 @@ app.post("/api/gemini/parse-petty-cash", async (req, res) => {
 - Kode 5-1900: Biaya Operasional Lain-lain (Pembelian material kecil, perlengkapan darurat lapangan)
 - Kode 1-1102: Kas Kecil / Petty Cash`;
 
-    const promptText = `Anda adalah seorang Senior Auditor Keuangan & Akuntan Ahli Sistem Accurate ERP PT Nusantara Mineral Sukses Abadi.
+      const promptText = `Anda adalah seorang Senior Auditor Keuangan & Akuntan Ahli Sistem Accurate ERP PT Nusantara Mineral Sukses Abadi.
 Tugas Anda adalah membaca, melakukan OCR, menganalisis, dan mengekstrak SELURUH data rincian transaksi pengeluaran dari berkas Laporan Pertanggungjawaban (LPJ) Petty Cash Lapangan / Kwitansi / Nota Bon / Bukti Belanja ini dengan TINGKAT AKURASI TERTINGGI (100% presisi tanpa ada yang terlewat atau tertukar).
 ${rawText ? `\nBerikut teks mentah dokumen:\n${rawText}\n` : ''}
 
 Daftar Kode Akun Accurate Resmi yang tersedia:
 ${coaPromptList}
-
-PANDUAN EKSTRAKSI DATA:
-1. DETEKSI VOLUME VS HARGA:
-   - Jika suatu baris memiliki Qty/Volume (misal 5 Liter, 3 Pcs, 2 Hari) dan Harga Satuan (misal @ Rp 15.000), pastikan:
-     * 'description': mencantumkan rincian barang serta volume dan harga satuan secara jelas (misal: "BBM Solar 20 Liter @ Rp 15.000").
-     * 'amount': adalah TOTAL NOMINAL AKHIR (Rp 300.000), bukan harga satuan per unit.
-   - Bersihkan seluruh simbol mata uang (Rp, titik pemisah ribuan) menjadi nilai numerik murni.
-2. TANGGAL & PENERIMA:
-   - Ekstrak tanggal transaksi dalam format standar YYYY-MM-DD. Jika tanggal hanya tertera DD/MM/YYYY atau bulan teks (misal: "15 Agustus 2026"), konversikan ke "2026-08-15".
-   - Ekstrak nama toko, penjual, atau penerima dana (Recipient/Worker/Vendor) jika tertera pada nota/kwitansi/tabel.
-3. KATEGORISASI COA ACCURATE:
-   - Petakan setiap transaksi ke Kode Akun Accurate yang PALING COCOK dari daftar di atas berdasarkan nama barang/jasa dan kata kuncinya.
-   - Sertakan nama akun dan kode akun secara tepat.
-4. ABAIKAN BARIS BUKAN PENGELUARAN:
-   - Jangan masukkan baris header, baris saldo awal (pemasukan/kas masuk), baris subtotal, atau baris total akhir sebagai item transaksi tersendiri.
 
 KEMBALIKAN HANYA FORMAT JSON VALID DENGAN SKEMA:
 {
@@ -207,55 +294,85 @@ KEMBALIKAN HANYA FORMAT JSON VALID DENGAN SKEMA:
   ]
 }`;
 
-    contents.push({ text: promptText });
+      contents.push({ text: promptText });
 
-    const modelsToTry = [
-      "gemini-2.5-pro",
-      "gemini-2.5-flash",
-      "gemini-3.1-flash-lite",
-      "gemini-flash-latest"
-    ];
+      const modelsToTry = [
+        "gemini-2.5-pro",
+        "gemini-2.5-flash",
+        "gemini-3.1-flash-lite",
+        "gemini-flash-latest"
+      ];
 
-    let response: any = null;
-    let lastError: any = null;
-
-    for (const modelName of modelsToTry) {
-      try {
-        console.log(`Attempting petty cash analysis with model: ${modelName}`);
-        response = await ai.models.generateContent({
-          model: modelName,
-          contents,
-          config: {
-            responseMimeType: "application/json",
-            temperature: 0.1,
-          },
-        });
-        if (response && response.text) {
-          console.log(`Successfully parsed petty cash with model: ${modelName}`);
-          break;
+      let response: any = null;
+      for (const modelName of modelsToTry) {
+        try {
+          response = await ai.models.generateContent({
+            model: modelName,
+            contents,
+            config: {
+              responseMimeType: "application/json",
+              temperature: 0.1,
+            },
+          });
+          if (response && response.text) break;
+        } catch (err: any) {
+          aiError = err;
         }
-      } catch (err: any) {
-        lastError = err;
-        console.warn(`Model ${modelName} error:`, err?.message || err);
+      }
+
+      if (response && response.text) {
+        let textClean = response.text.trim();
+        if (textClean.startsWith("```json")) {
+          textClean = textClean.replace(/^```json\s*/, "").replace(/\s*```$/, "");
+        } else if (textClean.startsWith("```")) {
+          textClean = textClean.replace(/^```\s*/, "").replace(/\s*```$/, "");
+        }
+        const parsedData = JSON.parse(textClean || "{}");
+        if (parsedData.transactions && parsedData.transactions.length > 0) {
+          return res.json({ success: true, result: parsedData, source: 'gemini' });
+        }
+      }
+    } catch (err: any) {
+      aiError = err;
+      console.warn("AI extraction encountered error, attempting fallback parser:", err?.message);
+    }
+  }
+
+  // FALLBACK: Local PDF text extraction or raw text parsing
+  try {
+    let extractedText = rawText || '';
+    if (!extractedText && fileBase64 && (mimeType === 'application/pdf' || fileBase64.startsWith('JVBERi') || String(fileBase64).includes('JVBERi'))) {
+      const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, "");
+      const pdfBuffer = Buffer.from(cleanBase64, 'base64');
+      extractedText = await extractTextFromPdfBuffer(pdfBuffer);
+    }
+
+    if (extractedText && extractedText.trim().length > 0) {
+      const parsed = heuristicParsePettyCashText(extractedText, accounts);
+      if (parsed.transactions.length > 0) {
+        console.log(`Fallback parser succeeded: extracted ${parsed.transactions.length} items from document text.`);
+        return res.json({
+          success: true,
+          result: parsed,
+          fallback: true,
+          source: 'local_text_parser'
+        });
       }
     }
 
-    if (!response || !response.text) {
-      throw lastError || new Error("Semua model AI gagal menganalisis dokumen LPJ Petty Cash.");
-    }
-
-    let textClean = response.text.trim();
-    if (textClean.startsWith("```json")) {
-      textClean = textClean.replace(/^```json\s*/, "").replace(/\s*```$/, "");
-    } else if (textClean.startsWith("```")) {
-      textClean = textClean.replace(/^```\s*/, "").replace(/\s*```$/, "");
-    }
-
-    const parsedData = JSON.parse(textClean || "{}");
-    return res.json({ success: true, result: parsedData });
-  } catch (error: any) {
-    console.error("Error in parse-petty-cash:", error);
-    return res.status(500).json({ error: "Gagal membaca & memetakan petty cash.", details: error.message });
+    // If both AI and local extraction failed:
+    return res.status(422).json({
+      success: false,
+      error: "Gagal memetakan transaksi. Layanan AI tidak dapat diakses dan berkas tidak memiliki lapisan teks yang dapat diekstrak secara otomatis.",
+      details: aiError?.message || "Format dokumen membutuhkan pembacaan teks langsung atau format Excel (.xlsx)."
+    });
+  } catch (fallbackErr: any) {
+    console.error("Error in fallback petty cash parser:", fallbackErr);
+    return res.status(500).json({
+      success: false,
+      error: "Gagal membaca & memetakan petty cash.",
+      details: fallbackErr.message
+    });
   }
 });
 

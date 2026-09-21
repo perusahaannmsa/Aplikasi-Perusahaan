@@ -1069,11 +1069,24 @@ export default function App() {
 
       // 3. Persist to active user document in Firestore if logged in
       if (authUser?.uid) {
-        await switchUserCompany(authUser.uid, cleanId, newCompanyName);
+        try {
+          await switchUserCompany(authUser.uid, cleanId, newCompanyName);
+        } catch (e) {
+          console.warn('switchUserCompany non-fatal:', e);
+        }
       }
 
       // 4. Strictly load submissions belonging to this company from Firestore
-      const companySubmissions = await loadSubmissionsFromFirestore(cleanId);
+      let companySubmissions: Submission[] = [];
+      try {
+        companySubmissions = await loadSubmissionsFromFirestore(cleanId);
+      } catch (e) {
+        console.warn('loadSubmissionsFromFirestore fallback to cache:', e);
+        const cached = localStorage.getItem(`NUSANTARA_HO_SUBMISSIONS_${cleanId}`) || localStorage.getItem('NUSANTARA_HO_SUBMISSIONS');
+        if (cached) {
+          try { companySubmissions = JSON.parse(cached); } catch (_) {}
+        }
+      }
       setSubmissions(companySubmissions);
       try {
         localStorage.setItem('NUSANTARA_HO_SUBMISSIONS', JSON.stringify(companySubmissions));
@@ -1095,7 +1108,6 @@ export default function App() {
       console.log(`✅ Berhasil beralih ke perusahaan: ${cleanId}, memuat ${companySubmissions.length} transaksi.`);
     } catch (err) {
       console.error('Gagal beralih perusahaan:', err);
-      throw err;
     }
   };
 

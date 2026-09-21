@@ -562,12 +562,6 @@ export const saveCompanyProfileToFirestore = async (company: Partial<CompanyProf
       console.log(`🏬 Profil perusahaan [${cleanCode} - ${cleanId}] berhasil disimpan di Firestore.`);
     } catch (err: any) {
       console.warn('Penyimpanan ke Firestore menemui kendala, tersimpan di cache lokal:', err);
-      // If it's a permission error, don't throw if we saved locally, but report to console
-      if (err?.code === 'permission-denied' || err?.message?.includes('permission')) {
-        console.warn('Izin Firestore terbatas, profil perusahaan diaktifkan secara lokal.');
-      } else {
-        throw err;
-      }
     }
   }
 };
