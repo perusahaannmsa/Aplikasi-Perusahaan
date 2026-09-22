@@ -526,6 +526,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
   const effectiveLogoUrl = submission.companyLogoUrl || userProfile?.companyDetails?.logoUrl || userProfile?.companyLogoUrl;
 
   const [printLayoutMode, setPrintLayoutMode] = useState<'standard' | 'compact_70' | 'eco_1page'>('standard');
+  const [signatureTableStyle, setSignatureTableStyle] = useState<'table' | 'line'>('table');
   const [showF2, setShowF2] = useState<boolean>(false);
   const [f1Verifier, setF1Verifier] = useState<'rifki' | 'nursyam'>(() => {
     if (submission.diverifikasiOleh?.toLowerCase().includes('nursyam')) return 'nursyam';
@@ -1540,6 +1541,31 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                   )}
                 </div>
 
+                {/* Format Tanda Tangan: Tabel vs Garis */}
+                <div className="flex bg-stone-100 p-1 rounded-xl border border-stone-200 items-center gap-1 shadow-3xs">
+                  <span className="text-[10px] font-bold text-stone-500 px-2 uppercase font-mono hidden sm:inline">Format TTD:</span>
+                  <button
+                    type="button"
+                    onClick={() => setSignatureTableStyle('table')}
+                    className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
+                      signatureTableStyle === 'table' ? 'bg-amber-600 text-white shadow-3xs' : 'text-stone-500 hover:text-stone-850'
+                    }`}
+                    title="Format Tabel Kotak Lengkap"
+                  >
+                    ▦ Tabel Kotak
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSignatureTableStyle('line')}
+                    className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
+                      signatureTableStyle === 'line' ? 'bg-amber-600 text-white shadow-3xs' : 'text-stone-500 hover:text-stone-850'
+                    }`}
+                    title="Format Garis Terbuka"
+                  >
+                    ━ Garis Terbuka
+                  </button>
+                </div>
+
                 {/* Menu Diverifikasi F1 */}
                 <div className="flex bg-stone-100 p-1 rounded-xl border border-stone-200 items-center gap-1 shadow-3xs">
                   <span className="text-[10px] font-bold text-stone-500 px-2 uppercase font-mono hidden sm:inline">Diverifikasi (F1):</span>
@@ -2208,78 +2234,154 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
 
                   {/* Bottom Content: Spacious Signatures and Note */}
                   <div className="mt-auto pt-2">
-                    {/* 4 Signers: 1 Single Row (Diajukan: Andi Dhiya Salsabila, Diverifikasi: Sri Ekowati, Diverifikasi: Andi Muhammad Rifki, Disetujui: Harijon) */}
-                    <div className={`my-2 sm:my-3 ${isUltraDenseF1 ? 'my-1' : ''}`}>
-                      <div className="grid grid-cols-4 gap-1.5 sm:gap-2 text-black px-1">
-                        {/* 1. Diajukan */}
-                        <div className="flex flex-col items-center text-center">
-                          <span className="font-sans font-semibold uppercase tracking-wider text-[10px] sm:text-[11px] print:text-[10.5px]">
-                            Diajukan
-                          </span>
-                          <div className={`w-full ${isUltraDenseF1 ? 'h-7' : isDenseF1 ? 'h-9' : isFewItems ? 'h-14 sm:h-16' : 'h-11 sm:h-13'}`} />
-                          <div className="w-full max-w-[170px] sm:max-w-[180px] border-b-2 border-black pb-0.5 flex items-center justify-center px-0.5">
-                            <span className="font-bold tracking-tight uppercase text-[11px] sm:text-[12.5px] print:text-[12px] whitespace-nowrap text-center block">
-                              {(submission.diajukanOleh && submission.diajukanOleh !== 'Sri Ekowati') ? submission.diajukanOleh : 'Andi Dhiya Salsabila'}
+                    {/* 4 Signers: Table or Line layout */}
+                    {signatureTableStyle === 'table' ? (
+                      <div className={`w-full ${isUltraDenseF1 ? 'my-1' : 'my-2 sm:my-2.5'}`}>
+                        <table className="w-full border-collapse border-2 border-black text-center font-sans table-fixed">
+                          <thead>
+                            <tr className="border-b-2 border-black bg-white">
+                              <th className="w-1/4 border-r-2 border-black py-1 sm:py-1.5 px-1 font-bold uppercase tracking-wider text-[10.5px] sm:text-[11.5px] print:text-[11px] text-black">
+                                Diajukan
+                              </th>
+                              <th className="w-1/4 border-r-2 border-black py-1 sm:py-1.5 px-1 font-bold uppercase tracking-wider text-[10.5px] sm:text-[11.5px] print:text-[11px] text-black">
+                                Diverifikasi
+                              </th>
+                              <th className="w-1/4 border-r-2 border-black py-1 sm:py-1.5 px-1 font-bold uppercase tracking-wider text-[10.5px] sm:text-[11.5px] print:text-[11px] text-black">
+                                Diverifikasi
+                              </th>
+                              <th className="w-1/4 py-1 sm:py-1.5 px-1 font-bold uppercase tracking-wider text-[10.5px] sm:text-[11.5px] print:text-[11px] text-black">
+                                Disetujui
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr className="border-b-2 border-black">
+                              <td className={`border-r-2 border-black ${isUltraDenseF1 ? 'h-7 sm:h-8' : isDenseF1 ? 'h-9 sm:h-10' : isFewItems ? 'h-14 sm:h-16' : 'h-11 sm:h-13'}`} />
+                              <td className={`border-r-2 border-black ${isUltraDenseF1 ? 'h-7 sm:h-8' : isDenseF1 ? 'h-9 sm:h-10' : isFewItems ? 'h-14 sm:h-16' : 'h-11 sm:h-13'}`} />
+                              <td className={`border-r-2 border-black ${isUltraDenseF1 ? 'h-7 sm:h-8' : isDenseF1 ? 'h-9 sm:h-10' : isFewItems ? 'h-14 sm:h-16' : 'h-11 sm:h-13'}`} />
+                              <td className={`${isUltraDenseF1 ? 'h-7 sm:h-8' : isDenseF1 ? 'h-9 sm:h-10' : isFewItems ? 'h-14 sm:h-16' : 'h-11 sm:h-13'}`} />
+                            </tr>
+                            <tr>
+                              {/* 1. Diajukan */}
+                              <td className="border-r-2 border-black py-1 sm:py-1.5 px-1 align-top">
+                                <span className="font-bold tracking-tight uppercase text-[11px] sm:text-[12px] print:text-[11.5px] text-black block leading-tight text-center">
+                                  {(submission.diajukanOleh && submission.diajukanOleh !== 'Sri Ekowati') ? submission.diajukanOleh : 'Andi Dhiya Salsabila'}
+                                </span>
+                                <span className="font-bold tracking-tight uppercase text-[9.5px] sm:text-[10.5px] print:text-[10px] text-stone-900 block leading-tight text-center mt-0.5">
+                                  {submission.diajukanJabatan || 'Keuangan'}
+                                </span>
+                              </td>
+
+                              {/* 2. Diverifikasi */}
+                              <td className="border-r-2 border-black py-1 sm:py-1.5 px-1 align-top">
+                                <span className="font-bold tracking-tight uppercase text-[11px] sm:text-[12px] print:text-[11.5px] text-black block leading-tight text-center">
+                                  Sri Ekowati
+                                </span>
+                                <span className="font-bold tracking-tight uppercase text-[9.5px] sm:text-[10.5px] print:text-[10px] text-stone-900 block leading-tight text-center mt-0.5">
+                                  Manager Keuangan
+                                </span>
+                              </td>
+
+                              {/* 3. Diverifikasi */}
+                              <td className="border-r-2 border-black py-1 sm:py-1.5 px-1 align-top">
+                                <span className="font-bold tracking-tight uppercase text-[11px] sm:text-[12px] print:text-[11.5px] text-black block leading-tight text-center">
+                                  {f1Verifier === 'nursyam'
+                                    ? 'Andi Nursyam Halid'
+                                    : ((submission.diverifikasiOleh && submission.diverifikasiOleh !== 'Andi Dhiya Salsabila' && submission.diverifikasiOleh !== 'Sri Ekowati') ? submission.diverifikasiOleh : 'Andi Muhammad Rifki')}
+                                </span>
+                                <span className="font-bold tracking-tight uppercase text-[9.5px] sm:text-[10.5px] print:text-[10px] text-stone-900 block leading-tight text-center mt-0.5">
+                                  {f1Verifier === 'nursyam'
+                                    ? 'Direktur Utama'
+                                    : ((submission.diverifikasiJabatan && submission.diverifikasiJabatan !== 'Keuangan') ? submission.diverifikasiJabatan : 'Direktur')}
+                                </span>
+                              </td>
+
+                              {/* 4. Disetujui */}
+                              <td className="py-1 sm:py-1.5 px-1 align-top">
+                                <span className="font-bold tracking-tight uppercase text-[11px] sm:text-[12px] print:text-[11.5px] text-black block leading-tight text-center">
+                                  {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? submission.disetujuiOleh2 : 'Harijon'}
+                                </span>
+                                <span className="font-bold tracking-tight uppercase text-[9.5px] sm:text-[10.5px] print:text-[10px] text-stone-900 block leading-tight text-center mt-0.5">
+                                  {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? (submission.disetujuiJabatan2 || 'Direktur Keuangan') : 'Direktur Keuangan'}
+                                </span>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className={`my-2 sm:my-3 ${isUltraDenseF1 ? 'my-1' : ''}`}>
+                        <div className="grid grid-cols-4 gap-1.5 sm:gap-2 text-black px-1">
+                          {/* 1. Diajukan */}
+                          <div className="flex flex-col items-center text-center">
+                            <span className="font-sans font-semibold uppercase tracking-wider text-[10px] sm:text-[11px] print:text-[10.5px]">
+                              Diajukan
+                            </span>
+                            <div className={`w-full ${isUltraDenseF1 ? 'h-7' : isDenseF1 ? 'h-9' : isFewItems ? 'h-14 sm:h-16' : 'h-11 sm:h-13'}`} />
+                            <div className="w-full max-w-[170px] sm:max-w-[180px] border-b-2 border-black pb-0.5 flex items-center justify-center px-0.5">
+                              <span className="font-bold tracking-tight uppercase text-[11px] sm:text-[12.5px] print:text-[12px] whitespace-nowrap text-center block">
+                                {(submission.diajukanOleh && submission.diajukanOleh !== 'Sri Ekowati') ? submission.diajukanOleh : 'Andi Dhiya Salsabila'}
+                              </span>
+                            </div>
+                            <span className="text-[9px] sm:text-[10px] print:text-[9.5px] text-stone-700 font-mono mt-0.5 uppercase font-medium leading-tight whitespace-nowrap text-center block">
+                              {submission.diajukanJabatan || 'Keuangan'}
                             </span>
                           </div>
-                          <span className="text-[9px] sm:text-[10px] print:text-[9.5px] text-stone-700 font-mono mt-0.5 uppercase font-medium leading-tight whitespace-nowrap text-center block">
-                            {submission.diajukanJabatan || 'Staff Keuangan'}
-                          </span>
-                        </div>
 
-                        {/* 2. Diverifikasi */}
-                        <div className="flex flex-col items-center text-center">
-                          <span className="font-sans font-semibold uppercase tracking-wider text-[10px] sm:text-[11px] print:text-[10.5px]">
-                            Diverifikasi
-                          </span>
-                          <div className={`w-full ${isUltraDenseF1 ? 'h-7' : isDenseF1 ? 'h-9' : isFewItems ? 'h-14 sm:h-16' : 'h-11 sm:h-13'}`} />
-                          <div className="w-full max-w-[170px] sm:max-w-[180px] border-b-2 border-black pb-0.5 flex items-center justify-center px-0.5">
-                            <span className="font-bold tracking-tight uppercase text-[11px] sm:text-[12.5px] print:text-[12px] whitespace-nowrap text-center block">
-                              Sri Ekowati
+                          {/* 2. Diverifikasi */}
+                          <div className="flex flex-col items-center text-center">
+                            <span className="font-sans font-semibold uppercase tracking-wider text-[10px] sm:text-[11px] print:text-[10.5px]">
+                              Diverifikasi
+                            </span>
+                            <div className={`w-full ${isUltraDenseF1 ? 'h-7' : isDenseF1 ? 'h-9' : isFewItems ? 'h-14 sm:h-16' : 'h-11 sm:h-13'}`} />
+                            <div className="w-full max-w-[170px] sm:max-w-[180px] border-b-2 border-black pb-0.5 flex items-center justify-center px-0.5">
+                              <span className="font-bold tracking-tight uppercase text-[11px] sm:text-[12.5px] print:text-[12px] whitespace-nowrap text-center block">
+                                Sri Ekowati
+                              </span>
+                            </div>
+                            <span className="text-[9px] sm:text-[10px] print:text-[9.5px] text-stone-700 font-mono mt-0.5 uppercase font-medium leading-tight whitespace-nowrap text-center block">
+                              Manager Keuangan
                             </span>
                           </div>
-                          <span className="text-[9px] sm:text-[10px] print:text-[9.5px] text-stone-700 font-mono mt-0.5 uppercase font-medium leading-tight whitespace-nowrap text-center block">
-                            Manager Keuangan
-                          </span>
-                        </div>
 
-                        {/* 3. Diverifikasi */}
-                        <div className="flex flex-col items-center text-center">
-                          <span className="font-sans font-semibold uppercase tracking-wider text-[10px] sm:text-[11px] print:text-[10.5px]">
-                            Diverifikasi
-                          </span>
-                          <div className={`w-full ${isUltraDenseF1 ? 'h-7' : isDenseF1 ? 'h-9' : isFewItems ? 'h-14 sm:h-16' : 'h-11 sm:h-13'}`} />
-                          <div className="w-full max-w-[170px] sm:max-w-[180px] border-b-2 border-black pb-0.5 flex items-center justify-center px-0.5">
-                            <span className="font-bold tracking-tight uppercase text-[11px] sm:text-[12.5px] print:text-[12px] whitespace-nowrap text-center block">
+                          {/* 3. Diverifikasi */}
+                          <div className="flex flex-col items-center text-center">
+                            <span className="font-sans font-semibold uppercase tracking-wider text-[10px] sm:text-[11px] print:text-[10.5px]">
+                              Diverifikasi
+                            </span>
+                            <div className={`w-full ${isUltraDenseF1 ? 'h-7' : isDenseF1 ? 'h-9' : isFewItems ? 'h-14 sm:h-16' : 'h-11 sm:h-13'}`} />
+                            <div className="w-full max-w-[170px] sm:max-w-[180px] border-b-2 border-black pb-0.5 flex items-center justify-center px-0.5">
+                              <span className="font-bold tracking-tight uppercase text-[11px] sm:text-[12.5px] print:text-[12px] whitespace-nowrap text-center block">
+                                {f1Verifier === 'nursyam'
+                                  ? 'Andi Nursyam Halid'
+                                  : ((submission.diverifikasiOleh && submission.diverifikasiOleh !== 'Andi Dhiya Salsabila' && submission.diverifikasiOleh !== 'Sri Ekowati') ? submission.diverifikasiOleh : 'Andi Muhammad Rifki')}
+                              </span>
+                            </div>
+                            <span className="text-[9px] sm:text-[10px] print:text-[9.5px] text-stone-700 font-mono mt-0.5 uppercase font-medium leading-tight whitespace-nowrap text-center block">
                               {f1Verifier === 'nursyam'
-                                ? 'Andi Nursyam Halid'
-                                : ((submission.diverifikasiOleh && submission.diverifikasiOleh !== 'Andi Dhiya Salsabila' && submission.diverifikasiOleh !== 'Sri Ekowati') ? submission.diverifikasiOleh : 'Andi Muhammad Rifki')}
+                                ? 'Direktur Utama'
+                                : ((submission.diverifikasiJabatan && submission.diverifikasiJabatan !== 'Keuangan') ? submission.diverifikasiJabatan : 'Direktur')}
                             </span>
                           </div>
-                          <span className="text-[9px] sm:text-[10px] print:text-[9.5px] text-stone-700 font-mono mt-0.5 uppercase font-medium leading-tight whitespace-nowrap text-center block">
-                            {f1Verifier === 'nursyam'
-                              ? 'Direktur Utama'
-                              : ((submission.diverifikasiJabatan && submission.diverifikasiJabatan !== 'Keuangan') ? submission.diverifikasiJabatan : 'Direktur')}
-                          </span>
-                        </div>
 
-                        {/* 4. Disetujui */}
-                        <div className="flex flex-col items-center text-center">
-                          <span className="font-sans font-semibold uppercase tracking-wider text-[10px] sm:text-[11px] print:text-[10.5px]">
-                            Disetujui
-                          </span>
-                          <div className={`w-full ${isUltraDenseF1 ? 'h-7' : isDenseF1 ? 'h-9' : isFewItems ? 'h-14 sm:h-16' : 'h-11 sm:h-13'}`} />
-                          <div className="w-full max-w-[170px] sm:max-w-[180px] border-b-2 border-black pb-0.5 flex items-center justify-center px-0.5">
-                            <span className="font-bold tracking-tight uppercase text-[11px] sm:text-[12.5px] print:text-[12px] whitespace-nowrap text-center block">
-                              {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? submission.disetujuiOleh2 : 'Harijon'}
+                          {/* 4. Disetujui */}
+                          <div className="flex flex-col items-center text-center">
+                            <span className="font-sans font-semibold uppercase tracking-wider text-[10px] sm:text-[11px] print:text-[10.5px]">
+                              Disetujui
+                            </span>
+                            <div className={`w-full ${isUltraDenseF1 ? 'h-7' : isDenseF1 ? 'h-9' : isFewItems ? 'h-14 sm:h-16' : 'h-11 sm:h-13'}`} />
+                            <div className="w-full max-w-[170px] sm:max-w-[180px] border-b-2 border-black pb-0.5 flex items-center justify-center px-0.5">
+                              <span className="font-bold tracking-tight uppercase text-[11px] sm:text-[12.5px] print:text-[12px] whitespace-nowrap text-center block">
+                                {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? submission.disetujuiOleh2 : 'Harijon'}
+                              </span>
+                            </div>
+                            <span className="text-[9px] sm:text-[10px] print:text-[9.5px] text-stone-700 font-mono mt-0.5 uppercase font-medium leading-tight whitespace-nowrap text-center block">
+                              {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? (submission.disetujuiJabatan2 || 'Direktur Keuangan') : 'Direktur Keuangan'}
                             </span>
                           </div>
-                          <span className="text-[9px] sm:text-[10px] print:text-[9.5px] text-stone-700 font-mono mt-0.5 uppercase font-medium leading-tight whitespace-nowrap text-center block">
-                            {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? (submission.disetujuiJabatan2 || 'Direktur Keuangan') : 'Direktur Keuangan'}
-                          </span>
                         </div>
                       </div>
-                    </div>
+                    )}
 
                     {/* Notes Section - only render if note exists */}
                     {submission.notes && submission.notes.trim() !== '' && (
@@ -2381,68 +2483,139 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                 </div>
 
                 <div>
-                  {/* 4 Signers: 1 Single Row (Diajukan: Andi Dhiya Salsabila, Diverifikasi: Sri Ekowati, Diverifikasi: Andi Muhammad Rifki, Disetujui: Harijon) */}
-                  <div className="my-2 text-black">
-                    <div className="grid grid-cols-4 gap-1 text-center">
-                      <div className="flex flex-col items-center">
-                        <span className="font-sans font-semibold uppercase text-[10px] sm:text-[10.5px]">Diajukan</span>
-                        <div className="w-full h-8 sm:h-9" />
-                        <div className="w-full max-w-[145px] sm:max-w-[155px] border-b-2 border-black pb-0.5 flex items-center justify-center px-0.5">
-                          <span className="font-bold text-[10px] sm:text-[11px] print:text-[10.5px] uppercase tracking-tight whitespace-nowrap block">
-                            {(submission.diajukanOleh && submission.diajukanOleh !== 'Sri Ekowati') ? submission.diajukanOleh : 'Andi Dhiya Salsabila'}
+                  {/* 4 Signers: Table or Line layout */}
+                  {signatureTableStyle === 'table' ? (
+                    <div className="my-2 text-black w-full">
+                      <table className="w-full border-collapse border-2 border-black text-center font-sans table-fixed">
+                        <thead>
+                          <tr className="border-b-2 border-black bg-white">
+                            <th className="w-1/4 border-r-2 border-black py-1 px-1 font-bold uppercase tracking-wider text-[10px] sm:text-[10.5px] print:text-[10.5px] text-black">
+                              Diajukan
+                            </th>
+                            <th className="w-1/4 border-r-2 border-black py-1 px-1 font-bold uppercase tracking-wider text-[10px] sm:text-[10.5px] print:text-[10.5px] text-black">
+                              Diverifikasi
+                            </th>
+                            <th className="w-1/4 border-r-2 border-black py-1 px-1 font-bold uppercase tracking-wider text-[10px] sm:text-[10.5px] print:text-[10.5px] text-black">
+                              Diverifikasi
+                            </th>
+                            <th className="w-1/4 py-1 px-1 font-bold uppercase tracking-wider text-[10px] sm:text-[10.5px] print:text-[10.5px] text-black">
+                              Disetujui
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr className="border-b-2 border-black">
+                            <td className="border-r-2 border-black h-8 sm:h-9" />
+                            <td className="border-r-2 border-black h-8 sm:h-9" />
+                            <td className="border-r-2 border-black h-8 sm:h-9" />
+                            <td className="h-8 sm:h-9" />
+                          </tr>
+                          <tr>
+                            <td className="border-r-2 border-black py-1 px-1 align-top">
+                              <span className="font-bold text-[10px] sm:text-[11px] print:text-[10.5px] uppercase tracking-tight text-black block leading-tight text-center">
+                                {(submission.diajukanOleh && submission.diajukanOleh !== 'Sri Ekowati') ? submission.diajukanOleh : 'Andi Dhiya Salsabila'}
+                              </span>
+                              <span className="font-bold text-[8.5px] sm:text-[9.5px] print:text-[9px] uppercase text-stone-900 block leading-tight text-center mt-0.5">
+                                {submission.diajukanJabatan || 'Keuangan'}
+                              </span>
+                            </td>
+                            <td className="border-r-2 border-black py-1 px-1 align-top">
+                              <span className="font-bold text-[10px] sm:text-[11px] print:text-[10.5px] uppercase tracking-tight text-black block leading-tight text-center">
+                                Sri Ekowati
+                              </span>
+                              <span className="font-bold text-[8.5px] sm:text-[9.5px] print:text-[9px] uppercase text-stone-900 block leading-tight text-center mt-0.5">
+                                Manager Keuangan
+                              </span>
+                            </td>
+                            <td className="border-r-2 border-black py-1 px-1 align-top">
+                              <span className="font-bold text-[10px] sm:text-[11px] print:text-[10.5px] uppercase tracking-tight text-black block leading-tight text-center">
+                                {f1Verifier === 'nursyam'
+                                  ? 'Andi Nursyam Halid'
+                                  : ((submission.diverifikasiOleh && submission.diverifikasiOleh !== 'Andi Dhiya Salsabila' && submission.diverifikasiOleh !== 'Sri Ekowati')
+                                    ? submission.diverifikasiOleh
+                                    : 'Andi Muhammad Rifki')}
+                              </span>
+                              <span className="font-bold text-[8.5px] sm:text-[9.5px] print:text-[9px] uppercase text-stone-900 block leading-tight text-center mt-0.5">
+                                {f1Verifier === 'nursyam'
+                                  ? 'Direktur Utama'
+                                  : ((submission.diverifikasiJabatan && submission.diverifikasiJabatan !== 'Keuangan') ? submission.diverifikasiJabatan : 'Direktur')}
+                              </span>
+                            </td>
+                            <td className="py-1 px-1 align-top">
+                              <span className="font-bold text-[10px] sm:text-[11px] print:text-[10.5px] uppercase tracking-tight text-black block leading-tight text-center">
+                                {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? submission.disetujuiOleh2 : 'Harijon'}
+                              </span>
+                              <span className="font-bold text-[8.5px] sm:text-[9.5px] print:text-[9px] uppercase text-stone-900 block leading-tight text-center mt-0.5">
+                                {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? (submission.disetujuiJabatan2 || 'Direktur Keuangan') : 'Direktur Keuangan'}
+                              </span>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="my-2 text-black">
+                      <div className="grid grid-cols-4 gap-1 text-center">
+                        <div className="flex flex-col items-center">
+                          <span className="font-sans font-semibold uppercase text-[10px] sm:text-[10.5px]">Diajukan</span>
+                          <div className="w-full h-8 sm:h-9" />
+                          <div className="w-full max-w-[145px] sm:max-w-[155px] border-b-2 border-black pb-0.5 flex items-center justify-center px-0.5">
+                            <span className="font-bold text-[10px] sm:text-[11px] print:text-[10.5px] uppercase tracking-tight whitespace-nowrap block">
+                              {(submission.diajukanOleh && submission.diajukanOleh !== 'Sri Ekowati') ? submission.diajukanOleh : 'Andi Dhiya Salsabila'}
+                            </span>
+                          </div>
+                          <span className="text-[8.5px] sm:text-[9px] text-stone-600 font-mono mt-0.5 uppercase whitespace-nowrap block">
+                            {submission.diajukanJabatan || 'Staff Keuangan'}
                           </span>
                         </div>
-                        <span className="text-[8.5px] sm:text-[9px] text-stone-600 font-mono mt-0.5 uppercase whitespace-nowrap block">
-                          {submission.diajukanJabatan || 'Staff Keuangan'}
-                        </span>
-                      </div>
 
-                      <div className="flex flex-col items-center">
-                        <span className="font-sans font-semibold uppercase text-[10px] sm:text-[10.5px]">Diverifikasi</span>
-                        <div className="w-full h-8 sm:h-9" />
-                        <div className="w-full max-w-[145px] sm:max-w-[155px] border-b-2 border-black pb-0.5 flex items-center justify-center px-0.5">
-                          <span className="font-bold text-[10px] sm:text-[11px] print:text-[10.5px] uppercase tracking-tight whitespace-nowrap block">
-                            Sri Ekowati
+                        <div className="flex flex-col items-center">
+                          <span className="font-sans font-semibold uppercase text-[10px] sm:text-[10.5px]">Diverifikasi</span>
+                          <div className="w-full h-8 sm:h-9" />
+                          <div className="w-full max-w-[145px] sm:max-w-[155px] border-b-2 border-black pb-0.5 flex items-center justify-center px-0.5">
+                            <span className="font-bold text-[10px] sm:text-[11px] print:text-[10.5px] uppercase tracking-tight whitespace-nowrap block">
+                              Sri Ekowati
+                            </span>
+                          </div>
+                          <span className="text-[8.5px] sm:text-[9px] text-stone-600 font-mono mt-0.5 uppercase whitespace-nowrap block">
+                            Manager Keuangan
                           </span>
                         </div>
-                        <span className="text-[8.5px] sm:text-[9px] text-stone-600 font-mono mt-0.5 uppercase whitespace-nowrap block">
-                          Manager Keuangan
-                        </span>
-                      </div>
 
-                      <div className="flex flex-col items-center">
-                        <span className="font-sans font-semibold uppercase text-[10px] sm:text-[10.5px]">Diverifikasi</span>
-                        <div className="w-full h-8 sm:h-9" />
-                        <div className="w-full max-w-[145px] sm:max-w-[155px] border-b-2 border-black pb-0.5 flex items-center justify-center px-0.5">
-                          <span className="font-bold text-[10px] sm:text-[11px] print:text-[10.5px] uppercase tracking-tight whitespace-nowrap block">
+                        <div className="flex flex-col items-center">
+                          <span className="font-sans font-semibold uppercase text-[10px] sm:text-[10.5px]">Diverifikasi</span>
+                          <div className="w-full h-8 sm:h-9" />
+                          <div className="w-full max-w-[145px] sm:max-w-[155px] border-b-2 border-black pb-0.5 flex items-center justify-center px-0.5">
+                            <span className="font-bold text-[10px] sm:text-[11px] print:text-[10.5px] uppercase tracking-tight whitespace-nowrap block">
+                              {f1Verifier === 'nursyam'
+                                ? 'Andi Nursyam Halid'
+                                : ((submission.diverifikasiOleh && submission.diverifikasiOleh !== 'Andi Dhiya Salsabila' && submission.diverifikasiOleh !== 'Sri Ekowati')
+                                  ? submission.diverifikasiOleh
+                                  : 'Andi Muhammad Rifki')}
+                            </span>
+                          </div>
+                          <span className="text-[8.5px] sm:text-[9px] text-stone-600 font-mono mt-0.5 uppercase whitespace-nowrap block">
                             {f1Verifier === 'nursyam'
-                              ? 'Andi Nursyam Halid'
-                              : ((submission.diverifikasiOleh && submission.diverifikasiOleh !== 'Andi Dhiya Salsabila' && submission.diverifikasiOleh !== 'Sri Ekowati')
-                                ? submission.diverifikasiOleh
-                                : 'Andi Muhammad Rifki')}
+                              ? 'Direktur Utama'
+                              : ((submission.diverifikasiJabatan && submission.diverifikasiJabatan !== 'Keuangan') ? submission.diverifikasiJabatan : 'Direktur')}
                           </span>
                         </div>
-                        <span className="text-[8.5px] sm:text-[9px] text-stone-600 font-mono mt-0.5 uppercase whitespace-nowrap block">
-                          {f1Verifier === 'nursyam'
-                            ? 'Direktur Utama'
-                            : ((submission.diverifikasiJabatan && submission.diverifikasiJabatan !== 'Keuangan') ? submission.diverifikasiJabatan : 'Direktur')}
-                        </span>
-                      </div>
 
-                      <div className="flex flex-col items-center">
-                        <span className="font-sans font-semibold uppercase text-[10px] sm:text-[10.5px]">Disetujui</span>
-                        <div className="w-full h-8 sm:h-9" />
-                        <div className="w-full max-w-[145px] sm:max-w-[155px] border-b-2 border-black pb-0.5 flex items-center justify-center px-0.5">
-                          <span className="font-bold text-[10px] sm:text-[11px] print:text-[10.5px] uppercase tracking-tight whitespace-nowrap block">
-                            {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? submission.disetujuiOleh2 : 'Harijon'}
+                        <div className="flex flex-col items-center">
+                          <span className="font-sans font-semibold uppercase text-[10px] sm:text-[10.5px]">Disetujui</span>
+                          <div className="w-full h-8 sm:h-9" />
+                          <div className="w-full max-w-[145px] sm:max-w-[155px] border-b-2 border-black pb-0.5 flex items-center justify-center px-0.5">
+                            <span className="font-bold text-[10px] sm:text-[11px] print:text-[10.5px] uppercase tracking-tight whitespace-nowrap block">
+                              {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? submission.disetujuiOleh2 : 'Harijon'}
+                            </span>
+                          </div>
+                          <span className="text-[8.5px] sm:text-[9px] text-stone-600 font-mono mt-0.5 uppercase whitespace-nowrap block">
+                            {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? (submission.disetujuiJabatan2 || 'Direktur Keuangan') : 'Direktur Keuangan'}
                           </span>
                         </div>
-                        <span className="text-[8.5px] sm:text-[9px] text-stone-600 font-mono mt-0.5 uppercase whitespace-nowrap block">
-                          {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? (submission.disetujuiJabatan2 || 'Direktur Keuangan') : 'Direktur Keuangan'}
-                        </span>
                       </div>
                     </div>
-                  </div>
+                  )}
 
                   {submission.notes && (
                     <div className="mt-1 text-xs">
@@ -2564,7 +2737,75 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                 {/* Bottom Content: Spacious Signatures & Notes */}
                 <div className="mt-auto pt-3">
                   {/* Signatures Row */}
-                  {f2ApprovedBy === 'none' ? (
+                  {signatureTableStyle === 'table' ? (
+                    f2ApprovedBy === 'none' ? (
+                      <div className={`text-black w-full max-w-xs mx-auto ${isUltraDenseF2 ? 'my-1' : isDenseF2 ? 'my-2' : isFewItemsF2 ? 'my-4' : 'my-3'}`}>
+                        <table className="w-full border-collapse border-2 border-black text-center font-sans">
+                          <thead>
+                            <tr className="border-b-2 border-black bg-white">
+                              <th className="py-1 px-2 font-bold uppercase tracking-wider text-[10px] sm:text-[11px] text-black">
+                                Dibuat Oleh
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr className="border-b-2 border-black">
+                              <td className={`${isUltraDenseF2 ? 'h-8' : isDenseF2 ? 'h-10' : 'h-12'}`} />
+                            </tr>
+                            <tr>
+                              <td className="py-1.5 px-2 align-top">
+                                <span className="font-bold text-[11px] sm:text-[12px] uppercase tracking-tight text-black block leading-tight text-center">
+                                  {submission.dibuatOleh || 'Nur Wahyudi'}
+                                </span>
+                                <span className="font-bold text-[9px] sm:text-[10px] uppercase text-stone-900 block leading-tight text-center mt-0.5">
+                                  Staff Keuangan
+                                </span>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className={`text-black w-full max-w-md mx-auto ${isUltraDenseF2 ? 'my-1' : isDenseF2 ? 'my-2' : isFewItemsF2 ? 'my-4' : 'my-3'}`}>
+                        <table className="w-full border-collapse border-2 border-black text-center font-sans table-fixed">
+                          <thead>
+                            <tr className="border-b-2 border-black bg-white">
+                              <th className="w-1/2 border-r-2 border-black py-1 px-2 font-bold uppercase tracking-wider text-[10px] sm:text-[11px] text-black">
+                                Dibuat Oleh
+                              </th>
+                              <th className="w-1/2 py-1 px-2 font-bold uppercase tracking-wider text-[10px] sm:text-[11px] text-black">
+                                Diajukan
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr className="border-b-2 border-black">
+                              <td className={`border-r-2 border-black ${isUltraDenseF2 ? 'h-8' : isDenseF2 ? 'h-10' : 'h-12'}`} />
+                              <td className={`${isUltraDenseF2 ? 'h-8' : isDenseF2 ? 'h-10' : 'h-12'}`} />
+                            </tr>
+                            <tr>
+                              <td className="border-r-2 border-black py-1.5 px-2 align-top">
+                                <span className="font-bold text-[11px] sm:text-[12px] uppercase tracking-tight text-black block leading-tight text-center">
+                                  {submission.dibuatOleh || 'Nur Wahyudi'}
+                                </span>
+                                <span className="font-bold text-[9px] sm:text-[10px] uppercase text-stone-900 block leading-tight text-center mt-0.5">
+                                  Staff Keuangan
+                                </span>
+                              </td>
+                              <td className="py-1.5 px-2 align-top">
+                                <span className="font-bold text-[11px] sm:text-[12px] uppercase tracking-tight text-black block leading-tight text-center">
+                                  {submission.diajukanOleh || 'Sri Ekowati'}
+                                </span>
+                                <span className="font-bold text-[9px] sm:text-[10px] uppercase text-stone-900 block leading-tight text-center mt-0.5">
+                                  {submission.diajukanJabatan || 'Manager Keuangan'}
+                                </span>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    )
+                  ) : f2ApprovedBy === 'none' ? (
                     <div className={`flex justify-center text-sm text-black ${isUltraDenseF2 ? 'mt-2 mb-1' : isDenseF2 ? 'mt-4 mb-2' : isFewItemsF2 ? 'mt-8 mb-4' : 'mt-6 mb-3'}`}>
                       <div className="flex flex-col items-center w-64 text-center">
                         <span className={`font-sans font-semibold uppercase tracking-wider ${isUltraDenseF2 ? 'text-[11px] mb-6' : isDenseF2 ? 'text-xs mb-8' : isFewItemsF2 ? 'text-xs sm:text-sm mb-24' : 'text-xs sm:text-sm mb-20'}`}>Dibuat Oleh</span>
@@ -2690,7 +2931,75 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                 </div>
 
                 <div>
-                  {f2ApprovedBy === 'none' ? (
+                  {signatureTableStyle === 'table' ? (
+                    f2ApprovedBy === 'none' ? (
+                      <div className="my-2 text-black w-full max-w-xs mx-auto">
+                        <table className="w-full border-collapse border-2 border-black text-center font-sans">
+                          <thead>
+                            <tr className="border-b-2 border-black bg-white">
+                              <th className="py-1 px-2 font-bold uppercase tracking-wider text-[10px] sm:text-[11px] text-black">
+                                Dibuat Oleh
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr className="border-b-2 border-black">
+                              <td className="h-8 sm:h-9" />
+                            </tr>
+                            <tr>
+                              <td className="py-1 px-2 align-top">
+                                <span className="font-bold text-[10.5px] sm:text-[11.5px] uppercase tracking-tight text-black block leading-tight text-center">
+                                  {submission.dibuatOleh || 'Nur Wahyudi'}
+                                </span>
+                                <span className="font-bold text-[8.5px] sm:text-[9.5px] uppercase text-stone-900 block leading-tight text-center mt-0.5">
+                                  Staff Keuangan
+                                </span>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className="my-2 text-black w-full max-w-md mx-auto">
+                        <table className="w-full border-collapse border-2 border-black text-center font-sans table-fixed">
+                          <thead>
+                            <tr className="border-b-2 border-black bg-white">
+                              <th className="w-1/2 border-r-2 border-black py-1 px-2 font-bold uppercase tracking-wider text-[10px] sm:text-[11px] text-black">
+                                Dibuat Oleh
+                              </th>
+                              <th className="w-1/2 py-1 px-2 font-bold uppercase tracking-wider text-[10px] sm:text-[11px] text-black">
+                                Diajukan
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr className="border-b-2 border-black">
+                              <td className="border-r-2 border-black h-8 sm:h-9" />
+                              <td className="h-8 sm:h-9" />
+                            </tr>
+                            <tr>
+                              <td className="border-r-2 border-black py-1 px-2 align-top">
+                                <span className="font-bold text-[10.5px] sm:text-[11.5px] uppercase tracking-tight text-black block leading-tight text-center">
+                                  {submission.dibuatOleh || 'Nur Wahyudi'}
+                                </span>
+                                <span className="font-bold text-[8.5px] sm:text-[9.5px] uppercase text-stone-900 block leading-tight text-center mt-0.5">
+                                  Staff Keuangan
+                                </span>
+                              </td>
+                              <td className="py-1 px-2 align-top">
+                                <span className="font-bold text-[10.5px] sm:text-[11.5px] uppercase tracking-tight text-black block leading-tight text-center">
+                                  {submission.diajukanOleh || 'Sri Ekowati'}
+                                </span>
+                                <span className="font-bold text-[8.5px] sm:text-[9.5px] uppercase text-stone-900 block leading-tight text-center mt-0.5">
+                                  {submission.diajukanJabatan || 'Manager Keuangan'}
+                                </span>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    )
+                  ) : f2ApprovedBy === 'none' ? (
                     <div className="flex justify-center mt-2 mb-1 text-xs sm:text-sm">
                       <div className="flex flex-col items-center text-center">
                         <span className="mb-10 font-medium uppercase text-xs">Dibuat Oleh</span>
@@ -2825,68 +3134,139 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                 </div>
 
                 <div>
-                  {/* 4 Signers: 1 Single Row (Diajukan: Andi Dhiya Salsabila, Diverifikasi: Sri Ekowati, Diverifikasi: Andi Muhammad Rifki, Disetujui: Harijon) */}
-                  <div className="my-2 text-black">
-                    <div className="grid grid-cols-4 gap-1 text-center">
-                      <div className="flex flex-col items-center">
-                        <span className="font-sans font-semibold uppercase text-[10px] sm:text-[10.5px]">Diajukan</span>
-                        <div className="w-full h-8 sm:h-9" />
-                        <div className="w-full max-w-[145px] sm:max-w-[155px] border-b-2 border-black pb-0.5 flex items-center justify-center px-0.5">
-                          <span className="font-bold text-[10px] sm:text-[11px] print:text-[10.5px] uppercase tracking-tight whitespace-nowrap block">
-                            {(submission.diajukanOleh && submission.diajukanOleh !== 'Sri Ekowati') ? submission.diajukanOleh : 'Andi Dhiya Salsabila'}
+                  {/* 4 Signers: Table or Line layout */}
+                  {signatureTableStyle === 'table' ? (
+                    <div className="my-2 text-black w-full">
+                      <table className="w-full border-collapse border-2 border-black text-center font-sans table-fixed">
+                        <thead>
+                          <tr className="border-b-2 border-black bg-white">
+                            <th className="w-1/4 border-r-2 border-black py-1 px-1 font-bold uppercase tracking-wider text-[10px] sm:text-[10.5px] print:text-[10.5px] text-black">
+                              Diajukan
+                            </th>
+                            <th className="w-1/4 border-r-2 border-black py-1 px-1 font-bold uppercase tracking-wider text-[10px] sm:text-[10.5px] print:text-[10.5px] text-black">
+                              Diverifikasi
+                            </th>
+                            <th className="w-1/4 border-r-2 border-black py-1 px-1 font-bold uppercase tracking-wider text-[10px] sm:text-[10.5px] print:text-[10.5px] text-black">
+                              Diverifikasi
+                            </th>
+                            <th className="w-1/4 py-1 px-1 font-bold uppercase tracking-wider text-[10px] sm:text-[10.5px] print:text-[10.5px] text-black">
+                              Disetujui
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr className="border-b-2 border-black">
+                            <td className="border-r-2 border-black h-8 sm:h-9" />
+                            <td className="border-r-2 border-black h-8 sm:h-9" />
+                            <td className="border-r-2 border-black h-8 sm:h-9" />
+                            <td className="h-8 sm:h-9" />
+                          </tr>
+                          <tr>
+                            <td className="border-r-2 border-black py-1 px-1 align-top">
+                              <span className="font-bold text-[10px] sm:text-[11px] print:text-[10.5px] uppercase tracking-tight text-black block leading-tight text-center">
+                                {(submission.diajukanOleh && submission.diajukanOleh !== 'Sri Ekowati') ? submission.diajukanOleh : 'Andi Dhiya Salsabila'}
+                              </span>
+                              <span className="font-bold text-[8.5px] sm:text-[9.5px] print:text-[9px] uppercase text-stone-900 block leading-tight text-center mt-0.5">
+                                {submission.diajukanJabatan || 'Keuangan'}
+                              </span>
+                            </td>
+                            <td className="border-r-2 border-black py-1 px-1 align-top">
+                              <span className="font-bold text-[10px] sm:text-[11px] print:text-[10.5px] uppercase tracking-tight text-black block leading-tight text-center">
+                                Sri Ekowati
+                              </span>
+                              <span className="font-bold text-[8.5px] sm:text-[9.5px] print:text-[9px] uppercase text-stone-900 block leading-tight text-center mt-0.5">
+                                Manager Keuangan
+                              </span>
+                            </td>
+                            <td className="border-r-2 border-black py-1 px-1 align-top">
+                              <span className="font-bold text-[10px] sm:text-[11px] print:text-[10.5px] uppercase tracking-tight text-black block leading-tight text-center">
+                                {f1Verifier === 'nursyam'
+                                  ? 'Andi Nursyam Halid'
+                                  : ((submission.diverifikasiOleh && submission.diverifikasiOleh !== 'Andi Dhiya Salsabila' && submission.diverifikasiOleh !== 'Sri Ekowati')
+                                    ? submission.diverifikasiOleh
+                                    : 'Andi Muhammad Rifki')}
+                              </span>
+                              <span className="font-bold text-[8.5px] sm:text-[9.5px] print:text-[9px] uppercase text-stone-900 block leading-tight text-center mt-0.5">
+                                {f1Verifier === 'nursyam'
+                                  ? 'Direktur Utama'
+                                  : ((submission.diverifikasiJabatan && submission.diverifikasiJabatan !== 'Keuangan') ? submission.diverifikasiJabatan : 'Direktur')}
+                              </span>
+                            </td>
+                            <td className="py-1 px-1 align-top">
+                              <span className="font-bold text-[10px] sm:text-[11px] print:text-[10.5px] uppercase tracking-tight text-black block leading-tight text-center">
+                                {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? submission.disetujuiOleh2 : 'Harijon'}
+                              </span>
+                              <span className="font-bold text-[8.5px] sm:text-[9.5px] print:text-[9px] uppercase text-stone-900 block leading-tight text-center mt-0.5">
+                                {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? (submission.disetujuiJabatan2 || 'Direktur Keuangan') : 'Direktur Keuangan'}
+                              </span>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="my-2 text-black">
+                      <div className="grid grid-cols-4 gap-1 text-center">
+                        <div className="flex flex-col items-center">
+                          <span className="font-sans font-semibold uppercase text-[10px] sm:text-[10.5px]">Diajukan</span>
+                          <div className="w-full h-8 sm:h-9" />
+                          <div className="w-full max-w-[145px] sm:max-w-[155px] border-b-2 border-black pb-0.5 flex items-center justify-center px-0.5">
+                            <span className="font-bold text-[10px] sm:text-[11px] print:text-[10.5px] uppercase tracking-tight whitespace-nowrap block">
+                              {(submission.diajukanOleh && submission.diajukanOleh !== 'Sri Ekowati') ? submission.diajukanOleh : 'Andi Dhiya Salsabila'}
+                            </span>
+                          </div>
+                          <span className="text-[8.5px] sm:text-[9px] text-stone-600 font-mono mt-0.5 uppercase whitespace-nowrap block">
+                            {submission.diajukanJabatan || 'Staff Keuangan'}
                           </span>
                         </div>
-                        <span className="text-[8.5px] sm:text-[9px] text-stone-600 font-mono mt-0.5 uppercase whitespace-nowrap block">
-                          {submission.diajukanJabatan || 'Staff Keuangan'}
-                        </span>
-                      </div>
 
-                      <div className="flex flex-col items-center">
-                        <span className="font-sans font-semibold uppercase text-[10px] sm:text-[10.5px]">Diverifikasi</span>
-                        <div className="w-full h-8 sm:h-9" />
-                        <div className="w-full max-w-[145px] sm:max-w-[155px] border-b-2 border-black pb-0.5 flex items-center justify-center px-0.5">
-                          <span className="font-bold text-[10px] sm:text-[11px] print:text-[10.5px] uppercase tracking-tight whitespace-nowrap block">
-                            Sri Ekowati
+                        <div className="flex flex-col items-center">
+                          <span className="font-sans font-semibold uppercase text-[10px] sm:text-[10.5px]">Diverifikasi</span>
+                          <div className="w-full h-8 sm:h-9" />
+                          <div className="w-full max-w-[145px] sm:max-w-[155px] border-b-2 border-black pb-0.5 flex items-center justify-center px-0.5">
+                            <span className="font-bold text-[10px] sm:text-[11px] print:text-[10.5px] uppercase tracking-tight whitespace-nowrap block">
+                              Sri Ekowati
+                            </span>
+                          </div>
+                          <span className="text-[8.5px] sm:text-[9px] text-stone-600 font-mono mt-0.5 uppercase whitespace-nowrap block">
+                            Manager Keuangan
                           </span>
                         </div>
-                        <span className="text-[8.5px] sm:text-[9px] text-stone-600 font-mono mt-0.5 uppercase whitespace-nowrap block">
-                          Manager Keuangan
-                        </span>
-                      </div>
 
-                      <div className="flex flex-col items-center">
-                        <span className="font-sans font-semibold uppercase text-[10px] sm:text-[10.5px]">Diverifikasi</span>
-                        <div className="w-full h-8 sm:h-9" />
-                        <div className="w-full max-w-[145px] sm:max-w-[155px] border-b-2 border-black pb-0.5 flex items-center justify-center px-0.5">
-                          <span className="font-bold text-[10px] sm:text-[11px] print:text-[10.5px] uppercase tracking-tight whitespace-nowrap block">
+                        <div className="flex flex-col items-center">
+                          <span className="font-sans font-semibold uppercase text-[10px] sm:text-[10.5px]">Diverifikasi</span>
+                          <div className="w-full h-8 sm:h-9" />
+                          <div className="w-full max-w-[145px] sm:max-w-[155px] border-b-2 border-black pb-0.5 flex items-center justify-center px-0.5">
+                            <span className="font-bold text-[10px] sm:text-[11px] print:text-[10.5px] uppercase tracking-tight whitespace-nowrap block">
+                              {f1Verifier === 'nursyam'
+                                ? 'Andi Nursyam Halid'
+                                : ((submission.diverifikasiOleh && submission.diverifikasiOleh !== 'Andi Dhiya Salsabila' && submission.diverifikasiOleh !== 'Sri Ekowati')
+                                  ? submission.diverifikasiOleh
+                                  : 'Andi Muhammad Rifki')}
+                            </span>
+                          </div>
+                          <span className="text-[8.5px] sm:text-[9px] text-stone-600 font-mono mt-0.5 uppercase whitespace-nowrap block">
                             {f1Verifier === 'nursyam'
-                              ? 'Andi Nursyam Halid'
-                              : ((submission.diverifikasiOleh && submission.diverifikasiOleh !== 'Andi Dhiya Salsabila' && submission.diverifikasiOleh !== 'Sri Ekowati')
-                                ? submission.diverifikasiOleh
-                                : 'Andi Muhammad Rifki')}
+                              ? 'Direktur Utama'
+                              : ((submission.diverifikasiJabatan && submission.diverifikasiJabatan !== 'Keuangan') ? submission.diverifikasiJabatan : 'Direktur')}
                           </span>
                         </div>
-                        <span className="text-[8.5px] sm:text-[9px] text-stone-600 font-mono mt-0.5 uppercase whitespace-nowrap block">
-                          {f1Verifier === 'nursyam'
-                            ? 'Direktur Utama'
-                            : ((submission.diverifikasiJabatan && submission.diverifikasiJabatan !== 'Keuangan') ? submission.diverifikasiJabatan : 'Direktur')}
-                        </span>
-                      </div>
 
-                      <div className="flex flex-col items-center">
-                        <span className="font-sans font-semibold uppercase text-[10px] sm:text-[10.5px]">Disetujui</span>
-                        <div className="w-full h-8 sm:h-9" />
-                        <div className="w-full max-w-[145px] sm:max-w-[155px] border-b-2 border-black pb-0.5 flex items-center justify-center px-0.5">
-                          <span className="font-bold text-[10px] sm:text-[11px] print:text-[10.5px] uppercase tracking-tight whitespace-nowrap block">
-                            {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? submission.disetujuiOleh2 : 'Harijon'}
+                        <div className="flex flex-col items-center">
+                          <span className="font-sans font-semibold uppercase text-[10px] sm:text-[10.5px]">Disetujui</span>
+                          <div className="w-full h-8 sm:h-9" />
+                          <div className="w-full max-w-[145px] sm:max-w-[155px] border-b-2 border-black pb-0.5 flex items-center justify-center px-0.5">
+                            <span className="font-bold text-[10px] sm:text-[11px] print:text-[10.5px] uppercase tracking-tight whitespace-nowrap block">
+                              {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? submission.disetujuiOleh2 : 'Harijon'}
+                            </span>
+                          </div>
+                          <span className="text-[8.5px] sm:text-[9px] text-stone-600 font-mono mt-0.5 uppercase whitespace-nowrap block">
+                            {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? (submission.disetujuiJabatan2 || 'Direktur Keuangan') : 'Direktur Keuangan'}
                           </span>
                         </div>
-                        <span className="text-[8.5px] sm:text-[9px] text-stone-600 font-mono mt-0.5 uppercase whitespace-nowrap block">
-                          {(submission.disetujuiOleh2 && !submission.disetujuiOleh2.toLowerCase().includes('nursyam')) ? (submission.disetujuiJabatan2 || 'Direktur Keuangan') : 'Direktur Keuangan'}
-                        </span>
                       </div>
                     </div>
-                  </div>
+                  )}
 
                   {submission.notes && (
                     <div className="mt-1 text-xs">
@@ -2977,7 +3357,75 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                   </div>
 
                   <div>
-                    {f2ApprovedBy === 'none' ? (
+                    {signatureTableStyle === 'table' ? (
+                      f2ApprovedBy === 'none' ? (
+                        <div className="my-2 text-black w-full max-w-xs mx-auto">
+                          <table className="w-full border-collapse border-2 border-black text-center font-sans">
+                            <thead>
+                              <tr className="border-b-2 border-black bg-white">
+                                <th className="py-1 px-2 font-bold uppercase tracking-wider text-[10px] sm:text-[11px] text-black">
+                                  Dibuat Oleh
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr className="border-b-2 border-black">
+                                <td className="h-8 sm:h-9" />
+                              </tr>
+                              <tr>
+                                <td className="py-1 px-2 align-top">
+                                  <span className="font-bold text-[10.5px] sm:text-[11.5px] uppercase tracking-tight text-black block leading-tight text-center">
+                                    {submission.dibuatOleh || 'Nur Wahyudi'}
+                                  </span>
+                                  <span className="font-bold text-[8.5px] sm:text-[9.5px] uppercase text-stone-900 block leading-tight text-center mt-0.5">
+                                    Staff Keuangan
+                                  </span>
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <div className="my-2 text-black w-full max-w-md mx-auto">
+                          <table className="w-full border-collapse border-2 border-black text-center font-sans table-fixed">
+                            <thead>
+                              <tr className="border-b-2 border-black bg-white">
+                                <th className="w-1/2 border-r-2 border-black py-1 px-2 font-bold uppercase tracking-wider text-[10px] sm:text-[11px] text-black">
+                                  Dibuat Oleh
+                                </th>
+                                <th className="w-1/2 py-1 px-2 font-bold uppercase tracking-wider text-[10px] sm:text-[11px] text-black">
+                                  Diajukan
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr className="border-b-2 border-black">
+                                <td className="border-r-2 border-black h-8 sm:h-9" />
+                                <td className="h-8 sm:h-9" />
+                              </tr>
+                              <tr>
+                                <td className="border-r-2 border-black py-1 px-2 align-top">
+                                  <span className="font-bold text-[10.5px] sm:text-[11.5px] uppercase tracking-tight text-black block leading-tight text-center">
+                                    {submission.dibuatOleh || 'Nur Wahyudi'}
+                                  </span>
+                                  <span className="font-bold text-[8.5px] sm:text-[9.5px] uppercase text-stone-900 block leading-tight text-center mt-0.5">
+                                    Staff Keuangan
+                                  </span>
+                                </td>
+                                <td className="py-1 px-2 align-top">
+                                  <span className="font-bold text-[10.5px] sm:text-[11.5px] uppercase tracking-tight text-black block leading-tight text-center">
+                                    {submission.diajukanOleh || 'Sri Ekowati'}
+                                  </span>
+                                  <span className="font-bold text-[8.5px] sm:text-[9.5px] uppercase text-stone-900 block leading-tight text-center mt-0.5">
+                                    {submission.diajukanJabatan || 'Manager Keuangan'}
+                                  </span>
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      )
+                    ) : f2ApprovedBy === 'none' ? (
                       <div className="flex justify-center mt-2 mb-1 text-xs sm:text-sm">
                         <div className="flex flex-col items-center text-center">
                           <span className="mb-10 font-medium uppercase text-xs">Dibuat Oleh</span>
