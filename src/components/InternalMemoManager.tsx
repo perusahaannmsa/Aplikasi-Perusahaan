@@ -404,7 +404,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
 
       {/* VIEW 1: EDITOR MEMO (Form on left, Live A4 Preview on right) */}
       {activeTab === 'editor' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start print:block print:w-full print:p-0 print:m-0">
           {/* FORM CONTROLS (Left side 5 cols on lg) */}
           <div className="lg:col-span-5 bg-white p-5 sm:p-6 rounded-2xl border border-stone-200 shadow-sm space-y-5 print:hidden">
             {/* Quick Actions Header */}
@@ -1069,7 +1069,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
           </div>
 
           {/* LIVE A4 DOCUMENT PREVIEW (Right side 7 cols on lg) */}
-          <div className="lg:col-span-7 flex flex-col items-center">
+          <div className="lg:col-span-7 flex flex-col items-center print:block print:w-full print:p-0 print:m-0">
             <div className="w-full flex items-center justify-between mb-3 px-1 print:hidden">
               <span className="text-xs font-bold text-stone-500 font-mono">
                 Pratinjau Resmi Lembar A4 (Siap Cetak / PDF)
@@ -1084,8 +1084,8 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
             </div>
 
             {/* Document wrapper */}
-            <div className="w-full overflow-x-auto pb-6">
-              <div className="min-w-[650px] sm:min-w-[700px] max-w-[800px] mx-auto print:min-w-0 print:w-full print:m-0">
+            <div className="w-full overflow-x-auto pb-6 print:overflow-visible print:p-0 print:m-0">
+              <div className="min-w-[650px] sm:min-w-[700px] max-w-[800px] mx-auto print:min-w-0 print:w-full print:max-w-none print:m-0 print:p-0">
                 <InternalMemoDocument
                   memo={currentMemo}
                   customLogoUrl={userProfile?.companyDetails?.logoUrl}

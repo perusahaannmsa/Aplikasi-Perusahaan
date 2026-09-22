@@ -107,7 +107,11 @@ export function cleanSingleLine(text: string | null | undefined): string {
   return sanitizeString(flattened);
 }
 
-export async function generateF1PdfBytes(submission: any, grandTotal: number): Promise<Uint8Array> {
+export async function generateF1PdfBytes(
+  submission: any,
+  grandTotal: number,
+  customSigners?: Array<{ title: string; name: string; role: string }>
+): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.create();
   const page = pdfDoc.addPage([595.27, 841.89]);
   
@@ -260,48 +264,69 @@ export async function generateF1PdfBytes(submission: any, grandTotal: number): P
   const sigGap = scale < 0.75 ? 65 : (items.length <= 3 ? 90 : 80);
   const sigY = curY - sigGap;
 
-  // Signer 1: Diajukan (Andi Dhiya Salsabila)
-  const applicantName = cleanSingleLine(
-    (submission.diajukanOleh && submission.diajukanOleh !== 'Sri Ekowati')
-      ? submission.diajukanOleh
-      : 'Andi Dhiya Salsabila'
-  );
-  const applicantRole = cleanSingleLine(submission.diajukanJabatan || 'Staff Keuangan');
+  let signers = customSigners;
+  if (!signers && typeof window !== 'undefined' && window.localStorage) {
+    try {
+      const saved = localStorage.getItem('nmsa_custom_f1_signers_config');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length === 4) {
+          signers = parsed;
+        }
+      }
+    } catch (_) {}
+  }
 
-  // Signer 2: Diverifikasi (Sri Ekowati)
-  const verifier1Name = 'Sri Ekowati';
-  const verifier1Role = 'Manager Keuangan';
+  if (!signers || signers.length !== 4) {
+    // Signer 1: Diajukan (Andi Dhiya Salsabila)
+    const applicantName = cleanSingleLine(
+      (submission.diajukanOleh && submission.diajukanOleh !== 'Sri Ekowati')
+        ? submission.diajukanOleh
+        : 'Andi Dhiya Salsabila'
+    );
+    const applicantRole = cleanSingleLine(submission.diajukanJabatan || 'Staff Keuangan');
 
-  // Signer 3: Diverifikasi (Andi Muhammad Rifki)
-  const verifierRaw = submission.diverifikasiOleh;
-  const isVerifierNursyam = verifierRaw?.toLowerCase().includes('nursyam') || submission.disetujuiOleh2?.toLowerCase().includes('nursyam');
-  const verifier2Name = cleanSingleLine(
-    isVerifierNursyam
-      ? 'Andi Nursyam Halid'
-      : (verifierRaw && verifierRaw !== 'Andi Dhiya Salsabila' && verifierRaw !== 'Sri Ekowati'
-        ? verifierRaw
-        : 'Andi Muhammad Rifki')
-  );
-  const verifier2Role = cleanSingleLine(
-    isVerifierNursyam
-      ? 'Direktur Utama'
-      : (submission.diverifikasiJabatan && submission.diverifikasiJabatan !== 'Keuangan'
-        ? submission.diverifikasiJabatan
-        : 'Direktur')
-  );
+    // Signer 2: Diverifikasi (Sri Ekowati)
+    const verifier1Name = 'Sri Ekowati';
+    const verifier1Role = 'Manager Keuangan';
 
-  // Signer 4: Disetujui (Harijon)
-  const rawApprover2 = submission.disetujuiOleh2;
-  const isNursyam = rawApprover2 && rawApprover2.toLowerCase().includes('nursyam');
-  const approverName = cleanSingleLine(isNursyam || !rawApprover2 ? 'Harijon' : rawApprover2);
-  const approverRole = cleanSingleLine(isNursyam || !submission.disetujuiJabatan2 ? 'Direktur Keuangan' : submission.disetujuiJabatan2);
+    // Signer 3: Diverifikasi (Andi Muhammad Rifki)
+    const verifierRaw = submission.diverifikasiOleh;
+    const isVerifierNursyam = verifierRaw?.toLowerCase().includes('nursyam') || submission.disetujuiOleh2?.toLowerCase().includes('nursyam');
+    const verifier2Name = cleanSingleLine(
+      isVerifierNursyam
+        ? 'Andi Nursyam Halid'
+        : (verifierRaw && verifierRaw !== 'Andi Dhiya Salsabila' && verifierRaw !== 'Sri Ekowati'
+          ? verifierRaw
+          : 'Andi Muhammad Rifki')
+    );
+    const verifier2Role = cleanSingleLine(
+      isVerifierNursyam
+        ? 'Direktur Utama'
+        : (submission.diverifikasiJabatan && submission.diverifikasiJabatan !== 'Keuangan'
+          ? submission.diverifikasiJabatan
+          : 'Direktur')
+    );
 
-  const signers = [
-    { title: 'Diajukan', name: applicantName, role: applicantRole },
-    { title: 'Diverifikasi', name: verifier1Name, role: verifier1Role },
-    { title: 'Diverifikasi', name: verifier2Name, role: verifier2Role },
-    { title: 'Disetujui', name: approverName, role: approverRole },
-  ];
+    // Signer 4: Disetujui (Harijon)
+    const rawApprover2 = submission.disetujuiOleh2;
+    const isNursyam = rawApprover2 && rawApprover2.toLowerCase().includes('nursyam');
+    const approverName = cleanSingleLine(isNursyam || !rawApprover2 ? 'Harijon' : rawApprover2);
+    const approverRole = cleanSingleLine(isNursyam || !submission.disetujuiJabatan2 ? 'Direktur Keuangan' : submission.disetujuiJabatan2);
+
+    signers = [
+      { title: 'Diajukan', name: applicantName, role: applicantRole },
+      { title: 'Diverifikasi', name: verifier1Name, role: verifier1Role },
+      { title: 'Diverifikasi', name: verifier2Name, role: verifier2Role },
+      { title: 'Disetujui', name: approverName, role: approverRole },
+    ];
+  } else {
+    signers = signers.map(s => ({
+      title: cleanSingleLine(s.title),
+      name: cleanSingleLine(s.name),
+      role: cleanSingleLine(s.role),
+    }));
+  }
 
   // Dynamically maximize font size so all 4 names are as large as possible without clipping
   const maxAllowedWidth = blockW - 10;
@@ -380,7 +405,12 @@ export async function generateF1PdfBytes(submission: any, grandTotal: number): P
   return await pdfDoc.save();
 }
 
-export async function generateF2PdfBytes(submission: any, grandTotal: number): Promise<Uint8Array> {
+export async function generateF2PdfBytes(
+  submission: any,
+  grandTotal: number,
+  customSigners?: Array<{ title: string; name: string; role: string }>,
+  showApproved: boolean = false
+): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.create();
   const page = pdfDoc.addPage([595.27, 841.89]);
   
@@ -520,19 +550,51 @@ export async function generateF2PdfBytes(submission: any, grandTotal: number): P
   // Signatures
   const f2SigGap = scaleF2 < 0.75 ? 65 : (items.length <= 4 ? 90 : 80);
   const sigY = curY - f2SigGap;
-  const f2Dibuat = cleanSingleLine(submission.dibuatOleh || 'Nur Wahyudi');
-  const f2DiajukanName = cleanSingleLine(submission.diajukanOleh || 'Sri Ekowati');
-  const f2DiajukanRole = cleanSingleLine(submission.diajukanJabatan || 'Manager Keuangan');
 
-  page.drawText('Dibuat Oleh', { x: 90, y: curY - 25, size: 10, font: fontRegular });
-  page.drawText(f2Dibuat, { x: 70, y: sigY, size: 10, font: fontBold });
-  page.drawLine({ start: { x: 60, y: sigY - 2 }, end: { x: 200, y: sigY - 2 }, thickness: 1 });
-  page.drawText('Staff Keuangan', { x: 90, y: sigY - 14, size: 8, font: fontRegular });
-  
-  page.drawText('Diajukan', { x: 410, y: curY - 25, size: 10, font: fontRegular });
-  page.drawText(f2DiajukanName, { x: 375, y: sigY, size: 10, font: fontBold });
-  page.drawLine({ start: { x: 370, y: sigY - 2 }, end: { x: 500, y: sigY - 2 }, thickness: 1 });
-  page.drawText(f2DiajukanRole, { x: 405, y: sigY - 14, size: 8, font: fontRegular });
+  let f2Signers = customSigners;
+  if (!f2Signers && typeof window !== 'undefined' && window.localStorage) {
+    try {
+      const saved = localStorage.getItem('nmsa_custom_f2_signers_config');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length >= 1) {
+          f2Signers = parsed;
+        }
+      }
+    } catch (_) {}
+  }
+
+  const s1Title = cleanSingleLine(f2Signers?.[0]?.title || 'Dibuat Oleh');
+  const s1Name = cleanSingleLine(f2Signers?.[0]?.name || submission.dibuatOleh || 'Nur Wahyudi');
+  const s1Role = cleanSingleLine(f2Signers?.[0]?.role || 'Staff Keuangan');
+
+  const s2Title = cleanSingleLine(f2Signers?.[1]?.title || 'Diajukan');
+  const s2Name = cleanSingleLine(f2Signers?.[1]?.name || submission.diajukanOleh || 'Sri Ekowati');
+  const s2Role = cleanSingleLine(f2Signers?.[1]?.role || submission.diajukanJabatan || 'Manager Keuangan');
+
+  if (!showApproved) {
+    // 1 signer centered
+    const centerBoxW = 160;
+    const centerX = 40 + (515 - centerBoxW) / 2;
+    const titleW = fontRegular.widthOfTextAtSize(s1Title, 10);
+    page.drawText(s1Title, { x: centerX + (centerBoxW - titleW) / 2, y: curY - 25, size: 10, font: fontRegular });
+    const nameW = fontBold.widthOfTextAtSize(s1Name, 10);
+    page.drawText(s1Name, { x: centerX + (centerBoxW - nameW) / 2, y: sigY, size: 10, font: fontBold });
+    page.drawLine({ start: { x: centerX, y: sigY - 2 }, end: { x: centerX + centerBoxW, y: sigY - 2 }, thickness: 1 });
+    const roleW = fontRegular.widthOfTextAtSize(s1Role, 8);
+    page.drawText(s1Role, { x: centerX + (centerBoxW - roleW) / 2, y: sigY - 14, size: 8, font: fontRegular });
+  } else {
+    // 2 signers: Dibuat Oleh (left) and Diajukan (right)
+    page.drawText(s1Title, { x: 90, y: curY - 25, size: 10, font: fontRegular });
+    page.drawText(s1Name, { x: 70, y: sigY, size: 10, font: fontBold });
+    page.drawLine({ start: { x: 60, y: sigY - 2 }, end: { x: 200, y: sigY - 2 }, thickness: 1 });
+    page.drawText(s1Role, { x: 90, y: sigY - 14, size: 8, font: fontRegular });
+    
+    page.drawText(s2Title, { x: 410, y: curY - 25, size: 10, font: fontRegular });
+    page.drawText(s2Name, { x: 375, y: sigY, size: 10, font: fontBold });
+    page.drawLine({ start: { x: 370, y: sigY - 2 }, end: { x: 500, y: sigY - 2 }, thickness: 1 });
+    page.drawText(s2Role, { x: 405, y: sigY - 14, size: 8, font: fontRegular });
+  }
   
   // Notes block
   const f2NoteY = sigY - (scaleF2 < 0.75 ? 40 : 50);

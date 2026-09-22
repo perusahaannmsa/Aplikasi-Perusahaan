@@ -165,6 +165,18 @@
     page-break-inside: avoid !important;
     break-inside: avoid !important;
   }
+  .internal-memo-page {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+    height: auto !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
   #printable-submissions-table,
   .print-only-container {
     display: block !important;
