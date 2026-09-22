@@ -6,9 +6,7 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import { google } from "googleapis";
 import dotenv from "dotenv";
-import { createRequire } from "module";
-const require = createRequire(import.meta.url);
-const { PDFParse } = require("pdf-parse");
+import { PDFParse } from "pdf-parse";
 import { 
   initWhatsApp, 
   getWhatsAppStatus, 
@@ -4078,7 +4076,8 @@ app.get(["/shared-view*", "/voucher/:id*"], async (req, res, next) => {
 });
 
 async function bootstrap() {
-  if (process.env.NODE_ENV !== "production") {
+  const isDev = process.env.NODE_ENV !== "production" && Boolean(process.env.APPLET_ID);
+  if (isDev) {
     console.log("Starting dev server with Vite middleware...");
     const vite = await createViteServer({
       server: { middlewareMode: true },
