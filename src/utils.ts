@@ -230,6 +230,11 @@ export async function generateF1PdfBytes(submission: any, grandTotal: number): P
   page.drawLine({ start: { x: 390, y: curY }, end: { x: 390, y: curY - 25 }, thickness: 1.5 });
   page.drawText('Total', { x: 50, y: curY - 17, size: 10, font: fontBold });
   page.drawText('Rp ' + formatRupiah(grandTotal), { x: 400, y: curY - 17, size: 10, font: fontBold });
+  
+  // Explicitly ensure outer vertical boundaries (especially right closure line) are solid
+  page.drawLine({ start: { x: 555, y: 555 }, end: { x: 555, y: curY - 25 }, thickness: 1.5 });
+  page.drawLine({ start: { x: 40, y: 555 }, end: { x: 40, y: curY - 25 }, thickness: 1.5 });
+
   curY -= 25;
 
   // Draw Terbilang
@@ -458,6 +463,10 @@ export async function generateF2PdfBytes(submission: any, grandTotal: number): P
   page.drawText('TOTAL PENYERAHAN', { x: 150, y: curY - 17, size: 9, font: fontBold });
   page.drawText(formatRupiah(grandTotal), { x: 395, y: curY - 17, size: 9, font: fontBold });
   
+  // Explicitly ensure outer vertical boundaries (especially right closure line) are solid
+  page.drawLine({ start: { x: 555, y: 600 }, end: { x: 555, y: curY - 25 }, thickness: 1.5 });
+  page.drawLine({ start: { x: 40, y: 600 }, end: { x: 40, y: curY - 25 }, thickness: 1.5 });
+
   curY -= 25;
   
   // Signatures

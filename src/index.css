@@ -174,7 +174,33 @@
     page-break-inside: auto !important;
     break-inside: auto !important;
     width: 100% !important;
+    max-width: 100% !important;
     border-collapse: collapse !important;
+    box-sizing: border-box !important;
+  }
+  table, table th, table td {
+    box-sizing: border-box !important;
+  }
+  .voucher-table-wrapper {
+    width: 100% !important;
+    padding-right: 2px !important;
+    padding-left: 1px !important;
+    box-sizing: border-box !important;
+    overflow: visible !important;
+  }
+  .voucher-table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    box-sizing: border-box !important;
+    border: 2px solid #000000 !important;
+  }
+  .voucher-table th:last-child,
+  .voucher-table td:last-child {
+    border-right: 2px solid #000000 !important;
+  }
+  .voucher-table th:first-child,
+  .voucher-table td:first-child {
+    border-left: 2px solid #000000 !important;
   }
   thead {
     display: table-header-group !important;

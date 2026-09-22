@@ -2159,21 +2159,21 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                     </div>
 
                     {/* Table Voucher */}
-                    <div className={isUltraDenseF1 ? 'mb-2' : isDenseF1 ? 'mb-3' : 'mb-4'}>
-                      <table className="w-full border-collapse border-[1.5px] border-black text-sm">
+                    <div className={`voucher-table-wrapper w-full pr-[2px] pl-[1px] box-border ${isUltraDenseF1 ? 'mb-2' : isDenseF1 ? 'mb-3' : 'mb-4'}`}>
+                      <table className="voucher-table w-full border-collapse border-2 border-black text-sm box-border">
                         <thead>
-                          <tr className="bg-stone-100 border-b-[1.5px] border-black text-black font-bold uppercase text-xs">
-                            <th className="border-l-[1.5px] border-r border-black py-2.5 px-4 text-left">JENIS PENGAJUAN</th>
-                            <th className="border-r-[1.5px] border-black py-2.5 px-4 text-right w-64">JUMLAH</th>
+                          <tr className="bg-stone-100 border-b-2 border-black text-black font-bold uppercase text-xs">
+                            <th className="border-l-2 border-r-2 border-black py-2.5 px-4 text-left">JENIS PENGAJUAN</th>
+                            <th className="border-r-2 border-black py-2.5 px-4 text-right w-64">JUMLAH</th>
                           </tr>
                         </thead>
                         <tbody>
                           {submission.items.map((item) => (
                             <tr key={item.id} className="border-b border-black text-black">
-                              <td className={`border-l-[1.5px] border-r border-black ${isUltraDenseF1 ? 'py-1 px-2.5 text-[11px]' : isDenseF1 ? 'py-2 px-3 text-xs' : 'py-2.5 px-4 text-sm'} leading-relaxed font-semibold`}>
+                              <td className={`border-l-2 border-r-2 border-black ${isUltraDenseF1 ? 'py-1 px-2.5 text-[11px]' : isDenseF1 ? 'py-2 px-3 text-xs' : 'py-2.5 px-4 text-sm'} leading-relaxed font-semibold`}>
                                 {item.item}
                               </td>
-                              <td className={`border-r-[1.5px] border-black py-2 px-4 text-right font-mono font-bold ${isUltraDenseF1 ? 'text-xs' : isDenseF1 ? 'text-sm' : 'text-base'}`}>
+                              <td className={`border-r-2 border-black py-2 px-4 text-right font-mono font-bold ${isUltraDenseF1 ? 'text-xs' : isDenseF1 ? 'text-sm' : 'text-base'}`}>
                                 <div className="flex items-center justify-between">
                                   <span>Rp</span>
                                   <span>{formatRupiah(item.total)}</span>
@@ -2182,11 +2182,11 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                             </tr>
                           ))}
                           
-                          <tr className="border-t-[1.5px] border-b-[1.5px] border-black font-bold text-black bg-stone-50">
-                            <td className="border-l-[1.5px] border-r border-black py-2.5 px-4 text-center uppercase tracking-wider text-xs font-bold bg-stone-100">
+                          <tr className="border-t-2 border-b-2 border-black font-bold text-black bg-stone-50">
+                            <td className="border-l-2 border-r-2 border-black py-2.5 px-4 text-center uppercase tracking-wider text-xs font-bold bg-stone-100">
                               TOTAL
                             </td>
-                            <td className={`border-r-[1.5px] border-black py-2.5 px-4 text-right font-mono font-bold bg-[#fcfcfc] ${isUltraDenseF1 ? 'text-xs' : isDenseF1 ? 'text-sm' : 'text-base'}`}>
+                            <td className={`border-r-2 border-black py-2.5 px-4 text-right font-mono font-bold bg-[#fcfcfc] ${isUltraDenseF1 ? 'text-xs' : isDenseF1 ? 'text-sm' : 'text-base'}`}>
                               <div className="flex items-center justify-between">
                                 <span>Rp</span>
                                 <span>{formatRupiah(grandTotal)}</span>
@@ -2347,30 +2347,32 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                     <span className="font-mono">{submission.kode}</span>
                   </div>
 
-                  <table className="w-full border-collapse border border-black text-xs sm:text-sm mb-2">
-                    <thead>
-                      <tr className="bg-stone-100 border-b border-black font-bold uppercase text-xs">
-                        <th className="border-l border-r border-black p-1.5 text-left">JENIS PENGAJUAN</th>
-                        <th className="border-r border-black p-1.5 text-right w-44">JUMLAH</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {submission.items.map((item) => (
-                        <tr key={item.id} className="border-b border-black">
-                          <td className="border-l border-r border-black p-1.5 font-semibold">{formatDisplayItemTitle(item.item)}</td>
-                          <td className="border-r border-black p-1.5 text-right font-mono font-bold">
-                            Rp <span className="float-right">{formatRupiah(item.total)}</span>
+                  <div className="voucher-table-wrapper w-full pr-[2px] pl-[1px] box-border mb-2">
+                    <table className="voucher-table w-full border-collapse border-2 border-black text-xs sm:text-sm box-border">
+                      <thead>
+                        <tr className="bg-stone-100 border-b-2 border-black font-bold uppercase text-xs">
+                          <th className="border-l-2 border-r-2 border-black p-1.5 text-left">JENIS PENGAJUAN</th>
+                          <th className="border-r-2 border-black p-1.5 text-right w-44">JUMLAH</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {submission.items.map((item) => (
+                          <tr key={item.id} className="border-b border-black">
+                            <td className="border-l-2 border-r-2 border-black p-1.5 font-semibold">{formatDisplayItemTitle(item.item)}</td>
+                            <td className="border-r-2 border-black p-1.5 text-right font-mono font-bold">
+                              Rp <span className="float-right">{formatRupiah(item.total)}</span>
+                            </td>
+                          </tr>
+                        ))}
+                        <tr className="border-t-2 border-b-2 border-black font-bold text-black bg-stone-50">
+                          <td className="border-l-2 border-r-2 border-black p-1.5 uppercase">TOTAL</td>
+                          <td className="border-r-2 border-black p-1.5 text-right font-mono font-bold">
+                            Rp <span className="float-right">{formatRupiah(grandTotal)}</span>
                           </td>
                         </tr>
-                      ))}
-                      <tr className="border-t border-b border-black font-bold text-black bg-stone-50">
-                        <td className="border-l border-r border-black p-1.5 uppercase">TOTAL</td>
-                        <td className="border-r border-black p-1.5 text-right font-mono font-bold">
-                          Rp <span className="float-right">{formatRupiah(grandTotal)}</span>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
+                      </tbody>
+                    </table>
+                  </div>
 
                   <div className="border border-black p-1.5 bg-stone-50/50 text-xs sm:text-sm flex gap-2 mb-2">
                     <span className="font-bold">Terbilang :</span>
@@ -2518,39 +2520,39 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                   </div>
 
                   {/* Main Items Table */}
-                  <div className={isUltraDenseF2 ? 'mb-2' : isDenseF2 ? 'mb-3' : isFewItemsF2 ? 'mb-6' : 'mb-5'}>
-                    <table className="w-full border-collapse border-[1.5px] border-black text-sm table-fixed">
+                  <div className={`voucher-table-wrapper w-full pr-[2px] pl-[1px] box-border ${isUltraDenseF2 ? 'mb-2' : isDenseF2 ? 'mb-3' : isFewItemsF2 ? 'mb-6' : 'mb-5'}`}>
+                    <table className="voucher-table w-full border-collapse border-2 border-black text-sm table-fixed box-border">
                       <thead>
-                        <tr className="bg-[#D9D9D9]/30 border-b-[1.5px] border-black text-black font-bold uppercase text-xs">
-                          <th className="border-l-[1.5px] border-r border-black py-2 px-1 text-center w-[5%]">NO</th>
+                        <tr className="bg-[#D9D9D9]/30 border-b-2 border-black text-black font-bold uppercase text-xs">
+                          <th className="border-l-2 border-r border-black py-2 px-1 text-center w-[5%]">NO</th>
                           <th className="border-r border-black py-2 px-2 text-left w-[41%]">ITEM DETIL (INVOICE / DESKRIPSI)</th>
                           <th className="border-r border-black py-2 px-1 text-center w-[8%]">VOL</th>
                           <th className="border-r border-black py-2 px-2 text-center w-[24%]">TOTAL (RP)</th>
-                          <th className="border-r-[1.5px] border-black py-2 px-2 text-left w-[22%]">KETERANGAN</th>
+                          <th className="border-r-2 border-black py-2 px-2 text-left w-[22%]">KETERANGAN</th>
                         </tr>
                       </thead>
                       <tbody>
                         {submission.items.map((item, idx) => (
                           <tr key={item.id} className="border-b border-black align-top text-black">
-                            <td className={`border-l-[1.5px] border-r border-black ${isUltraDenseF2 ? 'py-1 px-1 text-[10px]' : isDenseF2 ? 'py-1.5 px-1 text-xs' : isFewItemsF2 ? 'py-4 px-1 text-xs' : 'py-2.5 px-1 text-xs'} text-center font-mono`}>{idx + 1}</td>
+                            <td className={`border-l-2 border-r border-black ${isUltraDenseF2 ? 'py-1 px-1 text-[10px]' : isDenseF2 ? 'py-1.5 px-1 text-xs' : isFewItemsF2 ? 'py-4 px-1 text-xs' : 'py-2.5 px-1 text-xs'} text-center font-mono`}>{idx + 1}</td>
                             <td className={`border-r border-black ${isUltraDenseF2 ? 'py-1 px-2 text-[11px]' : isDenseF2 ? 'py-1.5 px-2 text-xs' : isFewItemsF2 ? 'py-4 px-3 text-xs' : 'py-2.5 px-3 text-xs'} font-semibold leading-relaxed break-words whitespace-pre-wrap text-stone-900`}>{formatDisplayItemTitle(item.item)}</td>
                             <td className={`border-r border-black ${isUltraDenseF2 ? 'py-1 px-1 text-[11px]' : isDenseF2 ? 'py-1.5 px-1 text-xs' : isFewItemsF2 ? 'py-4 px-2 text-xs' : 'py-2.5 px-2 text-xs'} text-center text-stone-800`}>{item.jumlahVolume || '-'}</td>
                             <td className={`border-r border-black ${isUltraDenseF2 ? 'py-1 px-2 text-[11px]' : isDenseF2 ? 'py-1.5 px-2 text-xs' : isFewItemsF2 ? 'py-4 px-3 text-xs' : 'py-2.5 px-3 text-xs'} text-right font-mono font-bold`}>
                               {formatRupiah(item.total)}
                             </td>
-                            <td className={`border-r-[1.5px] border-black py-1 px-2 text-stone-700 ${isUltraDenseF2 ? 'text-[9px]' : isDenseF2 ? 'text-[10px]' : 'text-[10px]'} italic break-all break-words whitespace-pre-wrap leading-tight text-left`}>{item.keterangan || '-'}</td>
+                            <td className={`border-r-2 border-black py-1 px-2 text-stone-700 ${isUltraDenseF2 ? 'text-[9px]' : isDenseF2 ? 'text-[10px]' : 'text-[10px]'} italic break-all break-words whitespace-pre-wrap leading-tight text-left`}>{item.keterangan || '-'}</td>
                           </tr>
                         ))}
                         
                         {/* Total Row */}
-                        <tr className="border-t-[1.5px] border-b-[1.5px] border-black font-bold text-black bg-stone-50">
-                          <td colSpan={3} className="border-l-[1.5px] border-r border-black py-2.5 px-3 text-center uppercase tracking-wider text-xs">
+                        <tr className="border-t-2 border-b-2 border-black font-bold text-black bg-stone-50">
+                          <td colSpan={3} className="border-l-2 border-r border-black py-2.5 px-3 text-center uppercase tracking-wider text-xs">
                              TOTAL PENYERAHAN
                           </td>
                           <td className={`border-r border-black py-2.5 px-2 text-right font-mono font-bold bg-amber-50/10 ${isUltraDenseF2 ? 'text-xs' : 'text-sm'}`}>
                             {formatRupiah(grandTotal)}
                           </td>
-                          <td className="border-r-[1.5px] border-black py-2.5 px-2 bg-stone-50"></td>
+                          <td className="border-r-2 border-black py-2.5 px-2 bg-stone-50"></td>
                         </tr>
                       </tbody>
                     </table>
@@ -2652,35 +2654,37 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                     <span className="font-mono">{submission.kode}</span>
                   </div>
 
-                  <table className="w-full border-collapse border border-black text-xs sm:text-sm mb-2 table-fixed">
-                    <thead>
-                      <tr className="bg-[#D9D9D9]/30 border-b border-black font-bold uppercase text-xs">
-                        <th className="border-r border-black p-1.5 text-center w-[5%]">NO</th>
-                        <th className="border-r border-black p-1.5 text-left w-[41%]">ITEM DETIL</th>
-                        <th className="border-r border-black p-1.5 text-center w-[8%]">VOL</th>
-                        <th className="border-r border-black p-1.5 text-center w-[24%]">TOTAL (RP)</th>
-                        <th className="p-1.5 text-left w-[22%]">KET</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {submission.items.map((item, idx) => (
-                        <tr key={item.id} className="border-b border-black align-top">
-                          <td className="border-r border-black p-1.5 text-center font-mono">{idx + 1}</td>
-                          <td className="border-r border-black p-1.5 font-semibold leading-tight">{formatDisplayItemTitle(item.item)}</td>
-                          <td className="border-r border-black p-1.5 text-center">{item.jumlahVolume || '-'}</td>
-                          <td className="border-r border-black p-1.5 text-right font-mono font-bold">
-                            {formatRupiah(item.total)}
-                          </td>
-                          <td className="p-1.5 text-xs italic">{item.keterangan || '-'}</td>
+                  <div className="voucher-table-wrapper w-full pr-[2px] pl-[1px] box-border mb-2">
+                    <table className="voucher-table w-full border-collapse border-2 border-black text-xs sm:text-sm mb-2 table-fixed box-border">
+                      <thead>
+                        <tr className="bg-[#D9D9D9]/30 border-b-2 border-black font-bold uppercase text-xs">
+                          <th className="border-l-2 border-r border-black p-1.5 text-center w-[5%]">NO</th>
+                          <th className="border-r border-black p-1.5 text-left w-[41%]">ITEM DETIL</th>
+                          <th className="border-r border-black p-1.5 text-center w-[8%]">VOL</th>
+                          <th className="border-r border-black p-1.5 text-center w-[24%]">TOTAL (RP)</th>
+                          <th className="border-r-2 border-black p-1.5 text-left w-[22%]">KET</th>
                         </tr>
-                      ))}
-                      <tr className="border-t border-black font-bold bg-stone-50">
-                        <td colSpan={3} className="border-r border-black p-1.5 text-center uppercase">TOTAL PENYERAHAN</td>
-                        <td className="border-r border-black p-1.5 text-right font-mono font-bold">{formatRupiah(grandTotal)}</td>
-                        <td className="p-1.5"></td>
-                      </tr>
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {submission.items.map((item, idx) => (
+                          <tr key={item.id} className="border-b border-black align-top">
+                            <td className="border-l-2 border-r border-black p-1.5 text-center font-mono">{idx + 1}</td>
+                            <td className="border-r border-black p-1.5 font-semibold leading-tight">{formatDisplayItemTitle(item.item)}</td>
+                            <td className="border-r border-black p-1.5 text-center">{item.jumlahVolume || '-'}</td>
+                            <td className="border-r border-black p-1.5 text-right font-mono font-bold">
+                              {formatRupiah(item.total)}
+                            </td>
+                            <td className="border-r-2 border-black p-1.5 text-xs italic">{item.keterangan || '-'}</td>
+                          </tr>
+                        ))}
+                        <tr className="border-t-2 border-b-2 border-black font-bold bg-stone-50">
+                          <td colSpan={3} className="border-l-2 border-r border-black p-1.5 text-center uppercase">TOTAL PENYERAHAN</td>
+                          <td className="border-r border-black p-1.5 text-right font-mono font-bold">{formatRupiah(grandTotal)}</td>
+                          <td className="border-r-2 border-black p-1.5"></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
 
                 <div>
@@ -2785,30 +2789,32 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                     <span className="font-mono">{submission.kode}</span>
                   </div>
 
-                  <table className="w-full border-collapse border border-black text-xs sm:text-sm mb-2">
-                    <thead>
-                      <tr className="bg-stone-100 border-b border-black font-bold uppercase text-xs">
-                        <th className="border-l border-r border-black p-1.5 text-left">JENIS PENGAJUAN</th>
-                        <th className="border-r border-black p-1.5 text-right w-44">JUMLAH</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {submission.items.map((item) => (
-                        <tr key={item.id} className="border-b border-black">
-                          <td className="border-l border-r border-black p-1.5 font-semibold">{formatDisplayItemTitle(item.item)}</td>
-                          <td className="border-r border-black p-1.5 text-right font-mono font-bold">
-                            Rp <span className="float-right">{formatRupiah(item.total)}</span>
+                  <div className="voucher-table-wrapper w-full pr-[2px] pl-[1px] box-border mb-2">
+                    <table className="voucher-table w-full border-collapse border-2 border-black text-xs sm:text-sm box-border">
+                      <thead>
+                        <tr className="bg-stone-100 border-b-2 border-black font-bold uppercase text-xs">
+                          <th className="border-l-2 border-r-2 border-black p-1.5 text-left">JENIS PENGAJUAN</th>
+                          <th className="border-r-2 border-black p-1.5 text-right w-44">JUMLAH</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {submission.items.map((item) => (
+                          <tr key={item.id} className="border-b border-black">
+                            <td className="border-l-2 border-r-2 border-black p-1.5 font-semibold">{formatDisplayItemTitle(item.item)}</td>
+                            <td className="border-r-2 border-black p-1.5 text-right font-mono font-bold">
+                              Rp <span className="float-right">{formatRupiah(item.total)}</span>
+                            </td>
+                          </tr>
+                        ))}
+                        <tr className="border-t-2 border-b-2 border-black font-bold text-black bg-stone-50">
+                          <td className="border-l-2 border-r-2 border-black p-1.5 uppercase">TOTAL</td>
+                          <td className="border-r-2 border-black p-1.5 text-right font-mono font-bold">
+                            Rp <span className="float-right">{formatRupiah(grandTotal)}</span>
                           </td>
                         </tr>
-                      ))}
-                      <tr className="border-t border-b border-black font-bold text-black bg-stone-50">
-                        <td className="border-l border-r border-black p-1.5 uppercase">TOTAL</td>
-                        <td className="border-r border-black p-1.5 text-right font-mono font-bold">
-                          Rp <span className="float-right">{formatRupiah(grandTotal)}</span>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
+                      </tbody>
+                    </table>
+                  </div>
 
                   <div className="border border-black p-1.5 bg-stone-50/50 text-xs sm:text-sm flex gap-2 mb-2">
                     <span className="font-bold">Terbilang :</span>
@@ -2933,35 +2939,37 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                       <span className="font-mono">{submission.kode}</span>
                     </div>
 
-                    <table className="w-full border-collapse border border-black text-xs sm:text-sm mb-2 table-fixed">
-                      <thead>
-                        <tr className="bg-[#D9D9D9]/30 border-b border-black font-bold uppercase text-xs">
-                          <th className="border-r border-black p-1.5 text-center w-[5%]">NO</th>
-                          <th className="border-r border-black p-1.5 text-left w-[41%]">ITEM DETIL</th>
-                          <th className="border-r border-black p-1.5 text-center w-[8%]">VOL</th>
-                          <th className="border-r border-black p-1.5 text-center w-[24%]">TOTAL (RP)</th>
-                          <th className="p-1.5 text-left w-[22%]">KET</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {submission.items.map((item, idx) => (
-                          <tr key={item.id} className="border-b border-black align-top">
-                            <td className="border-r border-black p-1.5 text-center font-mono">{idx + 1}</td>
-                            <td className="border-r border-black p-1.5 font-semibold leading-tight">{item.item}</td>
-                            <td className="border-r border-black p-1.5 text-center">{item.jumlahVolume || '-'}</td>
-                            <td className="border-r border-black p-1.5 text-right font-mono font-bold">
-                              {formatRupiah(item.total)}
-                            </td>
-                            <td className="p-1.5 text-xs italic">{item.keterangan || '-'}</td>
+                    <div className="voucher-table-wrapper w-full pr-[2px] pl-[1px] box-border mb-2">
+                      <table className="voucher-table w-full border-collapse border-2 border-black text-xs sm:text-sm table-fixed box-border">
+                        <thead>
+                          <tr className="bg-[#D9D9D9]/30 border-b-2 border-black font-bold uppercase text-xs">
+                            <th className="border-l-2 border-r border-black p-1.5 text-center w-[5%]">NO</th>
+                            <th className="border-r border-black p-1.5 text-left w-[41%]">ITEM DETIL</th>
+                            <th className="border-r border-black p-1.5 text-center w-[8%]">VOL</th>
+                            <th className="border-r border-black p-1.5 text-center w-[24%]">TOTAL (RP)</th>
+                            <th className="border-r-2 border-black p-1.5 text-left w-[22%]">KET</th>
                           </tr>
-                        ))}
-                        <tr className="border-t border-black font-bold bg-stone-50">
-                          <td colSpan={3} className="border-r border-black p-1.5 text-center uppercase">TOTAL PENYERAHAN</td>
-                          <td className="border-r border-black p-1.5 text-right font-mono font-bold">{formatRupiah(grandTotal)}</td>
-                          <td className="p-1.5"></td>
-                        </tr>
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {submission.items.map((item, idx) => (
+                            <tr key={item.id} className="border-b border-black align-top">
+                              <td className="border-l-2 border-r border-black p-1.5 text-center font-mono">{idx + 1}</td>
+                              <td className="border-r border-black p-1.5 font-semibold leading-tight">{item.item}</td>
+                              <td className="border-r border-black p-1.5 text-center">{item.jumlahVolume || '-'}</td>
+                              <td className="border-r border-black p-1.5 text-right font-mono font-bold">
+                                {formatRupiah(item.total)}
+                              </td>
+                              <td className="border-r-2 border-black p-1.5 text-xs italic">{item.keterangan || '-'}</td>
+                            </tr>
+                          ))}
+                          <tr className="border-t-2 border-b-2 border-black font-bold bg-stone-50">
+                            <td colSpan={3} className="border-l-2 border-r border-black p-1.5 text-center uppercase">TOTAL PENYERAHAN</td>
+                            <td className="border-r border-black p-1.5 text-right font-mono font-bold">{formatRupiah(grandTotal)}</td>
+                            <td className="border-r-2 border-black p-1.5"></td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
 
                   <div>

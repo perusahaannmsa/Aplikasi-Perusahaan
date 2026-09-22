@@ -38,6 +38,67 @@ function getGeminiClient() {
   });
 }
 
+const PRIMARY_GEMINI_MODELS = [
+  "gemini-3.8-flash",
+  "gemini-flash-latest",
+  "gemini-3.1-flash-lite",
+  "gemini-3.8-pro",
+];
+
+async function generateWithModelFallback(
+  ai: ReturnType<typeof getGeminiClient>,
+  models: string[],
+  generateOptions: {
+    contents: any;
+    config?: any;
+  }
+) {
+  let lastError: any = null;
+  for (const modelName of models) {
+    try {
+      const response = await ai.models.generateContent({
+        model: modelName,
+        contents: generateOptions.contents,
+        config: generateOptions.config,
+      });
+      if (response && response.text) {
+        return { response, modelUsed: modelName };
+      }
+    } catch (err: any) {
+      console.warn(`[Gemini Fallback] Model ${modelName} failed, attempting next: ${err?.message || err}`);
+      lastError = err;
+    }
+  }
+  throw lastError || new Error("Semua model Gemini gagal merespons.");
+}
+
+app.get("/api/gemini/status", async (req, res) => {
+  const hasKey = !!process.env.GEMINI_API_KEY;
+  if (!hasKey) {
+    return res.json({
+      configured: false,
+      message: "GEMINI_API_KEY belum dikonfigurasi di environment server.",
+    });
+  }
+  try {
+    const ai = getGeminiClient();
+    const { modelUsed } = await generateWithModelFallback(ai, PRIMARY_GEMINI_MODELS, {
+      contents: [{ text: "ping" }],
+    });
+    return res.json({
+      configured: true,
+      status: "active",
+      modelUsed,
+      message: "Layanan Gemini AI aktif dan siap digunakan.",
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      configured: true,
+      status: "error",
+      error: err?.message || "Gagal menghubungi Gemini API.",
+    });
+  }
+});
 
 app.post("/api/gemini/parse-receipt", async (req, res) => {
   try {
@@ -53,8 +114,7 @@ app.post("/api/gemini/parse-receipt", async (req, res) => {
     const documentPart = { inlineData: { mimeType, data: cleanBase64 } };
     const promptText = `Anda adalah sistem AI ekstraksi dokumen keuangan profesional. Ekstrak informasi kwitansi/faktur dalam JSON valid.`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+    const { response } = await generateWithModelFallback(ai, PRIMARY_GEMINI_MODELS, {
       contents: [documentPart, { text: promptText }],
       config: {
         responseMimeType: "application/json",
@@ -96,37 +156,12 @@ Ketentuan Penulisan:
 5. JANGAN menyertakan kop surat, nomor memo, kata "Dengan Hormat,", rincian nomor rekening, kata "Demikian,", atau tanda tangan (karena elemen-elemen tersebut sudah memiliki tempat tersendiri di template formulir).
 6. Kembalikan HANYA teks isi paragraf tersebut tanpa tanda kutip pembungkus dan tanpa penjelasan tambahan apa pun.`;
 
-    const modelsToTry = [
-      "gemini-2.5-flash",
-      "gemini-3.5-flash",
-      "gemini-2.5-pro",
-      "gemini-3.1-flash-lite",
-      "gemini-flash-latest"
-    ];
-
-    let response: any = null;
-    let lastError: any = null;
-
-    for (const modelName of modelsToTry) {
-      try {
-        response = await ai.models.generateContent({
-          model: modelName,
-          contents: [{ text: promptText }],
-          config: {
-            temperature: 0.3,
-          },
-        });
-        if (response && response.text) {
-          break;
-        }
-      } catch (err: any) {
-        lastError = err;
-      }
-    }
-
-    if (!response || !response.text) {
-      throw lastError || new Error("Gagal mendapatkan respons AI dari seluruh model.");
-    }
+    const { response } = await generateWithModelFallback(ai, PRIMARY_GEMINI_MODELS, {
+      contents: [{ text: promptText }],
+      config: {
+        temperature: 0.3,
+      },
+    });
 
     let refined = response.text.trim();
     // Clean potential quote wrapping
@@ -295,28 +330,18 @@ KEMBALIKAN HANYA FORMAT JSON VALID DENGAN SKEMA:
 
       contents.push({ text: promptText });
 
-      const modelsToTry = [
-        "gemini-2.5-pro",
-        "gemini-2.5-flash",
-        "gemini-3.1-flash-lite",
-        "gemini-flash-latest"
-      ];
-
       let response: any = null;
-      for (const modelName of modelsToTry) {
-        try {
-          response = await ai.models.generateContent({
-            model: modelName,
-            contents,
-            config: {
-              responseMimeType: "application/json",
-              temperature: 0.1,
-            },
-          });
-          if (response && response.text) break;
-        } catch (err: any) {
-          aiError = err;
-        }
+      try {
+        const fallbackRes = await generateWithModelFallback(ai, PRIMARY_GEMINI_MODELS, {
+          contents,
+          config: {
+            responseMimeType: "application/json",
+            temperature: 0.1,
+          },
+        });
+        response = fallbackRes.response;
+      } catch (err: any) {
+        aiError = err;
       }
 
       if (response && response.text) {
@@ -454,40 +479,14 @@ KEMBALIKAN HANYA FORMAT JSON VALID:
 
     contents.push({ text: promptText });
 
-    const modelsToTry = [
-      "gemini-2.5-pro",
-      "gemini-2.5-flash",
-      "gemini-3.1-flash-lite",
-      "gemini-flash-latest"
-    ];
-
-    let response: any = null;
-    let lastError: any = null;
-
-    for (const modelName of modelsToTry) {
-      try {
-        console.log(`Attempting SPPD document analysis with model: ${modelName}`);
-        response = await ai.models.generateContent({
-          model: modelName,
-          contents,
-          config: {
-            responseMimeType: "application/json",
-            temperature: 0.1,
-          },
-        });
-        if (response && response.text) {
-          console.log(`Successfully parsed SPPD with model: ${modelName}`);
-          break;
-        }
-      } catch (err: any) {
-        lastError = err;
-        console.warn(`Model ${modelName} error in SPPD parse:`, err?.message || err);
-      }
-    }
-
-    if (!response || !response.text) {
-      throw lastError || new Error("Semua model AI gagal menganalisis dokumen SPPD.");
-    }
+    const { response, modelUsed } = await generateWithModelFallback(ai, PRIMARY_GEMINI_MODELS, {
+      contents,
+      config: {
+        responseMimeType: "application/json",
+        temperature: 0.1,
+      },
+    });
+    console.log(`Successfully parsed SPPD with model: ${modelUsed}`);
 
     let textClean = response.text.trim();
     if (textClean.startsWith("```json")) {
@@ -2806,12 +2805,7 @@ Return a strict JSON response conforming exactly to this structure:
 
     console.log("Analyzing file: size =" + fileBase64.length + " bytes, type =" + defaultMime);
 
-    const modelsToTry = [
-      "gemini-2.5-flash", 
-      "gemini-flash-latest", 
-      "gemini-3.1-flash-lite", 
-      "gemini-3.5-flash"
-    ];
+    const modelsToTry = PRIMARY_GEMINI_MODELS;
     let response = null;
     let lastError: any = null;
 
@@ -2962,12 +2956,7 @@ Return a strict JSON response conforming exactly to this structure:
 
     console.log("Analyzing bank statement: size =" + fileBase64.length + " bytes, type =" + defaultMime);
 
-    const modelsToTry = [
-      "gemini-2.5-flash", 
-      "gemini-flash-latest", 
-      "gemini-3.1-flash-lite", 
-      "gemini-3.5-flash"
-    ];
+    const modelsToTry = PRIMARY_GEMINI_MODELS;
     let response = null;
     let lastError: any = null;
 
