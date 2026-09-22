@@ -21,7 +21,8 @@ import {
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+// Bind to 3000 in AI Studio (where nginx proxy routes to 3000), or use Railway/cloud PORT when deployed externally
+const PORT = process.env.APPLET_ID ? 3000 : (process.env.PORT ? parseInt(process.env.PORT, 10) : 3000);
 
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
