@@ -503,6 +503,10 @@ export interface InternalMemo {
   salamPenutup: string;
   penandatanganNama: string;
   penandatanganJabatan: string;
+  useSecondSigner?: boolean;
+  salamPenutup2?: string;
+  penandatanganNama2?: string;
+  penandatanganJabatan2?: string;
   linkedSubmissionId?: string;
   linkedSubmissionKode?: string;
   linkedAmount?: number;

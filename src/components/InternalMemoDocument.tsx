@@ -171,14 +171,41 @@ export const InternalMemoDocument: React.FC<InternalMemoDocumentProps> = ({
 
       {/* SIGNATURE BLOCK */}
       <div className="mt-8 pt-4 text-xs sm:text-sm text-black font-sans">
-        <p className="font-normal">{memo.salamPenutup}</p>
-        <div className="h-20 sm:h-24"></div>
-        <p className="font-bold underline uppercase tracking-wide text-stone-950">
-          {memo.penandatanganNama}
-        </p>
-        <p className="text-xs text-stone-800 font-medium mt-0.5">
-          {memo.penandatanganJabatan}
-        </p>
+        {memo.useSecondSigner ? (
+          <div className="grid grid-cols-2 gap-8">
+            <div>
+              <p className="font-normal">{memo.salamPenutup || 'Hormat saya,'}</p>
+              <div className="h-20 sm:h-24"></div>
+              <p className="font-bold underline uppercase tracking-wide text-stone-950">
+                {memo.penandatanganNama}
+              </p>
+              <p className="text-xs text-stone-800 font-medium mt-0.5">
+                {memo.penandatanganJabatan}
+              </p>
+            </div>
+            <div>
+              <p className="font-normal">{memo.salamPenutup2 || 'Menyetujui,'}</p>
+              <div className="h-20 sm:h-24"></div>
+              <p className="font-bold underline uppercase tracking-wide text-stone-950">
+                {memo.penandatanganNama2 || 'Harijon'}
+              </p>
+              <p className="text-xs text-stone-800 font-medium mt-0.5">
+                {memo.penandatanganJabatan2 || 'Direktur Keuangan'}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <p className="font-normal">{memo.salamPenutup}</p>
+            <div className="h-20 sm:h-24"></div>
+            <p className="font-bold underline uppercase tracking-wide text-stone-950">
+              {memo.penandatanganNama}
+            </p>
+            <p className="text-xs text-stone-800 font-medium mt-0.5">
+              {memo.penandatanganJabatan}
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -270,7 +270,7 @@ export async function generateF1PdfBytes(submission: any, grandTotal: number): P
 
   // Signer 2: Diverifikasi (Sri Ekowati)
   const verifier1Name = 'Sri Ekowati';
-  const verifier1Role = cleanSingleLine(submission.dibukukanJabatan || 'Manager Keuangan');
+  const verifier1Role = 'Manager Keuangan';
 
   // Signer 3: Diverifikasi (Andi Muhammad Rifki)
   const verifierRaw = submission.diverifikasiOleh;

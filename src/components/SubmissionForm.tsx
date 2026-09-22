@@ -456,7 +456,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
   const [disetujuiOleh2, setDisetujuiOleh2] = useState(() => localStorage.getItem('NUSANTARA_DEFAULT_APPROVER2_NAME') || 'Harijon');
   const [disetujuiJabatan2, setDisetujuiJabatan2] = useState(() => localStorage.getItem('NUSANTARA_DEFAULT_APPROVER2_JABATAN') || 'Direktur Keuangan');
   const [dibukukanOleh, setDibukukanOleh] = useState(() => localStorage.getItem('NUSANTARA_DEFAULT_BOOKKEEPER_NAME') || 'Sri Ekowati');
-  const [dibukukanJabatan, setDibukukanJabatan] = useState(() => localStorage.getItem('NUSANTARA_DEFAULT_BOOKKEEPER_JABATAN') || 'Accounting');
+  const [dibukukanJabatan, setDibukukanJabatan] = useState(() => localStorage.getItem('NUSANTARA_DEFAULT_BOOKKEEPER_JABATAN') || 'Manager Keuangan');
 
   // Salary details state
   const [namaKaryawanSalary, setNamaKaryawanSalary] = useState('');

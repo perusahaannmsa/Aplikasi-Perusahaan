@@ -2239,7 +2239,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                             </span>
                           </div>
                           <span className="text-[9px] sm:text-[10px] print:text-[9.5px] text-stone-700 font-mono mt-0.5 uppercase font-medium leading-tight whitespace-nowrap text-center block">
-                            {submission.dibukukanJabatan || 'Manager Keuangan'}
+                            Manager Keuangan
                           </span>
                         </div>
 
@@ -2406,7 +2406,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                           </span>
                         </div>
                         <span className="text-[8.5px] sm:text-[9px] text-stone-600 font-mono mt-0.5 uppercase whitespace-nowrap block">
-                          {submission.dibukukanJabatan || 'Manager Keuangan'}
+                          Manager Keuangan
                         </span>
                       </div>
 
@@ -2850,7 +2850,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                           </span>
                         </div>
                         <span className="text-[8.5px] sm:text-[9px] text-stone-600 font-mono mt-0.5 uppercase whitespace-nowrap block">
-                          {submission.dibukukanJabatan || 'Manager Keuangan'}
+                          Manager Keuangan
                         </span>
                       </div>
 
