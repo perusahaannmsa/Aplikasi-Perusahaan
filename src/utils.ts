@@ -254,28 +254,35 @@ export async function generateF1PdfBytes(submission: any, grandTotal: number): P
   }
   curY -= 45;
 
-  // Signatures Row (4 Signers for F1: Diajukan, Diverifikasi, Mengetahui, Disetujui)
+  // Signatures Row (4 Signers for F1: Diajukan, Diverifikasi, Diverifikasi, Disetujui)
   const blockW = 515 / 4;
   // Generous signing height for normal vouchers
   const sigGap = scale < 0.75 ? 65 : (items.length <= 3 ? 90 : 80);
   const sigY = curY - sigGap;
 
-  const applicantName = cleanSingleLine(submission.diajukanOleh || 'Sri Ekowati');
-  const applicantRole = cleanSingleLine(submission.diajukanJabatan || 'Manager Keuangan');
-
-  const rawApprover2 = submission.disetujuiOleh2;
-  const isNursyam = rawApprover2 && rawApprover2.toLowerCase().includes('nursyam');
-  const approverName = cleanSingleLine(isNursyam || !rawApprover2 ? 'Harijon' : rawApprover2);
-  const approverRole = cleanSingleLine(isNursyam || !submission.disetujuiJabatan2 ? 'Direktur Keuangan' : submission.disetujuiJabatan2);
-
-  const verifierRaw = submission.diverifikasiOleh;
-  const isVerifierNursyam = verifierRaw?.toLowerCase().includes('nursyam') || isNursyam;
-  const verifierName = cleanSingleLine(
-    verifierRaw && verifierRaw !== 'Andi Dhiya Salsabila' && verifierRaw !== 'Sri Ekowati'
-      ? verifierRaw
-      : (isNursyam ? 'Andi Nursyam Halid' : 'Andi Rifki Naufal')
+  // Signer 1: Diajukan (Andi Dhiya Salsabila)
+  const applicantName = cleanSingleLine(
+    (submission.diajukanOleh && submission.diajukanOleh !== 'Sri Ekowati')
+      ? submission.diajukanOleh
+      : 'Andi Dhiya Salsabila'
   );
-  const verifierRole = cleanSingleLine(
+  const applicantRole = cleanSingleLine(submission.diajukanJabatan || 'Staff Keuangan');
+
+  // Signer 2: Diverifikasi (Sri Ekowati)
+  const verifier1Name = 'Sri Ekowati';
+  const verifier1Role = cleanSingleLine(submission.dibukukanJabatan || 'Manager Keuangan');
+
+  // Signer 3: Diverifikasi (Andi Muhammad Rifki)
+  const verifierRaw = submission.diverifikasiOleh;
+  const isVerifierNursyam = verifierRaw?.toLowerCase().includes('nursyam') || submission.disetujuiOleh2?.toLowerCase().includes('nursyam');
+  const verifier2Name = cleanSingleLine(
+    isVerifierNursyam
+      ? 'Andi Nursyam Halid'
+      : (verifierRaw && verifierRaw !== 'Andi Dhiya Salsabila' && verifierRaw !== 'Sri Ekowati'
+        ? verifierRaw
+        : 'Andi Muhammad Rifki')
+  );
+  const verifier2Role = cleanSingleLine(
     isVerifierNursyam
       ? 'Direktur Utama'
       : (submission.diverifikasiJabatan && submission.diverifikasiJabatan !== 'Keuangan'
@@ -283,34 +290,75 @@ export async function generateF1PdfBytes(submission: any, grandTotal: number): P
         : 'Direktur')
   );
 
-  const knowingName = cleanSingleLine(submission.mengetahuiOleh || 'ABDUL AZIZ HALID');
-  const knowingRole = cleanSingleLine(submission.mengetahuiJabatan || 'Direktur Operasional');
+  // Signer 4: Disetujui (Harijon)
+  const rawApprover2 = submission.disetujuiOleh2;
+  const isNursyam = rawApprover2 && rawApprover2.toLowerCase().includes('nursyam');
+  const approverName = cleanSingleLine(isNursyam || !rawApprover2 ? 'Harijon' : rawApprover2);
+  const approverRole = cleanSingleLine(isNursyam || !submission.disetujuiJabatan2 ? 'Direktur Keuangan' : submission.disetujuiJabatan2);
 
-  // Title Headers ("Diajukan", "Diverifikasi", "Mengetahui", "Disetujui")
-  page.drawText('Diajukan', { x: 40 + (blockW / 2) - 18, y: curY - 20, size: 9, font: fontRegular });
-  page.drawText('Diverifikasi', { x: 40 + blockW + (blockW / 2) - 22, y: curY - 20, size: 9, font: fontRegular });
-  page.drawText('Mengetahui', { x: 40 + blockW * 2 + (blockW / 2) - 22, y: curY - 20, size: 9, font: fontRegular });
-  page.drawText('Disetujui', { x: 40 + blockW * 3 + (blockW / 2) - 18, y: curY - 20, size: 9, font: fontRegular });
+  const signers = [
+    { title: 'Diajukan', name: applicantName, role: applicantRole },
+    { title: 'Diverifikasi', name: verifier1Name, role: verifier1Role },
+    { title: 'Diverifikasi', name: verifier2Name, role: verifier2Role },
+    { title: 'Disetujui', name: approverName, role: approverRole },
+  ];
 
-  // Diajukan Name & Line & Role
-  page.drawText(applicantName, { x: 40 + (blockW / 2) - (applicantName.length * 2.1), y: sigY, size: 8, font: fontBold });
-  page.drawLine({ start: { x: 40 + 10, y: sigY - 2 }, end: { x: 40 + blockW - 10, y: sigY - 2 }, thickness: 1 });
-  page.drawText(applicantRole, { x: 40 + (blockW / 2) - (applicantRole.length * 1.9), y: sigY - 14, size: 7.5, font: fontRegular });
+  // Dynamically maximize font size so all 4 names are as large as possible without clipping
+  const maxAllowedWidth = blockW - 10;
+  let signerFontSize = 10.0;
+  for (let testSize = 10.5; testSize >= 7.5; testSize -= 0.25) {
+    const allFit = signers.every(s => fontBold.widthOfTextAtSize(s.name, testSize) <= maxAllowedWidth);
+    if (allFit) {
+      signerFontSize = testSize;
+      break;
+    }
+  }
 
-  // Diverifikasi Name & Line & Role
-  page.drawText(verifierName, { x: 40 + blockW + (blockW / 2) - (verifierName.length * 2.1), y: sigY, size: 8, font: fontBold });
-  page.drawLine({ start: { x: 40 + blockW + 10, y: sigY - 2 }, end: { x: 40 + blockW * 2 - 10, y: sigY - 2 }, thickness: 1 });
-  page.drawText(verifierRole, { x: 40 + blockW + (blockW / 2) - (verifierRole.length * 1.9), y: sigY - 14, size: 7.5, font: fontRegular });
+  let signerRoleSize = 8.0;
+  for (let testRoleSize = 8.5; testRoleSize >= 6.5; testRoleSize -= 0.25) {
+    const allFit = signers.every(s => fontRegular.widthOfTextAtSize(s.role, testRoleSize) <= maxAllowedWidth);
+    if (allFit) {
+      signerRoleSize = testRoleSize;
+      break;
+    }
+  }
 
-  // Mengetahui Name & Line & Role
-  page.drawText(knowingName, { x: 40 + blockW * 2 + (blockW / 2) - (knowingName.length * 2.1), y: sigY, size: 8, font: fontBold });
-  page.drawLine({ start: { x: 40 + blockW * 2 + 10, y: sigY - 2 }, end: { x: 40 + blockW * 3 - 10, y: sigY - 2 }, thickness: 1 });
-  page.drawText(knowingRole, { x: 40 + blockW * 2 + (blockW / 2) - (knowingRole.length * 1.9), y: sigY - 14, size: 7.5, font: fontRegular });
+  signers.forEach((s, idx) => {
+    const colX = 40 + idx * blockW;
+    // Title Header
+    const titleW = fontBold.widthOfTextAtSize(s.title, 9.0);
+    page.drawText(s.title, {
+      x: colX + (blockW - titleW) / 2,
+      y: curY - 20,
+      size: 9.0,
+      font: fontBold,
+    });
 
-  // Disetujui Name & Line & Role
-  page.drawText(approverName, { x: 40 + blockW * 3 + (blockW / 2) - (approverName.length * 2.1), y: sigY, size: 8, font: fontBold });
-  page.drawLine({ start: { x: 40 + blockW * 3 + 10, y: sigY - 2 }, end: { x: 40 + 515 - 10, y: sigY - 2 }, thickness: 1 });
-  page.drawText(approverRole, { x: 40 + blockW * 3 + (blockW / 2) - (approverRole.length * 1.9), y: sigY - 14, size: 7.5, font: fontRegular });
+    // Signer Name (Bold, maximized font size without clipping)
+    const nameW = fontBold.widthOfTextAtSize(s.name, signerFontSize);
+    page.drawText(s.name, {
+      x: colX + (blockW - nameW) / 2,
+      y: sigY,
+      size: signerFontSize,
+      font: fontBold,
+    });
+
+    // Underline Bar
+    page.drawLine({
+      start: { x: colX + 8, y: sigY - 2 },
+      end: { x: colX + blockW - 8, y: sigY - 2 },
+      thickness: 1,
+    });
+
+    // Signer Role
+    const roleW = fontRegular.widthOfTextAtSize(s.role, signerRoleSize);
+    page.drawText(s.role, {
+      x: colX + (blockW - roleW) / 2,
+      y: sigY - 14,
+      size: signerRoleSize,
+      font: fontRegular,
+    });
+  });
 
   // Notes block
   const noteY = sigY - (scale < 0.75 ? 40 : 50);
