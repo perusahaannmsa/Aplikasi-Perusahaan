@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react'; 
+import React, { useState, useEffect, useMemo, useRef } from 'react'; 
 import QRCode from 'qrcode';
 import { Submission } from '../types';
 import { formatRupiah, formatDateIndonesian, numberToTerbilang } from '../utils';
 import { NusantaraLogo } from './NusantaraLogo';
-import { Printer, ArrowLeft, Layers, FileText, CheckCircle, Cloud, Loader2, Lock, ShieldAlert, RefreshCw, Share2, Copy, Check, Send, Edit2, Trash, Trash2, RotateCw, Coins, ExternalLink, QrCode } from 'lucide-react';
-import { getStoredGoogleDriveToken, ensureValidDriveToken, googleDriveLogin, saveSubmissionToFirestore } from '../firebase';
+import { Printer, ArrowLeft, Layers, FileText, CheckCircle, Cloud, Loader2, Lock, ShieldAlert, RefreshCw, Share2, Copy, Check, Send, Edit2, Trash, Trash2, RotateCw, Coins, ExternalLink, QrCode, Upload, AlertTriangle } from 'lucide-react';
+import { getStoredGoogleDriveToken, ensureValidDriveToken, googleDriveLogin, saveSubmissionToFirestore, getAllConnectedDriveTokens, getConnectedDrives, ensureGoogleDriveFileSharing } from '../firebase';
 import { SppdSheetContent } from './PrintSppdDocument';
 import { SPPDRecord } from './SppdManager';
 import { SignerSettingsModal, SignerConfigItem } from './SignerSettingsModal';
@@ -926,6 +926,150 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
     }
   };
 
+  // State and logic for direct attachment replacement / upload
+  const [isReplacingFile, setIsReplacingFile] = useState<{[key: string]: boolean}>({});
+  const replaceFileInputRef = useRef<HTMLInputElement>(null);
+  const [pendingReplaceIndex, setPendingReplaceIndex] = useState<number | null>(null);
+
+  const triggerReplaceFile = (fileIndex: number) => {
+    setPendingReplaceIndex(fileIndex);
+    if (replaceFileInputRef.current) {
+      replaceFileInputRef.current.value = '';
+      replaceFileInputRef.current.click();
+    }
+  };
+
+  const handleFileReplacementSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || pendingReplaceIndex === null) return;
+
+    const targetFileObj = attachmentFiles[pendingReplaceIndex];
+    if (!targetFileObj) return;
+
+    const fileKey = targetFileObj.url || `${pendingReplaceIndex}`;
+    setIsReplacingFile(prev => ({ ...prev, [fileKey]: true }));
+    setLoadingProgress(`Mengunggah berkas pengganti "${file.name}"...`);
+
+    try {
+      // 1. Convert to dataUrl for guaranteed instant offline & multi-device preview
+      const reader = new FileReader();
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      let newDriveUrl = targetFileObj.url;
+      let newDriveName = file.name;
+
+      // 2. Try to upload to active Google Drive
+      let token = getStoredGoogleDriveToken();
+      if (!token) {
+        try {
+          token = await ensureValidDriveToken();
+        } catch (e) {}
+      }
+
+      if (token) {
+        try {
+          const folderId = submission.googleDriveFolderId || 'root';
+          const metadata = {
+            name: file.name,
+            mimeType: file.type || 'application/octet-stream',
+            parents: folderId !== 'root' ? [folderId] : undefined,
+          };
+          const formData = new FormData();
+          formData.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+          formData.append('file', file);
+
+          const upRes = await fetch(
+            'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink',
+            {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${token}` },
+              body: formData,
+            }
+          );
+
+          if (upRes.ok) {
+            const upData = await upRes.json();
+            newDriveUrl = upData.webViewLink || `https://drive.google.com/file/d/${upData.id}/view`;
+            newDriveName = upData.name || file.name;
+
+            // Ensure public reader + master drive permissions
+            await ensureGoogleDriveFileSharing(upData.id, token);
+          }
+        } catch (upErr) {
+          console.warn('Google Drive direct upload notice during replacement:', upErr);
+        }
+      }
+
+      // 3. Update Submission object
+      const updatedSubmission: Submission = { ...submission };
+
+      // Update in googleDriveFiles
+      if (updatedSubmission.googleDriveFiles && updatedSubmission.googleDriveFiles.length > 0) {
+        updatedSubmission.googleDriveFiles = updatedSubmission.googleDriveFiles.map((f, idx) => {
+          if (idx === pendingReplaceIndex || f.url === targetFileObj.url) {
+            return { ...f, url: newDriveUrl, name: newDriveName };
+          }
+          return f;
+        });
+      }
+
+      // Update in files array (with dataUrl fallback)
+      if (!updatedSubmission.files) {
+        updatedSubmission.files = [];
+      }
+      const existingFileIdx = updatedSubmission.files.findIndex(
+        f => f.url === targetFileObj.url || f.name === targetFileObj.name
+      );
+      if (existingFileIdx >= 0) {
+        updatedSubmission.files[existingFileIdx] = {
+          ...updatedSubmission.files[existingFileIdx],
+          name: newDriveName,
+          url: newDriveUrl,
+          dataUrl: dataUrl,
+        };
+      } else {
+        updatedSubmission.files.push({
+          name: newDriveName,
+          url: newDriveUrl,
+          dataUrl: dataUrl,
+        });
+      }
+
+      // Single file legacy fields
+      if (updatedSubmission.googleDriveFileUrl === targetFileObj.url) {
+        updatedSubmission.googleDriveFileUrl = newDriveUrl;
+        updatedSubmission.googleDriveFileName = newDriveName;
+      }
+      if (updatedSubmission.buktiPembayaran && updatedSubmission.buktiPembayaran.url === targetFileObj.url) {
+        updatedSubmission.buktiPembayaran = { url: newDriveUrl, name: newDriveName };
+      }
+
+      // 4. Save to Firestore
+      await saveSubmissionToFirestore(
+        updatedSubmission,
+        userProfile?.companyId || 'nmsa',
+        userProfile?.companyName || 'PT Nusantara Mineral Sukses Abadi'
+      );
+
+      if (onUpdateSubmission) {
+        onUpdateSubmission(updatedSubmission);
+      }
+
+      alert(`✅ Berkas lampiran berhasil diganti dengan "${newDriveName}"! Dokumen siap dicetak.`);
+      setReloadTrigger(prev => prev + 1);
+    } catch (err: any) {
+      console.error('Failed replacing file:', err);
+      alert('Gagal mengganti berkas: ' + (err.message || String(err)));
+    } finally {
+      setIsReplacingFile(prev => ({ ...prev, [fileKey]: false }));
+      setPendingReplaceIndex(null);
+    }
+  };
+
   // Dynamic document title based on "Jenis Pengajuan & Nomor Kode" for proper PDF download naming
   useEffect(() => {
     const originalTitle = document.title;
@@ -965,6 +1109,10 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
           } catch (e) {
             // Proceed if token cannot be discovered silently
           }
+        }
+        const allDriveTokens = getAllConnectedDriveTokens();
+        if (token && !allDriveTokens.includes(token)) {
+          allDriveTokens.unshift(token);
         }
         const tempPages: RenderedPage[] = [];
 
@@ -1074,28 +1222,30 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
           try {
             const isPdf = /\.pdf/i.test(file.name || '') || file.url.includes('.pdf');
 
-            // Download file content via authenticated direct API, server-side CORS proxy, or public fallback download
+            // Download file content via multi-account authenticated direct API or server-side CORS proxy
             let fileBlob: Blob | null = null;
             try {
-              if (token) {
+              // 1. Try downloading via each connected Google Drive account token
+              for (const curToken of allDriveTokens) {
+                if (fileBlob) break;
                 try {
                   const headers: HeadersInit = {
-                    'Authorization': `Bearer ${token}`
+                    'Authorization': `Bearer ${curToken}`
                   };
                   const fileRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`, { headers });
                   if (fileRes.ok) {
                     fileBlob = await fileRes.blob();
-                  } else {
-                    console.warn(`Gagal mengambil media via token direct (status ${fileRes.status}), mencoba proxy...`);
+                    break;
                   }
                 } catch (tokenErr) {
-                  console.warn('Gagal unduh via token direct, dialihkan ke proxy:', tokenErr);
+                  // Try next available token
                 }
               }
 
-              // If token failed, absent, or we don't have one, use the server-side CORS proxy
+              // 2. If direct tokens failed, use the server-side CORS proxy passing ALL available tokens
               if (!fileBlob) {
-                const proxyUrl = `/api/drive-proxy?id=${fileId}${token ? `&token=${encodeURIComponent(token)}` : ''}`;
+                const tokensParam = allDriveTokens.length > 0 ? `&tokens=${encodeURIComponent(allDriveTokens.join(','))}` : '';
+                const proxyUrl = `/api/drive-proxy?id=${fileId}${token ? `&token=${encodeURIComponent(token)}` : ''}${tokensParam}`;
                 const proxyRes = await fetch(proxyUrl, {
                   headers: token ? { Authorization: `Bearer ${token}` } : {}
                 });
@@ -3238,6 +3388,35 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                         height: '100%'
                       }}
                     >
+                      {/* Top Warning Ribbon for cross-account or restricted files */}
+                      <div className="absolute top-0 left-0 right-0 bg-amber-500/95 text-stone-950 px-4 py-2 text-xs font-sans font-bold flex items-center justify-between gap-2 z-20 print:hidden shadow-sm">
+                        <div className="flex items-center gap-2 truncate">
+                          <AlertTriangle size={15} className="text-stone-950 shrink-0" />
+                          <span className="truncate">
+                            Jika pratinjau di bawah tidak muncul, berkas berada di Google Drive akun lain.
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => triggerReplaceFile(page.fileIndex)}
+                            disabled={page.fileId ? isReplacingFile[page.fileId] : false}
+                            className="bg-emerald-700 hover:bg-emerald-800 text-white px-2.5 py-1 rounded-lg text-[11px] font-bold transition flex items-center gap-1 cursor-pointer shadow-xs"
+                          >
+                            <Upload size={12} />
+                            <span>Ganti / Unggah Berkas</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleConnectDriveFromWarning}
+                            className="bg-white hover:bg-stone-100 text-stone-900 px-2 py-1 rounded-lg text-[11px] font-bold transition flex items-center gap-1 cursor-pointer shadow-xs"
+                          >
+                            <RefreshCw size={12} />
+                            <span>Ganti Akun</span>
+                          </button>
+                        </div>
+                      </div>
+
                       <iframe
                         src={`https://drive.google.com/file/d/${page.fileId}/preview`}
                         className="w-full h-full border-0 z-0 bg-stone-50"
@@ -3246,15 +3425,15 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                       />
                     </div>
 
-                    {/* Floating Controls Overlay specifically configured for quick sync and manual copy overrides */}
-                    <div className="absolute bottom-4 left-4 right-4 bg-stone-900/90 hover:bg-stone-950/95 text-white rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 shadow-xl backdrop-blur-md z-10 print:hidden transition-all duration-150 border border-stone-800">
+                    {/* Floating Controls Overlay specifically configured for quick sync, replace, and manual copy overrides */}
+                    <div className="absolute bottom-4 left-4 right-4 bg-stone-900/95 hover:bg-stone-950 text-white rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 shadow-xl backdrop-blur-md z-10 print:hidden transition-all duration-150 border border-stone-800">
                       <div className="flex items-center gap-2">
                         <div className="p-1.5 bg-amber-500/10 border border-amber-500/35 rounded-lg text-[#D4AF37]">
                           <Cloud size={14} />
                         </div>
                         <div className="text-left">
                           <p className="text-[10px] font-extrabold tracking-wide uppercase text-stone-300">Pratinjau Langsung Google Drive</p>
-                          <p className="text-[9px] text-stone-400 font-medium">Bekerja via otorisasi browser Anda. Jika file tidak muncul, Anda dapat menyalin file atau membuka tab baru.</p>
+                          <p className="text-[9px] text-stone-400 font-medium">Jika file tidak muncul karena berbeda akun, klik "Unggah Berkas Baru" atau "Salin ke GDrive Saya".</p>
                         </div>
                       </div>
 
@@ -3262,9 +3441,30 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                         const file = attachmentFiles[page.fileIndex];
                         const url = file?.url || '';
                         const copying = isCopying[page.fileId!];
+                        const replacing = page.fileId ? isReplacingFile[page.fileId] : false;
 
                         return (
                           <div className="flex items-center gap-2 flex-wrap">
+                            <button
+                              type="button"
+                              onClick={() => triggerReplaceFile(page.fileIndex)}
+                              disabled={replacing}
+                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-stone-700 text-white font-extrabold rounded-lg text-[10px] transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+                              title="Pilih berkas baru dari komputer/HP untuk mengganti lampiran ini"
+                            >
+                              {replacing ? (
+                                <>
+                                  <Loader2 size={11} className="animate-spin text-white" />
+                                  <span>Mengunggah...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Upload size={11} className="text-white" />
+                                  <span>Unggah Berkas Baru</span>
+                                </>
+                              )}
+                            </button>
+
                             <button
                               onClick={handleConnectDriveFromWarning}
                               disabled={isConnectingDrive}
@@ -3358,9 +3558,29 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
                         const idMatch = url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
                         const fileId = (dMatch && dMatch[1]) || (idMatch && idMatch[1]);
                         const copying = fileId ? isCopying[fileId] : false;
+                        const replacing = fileId ? isReplacingFile[fileId] : false;
 
                         return (
                           <div className="pt-3 border-t border-stone-150 flex flex-col gap-2">
+                            <button
+                              type="button"
+                              onClick={() => triggerReplaceFile(page.fileIndex)}
+                              disabled={replacing}
+                              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-stone-300 text-white font-extrabold rounded-xl text-xs transition duration-150 shadow-3xs cursor-pointer"
+                            >
+                              {replacing ? (
+                                <>
+                                  <Loader2 size={14} className="animate-spin text-white" />
+                                  <span>Mengunggah Berkas Baru...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Upload size={14} className="text-white" />
+                                  <span>Unggah Ulang / Ganti Berkas Lampiran Ini</span>
+                                </>
+                              )}
+                            </button>
+
                             <button
                               onClick={handleConnectDriveFromWarning}
                               disabled={isConnectingDrive}
@@ -3498,6 +3718,15 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
           }
         }
       `}</style>
+
+      {/* Hidden file input for direct file replacement */}
+      <input
+        type="file"
+        ref={replaceFileInputRef}
+        onChange={handleFileReplacementSelected}
+        accept="image/*,application/pdf"
+        className="hidden"
+      />
 
     </div>
   );

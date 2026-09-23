@@ -22,13 +22,13 @@ export const F1SignaturesBlock: React.FC<F1SignaturesBlockProps> = ({
     signers[3] || { title: 'Disetujui', name: 'Harijon', role: 'Direktur Keuangan' },
   ];
 
-  // Height calculations based on density
+  // Height calculations based on density - increased for spacious signature area
   const getGapHeightClass = () => {
-    if (density === 'ultra_dense') return 'h-7 sm:h-8 print:h-7';
-    if (density === 'dense') return 'h-9 sm:h-10 print:h-8';
-    if (density === 'few_items') return 'h-13 sm:h-15 print:h-12';
-    if (isCompact) return 'h-8 sm:h-9 print:h-8';
-    return 'h-10 sm:h-12 print:h-10';
+    if (density === 'ultra_dense') return 'h-10 sm:h-12 print:h-10 min-h-[40px]';
+    if (density === 'dense') return 'h-14 sm:h-16 print:h-14 min-h-[56px]';
+    if (density === 'few_items') return 'h-24 sm:h-28 print:h-24 min-h-[96px]';
+    if (isCompact) return 'h-12 sm:h-14 print:h-12 min-h-[48px]';
+    return 'h-20 sm:h-24 print:h-20 min-h-[80px]';
   };
 
   const gapHeight = getGapHeightClass();
@@ -72,14 +72,16 @@ export const F1SignaturesBlock: React.FC<F1SignaturesBlockProps> = ({
               {safeSigners.map((signer, idx) => (
                 <td
                   key={idx}
-                  className={`w-1/4 max-w-[25%] p-1 sm:p-1.5 align-top overflow-hidden ${
+                  className={`w-1/4 max-w-[25%] px-1 py-1.5 align-top overflow-hidden ${
                     idx < 3 ? 'border-r-2 border-black' : ''
                   }`}
                 >
                   <span className="font-bold tracking-tight uppercase text-[10.5px] sm:text-[11.5px] print:text-[11px] text-black block leading-tight text-center break-words">
                     {signer.name}
                   </span>
-                  <span className="font-bold tracking-tight uppercase text-[8.5px] sm:text-[9.5px] print:text-[9px] text-stone-900 block leading-tight text-center mt-0.5 break-words">
+                  {/* Garis tipis pemisah antara nama dan jabatan */}
+                  <div className="w-5/6 mx-auto border-b border-black my-1 print:my-0.5" />
+                  <span className="font-bold tracking-tight uppercase text-[8.5px] sm:text-[9.5px] print:text-[9px] text-stone-900 block leading-tight text-center break-words">
                     {signer.role}
                   </span>
                 </td>
@@ -108,8 +110,8 @@ export const F1SignaturesBlock: React.FC<F1SignaturesBlockProps> = ({
             {/* Signature Area Space */}
             <div className={`w-full ${gapHeight}`} />
 
-            {/* Name with strict Underline */}
-            <div className="w-full max-w-[170px] sm:max-w-[185px] border-b-2 border-black pb-0.5 flex items-center justify-center px-0.5 min-w-0">
+            {/* Name with thin line separator */}
+            <div className="w-full max-w-[170px] sm:max-w-[185px] border-b border-black pb-0.5 flex items-center justify-center px-0.5 min-w-0">
               <span className="font-bold tracking-tight uppercase text-[10.5px] sm:text-[11.5px] print:text-[11px] block text-center break-words leading-tight w-full">
                 {signer.name}
               </span>

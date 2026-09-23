@@ -873,14 +873,32 @@ app.get("/api/drive-proxy", async (req, res) => {
   if (!rawId) return res.status(400).json({ error: "Missing id parameter." });
   const fileId = cleanDriveFileId(rawId);
 
-  // 1. Check if token is provided via Authorization header or query param
+  // 1. Check if token(s) are provided via Authorization header or query param (supports multi-account tokens)
   const authHeader = req.headers.authorization;
   const queryToken = req.query.token as string;
-  const userToken = (authHeader && authHeader.startsWith("Bearer ")) 
-    ? authHeader.substring(7) 
-    : queryToken;
+  const queryTokens = req.query.tokens as string;
+  
+  const tokenList: string[] = [];
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    authHeader.substring(7).split(',').forEach(t => {
+      const clean = t.trim();
+      if (clean && !tokenList.includes(clean)) tokenList.push(clean);
+    });
+  }
+  if (queryToken) {
+    queryToken.split(',').forEach(t => {
+      const clean = t.trim();
+      if (clean && !tokenList.includes(clean)) tokenList.push(clean);
+    });
+  }
+  if (queryTokens) {
+    queryTokens.split(',').forEach(t => {
+      const clean = t.trim();
+      if (clean && !tokenList.includes(clean)) tokenList.push(clean);
+    });
+  }
 
-  if (userToken) {
+  for (const userToken of tokenList) {
     try {
       const driveRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`, {
         headers: {
@@ -898,7 +916,7 @@ app.get("/api/drive-proxy", async (req, res) => {
         }
       }
     } catch (errUserToken: any) {
-      // Proceed to Service Account or public fallbacks
+      // Proceed to next token
     }
   }
 
@@ -4065,7 +4083,7 @@ app.get(["/shared-view*", "/voucher/:id*"], async (req, res, next) => {
 });
 
 async function bootstrap() {
-  const isDev = process.env.NODE_ENV !== "production" && Boolean(process.env.APPLET_ID);
+  const isDev = process.env.NODE_ENV !== "production" || !fs.existsSync(path.join(process.cwd(), "dist"));
   if (isDev) {
     console.log("Starting dev server with Vite middleware...");
     const vite = await createViteServer({

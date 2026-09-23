@@ -13,6 +13,7 @@ import { AccurateAccount, AccurateMappedTransaction, AccurateMappingReport, Pett
 import { DEFAULT_ACCURATE_ACCOUNTS, autoMapTransactionToAccurate } from '../data/accurateCoaData';
 import { useAccurateCoa } from '../utils/accurateCoaStore';
 import { AccurateCoaMasterModal } from './AccurateCoaMasterModal';
+import { SearchableAccountSelect } from './SearchableAccountSelect';
 import { isPettyCashSubmission, getPettyCashCustodian, sortSubmissionsDescending } from '../utils';
 import { 
   saveAccurateMappingToFirestore, 
@@ -3409,19 +3410,15 @@ export function AccuratePettyCashMapping({
                         />
                       </td>
 
-                      {/* Accurate Account Dropdown Selector */}
-                      <td className="p-2">
-                        <select
+                      {/* Accurate Account Dropdown Selector with Instant Search */}
+                      <td className="p-2 min-w-[260px]">
+                        <SearchableAccountSelect
                           value={t.accurateAccountCode}
-                          onChange={(e) => handleAccountChange(t.id, e.target.value)}
-                          className="w-full bg-white border border-emerald-300 font-bold text-stone-900 rounded-lg px-2 py-1.5 text-xs font-mono focus:ring-2 focus:ring-emerald-500 focus:outline-none cursor-pointer"
-                        >
-                          {accounts.map((acc) => (
-                            <option key={acc.code} value={acc.code}>
-                              [{acc.code}] {acc.name}
-                            </option>
-                          ))}
-                        </select>
+                          onChange={(code) => handleAccountChange(t.id, code)}
+                          accounts={accounts}
+                          compact={true}
+                          placeholder="-- Cari Akun --"
+                        />
                       </td>
 
                       {/* Confidence Badge */}
@@ -3506,19 +3503,17 @@ export function AccuratePettyCashMapping({
                     <span>Pindahkan SELURUH ({activeGroup.items.length}) transaksi dari akun ini sekaligus:</span>
                   </div>
 
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <select
-                      value={bulkMoveTargetCode}
-                      onChange={(e) => setBulkMoveTargetCode(e.target.value)}
-                      className="bg-white border border-amber-300 font-bold text-stone-900 rounded-xl px-3 py-1.5 text-xs font-mono focus:ring-2 focus:ring-amber-500 focus:outline-none cursor-pointer"
-                    >
-                      <option value="">-- Pilih Akun Accurate Tujuan --</option>
-                      {accounts.filter(a => a.code !== selectedGroupCode).map((acc) => (
-                        <option key={acc.code} value={acc.code}>
-                          [{acc.code}] {acc.name}
-                        </option>
-                      ))}
-                    </select>
+                  <div className="flex items-center gap-2 flex-wrap min-w-[280px]">
+                    <div className="w-72">
+                      <SearchableAccountSelect
+                        value={bulkMoveTargetCode}
+                        onChange={(code) => setBulkMoveTargetCode(code)}
+                        accounts={accounts}
+                        excludeCode={selectedGroupCode}
+                        placeholder="-- Cari & Pilih Akun Tujuan --"
+                        buttonClassName="border-amber-300 hover:border-amber-500 font-bold"
+                      />
+                    </div>
 
                     <button
                       disabled={!bulkMoveTargetCode}
@@ -3526,7 +3521,7 @@ export function AccuratePettyCashMapping({
                         handleBulkMoveGroup(selectedGroupCode, bulkMoveTargetCode);
                         setBulkMoveTargetCode('');
                       }}
-                      className="bg-amber-600 hover:bg-amber-700 disabled:bg-stone-300 disabled:cursor-not-allowed text-white font-bold px-3.5 py-1.5 rounded-xl text-xs transition cursor-pointer shadow-3xs flex items-center gap-1.5"
+                      className="bg-amber-600 hover:bg-amber-700 disabled:bg-stone-300 disabled:cursor-not-allowed text-white font-bold px-3.5 py-2 rounded-xl text-xs transition cursor-pointer shadow-3xs flex items-center gap-1.5 shrink-0"
                     >
                       <Check size={14} />
                       <span>Pindahkan Semua</span>
@@ -3564,7 +3559,7 @@ export function AccuratePettyCashMapping({
                     <th className="p-2.5">Keterangan / Detail Pengeluaran</th>
                     <th className="p-2.5 w-28">Penerima</th>
                     <th className="p-2.5 w-32 text-right">Nominal (Rp)</th>
-                    <th className="p-2.5 w-64">Pindahkan Ke Akun Accurate</th>
+                    <th className="p-2.5 w-72">Pindahkan Ke Akun Accurate</th>
                     <th className="p-2.5 text-center w-12">Aksi</th>
                   </tr>
                 </thead>
@@ -3600,19 +3595,15 @@ export function AccuratePettyCashMapping({
                             Rp {t.amount.toLocaleString('id-ID')}
                           </td>
 
-                          {/* Reclassify Dropdown */}
-                          <td className="p-2.5">
-                            <select
+                          {/* Reclassify Dropdown with Instant Search */}
+                          <td className="p-2.5 min-w-[260px]">
+                            <SearchableAccountSelect
                               value={t.accurateAccountCode}
-                              onChange={(e) => handleAccountChange(t.id, e.target.value)}
-                              className="w-full bg-white border border-emerald-400 font-bold text-stone-900 rounded-lg px-2 py-1.5 text-xs font-mono focus:ring-2 focus:ring-emerald-500 focus:outline-none cursor-pointer shadow-3xs"
-                            >
-                              {accounts.map((acc) => (
-                                <option key={acc.code} value={acc.code}>
-                                  [{acc.code}] {acc.name}
-                                </option>
-                              ))}
-                            </select>
+                              onChange={(code) => handleAccountChange(t.id, code)}
+                              accounts={accounts}
+                              compact={true}
+                              placeholder="-- Cari / Pilih Akun --"
+                            />
                           </td>
 
                           <td className="p-2.5 text-center">

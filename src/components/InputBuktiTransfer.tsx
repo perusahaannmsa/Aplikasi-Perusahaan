@@ -12,7 +12,8 @@ import {
   ensureValidDriveToken,
   getOrRenewDriveToken,
   getActiveGoogleDriveAccount,
-  executeDriveApiWithAutoRefresh
+  executeDriveApiWithAutoRefresh,
+  ensureGoogleDriveFileSharing
 } from '../firebase';
 import { DriveAccountsManager } from './DriveAccountsManager';
 import { formatRupiah, formatDateIndonesian, convertImageToPdf, compressImage } from '../utils';
@@ -360,19 +361,9 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
 
       const fileData = await res.json();
 
-      // Set permissions
+      // Set resilient multi-account & public permissions
       try {
-        await fetch(`https://www.googleapis.com/drive/v3/files/${fileData.id}/permissions`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${driveToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            role: 'reader',
-            type: 'anyone',
-          }),
-        });
+        await ensureGoogleDriveFileSharing(fileData.id, driveToken);
       } catch (perErr) {
         console.warn('Could not set permissions for uploaded file:', fileName, perErr);
       }

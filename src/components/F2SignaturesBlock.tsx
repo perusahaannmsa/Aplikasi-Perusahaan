@@ -20,11 +20,11 @@ export const F2SignaturesBlock: React.FC<F2SignaturesBlockProps> = ({
   const signer2 = signers[1] || { title: 'Diajukan', name: 'Sri Ekowati', role: 'Manager Keuangan' };
 
   const getGapHeightClass = () => {
-    if (density === 'ultra_dense') return 'h-7 sm:h-8 print:h-7';
-    if (density === 'dense') return 'h-9 sm:h-10 print:h-8';
-    if (density === 'few_items') return 'h-13 sm:h-15 print:h-12';
-    if (isCompact) return 'h-8 sm:h-9 print:h-8';
-    return 'h-10 sm:h-12 print:h-10';
+    if (density === 'ultra_dense') return 'h-10 sm:h-12 print:h-10 min-h-[40px]';
+    if (density === 'dense') return 'h-14 sm:h-16 print:h-14 min-h-[56px]';
+    if (density === 'few_items') return 'h-24 sm:h-28 print:h-24 min-h-[96px]';
+    if (isCompact) return 'h-12 sm:h-14 print:h-12 min-h-[48px]';
+    return 'h-20 sm:h-24 print:h-20 min-h-[80px]';
   };
 
   const gapHeight = getGapHeightClass();
@@ -47,11 +47,13 @@ export const F2SignaturesBlock: React.FC<F2SignaturesBlockProps> = ({
                 <td className={gapHeight} />
               </tr>
               <tr>
-                <td className="py-1 px-2 align-top">
+                <td className="px-2 py-1.5 align-top">
                   <span className="font-bold tracking-tight uppercase text-[10.5px] sm:text-[11.5px] print:text-[11px] text-black block leading-tight text-center break-words">
                     {signer1.name}
                   </span>
-                  <span className="font-bold tracking-tight uppercase text-[8.5px] sm:text-[9.5px] print:text-[9px] text-stone-900 block leading-tight text-center mt-0.5 break-words">
+                  {/* Garis tipis pemisah antara nama dan jabatan */}
+                  <div className="w-5/6 max-w-[180px] mx-auto border-b border-black my-1 print:my-0.5" />
+                  <span className="font-bold tracking-tight uppercase text-[8.5px] sm:text-[9.5px] print:text-[9px] text-stone-900 block leading-tight text-center break-words">
                     {signer1.role}
                   </span>
                 </td>
@@ -69,7 +71,7 @@ export const F2SignaturesBlock: React.FC<F2SignaturesBlockProps> = ({
           {signer1.title}
         </span>
         <div className={`w-full ${gapHeight}`} />
-        <div className="w-full max-w-[180px] mx-auto border-b-2 border-black pb-0.5 flex items-center justify-center px-1">
+        <div className="w-full max-w-[180px] mx-auto border-b border-black pb-0.5 flex items-center justify-center px-1">
           <span className="font-bold text-[10.5px] sm:text-[11.5px] print:text-[11px] uppercase tracking-tight block text-center break-words leading-tight">
             {signer1.name}
           </span>
@@ -106,19 +108,23 @@ export const F2SignaturesBlock: React.FC<F2SignaturesBlockProps> = ({
               <td className={`w-1/2 ${gapHeight}`} />
             </tr>
             <tr>
-              <td className="w-1/2 border-r-2 border-black py-1 px-2 align-top">
+              <td className="w-1/2 border-r-2 border-black px-2 py-1.5 align-top">
                 <span className="font-bold tracking-tight uppercase text-[10.5px] sm:text-[11.5px] print:text-[11px] text-black block leading-tight text-center break-words">
                   {signer1.name}
                 </span>
-                <span className="font-bold tracking-tight uppercase text-[8.5px] sm:text-[9.5px] print:text-[9px] text-stone-900 block leading-tight text-center mt-0.5 break-words">
+                {/* Garis tipis pemisah antara nama dan jabatan */}
+                <div className="w-5/6 max-w-[180px] mx-auto border-b border-black my-1 print:my-0.5" />
+                <span className="font-bold tracking-tight uppercase text-[8.5px] sm:text-[9.5px] print:text-[9px] text-stone-900 block leading-tight text-center break-words">
                   {signer1.role}
                 </span>
               </td>
-              <td className="w-1/2 py-1 px-2 align-top">
+              <td className="w-1/2 px-2 py-1.5 align-top">
                 <span className="font-bold tracking-tight uppercase text-[10.5px] sm:text-[11.5px] print:text-[11px] text-black block leading-tight text-center break-words">
                   {signer2.name}
                 </span>
-                <span className="font-bold tracking-tight uppercase text-[8.5px] sm:text-[9.5px] print:text-[9px] text-stone-900 block leading-tight text-center mt-0.5 break-words">
+                {/* Garis tipis pemisah antara nama dan jabatan */}
+                <div className="w-5/6 max-w-[180px] mx-auto border-b border-black my-1 print:my-0.5" />
+                <span className="font-bold tracking-tight uppercase text-[8.5px] sm:text-[9.5px] print:text-[9px] text-stone-900 block leading-tight text-center break-words">
                   {signer2.role}
                 </span>
               </td>
@@ -138,7 +144,7 @@ export const F2SignaturesBlock: React.FC<F2SignaturesBlockProps> = ({
             {signer1.title}
           </span>
           <div className={`w-full ${gapHeight}`} />
-          <div className="w-full max-w-[170px] border-b-2 border-black pb-0.5 flex items-center justify-center px-1">
+          <div className="w-full max-w-[170px] border-b border-black pb-0.5 flex items-center justify-center px-1">
             <span className="font-bold text-[10.5px] sm:text-[11.5px] print:text-[11px] uppercase tracking-tight block text-center break-words leading-tight">
               {signer1.name}
             </span>
@@ -153,7 +159,7 @@ export const F2SignaturesBlock: React.FC<F2SignaturesBlockProps> = ({
             {signer2.title}
           </span>
           <div className={`w-full ${gapHeight}`} />
-          <div className="w-full max-w-[170px] border-b-2 border-black pb-0.5 flex items-center justify-center px-1">
+          <div className="w-full max-w-[170px] border-b border-black pb-0.5 flex items-center justify-center px-1">
             <span className="font-bold text-[10.5px] sm:text-[11.5px] print:text-[11px] uppercase tracking-tight block text-center break-words leading-tight">
               {signer2.name}
             </span>

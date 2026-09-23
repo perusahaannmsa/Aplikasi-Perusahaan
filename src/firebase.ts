@@ -978,6 +978,69 @@ export const setMasterDriveEmail = async (email: string): Promise<void> => {
   }
 };
 
+export const ensureGoogleDriveFileSharing = async (fileId: string, driveToken: string): Promise<void> => {
+  if (!fileId || !driveToken) return;
+
+  // 1. Set public reader permission (anyone with link)
+  try {
+    await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions?supportsAllDrives=true&sendNotificationEmail=false`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${driveToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        role: 'reader',
+        type: 'anyone',
+      }),
+    });
+  } catch (err) {
+    console.warn('Could not set public anyone permission on Drive file:', fileId, err);
+  }
+
+  // 2. Explicitly share with Master Drive account
+  const masterEmail = getMasterDriveEmail();
+  if (masterEmail) {
+    try {
+      await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions?supportsAllDrives=true&sendNotificationEmail=false`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${driveToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          role: 'writer',
+          type: 'user',
+          emailAddress: masterEmail,
+        }),
+      });
+    } catch {}
+  }
+
+  // 3. Explicitly share with all authorized & connected company accounts
+  const targets = new Set<string>();
+  getAuthorizedDriveEmails().forEach(e => { if (e) targets.add(e.toLowerCase()); });
+  getConnectedDrives().forEach(d => { if (d.email) targets.add(d.email.toLowerCase()); });
+
+  for (const email of targets) {
+    if (email === masterEmail?.toLowerCase()) continue;
+    try {
+      await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions?supportsAllDrives=true&sendNotificationEmail=false`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${driveToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          role: 'reader',
+          type: 'user',
+          emailAddress: email,
+        }),
+      });
+    } catch {}
+  }
+};
+
 export const getConnectedDrives = (): ConnectedDrive[] => {
   try {
     const raw = localStorage.getItem('NUSANTARA_CONNECTED_DRIVES');
@@ -1338,6 +1401,26 @@ export const getStoredGoogleDriveToken = (strictFreshnessCheck = false): string 
   }
   
   return googleDriveTokenMemory || localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
+};
+
+export const getAllConnectedDriveTokens = (): string[] => {
+  const drives = getConnectedDrives();
+  const tokens: string[] = [];
+  drives.forEach(d => {
+    if (d.accessToken && !tokens.includes(d.accessToken)) {
+      tokens.push(d.accessToken);
+    }
+  });
+  if (googleDriveTokenMemory && !tokens.includes(googleDriveTokenMemory)) {
+    tokens.push(googleDriveTokenMemory);
+  }
+  try {
+    const legacy = localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
+    if (legacy && !tokens.includes(legacy)) {
+      tokens.push(legacy);
+    }
+  } catch {}
+  return tokens;
 };
 
 // ═════════ CLOUD SETTINGS & MULTI-DEVICE SYNC ENGINE ═════════
