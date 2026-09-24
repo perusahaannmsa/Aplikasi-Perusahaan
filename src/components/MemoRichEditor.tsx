@@ -364,10 +364,14 @@ export const MemoRichEditor: React.FC<MemoRichEditorProps> = ({
         onMouseUp={updateActiveFormats}
         onKeyDown={handleKeyDown}
         data-placeholder={placeholder}
-        className="p-3.5 min-h-[140px] max-h-[360px] overflow-y-auto text-xs leading-relaxed text-stone-900 focus:outline-none font-sans memo-editor-surface selection:bg-amber-200 selection:text-black"
+        className="p-3.5 min-h-[140px] max-h-[360px] overflow-y-auto text-sm leading-normal text-stone-900 focus:outline-none memo-editor-surface selection:bg-amber-200 selection:text-black"
         style={{
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
+          fontFamily: "Calibri, 'Calibri (Body)', Aptos, 'Segoe UI', Arial, sans-serif",
+          fontSize: '11pt',
+          lineHeight: 1.15,
+          textAlign: 'justify',
         }}
       />
 

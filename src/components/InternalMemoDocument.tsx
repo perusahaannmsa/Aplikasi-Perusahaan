@@ -52,9 +52,12 @@ export const InternalMemoDocument: React.FC<InternalMemoDocumentProps> = ({
   return (
     <div
       id="internal-memo-printable-document"
-      className={`bg-white text-black font-sans shadow-md border border-stone-200 mx-auto p-8 sm:p-12 md:p-14 max-w-[850px] w-full min-h-[1050px] flex flex-col justify-between select-text internal-memo-page ${className}`}
+      className={`bg-white text-black shadow-md border border-stone-200 mx-auto p-8 sm:p-12 md:p-14 max-w-[850px] w-full min-h-[1050px] flex flex-col justify-between select-text internal-memo-page memo-word-document ${className}`}
       style={{
         boxSizing: 'border-box',
+        fontFamily: "Calibri, 'Calibri (Body)', Aptos, 'Segoe UI', Arial, sans-serif",
+        fontSize: '11pt',
+        lineHeight: 1.15,
       }}
     >
       <div>
@@ -83,10 +86,10 @@ export const InternalMemoDocument: React.FC<InternalMemoDocumentProps> = ({
 
               {/* Company Details (Right aligned, uppercase, bold corporate) */}
               <div className="w-3/5 sm:w-2/3 text-right">
-                <h1 className="font-sans font-black text-base sm:text-lg md:text-xl print:text-[18px] text-black tracking-wider leading-tight uppercase">
+                <h1 className="font-bold text-[14pt] print:text-[14pt] text-black tracking-wide leading-tight uppercase">
                   {memo.companyName || 'PT. NUSANTARA MINERAL SUKSES ABADI'}
                 </h1>
-                <div className="text-[11px] sm:text-xs print:text-[11px] font-bold text-black mt-1 leading-snug">
+                <div className="text-[9.5pt] print:text-[9.5pt] font-bold text-black mt-1 leading-snug">
                   <p>WISMA NH BUILDING No.. 2B – C LT. 1</p>
                   <p>JL. RAYA PASAR MINGGU</p>
                   <p>JAKARTA SELATAN, DKI Jakarta 12780</p>
@@ -102,65 +105,65 @@ export const InternalMemoDocument: React.FC<InternalMemoDocumentProps> = ({
             </div>
 
             {/* GARIS PANJANG HEADER (100% Full Width across the entire document width) */}
-            <div className="w-full border-b-[2.5px] border-black mt-2 mb-3.5 print:mt-1.5 print:mb-2.5"></div>
+            <div className="w-full border-b-[2.5px] border-black mt-2 mb-5 print:mt-1 print:mb-4"></div>
           </div>
         )}
 
-        {/* TITLE & NUMBER */}
-        <div className="text-center my-3 sm:my-4 print:my-2">
-          <h2 className="text-base sm:text-lg md:text-xl print:text-[17px] font-black uppercase tracking-wider underline underline-offset-4 text-black">
+        {/* TITLE & NUMBER - Spasi Renggang Sesuai Word */}
+        <div className="text-center my-4 sm:my-5 print:my-4">
+          <h2 className="text-[13pt] print:text-[13pt] font-bold uppercase tracking-wider underline underline-offset-4 text-black">
             INTERNAL MEMO
           </h2>
-          <p className="text-xs sm:text-sm print:text-[12.5px] font-bold text-black mt-1">
+          <p className="text-[11pt] print:text-[11pt] font-bold text-black mt-1">
             No. : {memo.nomorMemo}
           </p>
         </div>
 
-        {/* RECIPIENT & SUBJECT TABLE (100% Full Width, Sharp 1.5px Black Borders) */}
-        <div className="my-3 print:my-2 w-full">
-          <table className="w-full border-collapse border-[1.5px] border-black text-xs sm:text-[13px] print:text-[12px] text-black font-sans">
+        {/* RECIPIENT & SUBJECT TABLE (100% Full Width, Sharp 1.5px Black Borders, Spaced Sesuai Word) */}
+        <div className="my-5 print:my-4 w-full">
+          <table className="w-full border-collapse border-[1.5px] border-black text-[11pt] print:text-[11pt] text-black">
             <tbody>
               <tr className="border-b border-black">
-                <td className="w-32 sm:w-36 px-3 py-1.5 print:py-1 font-semibold border-r border-black">
+                <td className="w-36 px-3 py-1.5 font-semibold border-r border-black">
                   Hari/taggal
                 </td>
                 <td className="w-6 px-1 text-center font-bold border-r border-black">
                   :
                 </td>
-                <td className="px-3 py-1.5 print:py-1 font-medium">
+                <td className="px-3 py-1.5 font-normal">
                   {memo.hariTanggalDisplay}
                 </td>
               </tr>
               <tr className="border-b border-black">
-                <td className="px-3 py-1.5 print:py-1 font-semibold border-r border-black">
+                <td className="px-3 py-1.5 font-semibold border-r border-black">
                   Dari
                 </td>
                 <td className="px-1 text-center font-bold border-r border-black">
                   :
                 </td>
-                <td className="px-3 py-1.5 print:py-1 font-medium">
+                <td className="px-3 py-1.5 font-normal">
                   {memo.dari}
                 </td>
               </tr>
               <tr className="border-b border-black">
-                <td className="px-3 py-1.5 print:py-1 font-semibold border-r border-black">
+                <td className="px-3 py-1.5 font-semibold border-r border-black">
                   Kepada
                 </td>
                 <td className="px-1 text-center font-bold border-r border-black">
                   :
                 </td>
-                <td className="px-3 py-1.5 print:py-1 font-medium">
+                <td className="px-3 py-1.5 font-normal">
                   {memo.kepada}
                 </td>
               </tr>
               <tr>
-                <td className="px-3 py-1.5 print:py-1 font-semibold border-r border-black">
+                <td className="px-3 py-1.5 font-semibold border-r border-black">
                   Perihal
                 </td>
                 <td className="px-1 text-center font-bold border-r border-black">
                   :
                 </td>
-                <td className="px-3 py-1.5 print:py-1 font-bold">
+                <td className="px-3 py-1.5 font-bold">
                   {memo.perihal}
                 </td>
               </tr>
@@ -168,54 +171,59 @@ export const InternalMemoDocument: React.FC<InternalMemoDocumentProps> = ({
           </table>
         </div>
 
-        {/* SALUTATION & BODY WITH WORD RICH TEXT SUPPORT */}
-        <div className="my-4 print:my-2 text-xs sm:text-[13px] print:text-[12px] text-black leading-relaxed font-sans">
-          <p className="font-semibold mb-2 print:mb-1">Dengan Hormat</p>
+        {/* SALUTATION & BODY - PERSIS WORD (Calibri 11pt, Justified, Multiple 1.08 Line Spacing) */}
+        <div className="mt-6 mb-4 print:mt-5 print:mb-3 text-[11pt] print:text-[11pt] text-black">
+          <p className="font-normal mb-3 print:mb-2">Dengan Hormat</p>
           <div
-            className="memo-rich-content text-justify leading-relaxed font-normal text-stone-950 font-sans"
+            className="memo-rich-content text-justify leading-[1.15] font-normal text-black"
+            style={{
+              textAlign: 'justify',
+              textJustify: 'inter-word',
+              lineHeight: 1.15,
+            }}
             dangerouslySetInnerHTML={{ __html: formatMemoBodyHtml(memo.isiSurat) }}
           />
         </div>
 
-        {/* BANK DETAILS (Indented, matching Word document format) */}
-        <div className="my-4 print:my-2.5 ml-6 sm:ml-12 print:ml-8 text-xs sm:text-[13px] print:text-[12px] font-sans text-black space-y-1.5 print:space-y-0.5">
+        {/* BANK DETAILS (Indented Persis Sesuai Posisi Word Image 3) */}
+        <div className="my-5 print:my-4 ml-10 sm:ml-20 print:ml-16 text-[11pt] print:text-[11pt] text-black space-y-1.5 print:space-y-1">
           <div className="flex items-baseline">
-            <span className="w-32 sm:w-36 font-normal text-stone-900">Nama Bank</span>
-            <span className="w-5 font-bold">:</span>
+            <span className="w-36 font-normal text-black">Nama Bank</span>
+            <span className="w-6 font-bold">:</span>
             <span className="font-bold text-black">{memo.bankName}</span>
           </div>
           <div className="flex items-baseline">
-            <span className="w-32 sm:w-36 font-normal text-stone-900">No Rekeing</span>
-            <span className="w-5 font-bold">:</span>
+            <span className="w-36 font-normal text-black">No Rekeing</span>
+            <span className="w-6 font-bold">:</span>
             <span className="font-bold font-mono tracking-wider text-black">{memo.accountNumber}</span>
           </div>
           <div className="flex items-baseline">
-            <span className="w-32 sm:w-36 font-normal text-stone-900">Nama Rekening</span>
-            <span className="w-5 font-bold">:</span>
+            <span className="w-36 font-normal text-black">Nama Rekening</span>
+            <span className="w-6 font-bold">:</span>
             <span className="font-bold text-black">{memo.accountHolder}</span>
           </div>
         </div>
 
-        {/* CLOSING PARAGRAPH */}
-        <div className="my-4 print:my-2.5 text-xs sm:text-[13px] print:text-[12px] text-black font-sans leading-relaxed">
+        {/* CLOSING PARAGRAPH - Spasi Renggang Sesuai Word */}
+        <div className="my-5 print:my-4 text-[11pt] print:text-[11pt] text-black leading-[1.15]">
           <p>{memo.penutup}</p>
         </div>
       </div>
 
-      {/* SIGNATURE BLOCK (PERSIS SESUAI FOTO WORD RESMI: 3 PENANDATANGAN ATAU OPSI 2 / 1) */}
-      <div className="mt-8 sm:mt-10 print:mt-6 pt-2 print:pt-0 text-xs sm:text-[13px] print:text-[12px] text-black font-sans print:break-inside-avoid">
+      {/* SIGNATURE BLOCK - Renggang ke Bawah Sesuai Dokumen Word */}
+      <div className="mt-14 sm:mt-20 print:mt-14 pt-4 print:pt-2 text-[11pt] print:text-[11pt] text-black print:break-inside-avoid">
         {isThreeSigners ? (
           /* TAMPILAN 3 PENANDATANGAN SESUAI MICROSOFT WORD RESMI */
-          <div className="grid grid-cols-12 gap-2 sm:gap-4 print:gap-4 items-start">
+          <div className="grid grid-cols-12 gap-4 print:gap-4 items-start">
             {/* KOLOM KIRI: Hormat Saya (Andi Muhammad Rifki - Direktur) */}
             <div className="col-span-4 text-center flex flex-col justify-between">
               <p className="font-normal">{memo.salamPenutup || 'Hormat Saya'}</p>
-              <div className="h-16 sm:h-20 print:h-16"></div>
+              <div className="h-20 sm:h-24 print:h-20"></div>
               <div>
                 <p className="font-bold underline tracking-wide text-black">
                   {memo.penandatanganNama || 'Andi Muhammad Rifki'}
                 </p>
-                <p className="text-stone-900 font-normal mt-0.5 text-[11px] sm:text-xs print:text-[11px]">
+                <p className="text-black font-normal mt-0.5 text-[10.5pt] print:text-[10.5pt]">
                   {memo.penandatanganJabatan || 'Direktur'}
                 </p>
               </div>
@@ -226,15 +234,15 @@ export const InternalMemoDocument: React.FC<InternalMemoDocumentProps> = ({
               <p className="text-center font-normal mb-0">
                 {memo.approvalHeaderTitle || 'Mengetahui dan Menyetujui'}
               </p>
-              <div className="grid grid-cols-2 gap-2 sm:gap-4 print:gap-4 flex-1">
+              <div className="grid grid-cols-2 gap-4 print:gap-4 flex-1">
                 {/* Penandatangan 2: Harijon - Direktur Keuangan */}
                 <div className="text-center flex flex-col justify-between">
-                  <div className="h-16 sm:h-20 print:h-16"></div>
+                  <div className="h-20 sm:h-24 print:h-20"></div>
                   <div>
                     <p className="font-bold underline tracking-wide text-black">
                       {memo.penandatanganNama2 || 'Harijon'}
                     </p>
-                    <p className="text-stone-900 font-normal mt-0.5 text-[11px] sm:text-xs print:text-[11px]">
+                    <p className="text-black font-normal mt-0.5 text-[10.5pt] print:text-[10.5pt]">
                       {memo.penandatanganJabatan2 || 'Direktur Keuangan'}
                     </p>
                   </div>
@@ -242,12 +250,12 @@ export const InternalMemoDocument: React.FC<InternalMemoDocumentProps> = ({
 
                 {/* Penandatangan 3: Abdul Aziz Halid - Direktur Utama ANH */}
                 <div className="text-center flex flex-col justify-between">
-                  <div className="h-16 sm:h-20 print:h-16"></div>
+                  <div className="h-20 sm:h-24 print:h-20"></div>
                   <div>
                     <p className="font-bold underline tracking-wide text-black">
                       {memo.penandatanganNama3 || 'Abdul Aziz Halid'}
                     </p>
-                    <p className="text-stone-900 font-normal mt-0.5 text-[11px] sm:text-xs print:text-[11px]">
+                    <p className="text-black font-normal mt-0.5 text-[10.5pt] print:text-[10.5pt]">
                       {memo.penandatanganJabatan3 || 'Direktur Utama ANH'}
                     </p>
                   </div>
@@ -260,21 +268,21 @@ export const InternalMemoDocument: React.FC<InternalMemoDocumentProps> = ({
           <div className="grid grid-cols-2 gap-8 print:gap-4">
             <div>
               <p className="font-normal">{memo.salamPenutup || 'Hormat Saya'}</p>
-              <div className="h-16 sm:h-20 print:h-14"></div>
-              <p className="font-bold underline tracking-wide text-stone-950">
+              <div className="h-20 sm:h-24 print:h-20"></div>
+              <p className="font-bold underline tracking-wide text-black">
                 {memo.penandatanganNama}
               </p>
-              <p className="text-xs text-stone-800 font-medium mt-0.5">
+              <p className="text-[10.5pt] text-black font-normal mt-0.5">
                 {memo.penandatanganJabatan}
               </p>
             </div>
             <div>
               <p className="font-normal">{memo.salamPenutup2 || 'Menyetujui,'}</p>
-              <div className="h-16 sm:h-20 print:h-14"></div>
-              <p className="font-bold underline tracking-wide text-stone-950">
+              <div className="h-20 sm:h-24 print:h-20"></div>
+              <p className="font-bold underline tracking-wide text-black">
                 {memo.penandatanganNama2 || 'Harijon'}
               </p>
-              <p className="text-xs text-stone-800 font-medium mt-0.5">
+              <p className="text-[10.5pt] text-black font-normal mt-0.5">
                 {memo.penandatanganJabatan2 || 'Direktur Keuangan'}
               </p>
             </div>
@@ -283,11 +291,11 @@ export const InternalMemoDocument: React.FC<InternalMemoDocumentProps> = ({
           /* TAMPILAN 1 PENANDATANGAN */
           <div>
             <p className="font-normal">{memo.salamPenutup || 'Hormat Saya'}</p>
-            <div className="h-16 sm:h-20 print:h-14"></div>
-            <p className="font-bold underline tracking-wide text-stone-950">
+            <div className="h-20 sm:h-24 print:h-20"></div>
+            <p className="font-bold underline tracking-wide text-black">
               {memo.penandatanganNama}
             </p>
-            <p className="text-xs text-stone-800 font-medium mt-0.5">
+            <p className="text-[10.5pt] text-black font-normal mt-0.5">
               {memo.penandatanganJabatan}
             </p>
           </div>

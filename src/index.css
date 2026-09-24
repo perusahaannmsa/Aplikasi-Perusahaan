@@ -199,7 +199,35 @@
     box-shadow: none !important;
     border: none !important;
     background: white !important;
+    font-family: Calibri, 'Calibri (Body)', Aptos, 'Segoe UI', Arial, sans-serif !important;
   }
+
+/* Microsoft Word Exact Font & Paragraph Layout for Internal Memo */
+.memo-word-document {
+  font-family: Calibri, 'Calibri (Body)', Aptos, 'Segoe UI', Arial, sans-serif !important;
+  font-size: 11pt !important;
+}
+
+.memo-word-document,
+.memo-word-document p,
+.memo-word-document td,
+.memo-word-document div,
+.memo-word-document span {
+  font-family: Calibri, 'Calibri (Body)', Aptos, 'Segoe UI', Arial, sans-serif;
+}
+
+.memo-word-document .memo-rich-content {
+  text-align: justify !important;
+  text-justify: inter-word !important;
+  line-height: 1.15 !important;
+}
+
+.memo-word-document .memo-rich-content p {
+  line-height: 1.15 !important;
+  margin-top: 0 !important;
+  margin-bottom: 0.5rem !important;
+  text-align: justify !important;
+}
 
 /* Microsoft Word Rich Text Formatting styles for Memo */
 .memo-rich-content b,
