@@ -165,7 +165,7 @@ export function createInitialMemo(submission?: Submission | null, existingCount 
     };
   }
 
-  // Default sample exactly matching user's official "IM - Pembayaran Tongkang" PDF
+  // Default sample exactly matching user's official "IM - Pembayaran Tongkang" Word document
   return {
     id: `memo-${Date.now()}`,
     nomorMemo: '168/IM-NMSA/KEU/IX/2026',
@@ -179,16 +179,22 @@ export function createInitialMemo(submission?: Submission | null, existingCount 
     accountNumber: '1030013139064',
     accountHolder: 'PT. Nusantara Mineral Sukses Abadi',
     penutup: 'Demikian Internal Memo ini dibuat untuk dapat dipahami bersama dan dilaksanakan sebaik baiknya',
-    salamPenutup: 'Hormat saya,',
+    salamPenutup: 'Hormat Saya',
     penandatanganNama: 'Andi Muhammad Rifki',
     penandatanganJabatan: 'Direktur',
-    useSecondSigner: false,
+    signerCount: 3,
+    useSecondSigner: true,
+    useThirdSigner: true,
+    approvalHeaderTitle: 'Mengetahui dan Menyetujui',
     salamPenutup2: 'Menyetujui,',
     penandatanganNama2: 'Harijon',
     penandatanganJabatan2: 'Direktur Keuangan',
+    salamPenutup3: 'Menyetujui,',
+    penandatanganNama3: 'Abdul Aziz Halid',
+    penandatanganJabatan3: 'Direktur Utama ANH',
     companyName: 'PT. NUSANTARA MINERAL SUKSES ABADI',
     companyHeaderUrl: OFFICIAL_KOP_SURAT_IMAGE_URL,
-    useImageHeader: false, // Default to official layout with long line like PDF IM Tongkang
+    useImageHeader: false, // Default to official layout with long line like Word document
     createdAt: new Date().toISOString(),
   };
 }

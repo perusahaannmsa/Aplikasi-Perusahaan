@@ -507,6 +507,13 @@ export interface InternalMemo {
   salamPenutup2?: string;
   penandatanganNama2?: string;
   penandatanganJabatan2?: string;
+  // 3 Penandatangan (Sesuai Word Resmi NMSA)
+  signerCount?: 1 | 2 | 3;
+  useThirdSigner?: boolean;
+  salamPenutup3?: string;
+  penandatanganNama3?: string;
+  penandatanganJabatan3?: string;
+  approvalHeaderTitle?: string; // e.g. "Mengetahui dan Menyetujui"
   linkedSubmissionId?: string;
   linkedSubmissionKode?: string;
   linkedAmount?: number;

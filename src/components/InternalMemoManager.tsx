@@ -41,9 +41,10 @@ import {
 } from 'lucide-react';
 
 const COMMON_MEMO_SIGNERS = [
-  { name: 'H. Andi Nursyam Halid', role: 'Direktur Utama' },
-  { name: 'Harijon', role: 'Direktur Keuangan' },
   { name: 'Andi Muhammad Rifki', role: 'Direktur' },
+  { name: 'Harijon', role: 'Direktur Keuangan' },
+  { name: 'Abdul Aziz Halid', role: 'Direktur Utama ANH' },
+  { name: 'H. Andi Nursyam Halid', role: 'Direktur Utama' },
   { name: 'Sri Ekowati', role: 'Manager Keuangan' },
 ];
 
@@ -267,7 +268,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
     }
   };
 
-  // Restore sample document matching user's official "IM - Pembayaran Tongkang" PDF
+  // Restore sample document matching user's official "IM - Pembayaran Tongkang" Word document
   const handleLoadSampleDokumen = () => {
     setCurrentMemo({
       id: `memo-${Date.now()}`,
@@ -284,27 +285,39 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
       accountHolder: 'PT. Nusantara Mineral Sukses Abadi',
       penutup:
         'Demikian Internal Memo ini dibuat untuk dapat dipahami bersama dan dilaksanakan sebaik baiknya',
-      salamPenutup: 'Hormat saya,',
+      salamPenutup: 'Hormat Saya',
       penandatanganNama: 'Andi Muhammad Rifki',
       penandatanganJabatan: 'Direktur',
-      useSecondSigner: false,
+      signerCount: 3,
+      useSecondSigner: true,
+      useThirdSigner: true,
+      approvalHeaderTitle: 'Mengetahui dan Menyetujui',
       salamPenutup2: 'Menyetujui,',
       penandatanganNama2: 'Harijon',
       penandatanganJabatan2: 'Direktur Keuangan',
+      salamPenutup3: 'Menyetujui,',
+      penandatanganNama3: 'Abdul Aziz Halid',
+      penandatanganJabatan3: 'Direktur Utama ANH',
       companyName: 'PT. NUSANTARA MINERAL SUKSES ABADI',
       companyHeaderUrl: OFFICIAL_KOP_SURAT_IMAGE_URL,
-      useImageHeader: false, // Default to official layout with long line like PDF IM Tongkang
+      useImageHeader: false, // Default to official layout with long line like Word document
       createdAt: new Date().toISOString(),
     });
-    setSaveSuccessMsg('Draf contoh resmi IM - Pembayaran Tongkang (Sesuai PDF) dimuat.');
+    setSaveSuccessMsg('Draf contoh resmi IM - Pembayaran Tongkang (3 Penandatangan Sesuai Word) dimuat.');
     setTimeout(() => setSaveSuccessMsg(''), 2500);
   };
 
-  // Print function
+  // Print function with complete isolation to match Microsoft Word exact output
   const handlePrint = () => {
     // Automatically save before print
     handleSaveCurrentMemo();
-    window.print();
+    document.body.classList.add('is-printing-internal-memo');
+    setTimeout(() => {
+      window.print();
+      setTimeout(() => {
+        document.body.classList.remove('is-printing-internal-memo');
+      }, 1000);
+    }, 150);
   };
 
   // Filter memos for history tab
@@ -850,27 +863,99 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                 </div>
               </div>
 
-              {/* Signer 1 & Optional Signer 2 Section */}
+              {/* Signer Configuration Section (1, 2, or 3 Signers Sesuai Dokumen Word) */}
               <div className="p-3.5 bg-stone-50 rounded-xl border border-stone-200 space-y-3.5">
-                {/* Penandatangan 1 */}
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-stone-200">
+                  <span className="text-[11px] font-bold text-stone-800 flex items-center gap-1.5">
+                    <Users size={14} className="text-amber-600" />
+                    Format Penandatangan Dokumen
+                  </span>
+                  {/* Segmented Signer Mode Selector */}
+                  <div className="inline-flex rounded-lg border border-stone-300 p-0.5 bg-stone-200/70 text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCurrentMemo((prev) => ({
+                          ...prev,
+                          signerCount: 3,
+                          useSecondSigner: true,
+                          useThirdSigner: true,
+                          salamPenutup: prev.salamPenutup || 'Hormat Saya',
+                          approvalHeaderTitle: prev.approvalHeaderTitle || 'Mengetahui dan Menyetujui',
+                          penandatanganNama2: prev.penandatanganNama2 || 'Harijon',
+                          penandatanganJabatan2: prev.penandatanganJabatan2 || 'Direktur Keuangan',
+                          penandatanganNama3: prev.penandatanganNama3 || 'Abdul Aziz Halid',
+                          penandatanganJabatan3: prev.penandatanganJabatan3 || 'Direktur Utama ANH',
+                        }))
+                      }
+                      className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer ${
+                        currentMemo.signerCount === 3 || currentMemo.useThirdSigner
+                          ? 'bg-amber-600 text-white shadow-xs'
+                          : 'text-stone-700 hover:text-stone-900'
+                      }`}
+                    >
+                      3 Pejabat (Resmi Word)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCurrentMemo((prev) => ({
+                          ...prev,
+                          signerCount: 2,
+                          useSecondSigner: true,
+                          useThirdSigner: false,
+                        }))
+                      }
+                      className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer ${
+                        currentMemo.signerCount === 2 ||
+                        (currentMemo.useSecondSigner && !currentMemo.useThirdSigner && currentMemo.signerCount !== 3)
+                          ? 'bg-amber-600 text-white shadow-xs'
+                          : 'text-stone-700 hover:text-stone-900'
+                      }`}
+                    >
+                      2 Pejabat
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCurrentMemo((prev) => ({
+                          ...prev,
+                          signerCount: 1,
+                          useSecondSigner: false,
+                          useThirdSigner: false,
+                        }))
+                      }
+                      className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer ${
+                        currentMemo.signerCount === 1 ||
+                        (!currentMemo.useSecondSigner && !currentMemo.useThirdSigner)
+                          ? 'bg-amber-600 text-white shadow-xs'
+                          : 'text-stone-700 hover:text-stone-900'
+                      }`}
+                    >
+                      1 Pejabat
+                    </button>
+                  </div>
+                </div>
+
+                {/* Penandatangan 1: Pemohon / Hormat Saya */}
+                <div className="bg-white p-3 rounded-lg border border-stone-200 space-y-2">
+                  <div className="flex items-center justify-between">
                     <span className="text-[11px] font-bold text-stone-800 flex items-center gap-1.5">
                       <User size={13} className="text-amber-600" />
-                      Penandatangan 1 (Pembuat Memo)
+                      Penandatangan 1 (Pembuat / Pemohon)
                     </span>
                     <div className="flex items-center gap-1">
                       <span className="text-[10px] text-stone-500 font-medium">Salam:</span>
                       <input
                         type="text"
-                        value={currentMemo.salamPenutup || 'Hormat saya,'}
+                        value={currentMemo.salamPenutup || 'Hormat Saya'}
                         onChange={(e) =>
                           setCurrentMemo((prev) => ({
                             ...prev,
                             salamPenutup: e.target.value,
                           }))
                         }
-                        placeholder="Hormat saya,"
+                        placeholder="Hormat Saya"
                         className="px-2 py-0.5 text-[11px] bg-white border border-stone-300 rounded-md focus:ring-1 focus:ring-amber-500 focus:outline-none w-28 text-stone-700"
                       />
                     </div>
@@ -890,7 +975,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                             penandatanganNama: e.target.value,
                           }))
                         }
-                        placeholder="H. Andi Nursyam Halid"
+                        placeholder="Andi Muhammad Rifki"
                         className="w-full px-2.5 py-1.5 text-xs font-bold bg-white border border-stone-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none"
                       />
                     </div>
@@ -907,14 +992,14 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                             penandatanganJabatan: e.target.value,
                           }))
                         }
-                        placeholder="Direktur Utama"
+                        placeholder="Direktur"
                         className="w-full px-2.5 py-1.5 text-xs bg-white border border-stone-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none"
                       />
                     </div>
                   </div>
 
                   {/* Preset quick buttons for Signer 1 */}
-                  <div className="flex flex-wrap gap-1 mt-2">
+                  <div className="flex flex-wrap gap-1 pt-1">
                     <span className="text-[10px] text-stone-400 self-center mr-1">Preset:</span>
                     {COMMON_MEMO_SIGNERS.map((s) => (
                       <button
@@ -927,7 +1012,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                             penandatanganJabatan: s.role,
                           }))
                         }
-                        className="px-2 py-0.5 text-[10px] bg-white hover:bg-stone-100 text-stone-700 border border-stone-250 rounded-md transition cursor-pointer"
+                        className="px-2 py-0.5 text-[10px] bg-stone-50 hover:bg-stone-100 text-stone-700 border border-stone-250 rounded-md transition cursor-pointer"
                       >
                         {s.name} ({s.role})
                       </button>
@@ -935,69 +1020,39 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                   </div>
                 </div>
 
-                {/* Divider / Toggle Penandatangan 2 */}
-                <div className="pt-2.5 border-t border-stone-200">
-                  <div className="flex items-center justify-between">
-                    <label className="flex items-center gap-2 cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        checked={!!currentMemo.useSecondSigner}
-                        onChange={(e) =>
-                          setCurrentMemo((prev) => ({
-                            ...prev,
-                            useSecondSigner: e.target.checked,
-                            salamPenutup2: prev.salamPenutup2 || 'Menyetujui,',
-                            penandatanganNama2: prev.penandatanganNama2 || 'Harijon',
-                            penandatanganJabatan2: prev.penandatanganJabatan2 || 'Direktur Keuangan',
-                          }))
-                        }
-                        className="w-4 h-4 text-amber-600 rounded-sm border-stone-300 focus:ring-amber-500 cursor-pointer"
-                      />
-                      <span className="text-xs font-bold text-stone-800 flex items-center gap-1.5">
-                        <Users size={13} className="text-amber-600" />
-                        Aktifkan Penandatangan 2 (Opsional)
+                {/* Bagian Penandatangan 2 & 3 (Untuk 3 Pejabat Sesuai Word) */}
+                {(currentMemo.signerCount === 3 || currentMemo.useThirdSigner) && (
+                  <div className="bg-amber-50/60 p-3 rounded-lg border border-amber-200/80 space-y-3">
+                    <div className="flex items-center justify-between pb-1 border-b border-amber-200">
+                      <span className="text-[11px] font-bold text-amber-950 flex items-center gap-1.5">
+                        <Users size={13} className="text-amber-700" />
+                        Pihak yang Menyetujui (2 Pejabat Sejajar di Kanan)
                       </span>
-                    </label>
-                    <span
-                      className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                        currentMemo.useSecondSigner
-                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                          : 'bg-stone-200 text-stone-600'
-                      }`}
-                    >
-                      {currentMemo.useSecondSigner ? 'Aktif (2 Kolom Tanda Tangan)' : 'Nonaktif (1 Kolom)'}
-                    </span>
-                  </div>
-
-                  {/* Second Signer Inputs (visible when enabled) */}
-                  {currentMemo.useSecondSigner && (
-                    <div className="mt-3 p-2.5 bg-amber-50/50 rounded-lg border border-amber-200 space-y-2.5">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10.5px] font-bold text-stone-700">
-                          Data Penandatangan 2 (Menyetujui / Mengetahui)
-                        </span>
-                        <div className="flex items-center gap-1">
-                          <span className="text-[10px] text-stone-500 font-medium">Salam:</span>
-                          <input
-                            type="text"
-                            value={currentMemo.salamPenutup2 || 'Menyetujui,'}
-                            onChange={(e) =>
-                              setCurrentMemo((prev) => ({
-                                ...prev,
-                                salamPenutup2: e.target.value,
-                              }))
-                            }
-                            placeholder="Menyetujui,"
-                            className="px-2 py-0.5 text-[11px] bg-white border border-stone-300 rounded-md focus:ring-1 focus:ring-amber-500 focus:outline-none w-28 text-stone-700"
-                          />
-                        </div>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[10px] text-stone-600 font-medium">Judul Header:</span>
+                        <input
+                          type="text"
+                          value={currentMemo.approvalHeaderTitle || 'Mengetahui dan Menyetujui'}
+                          onChange={(e) =>
+                            setCurrentMemo((prev) => ({
+                              ...prev,
+                              approvalHeaderTitle: e.target.value,
+                            }))
+                          }
+                          placeholder="Mengetahui dan Menyetujui"
+                          className="px-2 py-0.5 text-[11px] bg-white border border-stone-300 rounded-md focus:ring-1 focus:ring-amber-500 focus:outline-none w-44 text-stone-800 font-medium"
+                        />
                       </div>
+                    </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {/* Penandatangan 2: Harijon - Direktur Keuangan */}
+                    <div className="bg-white p-2.5 rounded-lg border border-stone-200 space-y-1.5">
+                      <span className="text-[10.5px] font-bold text-stone-700 block">
+                        Penandatangan 2 (Mengetahui 1)
+                      </span>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <div>
-                          <label className="block text-[10px] font-bold text-stone-600 mb-0.5">
-                            Nama Penandatangan 2 (Manual)
-                          </label>
+                          <label className="block text-[9.5px] font-bold text-stone-500 mb-0.5">Nama</label>
                           <input
                             type="text"
                             value={currentMemo.penandatanganNama2 || ''}
@@ -1008,13 +1063,11 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                               }))
                             }
                             placeholder="Harijon"
-                            className="w-full px-2.5 py-1.5 text-xs font-bold bg-white border border-stone-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                            className="w-full px-2 py-1 text-xs font-bold bg-white border border-stone-300 rounded-md focus:ring-1 focus:ring-amber-500 focus:outline-none"
                           />
                         </div>
                         <div>
-                          <label className="block text-[10px] font-bold text-stone-600 mb-0.5">
-                            Jabatan Penandatangan 2 (Manual)
-                          </label>
+                          <label className="block text-[9.5px] font-bold text-stone-500 mb-0.5">Jabatan</label>
                           <input
                             type="text"
                             value={currentMemo.penandatanganJabatan2 || ''}
@@ -1025,14 +1078,11 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                               }))
                             }
                             placeholder="Direktur Keuangan"
-                            className="w-full px-2.5 py-1.5 text-xs bg-white border border-stone-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                            className="w-full px-2 py-1 text-xs bg-white border border-stone-300 rounded-md focus:ring-1 focus:ring-amber-500 focus:outline-none"
                           />
                         </div>
                       </div>
-
-                      {/* Preset quick buttons for Signer 2 */}
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        <span className="text-[10px] text-stone-400 self-center mr-1">Preset:</span>
+                      <div className="flex flex-wrap gap-1 pt-0.5">
                         {COMMON_MEMO_SIGNERS.map((s) => (
                           <button
                             key={s.name}
@@ -1044,15 +1094,155 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                                 penandatanganJabatan2: s.role,
                               }))
                             }
-                            className="px-2 py-0.5 text-[10px] bg-white hover:bg-stone-100 text-stone-700 border border-stone-250 rounded-md transition cursor-pointer"
+                            className="px-1.5 py-0.5 text-[9.5px] bg-stone-50 hover:bg-stone-100 text-stone-700 border border-stone-200 rounded-sm transition cursor-pointer"
                           >
                             {s.name} ({s.role})
                           </button>
                         ))}
                       </div>
                     </div>
-                  )}
-                </div>
+
+                    {/* Penandatangan 3: Abdul Aziz Halid - Direktur Utama ANH */}
+                    <div className="bg-white p-2.5 rounded-lg border border-stone-200 space-y-1.5">
+                      <span className="text-[10.5px] font-bold text-stone-700 block">
+                        Penandatangan 3 (Mengetahui 2)
+                      </span>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-[9.5px] font-bold text-stone-500 mb-0.5">Nama</label>
+                          <input
+                            type="text"
+                            value={currentMemo.penandatanganNama3 || ''}
+                            onChange={(e) =>
+                              setCurrentMemo((prev) => ({
+                                ...prev,
+                                penandatanganNama3: e.target.value,
+                              }))
+                            }
+                            placeholder="Abdul Aziz Halid"
+                            className="w-full px-2 py-1 text-xs font-bold bg-white border border-stone-300 rounded-md focus:ring-1 focus:ring-amber-500 focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[9.5px] font-bold text-stone-500 mb-0.5">Jabatan</label>
+                          <input
+                            type="text"
+                            value={currentMemo.penandatanganJabatan3 || ''}
+                            onChange={(e) =>
+                              setCurrentMemo((prev) => ({
+                                ...prev,
+                                penandatanganJabatan3: e.target.value,
+                              }))
+                            }
+                            placeholder="Direktur Utama ANH"
+                            className="w-full px-2 py-1 text-xs bg-white border border-stone-300 rounded-md focus:ring-1 focus:ring-amber-500 focus:outline-none"
+                          />
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-1 pt-0.5">
+                        {COMMON_MEMO_SIGNERS.map((s) => (
+                          <button
+                            key={s.name}
+                            type="button"
+                            onClick={() =>
+                              setCurrentMemo((prev) => ({
+                                ...prev,
+                                penandatanganNama3: s.name,
+                                penandatanganJabatan3: s.role,
+                              }))
+                            }
+                            className="px-1.5 py-0.5 text-[9.5px] bg-stone-50 hover:bg-stone-100 text-stone-700 border border-stone-200 rounded-sm transition cursor-pointer"
+                          >
+                            {s.name} ({s.role})
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Bagian Penandatangan 2 Saja (Jika mode 2 Penandatangan dipilih) */}
+                {currentMemo.signerCount === 2 && (
+                  <div className="bg-amber-50/50 p-2.5 rounded-lg border border-amber-200 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10.5px] font-bold text-stone-700">
+                        Data Penandatangan 2 (Menyetujui)
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[10px] text-stone-500 font-medium">Salam:</span>
+                        <input
+                          type="text"
+                          value={currentMemo.salamPenutup2 || 'Menyetujui,'}
+                          onChange={(e) =>
+                            setCurrentMemo((prev) => ({
+                              ...prev,
+                              salamPenutup2: e.target.value,
+                            }))
+                          }
+                          placeholder="Menyetujui,"
+                          className="px-2 py-0.5 text-[11px] bg-white border border-stone-300 rounded-md focus:ring-1 focus:ring-amber-500 focus:outline-none w-28 text-stone-700"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="block text-[10px] font-bold text-stone-600 mb-0.5">
+                          Nama Penandatangan 2
+                        </label>
+                        <input
+                          type="text"
+                          value={currentMemo.penandatanganNama2 || ''}
+                          onChange={(e) =>
+                            setCurrentMemo((prev) => ({
+                              ...prev,
+                              penandatanganNama2: e.target.value,
+                            }))
+                          }
+                          placeholder="Harijon"
+                          className="w-full px-2.5 py-1.5 text-xs font-bold bg-white border border-stone-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-stone-600 mb-0.5">
+                          Jabatan Penandatangan 2
+                        </label>
+                        <input
+                          type="text"
+                          value={currentMemo.penandatanganJabatan2 || ''}
+                          onChange={(e) =>
+                            setCurrentMemo((prev) => ({
+                              ...prev,
+                              penandatanganJabatan2: e.target.value,
+                            }))
+                          }
+                          placeholder="Direktur Keuangan"
+                          className="w-full px-2.5 py-1.5 text-xs bg-white border border-stone-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      <span className="text-[10px] text-stone-400 self-center mr-1">Preset:</span>
+                      {COMMON_MEMO_SIGNERS.map((s) => (
+                        <button
+                          key={s.name}
+                          type="button"
+                          onClick={() =>
+                            setCurrentMemo((prev) => ({
+                              ...prev,
+                              penandatanganNama2: s.name,
+                              penandatanganJabatan2: s.role,
+                            }))
+                          }
+                          className="px-2 py-0.5 text-[10px] bg-white hover:bg-stone-100 text-stone-700 border border-stone-250 rounded-md transition cursor-pointer"
+                        >
+                          {s.name} ({s.role})
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Action Buttons */}
@@ -1192,7 +1382,13 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                     <button
                       onClick={() => {
                         handleSelectMemoFromHistory(memo);
-                        setTimeout(() => window.print(), 150);
+                        document.body.classList.add('is-printing-internal-memo');
+                        setTimeout(() => {
+                          window.print();
+                          setTimeout(() => {
+                            document.body.classList.remove('is-printing-internal-memo');
+                          }, 1000);
+                        }, 200);
                       }}
                       className="px-2 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold rounded-lg transition"
                       title="Cetak langsung"
