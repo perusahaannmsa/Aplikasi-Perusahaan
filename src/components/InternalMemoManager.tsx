@@ -12,6 +12,7 @@ import {
 } from '../utils/memoUtils';
 import { InternalMemoDocument } from './InternalMemoDocument';
 import { ManageBankAccountsModal } from './ManageBankAccountsModal';
+import { MemoRichEditor } from './MemoRichEditor';
 import {
   FileText,
   Printer,
@@ -266,36 +267,36 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
     }
   };
 
-  // Restore sample document matching user's PDF
+  // Restore sample document matching user's official "IM - Pembayaran Tongkang" PDF
   const handleLoadSampleDokumen = () => {
     setCurrentMemo({
       id: `memo-${Date.now()}`,
-      nomorMemo: '164/IM-NMSA/KEU/IX/2026',
-      tanggal: '2026-09-21',
-      hariTanggalDisplay: 'Senin / 21 September 2026',
-      dari: 'H. A. Nursyam Halid – Direktur Utama',
+      nomorMemo: '168/IM-NMSA/KEU/IX/2026',
+      tanggal: '2026-09-24',
+      hariTanggalDisplay: 'Kamis / 24 September 2026',
+      dari: 'Andi Muhammad Rifki – Direktur',
       kepada: 'Harijon – Direktur Keuangan',
       perihal: 'Pembayaran DP Batubara 50%',
       isiSurat:
-        'Sehubungan dengan akan dilakukannya kegiatan Pengiriman Batubara ke PLTU Pelabuhan Ratu ADC, dengan ini kami memohon untuk dilakukan pembayaran DP Batubara sebesar 50% dari total biaya yang terlampir didalam invoice No. 004/INV/BBJ/IX/2026 Tanggal 15 September yaitu sebesar Rp. 2.512.500.000,- dapat di transfer ke :',
+        'Sehubungan dengan akan dilakukannya kegiatan pengiriman Batubara ke <strong>PLTU Pelabuhan Ratu ADC</strong>, dengan ini kami memohon untuk dapat dilakukan pembayaran <strong>DP Tongkang sebesar 50%</strong> dari total biaya yang terlampir didalam <strong>Invoice No. 001-DP/WAA-BJM-NMSA/IX/26 Tanggal 23 September 2026</strong>, yaitu <strong>Sebesar Rp. 712.500.000,-</strong> dapat di Transfer ke :',
       bankName: 'Bank Mandiri',
       accountNumber: '1030013139064',
       accountHolder: 'PT. Nusantara Mineral Sukses Abadi',
       penutup:
         'Demikian Internal Memo ini dibuat untuk dapat dipahami bersama dan dilaksanakan sebaik baiknya',
       salamPenutup: 'Hormat saya,',
-      penandatanganNama: 'H. Andi Nursyam Halid',
-      penandatanganJabatan: 'Direktur Utama',
+      penandatanganNama: 'Andi Muhammad Rifki',
+      penandatanganJabatan: 'Direktur',
       useSecondSigner: false,
       salamPenutup2: 'Menyetujui,',
       penandatanganNama2: 'Harijon',
       penandatanganJabatan2: 'Direktur Keuangan',
       companyName: 'PT. NUSANTARA MINERAL SUKSES ABADI',
       companyHeaderUrl: OFFICIAL_KOP_SURAT_IMAGE_URL,
-      useImageHeader: true,
+      useImageHeader: false, // Default to official layout with long line like PDF IM Tongkang
       createdAt: new Date().toISOString(),
     });
-    setSaveSuccessMsg('Draf contoh resmi PLTU Pelabuhan Ratu dimuat.');
+    setSaveSuccessMsg('Draf contoh resmi IM - Pembayaran Tongkang (Sesuai PDF) dimuat.');
     setTimeout(() => setSaveSuccessMsg(''), 2500);
   };
 
@@ -496,7 +497,29 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                   </span>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 text-xs font-semibold">
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setCurrentMemo((prev) => ({
+                        ...prev,
+                        useImageHeader: false,
+                      }))
+                    }
+                    className={`py-2 px-2.5 rounded-xl border text-center transition cursor-pointer flex flex-col items-center justify-center gap-1 ${
+                      currentMemo.useImageHeader === false
+                        ? 'bg-amber-100 border-amber-500 text-amber-950 font-black shadow-xs ring-1 ring-amber-400'
+                        : 'bg-white border-stone-200 text-stone-700 hover:bg-stone-100'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <CheckCircle2 size={13} className={currentMemo.useImageHeader === false ? 'text-amber-700' : 'opacity-0'} />
+                      <span className="font-bold">Format IM Tongkang</span>
+                    </div>
+                    <span className="text-[9.5px] font-normal text-stone-600 leading-tight">
+                      Logo + Teks + Garis Panjang (Sesuai PDF Asli)
+                    </span>
+                  </button>
                   <button
                     type="button"
                     onClick={() =>
@@ -506,31 +529,19 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                         companyHeaderUrl: prev.companyHeaderUrl || OFFICIAL_KOP_SURAT_IMAGE_URL,
                       }))
                     }
-                    className={`py-1.5 px-2 rounded-lg border text-center transition cursor-pointer flex items-center justify-center gap-1.5 ${
-                      currentMemo.useImageHeader !== false
-                        ? 'bg-amber-100 border-amber-400 text-amber-950 font-bold shadow-xs'
-                        : 'bg-white border-stone-200 text-stone-600 hover:bg-stone-100'
+                    className={`py-2 px-2.5 rounded-xl border text-center transition cursor-pointer flex flex-col items-center justify-center gap-1 ${
+                      currentMemo.useImageHeader === true
+                        ? 'bg-amber-100 border-amber-500 text-amber-950 font-black shadow-xs ring-1 ring-amber-400'
+                        : 'bg-white border-stone-200 text-stone-700 hover:bg-stone-100'
                     }`}
                   >
-                    <CheckCircle2 size={13} className={currentMemo.useImageHeader !== false ? 'text-amber-700' : 'opacity-0'} />
-                    <span>Banner Kop Resmi</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setCurrentMemo((prev) => ({
-                        ...prev,
-                        useImageHeader: false,
-                      }))
-                    }
-                    className={`py-1.5 px-2 rounded-lg border text-center transition cursor-pointer flex items-center justify-center gap-1.5 ${
-                      currentMemo.useImageHeader === false
-                        ? 'bg-amber-100 border-amber-400 text-amber-950 font-bold shadow-xs'
-                        : 'bg-white border-stone-200 text-stone-600 hover:bg-stone-100'
-                    }`}
-                  >
-                    <CheckCircle2 size={13} className={currentMemo.useImageHeader === false ? 'text-amber-700' : 'opacity-0'} />
-                    <span>Kop Teks Biasa</span>
+                    <div className="flex items-center gap-1.5">
+                      <CheckCircle2 size={13} className={currentMemo.useImageHeader === true ? 'text-amber-700' : 'opacity-0'} />
+                      <span className="font-bold">Banner Gambar Kop</span>
+                    </div>
+                    <span className="text-[9.5px] font-normal text-stone-600 leading-tight">
+                      Banner Gambar Tunggal (Full Width)
+                    </span>
                   </button>
                 </div>
 
@@ -732,18 +743,17 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                   </div>
                 )}
 
-                <textarea
-                  rows={5}
+                {/* Word-like Rich Text Editor */}
+                <MemoRichEditor
                   value={currentMemo.isiSurat}
-                  onChange={(e) =>
-                    setCurrentMemo((prev) => ({ ...prev, isiSurat: e.target.value }))
+                  onChange={(html) =>
+                    setCurrentMemo((prev) => ({ ...prev, isiSurat: html }))
                   }
-                  placeholder="Sehubungan dengan akan dilakukannya kegiatan Pengiriman Batubara ke PLTU Pelabuhan Ratu ADC..."
-                  className="w-full px-3 py-2.5 text-xs leading-relaxed bg-stone-50 border border-stone-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:bg-white focus:outline-none resize-y"
+                  placeholder="Sehubungan dengan akan dilakukannya kegiatan..."
                 />
                 <div className="flex justify-between text-[10px] text-stone-400 font-mono mt-0.5">
                   <span>Pastikan berakhiran: "... dapat di transfer ke :"</span>
-                  <span>{currentMemo.isiSurat.length} karakter</span>
+                  <span>{currentMemo.isiSurat.replace(/<[^>]*>/g, '').length} karakter</span>
                 </div>
               </div>
 
@@ -1085,7 +1095,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
 
             {/* Document wrapper */}
             <div className="w-full overflow-x-auto pb-6 print:overflow-visible print:p-0 print:m-0">
-              <div className="min-w-[650px] sm:min-w-[700px] max-w-[800px] mx-auto print:min-w-0 print:w-full print:max-w-none print:m-0 print:p-0">
+              <div className="min-w-[680px] sm:min-w-[740px] max-w-[860px] w-full mx-auto print:min-w-0 print:w-full print:max-w-none print:m-0 print:p-0">
                 <InternalMemoDocument
                   memo={currentMemo}
                   customLogoUrl={userProfile?.companyDetails?.logoUrl}

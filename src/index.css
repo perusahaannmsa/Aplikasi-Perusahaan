@@ -172,11 +172,71 @@
     break-after: avoid !important;
     height: auto !important;
     min-height: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
     padding: 0 !important;
     margin: 0 !important;
     box-shadow: none !important;
     border: none !important;
   }
+
+/* Microsoft Word Rich Text Formatting styles for Memo */
+.memo-rich-content b,
+.memo-rich-content strong,
+.memo-editor-surface b,
+.memo-editor-surface strong {
+  font-weight: 700 !important;
+  color: inherit;
+}
+
+.memo-rich-content i,
+.memo-rich-content em,
+.memo-editor-surface i,
+.memo-editor-surface em {
+  font-style: italic !important;
+}
+
+.memo-rich-content u,
+.memo-editor-surface u {
+  text-decoration: underline !important;
+  text-underline-offset: 2.5px !important;
+}
+
+.memo-rich-content s,
+.memo-rich-content strike,
+.memo-editor-surface s,
+.memo-editor-surface strike {
+  text-decoration: line-through !important;
+}
+
+.memo-rich-content mark,
+.memo-editor-surface mark {
+  background-color: #fef08a !important;
+  padding: 0 2px !important;
+  border-radius: 2px;
+}
+
+.memo-rich-content ul,
+.memo-editor-surface ul {
+  list-style-type: disc !important;
+  padding-left: 1.5rem !important;
+  margin-top: 0.25rem !important;
+  margin-bottom: 0.25rem !important;
+}
+
+.memo-rich-content ol,
+.memo-editor-surface ol {
+  list-style-type: decimal !important;
+  padding-left: 1.5rem !important;
+  margin-top: 0.25rem !important;
+  margin-bottom: 0.25rem !important;
+}
+
+.memo-editor-surface:empty:before {
+  content: attr(data-placeholder);
+  color: #a8a29e;
+  pointer-events: none;
+}
   #printable-submissions-table,
   .print-only-container {
     display: block !important;

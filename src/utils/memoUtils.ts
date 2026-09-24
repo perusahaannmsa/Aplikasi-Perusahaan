@@ -143,7 +143,7 @@ export function createInitialMemo(submission?: Submission | null, existingCount 
       dari: 'H. A. Nursyam Halid – Direktur Utama',
       kepada: 'Harijon – Direktur Keuangan',
       perihal: `Pembayaran ${submission.jenisPengajuan || 'Operasional'} - ${submission.dibayarkanKepada || ''}`.trim(),
-      isiSurat: `Sehubungan dengan adanya pengajuan pembayaran keperluan ${submission.jenisPengajuan || 'operasional'} terkait ${submission.dibayarkanKepada || 'pihak rekanan'} sesuai rincian pada formulir voucher pengeluaran ${invoiceOrRef} tertanggal ${dateFormatted}, dengan ini kami memohon untuk dilakukan pembayaran sebesar ${formattedAmount} dapat di transfer ke :`,
+      isiSurat: `Sehubungan dengan adanya pengajuan pembayaran keperluan <strong>${submission.jenisPengajuan || 'operasional'}</strong> terkait <strong>${submission.dibayarkanKepada || 'pihak rekanan'}</strong> sesuai rincian pada formulir voucher pengeluaran <strong>${invoiceOrRef}</strong> tertanggal ${dateFormatted}, dengan ini kami memohon untuk dilakukan pembayaran sebesar <strong>${formattedAmount}</strong> dapat di transfer ke :`,
       bankName: defaultBank.bankName,
       accountNumber: defaultBank.accountNumber,
       accountHolder: defaultBank.accountHolder,
@@ -160,34 +160,35 @@ export function createInitialMemo(submission?: Submission | null, existingCount 
       linkedAmount: subTotal,
       companyName: 'PT. NUSANTARA MINERAL SUKSES ABADI',
       companyHeaderUrl: OFFICIAL_KOP_SURAT_IMAGE_URL,
-      useImageHeader: true,
+      useImageHeader: false, // Default to official layout with long line like PDF IM Tongkang
       createdAt: new Date().toISOString(),
     };
   }
 
+  // Default sample exactly matching user's official "IM - Pembayaran Tongkang" PDF
   return {
     id: `memo-${Date.now()}`,
-    nomorMemo: generateDefaultMemoNumber(164, now),
+    nomorMemo: '168/IM-NMSA/KEU/IX/2026',
     tanggal: todayIso,
-    hariTanggalDisplay,
-    dari: 'H. A. Nursyam Halid – Direktur Utama',
+    hariTanggalDisplay: 'Kamis / 24 September 2026',
+    dari: 'Andi Muhammad Rifki – Direktur',
     kepada: 'Harijon – Direktur Keuangan',
     perihal: 'Pembayaran DP Batubara 50%',
-    isiSurat: 'Sehubungan dengan akan dilakukannya kegiatan Pengiriman Batubara ke PLTU Pelabuhan Ratu ADC, dengan ini kami memohon untuk dilakukan pembayaran DP Batubara sebesar 50% dari total biaya yang terlampir didalam invoice No. 004/INV/BBJ/IX/2026 Tanggal 15 September yaitu sebesar Rp. 2.512.500.000,- dapat di transfer ke :',
-    bankName: defaultBank.bankName,
-    accountNumber: defaultBank.accountNumber,
-    accountHolder: defaultBank.accountHolder,
+    isiSurat: 'Sehubungan dengan akan dilakukannya kegiatan pengiriman Batubara ke <strong>PLTU Pelabuhan Ratu ADC</strong>, dengan ini kami memohon untuk dapat dilakukan pembayaran <strong>DP Tongkang sebesar 50%</strong> dari total biaya yang terlampir didalam <strong>Invoice No. 001-DP/WAA-BJM-NMSA/IX/26 Tanggal 23 September 2026</strong>, yaitu <strong>Sebesar Rp. 712.500.000,-</strong> dapat di Transfer ke :',
+    bankName: 'Bank Mandiri',
+    accountNumber: '1030013139064',
+    accountHolder: 'PT. Nusantara Mineral Sukses Abadi',
     penutup: 'Demikian Internal Memo ini dibuat untuk dapat dipahami bersama dan dilaksanakan sebaik baiknya',
     salamPenutup: 'Hormat saya,',
-    penandatanganNama: 'H. Andi Nursyam Halid',
-    penandatanganJabatan: 'Direktur Utama',
+    penandatanganNama: 'Andi Muhammad Rifki',
+    penandatanganJabatan: 'Direktur',
     useSecondSigner: false,
     salamPenutup2: 'Menyetujui,',
     penandatanganNama2: 'Harijon',
     penandatanganJabatan2: 'Direktur Keuangan',
     companyName: 'PT. NUSANTARA MINERAL SUKSES ABADI',
     companyHeaderUrl: OFFICIAL_KOP_SURAT_IMAGE_URL,
-    useImageHeader: true,
+    useImageHeader: false, // Default to official layout with long line like PDF IM Tongkang
     createdAt: new Date().toISOString(),
   };
 }
