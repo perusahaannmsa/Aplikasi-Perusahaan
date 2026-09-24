@@ -39,7 +39,14 @@ export const InternalMemoDocument: React.FC<InternalMemoDocumentProps> = ({
 }) => {
   // Check whether to use image banner or official vector layout (matching user's Word layout)
   const isImageHeader = memo.useImageHeader === true;
-  const headerImageUrl = customHeaderUrl || memo.companyHeaderUrl || OFFICIAL_KOP_SURAT_IMAGE_URL;
+  const rawHeaderUrl = customHeaderUrl || memo.companyHeaderUrl || OFFICIAL_KOP_SURAT_IMAGE_URL;
+  const headerImageUrl =
+    !rawHeaderUrl ||
+    rawHeaderUrl.includes('Kop-Surat-NMSA.png') ||
+    rawHeaderUrl.includes('i.ibb.co.com/N26djkQX') ||
+    rawHeaderUrl.includes('kommodo.ai')
+      ? '/kop-surat-nmsa-full.png'
+      : rawHeaderUrl;
 
   // Determine signer mode (default to 3 signers if useThirdSigner or signerCount is 3 or not explicitly 1/2)
   const isThreeSigners =
@@ -61,13 +68,19 @@ export const InternalMemoDocument: React.FC<InternalMemoDocumentProps> = ({
       }}
     >
       <div>
-        {/* KOP SURAT NMSA (Sesuai Dokumen Resmi Word: Logo + Alamat + Garis Panjang 100% Full Width) */}
+        {/* KOP SURAT NMSA (Garis Panjang 100% Full Width Ujung ke Ujung Sesuai Lebar Tabel) */}
         {isImageHeader ? (
           <div className="w-full pb-1 -mt-2 print:mt-0 print:pb-1">
             <img
               src={headerImageUrl}
               alt="Kop Surat PT. Nusantara Mineral Sukses Abadi"
-              className="w-full h-auto max-h-[135px] print:max-h-[110px] object-contain block mx-auto"
+              className="w-full h-auto block"
+              style={{
+                width: '100%',
+                maxWidth: '100%',
+                height: 'auto',
+                display: 'block',
+              }}
               referrerPolicy="no-referrer"
             />
           </div>

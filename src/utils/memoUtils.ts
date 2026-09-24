@@ -1,6 +1,6 @@
 import { BankAccountMaster, InternalMemo, Submission } from '../types';
 
-export const OFFICIAL_KOP_SURAT_IMAGE_URL = 'https://i.ibb.co.com/N26djkQX/Kop-Surat-NMSA.png';
+export const OFFICIAL_KOP_SURAT_IMAGE_URL = '/kop-surat-nmsa-full.png';
 
 export const DEFAULT_BANK_ACCOUNTS: BankAccountMaster[] = [
   {
@@ -102,7 +102,10 @@ export function getSavedInternalMemos(): InternalMemo[] {
         return parsed.map((m) => ({
           ...m,
           companyHeaderUrl:
-            !m.companyHeaderUrl || m.companyHeaderUrl.includes('kommodo.ai')
+            !m.companyHeaderUrl ||
+            m.companyHeaderUrl.includes('kommodo.ai') ||
+            m.companyHeaderUrl.includes('Kop-Surat-NMSA.png') ||
+            m.companyHeaderUrl.includes('i.ibb.co.com/N26djkQX')
               ? OFFICIAL_KOP_SURAT_IMAGE_URL
               : m.companyHeaderUrl,
         }));

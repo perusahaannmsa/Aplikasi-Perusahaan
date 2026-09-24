@@ -312,11 +312,18 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
     // Automatically save before print
     handleSaveCurrentMemo();
     document.body.classList.add('is-printing-internal-memo');
+
+    const cleanup = () => {
+      document.body.classList.remove('is-printing-internal-memo');
+      window.removeEventListener('afterprint', cleanup);
+    };
+
+    window.addEventListener('afterprint', cleanup);
+
     setTimeout(() => {
       window.print();
-      setTimeout(() => {
-        document.body.classList.remove('is-printing-internal-memo');
-      }, 1000);
+      // Fallback timeout cleanup in case afterprint doesn't trigger on some browsers
+      setTimeout(cleanup, 2500);
     }, 150);
   };
 

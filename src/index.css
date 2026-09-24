@@ -201,6 +201,13 @@
     background: white !important;
     font-family: Calibri, 'Calibri (Body)', Aptos, 'Segoe UI', Arial, sans-serif !important;
   }
+  body.is-printing-internal-memo #internal-memo-printable-document img {
+    max-width: 100% !important;
+    width: 100% !important;
+    height: auto !important;
+    display: block !important;
+    object-fit: fill !important;
+  }
 
 /* Microsoft Word Exact Font & Paragraph Layout for Internal Memo */
 .memo-word-document {
