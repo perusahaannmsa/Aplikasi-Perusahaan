@@ -9,6 +9,7 @@ import { JsonBackup } from './components/JsonBackup';
 import { DriveSyncMass } from './components/DriveSyncMass';
 import { NusantaraLogo } from './components/NusantaraLogo';
 import { CloudControlCenter } from './components/CloudControlCenter';
+import { FirebaseMigration } from './components/FirebaseMigration';
 import { SppdIntegration, SppdRecord } from './components/SppdIntegration';
 import { SppdManager, SPPDRecord } from './components/SppdManager';
 import { PublicSppdInput } from './components/PublicSppdInput';
@@ -62,7 +63,7 @@ import {
   switchUserCompany,
   setActiveCompanyId
 } from './firebase';
-import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell, MessageSquare, Bot, Sparkles, BookOpen, Wrench, Building2 } from 'lucide-react';
+import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, ArrowLeftRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell, MessageSquare, Bot, Sparkles, BookOpen, Wrench, Building2 } from 'lucide-react';
 
 export default function App() {
   const [theme, setTheme] = useState<'classic' | 'gold-dark' | 'emerald' | 'slate'>(() => {
@@ -1011,6 +1012,7 @@ export default function App() {
   const [isCompanyModalOpen, setIsCompanyModalOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isCloudModalOpen, setIsCloudModalOpen] = useState(false);
+  const [isFirebaseMigrationOpen, setIsFirebaseMigrationOpen] = useState(false);
   const [isGoogleDriveSettingsOpen, setIsGoogleDriveSettingsOpen] = useState(false);
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
   const [masterDriveEmail, setMasterDriveEmailState] = useState<string>(() => getMasterDriveEmail());
@@ -2996,6 +2998,24 @@ export default function App() {
                         </span>
                       </button>
 
+                      {/* 12. Salin Data ke Akun Firebase Lain */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsToolsDropdownOpen(false);
+                          setIsFirebaseMigrationOpen(true);
+                        }}
+                        className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold text-amber-950 bg-amber-50 hover:bg-amber-100 transition cursor-pointer border border-amber-300 mt-1 shadow-3xs"
+                      >
+                        <div className="flex items-center gap-2">
+                          <ArrowLeftRight size={14} className="text-amber-600" />
+                          <span>Salin Data ke Firebase Lain</span>
+                        </div>
+                        <span className="text-[9px] font-mono bg-amber-200 text-amber-950 px-1.5 py-0.5 rounded font-black">
+                          Migrasi
+                        </span>
+                      </button>
+
                       {/* Tombol Cepat Kembali ke Voucher HO jika berada di menu lain */}
                       {view !== 'list' && (
                         <button
@@ -3108,6 +3128,23 @@ export default function App() {
                           </div>
                           <span className="text-[9px] font-mono bg-stone-300 text-stone-900 px-1.5 py-0.5 rounded font-bold">
                             Ready
+                          </span>
+                        </button>
+
+                        {/* SALIN / MIGRASI DATA FIREBASE */}
+                        <button
+                          onClick={() => {
+                            setIsUserMenuOpen(false);
+                            setIsFirebaseMigrationOpen(true);
+                          }}
+                          className="w-full bg-amber-50 hover:bg-amber-100 text-amber-950 border border-amber-300 font-bold px-3 py-2 rounded-xl text-xs transition cursor-pointer flex items-center justify-between font-sans shadow-3xs"
+                        >
+                          <div className="flex items-center gap-2">
+                            <ArrowLeftRight size={15} className="text-amber-600" />
+                            <span>Salin / Migrasi Data Firebase</span>
+                          </div>
+                          <span className="text-[9px] font-mono bg-amber-200 text-amber-950 px-1.5 py-0.5 rounded font-black">
+                            Multi-Akun
                           </span>
                         </button>
 
@@ -3254,6 +3291,34 @@ export default function App() {
 
           {/* Backup / Export-Import Section */}
           <div className="pt-4 print:hidden space-y-4">
+            {/* Quick Action Card: Salin / Migrasi Data ke Firebase Baru */}
+            <div className="bg-amber-50/70 border border-amber-300 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-3xs">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-amber-500 text-stone-955 rounded-xl shadow-3xs">
+                  <ArrowLeftRight size={22} />
+                </div>
+                <div>
+                  <h4 className="text-xs sm:text-sm font-black text-stone-900 uppercase tracking-wider font-display flex items-center gap-2">
+                    Salin Data ke Akun Firebase Lain
+                    <span className="text-[9px] font-mono normal-case bg-amber-200 text-amber-950 px-2 py-0.5 rounded-full font-bold">
+                      Migrasi Proyek
+                    </span>
+                  </h4>
+                  <p className="text-xs text-stone-600 mt-0.5">
+                    Pindahkan seluruh data transaksi voucher, profil multi-perusahaan, SPPD, NPWP, dan absensi ke proyek Firebase baru tanpa downtime.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsFirebaseMigrationOpen(true)}
+                className="px-4 py-2.5 text-xs font-bold bg-stone-900 hover:bg-stone-800 text-white rounded-xl transition flex items-center gap-2 shadow-3xs cursor-pointer shrink-0"
+              >
+                <span>Buka Menu Salin Data</span>
+                <ArrowRight size={14} />
+              </button>
+            </div>
+
             <DriveSyncMass submissions={submissions} onUpdateSubmissions={saveSubmissionsToStorage} />
             <JsonBackup submissions={submissions} onImport={handleImportJson} />
           </div>
@@ -3583,6 +3648,52 @@ export default function App() {
         onClose={() => setIsWhatsAppModalOpen(false)}
         submissions={submissions}
       />
+
+      {/* Salin Data ke Akun Firebase Lain (Migrasi Proyek) Modal */}
+      {isFirebaseMigrationOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 overflow-y-auto animate-in fade-in duration-200 print:hidden">
+          <div className="relative w-full max-w-4xl max-h-[92vh] bg-white rounded-3xl shadow-2xl border border-stone-200 overflow-hidden flex flex-col font-sans my-auto">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 bg-stone-900 text-white border-b border-stone-800 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-amber-500 text-stone-950 rounded-xl shadow-3xs">
+                  <ArrowLeftRight size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black tracking-tight text-white flex items-center gap-2">
+                    Salin Data ke Akun Firebase Lain
+                    <span className="text-[9px] font-mono bg-amber-400 text-stone-950 px-2 py-0.5 rounded-full font-bold">
+                      Migrasi Proyek
+                    </span>
+                  </h3>
+                  <p className="text-[10px] text-stone-300 font-mono">
+                    Duplikasi seluruh transaksi voucher, profil multi-PT, SPPD, dan NPWP ke akun atau proyek Firebase baru
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsFirebaseMigrationOpen(false)}
+                className="p-1.5 rounded-full hover:bg-stone-800 text-stone-400 hover:text-white transition cursor-pointer"
+                title="Tutup Modal"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-5 sm:p-6 overflow-y-auto flex-1">
+              <FirebaseMigration
+                submissions={submissions}
+                userProfile={userProfile}
+                onMigrationComplete={() => {
+                  setIsFirebaseMigrationOpen(false);
+                }}
+                isModalDirect={true}
+                onCloseModal={() => setIsFirebaseMigrationOpen(false)}
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

@@ -62,6 +62,19 @@ let currentUser: User | null = null;
 
 // Helper to check and parse stored config
 export const getStoredFirebaseConfig = (): any | null => {
+  // Check if custom user config was saved to localStorage (e.g. from Firebase Migration / Multi-project)
+  try {
+    const custom = localStorage.getItem('NUSANTARA_FIREBASE_CONFIG');
+    if (custom) {
+      const parsed = JSON.parse(custom);
+      if (parsed && parsed.apiKey && parsed.projectId) {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.warn('Error reading stored custom firebase config:', e);
+  }
+
   // Check if environment variables are provided first, else fall back to default hardcoded config
   const envApiKey = import.meta.env.VITE_FIREBASE_API_KEY;
   const envProjectId = import.meta.env.VITE_FIREBASE_PROJECT_ID;
