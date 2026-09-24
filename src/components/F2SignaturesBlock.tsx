@@ -16,8 +16,14 @@ export const F2SignaturesBlock: React.FC<F2SignaturesBlockProps> = ({
   density = 'normal',
   isCompact = false,
 }) => {
-  const signer1 = signers[0] || { title: 'Dibuat Oleh', name: 'Nur Wahyudi', role: 'Staff Keuangan' };
-  const signer2 = signers[1] || { title: 'Diajukan', name: 'Sri Ekowati', role: 'Manager Keuangan' };
+  const isSigner1Active = signers[0] ? signers[0].enabled !== false : true;
+  const isSigner2Active = signers[1] ? signers[1].enabled !== false : true;
+
+  const defaultSigner1 = { title: 'Dibuat Oleh', name: 'Nur Wahyudi', role: 'Staff Keuangan' };
+  const defaultSigner2 = { title: 'Diajukan', name: 'Sri Ekowati', role: 'Manager Keuangan' };
+
+  const signer1 = (isSigner1Active ? signers[0] : (isSigner2Active ? signers[1] : null)) || defaultSigner1;
+  const signer2 = signers[1] || defaultSigner2;
 
   const getGapHeightClass = () => {
     if (density === 'ultra_dense') return 'h-10 sm:h-12 print:h-10 min-h-[40px]';
@@ -29,8 +35,8 @@ export const F2SignaturesBlock: React.FC<F2SignaturesBlockProps> = ({
 
   const gapHeight = getGapHeightClass();
 
-  // If NOT showApproved, only show 1 signer (Dibuat Oleh)
-  if (!showApproved) {
+  // If NOT both signers active or not showApproved, only show 1 signer
+  if (!showApproved || !isSigner1Active || !isSigner2Active) {
     if (style === 'table') {
       return (
         <div className={`text-black w-full max-w-xs mx-auto ${density === 'ultra_dense' ? 'my-1' : 'my-2 sm:my-3 print:my-1.5'}`}>

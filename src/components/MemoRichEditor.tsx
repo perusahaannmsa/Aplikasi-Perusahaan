@@ -1,19 +1,4 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import {
-  Bold,
-  Italic,
-  Underline,
-  Strikethrough,
-  Highlighter,
-  List,
-  ListOrdered,
-  RemoveFormatting,
-  Undo,
-  Redo,
-  Sparkles,
-  Info,
-  Check,
-} from 'lucide-react';
 
 interface MemoRichEditorProps {
   value: string;
@@ -78,10 +63,10 @@ export const MemoRichEditor: React.FC<MemoRichEditorProps> = ({
   }, []);
 
   // Execute formatting command like Microsoft Word
-  const format = (command: string, value: string | undefined = undefined) => {
+  const format = (command: string, val: string | undefined = undefined) => {
     if (!editorRef.current) return;
     editorRef.current.focus();
-    document.execCommand(command, false, value);
+    document.execCommand(command, false, val);
     updateActiveFormats();
     triggerChange();
   };
@@ -114,15 +99,6 @@ export const MemoRichEditor: React.FC<MemoRichEditorProps> = ({
     }
   };
 
-  // Quick insertion helpers
-  const insertQuickText = (text: string, asBold = false) => {
-    if (!editorRef.current) return;
-    editorRef.current.focus();
-    const htmlToInsert = asBold ? `<strong>${text}</strong>` : text;
-    document.execCommand('insertHTML', false, htmlToInsert);
-    triggerChange();
-  };
-
   return (
     <div
       className={`rounded-xl border transition flex flex-col bg-white overflow-hidden ${
@@ -131,219 +107,150 @@ export const MemoRichEditor: React.FC<MemoRichEditorProps> = ({
           : 'border-stone-300 hover:border-stone-400'
       } ${className}`}
     >
-      {/* WORD-STYLE FORMATTING TOOLBAR */}
-      <div className="bg-stone-50 border-b border-stone-200 px-2 py-1.5 flex flex-wrap items-center justify-between gap-1 select-none">
-        {/* Basic Word Formatting Buttons */}
-        <div className="flex items-center gap-0.5">
-          {/* Bold Button (Ctrl+B) */}
-          <button
-            type="button"
-            onClick={() => format('bold')}
-            className={`p-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center cursor-pointer ${
-              activeFormats.bold
-                ? 'bg-amber-500 text-white shadow-xs font-black'
-                : 'text-stone-700 hover:bg-stone-200/80'
-            }`}
-            title="Tebal / Bold (Ctrl + B)"
-          >
-            <Bold size={15} />
-          </button>
-
-          {/* Italic Button (Ctrl+I) */}
-          <button
-            type="button"
-            onClick={() => format('italic')}
-            className={`p-1.5 rounded-lg text-xs transition flex items-center justify-center cursor-pointer ${
-              activeFormats.italic
-                ? 'bg-amber-500 text-white shadow-xs'
-                : 'text-stone-700 hover:bg-stone-200/80'
-            }`}
-            title="Garis Miring / Italic (Ctrl + I)"
-          >
-            <Italic size={15} />
-          </button>
-
-          {/* Underline Button (Ctrl+U) */}
-          <button
-            type="button"
-            onClick={() => format('underline')}
-            className={`p-1.5 rounded-lg text-xs transition flex items-center justify-center cursor-pointer ${
-              activeFormats.underline
-                ? 'bg-amber-500 text-white shadow-xs'
-                : 'text-stone-700 hover:bg-stone-200/80'
-            }`}
-            title="Garis Bawah / Underline (Ctrl + U)"
-          >
-            <Underline size={15} />
-          </button>
-
-          {/* Strikethrough Button */}
-          <button
-            type="button"
-            onClick={() => format('strikeThrough')}
-            className={`p-1.5 rounded-lg text-xs transition flex items-center justify-center cursor-pointer ${
-              activeFormats.strikeThrough
-                ? 'bg-amber-500 text-white shadow-xs'
-                : 'text-stone-700 hover:bg-stone-200/80'
-            }`}
-            title="Coret Teks / Strikethrough"
-          >
-            <Strikethrough size={15} />
-          </button>
-
-          <div className="h-4 w-[1px] bg-stone-300 mx-1"></div>
-
-          {/* Highlight Marker */}
-          <button
-            type="button"
-            onClick={() => format('hiliteColor', '#fef08a')}
-            className="p-1.5 rounded-lg text-xs text-stone-700 hover:bg-yellow-100 transition flex items-center justify-center cursor-pointer"
-            title="Stabilo Kuning (Highlight)"
-          >
-            <Highlighter size={15} className="text-amber-600" />
-          </button>
-
-          {/* Text Color: Merah / Red for Urgency */}
-          <button
-            type="button"
-            onClick={() => format('foreColor', '#dc2626')}
-            className="px-1.5 py-1 rounded-lg text-[11px] font-black text-red-600 hover:bg-red-50 transition flex items-center gap-0.5 cursor-pointer"
-            title="Warna Teks Merah"
-          >
-            A
-          </button>
-
-          {/* Text Color: Biru / Blue */}
-          <button
-            type="button"
-            onClick={() => format('foreColor', '#1d4ed8')}
-            className="px-1.5 py-1 rounded-lg text-[11px] font-black text-blue-700 hover:bg-blue-50 transition flex items-center gap-0.5 cursor-pointer"
-            title="Warna Teks Biru"
-          >
-            A
-          </button>
-
-          {/* Reset Text Color to Black */}
-          <button
-            type="button"
-            onClick={() => format('foreColor', '#000000')}
-            className="px-1.5 py-1 rounded-lg text-[11px] font-black text-black hover:bg-stone-200 transition flex items-center gap-0.5 cursor-pointer"
-            title="Warna Teks Hitam (Default)"
-          >
-            A
-          </button>
-
-          <div className="h-4 w-[1px] bg-stone-300 mx-1"></div>
-
-          {/* Bullet List */}
-          <button
-            type="button"
-            onClick={() => format('insertUnorderedList')}
-            className="p-1.5 rounded-lg text-xs text-stone-700 hover:bg-stone-200/80 transition flex items-center justify-center cursor-pointer"
-            title="Daftar Poin (Bullet List)"
-          >
-            <List size={15} />
-          </button>
-
-          {/* Numbered List */}
-          <button
-            type="button"
-            onClick={() => format('insertOrderedList')}
-            className="p-1.5 rounded-lg text-xs text-stone-700 hover:bg-stone-200/80 transition flex items-center justify-center cursor-pointer"
-            title="Daftar Nomor (Numbered List)"
-          >
-            <ListOrdered size={15} />
-          </button>
-
-          {/* Clear Formatting */}
-          <button
-            type="button"
-            onClick={() => format('removeFormat')}
-            className="p-1.5 rounded-lg text-xs text-stone-600 hover:bg-stone-200/80 hover:text-red-700 transition flex items-center justify-center cursor-pointer"
-            title="Hapus Format (Kembali ke Teks Polos)"
-          >
-            <RemoveFormatting size={15} />
-          </button>
-
-          <div className="h-4 w-[1px] bg-stone-300 mx-1"></div>
-
-          {/* Undo / Redo */}
-          <button
-            type="button"
-            onClick={() => format('undo')}
-            className="p-1.5 rounded-lg text-xs text-stone-600 hover:bg-stone-200/80 transition flex items-center justify-center cursor-pointer"
-            title="Urungkan / Undo (Ctrl + Z)"
-          >
-            <Undo size={14} />
-          </button>
-          <button
-            type="button"
-            onClick={() => format('redo')}
-            className="p-1.5 rounded-lg text-xs text-stone-600 hover:bg-stone-200/80 transition flex items-center justify-center cursor-pointer"
-            title="Ulangi / Redo (Ctrl + Y)"
-          >
-            <Redo size={14} />
-          </button>
-        </div>
-
-        {/* Quick word shortcuts badge */}
-        <div className="hidden sm:flex items-center gap-1 text-[10px] text-stone-500 font-mono">
-          <span className="bg-stone-200/70 text-stone-700 px-1 py-0.5 rounded-md font-semibold">Ctrl+B</span>
-          <span>Tebal</span>
-          <span className="bg-stone-200/70 text-stone-700 px-1 py-0.5 rounded-md font-semibold ml-1">Ctrl+I</span>
-          <span>Miring</span>
-          <span className="bg-stone-200/70 text-stone-700 px-1 py-0.5 rounded-md font-semibold ml-1">Ctrl+U</span>
-          <span>Garis Bawah</span>
-        </div>
-      </div>
-
-      {/* QUICK PHRASES SNIPPET BAR */}
-      <div className="bg-amber-50/60 border-b border-amber-200/60 px-2 py-1 flex flex-wrap items-center gap-1.5 text-[10.5px]">
-        <span className="text-amber-900 font-bold flex items-center gap-1 shrink-0">
-          <Sparkles size={11} className="text-amber-600" />
-          Sisipkan Format Cepat:
-        </span>
+      {/* WORD-STYLE FORMATTING TOOLBAR - CLEAN TEXT BUTTONS ONLY (NO ICON PICTURES / NO EXTRA TEXT) */}
+      <div className="bg-stone-50 border-b border-stone-200 px-2 py-1.5 flex flex-wrap items-center gap-1 select-none">
+        {/* Tombol Tebal (B) */}
         <button
           type="button"
-          onClick={() => insertQuickText(' Sebesar Rp. ', true)}
-          className="px-1.5 py-0.5 bg-white hover:bg-amber-100 text-stone-800 border border-amber-300 rounded text-[10px] font-bold transition cursor-pointer"
+          onClick={() => format('bold')}
+          className={`h-7 px-2.5 rounded-md text-xs font-black transition cursor-pointer border ${
+            activeFormats.bold
+              ? 'bg-amber-600 border-amber-700 text-white shadow-xs'
+              : 'bg-white border-stone-300 text-stone-900 hover:bg-stone-100'
+          }`}
+          title="Tebal / Bold (Ctrl + B)"
         >
-          <strong>Rp. Nominal</strong>
+          <strong>B</strong>
+        </button>
+
+        {/* Tombol Miring (I) */}
+        <button
+          type="button"
+          onClick={() => format('italic')}
+          className={`h-7 px-2.5 rounded-md text-xs italic font-serif font-bold transition cursor-pointer border ${
+            activeFormats.italic
+              ? 'bg-amber-600 border-amber-700 text-white shadow-xs'
+              : 'bg-white border-stone-300 text-stone-900 hover:bg-stone-100'
+          }`}
+          title="Miring / Italic (Ctrl + I)"
+        >
+          <em>I</em>
+        </button>
+
+        {/* Tombol Garis Bawah (U) */}
+        <button
+          type="button"
+          onClick={() => format('underline')}
+          className={`h-7 px-2.5 rounded-md text-xs underline font-bold transition cursor-pointer border ${
+            activeFormats.underline
+              ? 'bg-amber-600 border-amber-700 text-white shadow-xs'
+              : 'bg-white border-stone-300 text-stone-900 hover:bg-stone-100'
+          }`}
+          title="Garis Bawah / Underline (Ctrl + U)"
+        >
+          <u>U</u>
+        </button>
+
+        {/* Tombol Coret (S) */}
+        <button
+          type="button"
+          onClick={() => format('strikeThrough')}
+          className={`h-7 px-2.5 rounded-md text-xs line-through font-bold transition cursor-pointer border ${
+            activeFormats.strikeThrough
+              ? 'bg-amber-600 border-amber-700 text-white shadow-xs'
+              : 'bg-white border-stone-300 text-stone-900 hover:bg-stone-100'
+          }`}
+          title="Coret / Strikethrough"
+        >
+          <s>S</s>
+        </button>
+
+        <div className="h-4 w-[1px] bg-stone-300 mx-1"></div>
+
+        {/* Tombol Stabilo */}
+        <button
+          type="button"
+          onClick={() => format('hiliteColor', '#fef08a')}
+          className="h-7 px-2.5 rounded-md text-xs font-semibold bg-amber-100/90 hover:bg-amber-200 text-amber-950 border border-amber-300 transition cursor-pointer"
+          title="Stabilo Kuning"
+        >
+          Stabilo
+        </button>
+
+        {/* Tombol Warna Teks */}
+        <button
+          type="button"
+          onClick={() => format('foreColor', '#dc2626')}
+          className="h-7 px-2 rounded-md text-xs font-bold text-red-600 bg-white hover:bg-red-50 border border-red-200 transition cursor-pointer"
+          title="Warna Teks Merah"
+        >
+          Merah
         </button>
         <button
           type="button"
-          onClick={() => insertQuickText(' Invoice No. ... Tanggal ... ', true)}
-          className="px-1.5 py-0.5 bg-white hover:bg-amber-100 text-stone-800 border border-amber-300 rounded text-[10px] font-bold transition cursor-pointer"
+          onClick={() => format('foreColor', '#1d4ed8')}
+          className="h-7 px-2 rounded-md text-xs font-bold text-blue-700 bg-white hover:bg-blue-50 border border-blue-200 transition cursor-pointer"
+          title="Warna Teks Biru"
         >
-          <strong>No. Invoice</strong>
+          Biru
         </button>
         <button
           type="button"
-          onClick={() => insertQuickText(' PLTU Pelabuhan Ratu ADC', true)}
-          className="px-1.5 py-0.5 bg-white hover:bg-amber-100 text-stone-800 border border-amber-300 rounded text-[10px] font-bold transition cursor-pointer"
+          onClick={() => format('foreColor', '#000000')}
+          className="h-7 px-2 rounded-md text-xs font-bold text-black bg-white hover:bg-stone-100 border border-stone-300 transition cursor-pointer"
+          title="Warna Teks Hitam (Default)"
         >
-          <strong>PLTU Pelabuhan Ratu</strong>
+          Hitam
+        </button>
+
+        <div className="h-4 w-[1px] bg-stone-300 mx-1"></div>
+
+        {/* Tombol Daftar Poin & Nomor */}
+        <button
+          type="button"
+          onClick={() => format('insertUnorderedList')}
+          className="h-7 px-2 rounded-md text-xs font-medium bg-white hover:bg-stone-100 text-stone-800 border border-stone-300 transition cursor-pointer"
+          title="Daftar Poin (Bullet)"
+        >
+          • Poin
         </button>
         <button
           type="button"
-          onClick={() => insertQuickText(' DP Tongkang sebesar 50%', true)}
-          className="px-1.5 py-0.5 bg-white hover:bg-amber-100 text-stone-800 border border-amber-300 rounded text-[10px] font-bold transition cursor-pointer"
+          onClick={() => format('insertOrderedList')}
+          className="h-7 px-2 rounded-md text-xs font-medium bg-white hover:bg-stone-100 text-stone-800 border border-stone-300 transition cursor-pointer"
+          title="Daftar Nomor"
         >
-          <strong>DP Tongkang 50%</strong>
+          1. Nomor
+        </button>
+
+        {/* Tombol Hapus Format */}
+        <button
+          type="button"
+          onClick={() => format('removeFormat')}
+          className="h-7 px-2 rounded-md text-xs font-medium bg-white hover:bg-stone-100 text-stone-600 hover:text-red-700 border border-stone-300 transition cursor-pointer"
+          title="Hapus Format Teks"
+        >
+          Hapus Format
+        </button>
+
+        <div className="h-4 w-[1px] bg-stone-300 mx-1"></div>
+
+        {/* Tombol Undo & Redo */}
+        <button
+          type="button"
+          onClick={() => format('undo')}
+          className="h-7 px-2 rounded-md text-xs font-medium bg-white hover:bg-stone-100 text-stone-700 border border-stone-300 transition cursor-pointer"
+          title="Urungkan (Undo)"
+        >
+          Undo
         </button>
         <button
           type="button"
-          onClick={() => insertQuickText(', yaitu Sebesar ')}
-          className="px-1.5 py-0.5 bg-white hover:bg-amber-100 text-stone-700 border border-amber-200 rounded text-[10px] transition cursor-pointer"
+          onClick={() => format('redo')}
+          className="h-7 px-2 rounded-md text-xs font-medium bg-white hover:bg-stone-100 text-stone-700 border border-stone-300 transition cursor-pointer"
+          title="Ulangi (Redo)"
         >
-          yaitu Sebesar
-        </button>
-        <button
-          type="button"
-          onClick={() => insertQuickText(' dapat di Transfer ke :')}
-          className="px-1.5 py-0.5 bg-white hover:bg-amber-100 text-stone-700 border border-amber-200 rounded text-[10px] transition cursor-pointer"
-        >
-          dapat di Transfer ke :
+          Redo
         </button>
       </div>
 
@@ -374,15 +281,6 @@ export const MemoRichEditor: React.FC<MemoRichEditorProps> = ({
           textAlign: 'justify',
         }}
       />
-
-      {/* FOOTER BAR: HINT & SHORTCUT INFO */}
-      <div className="bg-stone-50 border-t border-stone-200 px-3 py-1.5 flex items-center justify-between text-[10px] text-stone-500 font-sans">
-        <span className="flex items-center gap-1">
-          <Info size={12} className="text-stone-400" />
-          Blok kata untuk memilih tombol format tebal, miring, atau garis bawah seperti di Microsoft Word.
-        </span>
-        <span className="font-mono text-stone-400">Word Rich Text</span>
-      </div>
     </div>
   );
 };

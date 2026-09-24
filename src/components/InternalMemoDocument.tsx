@@ -1,7 +1,7 @@
 import React from 'react';
 import { InternalMemo } from '../types';
 import { NusantaraLogo } from './NusantaraLogo';
-import { OFFICIAL_KOP_SURAT_IMAGE_URL } from '../utils/memoUtils';
+import { OFFICIAL_KOP_SURAT_IMAGE_URL, parseDari } from '../utils/memoUtils';
 
 interface InternalMemoDocumentProps {
   memo: InternalMemo;
@@ -55,6 +55,11 @@ export const InternalMemoDocument: React.FC<InternalMemoDocumentProps> = ({
     (memo.signerCount === undefined && memo.useSecondSigner !== false && !!memo.penandatanganNama3);
 
   const isTwoSigners = !isThreeSigners && (memo.signerCount === 2 || memo.useSecondSigner === true);
+
+  // Automatically sync Penandatangan 1 from "Dari" (Pejabat ke-1 otomatis sama dengan Dari)
+  const parsedDari = parseDari(memo.dari || '');
+  const signer1Nama = memo.penandatanganNama || parsedDari.nama || 'Andi Muhammad Rifki';
+  const signer1Jabatan = memo.penandatanganJabatan || parsedDari.jabatan || 'Direktur';
 
   return (
     <div
@@ -234,10 +239,10 @@ export const InternalMemoDocument: React.FC<InternalMemoDocumentProps> = ({
               <div className="h-20 sm:h-24 print:h-20"></div>
               <div>
                 <p className="font-bold underline tracking-wide text-black">
-                  {memo.penandatanganNama || 'Andi Muhammad Rifki'}
+                  {signer1Nama}
                 </p>
                 <p className="text-black font-normal mt-0.5 text-[10.5pt] print:text-[10.5pt]">
-                  {memo.penandatanganJabatan || 'Direktur'}
+                  {signer1Jabatan}
                 </p>
               </div>
             </div>
@@ -283,10 +288,10 @@ export const InternalMemoDocument: React.FC<InternalMemoDocumentProps> = ({
               <p className="font-normal">{memo.salamPenutup || 'Hormat Saya'}</p>
               <div className="h-20 sm:h-24 print:h-20"></div>
               <p className="font-bold underline tracking-wide text-black">
-                {memo.penandatanganNama}
+                {signer1Nama}
               </p>
               <p className="text-[10.5pt] text-black font-normal mt-0.5">
-                {memo.penandatanganJabatan}
+                {signer1Jabatan}
               </p>
             </div>
             <div>
@@ -306,10 +311,10 @@ export const InternalMemoDocument: React.FC<InternalMemoDocumentProps> = ({
             <p className="font-normal">{memo.salamPenutup || 'Hormat Saya'}</p>
             <div className="h-20 sm:h-24 print:h-20"></div>
             <p className="font-bold underline tracking-wide text-black">
-              {memo.penandatanganNama}
+              {signer1Nama}
             </p>
             <p className="text-[10.5pt] text-black font-normal mt-0.5">
-              {memo.penandatanganJabatan}
+              {signer1Jabatan}
             </p>
           </div>
         )}

@@ -9,6 +9,7 @@ import {
   saveInternalMemos,
   createInitialMemo,
   OFFICIAL_KOP_SURAT_IMAGE_URL,
+  parseDari,
 } from '../utils/memoUtils';
 import { InternalMemoDocument } from './InternalMemoDocument';
 import { ManageBankAccountsModal } from './ManageBankAccountsModal';
@@ -682,16 +683,28 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
               {/* Dari & Kepada */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[11px] font-bold text-stone-700 mb-1">
-                    Dari (Default Direktur Utama)
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[11px] font-bold text-stone-700">
+                      Dari (Pejabat Pemohon)
+                    </label>
+                    <span className="text-[9px] font-bold text-amber-800 bg-amber-50 px-1.5 py-0.2 rounded border border-amber-200">
+                      Auto sinkron ke Penandatangan 1
+                    </span>
+                  </div>
                   <input
                     type="text"
                     value={currentMemo.dari}
-                    onChange={(e) =>
-                      setCurrentMemo((prev) => ({ ...prev, dari: e.target.value }))
-                    }
-                    placeholder="H. A. Nursyam Halid – Direktur Utama"
+                    onChange={(e) => {
+                      const newDari = e.target.value;
+                      const { nama, jabatan } = parseDari(newDari);
+                      setCurrentMemo((prev) => ({
+                        ...prev,
+                        dari: newDari,
+                        penandatanganNama: nama,
+                        penandatanganJabatan: jabatan || (nama ? '' : prev.penandatanganJabatan),
+                      }));
+                    }}
+                    placeholder="Andi Muhammad Rifki - Direktur"
                     className="w-full px-3 py-2 text-xs bg-stone-50 border border-stone-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:bg-white focus:outline-none"
                   />
                 </div>
@@ -944,13 +957,19 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                   </div>
                 </div>
 
-                {/* Penandatangan 1: Pemohon / Hormat Saya */}
+                {/* Penandatangan 1: Otomatis dari 'Dari' (Pembuat / Pemohon) */}
                 <div className="bg-white p-3 rounded-lg border border-stone-200 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold text-stone-800 flex items-center gap-1.5">
+                  <div className="flex flex-wrap items-center justify-between gap-1.5">
+                    <div className="flex items-center gap-1.5">
                       <User size={13} className="text-amber-600" />
-                      Penandatangan 1 (Pembuat / Pemohon)
-                    </span>
+                      <span className="text-[11px] font-bold text-stone-800">
+                        Penandatangan 1 (Pejabat Pemohon)
+                      </span>
+                      <span className="text-[9px] font-bold bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                        <CheckCircle2 size={10} className="text-emerald-700" />
+                        Otomatis dari Dari
+                      </span>
+                    </div>
                     <div className="flex items-center gap-1">
                       <span className="text-[10px] text-stone-500 font-medium">Salam:</span>
                       <input
@@ -970,12 +989,15 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     <div>
-                      <label className="block text-[10px] font-bold text-stone-600 mb-0.5">
-                        Nama Penandatangan 1
-                      </label>
+                      <div className="flex items-center justify-between mb-0.5">
+                        <label className="block text-[10px] font-bold text-stone-600">
+                          Nama Penandatangan 1
+                        </label>
+                        <span className="text-[9px] text-stone-400 font-medium">Sesuai nama di Dari</span>
+                      </div>
                       <input
                         type="text"
-                        value={currentMemo.penandatanganNama}
+                        value={currentMemo.penandatanganNama || parseDari(currentMemo.dari).nama}
                         onChange={(e) =>
                           setCurrentMemo((prev) => ({
                             ...prev,
@@ -983,16 +1005,19 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                           }))
                         }
                         placeholder="Andi Muhammad Rifki"
-                        className="w-full px-2.5 py-1.5 text-xs font-bold bg-white border border-stone-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                        className="w-full px-2.5 py-1.5 text-xs font-bold bg-stone-50 border border-stone-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:bg-white focus:outline-none"
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-bold text-stone-600 mb-0.5">
-                        Jabatan Penandatangan 1
-                      </label>
+                      <div className="flex items-center justify-between mb-0.5">
+                        <label className="block text-[10px] font-bold text-stone-600">
+                          Jabatan Penandatangan 1
+                        </label>
+                        <span className="text-[9px] text-stone-400 font-medium">Sesuai jabatan di Dari</span>
+                      </div>
                       <input
                         type="text"
-                        value={currentMemo.penandatanganJabatan}
+                        value={currentMemo.penandatanganJabatan || parseDari(currentMemo.dari).jabatan}
                         onChange={(e) =>
                           setCurrentMemo((prev) => ({
                             ...prev,
@@ -1000,30 +1025,29 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                           }))
                         }
                         placeholder="Direktur"
-                        className="w-full px-2.5 py-1.5 text-xs bg-white border border-stone-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                        className="w-full px-2.5 py-1.5 text-xs bg-stone-50 border border-stone-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:bg-white focus:outline-none"
                       />
                     </div>
                   </div>
 
-                  {/* Preset quick buttons for Signer 1 */}
-                  <div className="flex flex-wrap gap-1 pt-1">
-                    <span className="text-[10px] text-stone-400 self-center mr-1">Preset:</span>
-                    {COMMON_MEMO_SIGNERS.map((s) => (
-                      <button
-                        key={s.name}
-                        type="button"
-                        onClick={() =>
-                          setCurrentMemo((prev) => ({
-                            ...prev,
-                            penandatanganNama: s.name,
-                            penandatanganJabatan: s.role,
-                          }))
-                        }
-                        className="px-2 py-0.5 text-[10px] bg-stone-50 hover:bg-stone-100 text-stone-700 border border-stone-250 rounded-md transition cursor-pointer"
-                      >
-                        {s.name} ({s.role})
-                      </button>
-                    ))}
+                  <div className="flex items-center justify-between pt-0.5 text-[10px] text-stone-500">
+                    <span className="text-[9.5px] italic text-stone-500">
+                      *Tercetak otomatis di bawah tanda tangan: <strong>{currentMemo.penandatanganNama || parseDari(currentMemo.dari).nama || 'Nama'}</strong> - (bawahnya) <strong>{currentMemo.penandatanganJabatan || parseDari(currentMemo.dari).jabatan || 'Jabatan'}</strong>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const parsed = parseDari(currentMemo.dari);
+                        setCurrentMemo((prev) => ({
+                          ...prev,
+                          penandatanganNama: parsed.nama,
+                          penandatanganJabatan: parsed.jabatan,
+                        }));
+                      }}
+                      className="text-[10px] text-amber-700 hover:text-amber-900 font-bold underline cursor-pointer shrink-0 ml-2"
+                    >
+                      Sinkronkan Ulang
+                    </button>
                   </div>
                 </div>
 

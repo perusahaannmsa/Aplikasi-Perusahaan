@@ -2,6 +2,29 @@ import { BankAccountMaster, InternalMemo, Submission } from '../types';
 
 export const OFFICIAL_KOP_SURAT_IMAGE_URL = '/kop-surat-nmsa-full.png';
 
+/**
+ * Parses a "Dari" string into Name and Role/Jabatan.
+ * Supports formats like:
+ * - "Andi Muhammad Rifki - Direktur"
+ * - "Andi Muhammad Rifki – Direktur Utama"
+ * - "Andi Muhammad Rifki (Direktur)"
+ * - "Andi Muhammad Rifki, Direktur"
+ */
+export function parseDari(dariText: string): { nama: string; jabatan: string } {
+  if (!dariText) return { nama: '', jabatan: '' };
+  const dashIndex = dariText.search(/\s+(?:–|—|-|\/|\|)\s+/);
+  if (dashIndex !== -1) {
+    const nama = dariText.substring(0, dashIndex).trim();
+    const rest = dariText.substring(dashIndex).replace(/^\s*(?:–|—|-|\/|\|)\s*/, '').trim();
+    return { nama, jabatan: rest };
+  }
+  const parenMatch = dariText.match(/^([^(]+)\(([^)]+)\)$/);
+  if (parenMatch) return { nama: parenMatch[1].trim(), jabatan: parenMatch[2].trim() };
+  const commaMatch = dariText.match(/^([^,]+),\s*(.+)$/);
+  if (commaMatch) return { nama: commaMatch[1].trim(), jabatan: commaMatch[2].trim() };
+  return { nama: dariText.trim(), jabatan: '' };
+}
+
 export const DEFAULT_BANK_ACCOUNTS: BankAccountMaster[] = [
   {
     id: 'bank-mandiri-nmsa',

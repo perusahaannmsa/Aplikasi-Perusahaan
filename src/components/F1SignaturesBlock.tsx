@@ -14,13 +14,21 @@ export const F1SignaturesBlock: React.FC<F1SignaturesBlockProps> = ({
   density = 'normal',
   isCompact = false,
 }) => {
-  // Ensure exactly 4 signers
-  const safeSigners: SignerConfigItem[] = [
-    signers[0] || { title: 'Diajukan', name: 'Andi Dhiya Salsabila', role: 'Staff Keuangan' },
-    signers[1] || { title: 'Diverifikasi', name: 'Sri Ekowati', role: 'Manager Keuangan' },
-    signers[2] || { title: 'Diverifikasi', name: 'Andi Muhammad Rifki', role: 'Direktur' },
-    signers[3] || { title: 'Disetujui', name: 'Harijon', role: 'Direktur Keuangan' },
+  // Ensure default fallback if signers array is empty
+  const defaultFallbackSigners: SignerConfigItem[] = [
+    { title: 'Diajukan', name: 'Andi Dhiya Salsabila', role: 'Staff Keuangan', enabled: true },
+    { title: 'Diverifikasi', name: 'Sri Ekowati', role: 'Manager Keuangan', enabled: true },
+    { title: 'Diverifikasi', name: 'Andi Muhammad Rifki', role: 'Direktur', enabled: true },
+    { title: 'Disetujui', name: 'Harijon', role: 'Direktur Keuangan', enabled: true },
   ];
+
+  const sourceSigners = signers && signers.length > 0 ? signers : defaultFallbackSigners;
+
+  // Filter only ACTIVE / ENABLED signers (respecting user's selection of 2, 3, or 4 columns)
+  const activeSigners = sourceSigners.filter((s) => s.enabled !== false);
+  const displaySigners: SignerConfigItem[] = activeSigners.length > 0 ? activeSigners : sourceSigners;
+  const count = displaySigners.length;
+  const colWidthPercent = `${(100 / count).toFixed(3)}%`;
 
   // Height calculations based on density - increased for spacious signature area
   const getGapHeightClass = () => {
@@ -33,23 +41,24 @@ export const F1SignaturesBlock: React.FC<F1SignaturesBlockProps> = ({
 
   const gapHeight = getGapHeightClass();
 
+  // Model 1: Kotak Penanda Tangan (Tabel Berbingkai Tertutup)
   if (style === 'table') {
     return (
       <div className={`w-full text-black ${density === 'ultra_dense' ? 'my-1' : 'my-2 sm:my-2.5 print:my-1.5'}`}>
         <table className="w-full border-collapse border-2 border-black text-center font-sans table-fixed box-border">
           <colgroup>
-            <col className="w-1/4" style={{ width: '25%' }} />
-            <col className="w-1/4" style={{ width: '25%' }} />
-            <col className="w-1/4" style={{ width: '25%' }} />
-            <col className="w-1/4" style={{ width: '25%' }} />
+            {displaySigners.map((_, idx) => (
+              <col key={idx} style={{ width: colWidthPercent }} />
+            ))}
           </colgroup>
           <thead>
             <tr className="border-b-2 border-black bg-white">
-              {safeSigners.map((signer, idx) => (
+              {displaySigners.map((signer, idx) => (
                 <th
                   key={idx}
-                  className={`w-1/4 max-w-[25%] p-1 sm:p-1.5 font-bold uppercase tracking-wider text-[10px] sm:text-[11px] print:text-[10.5px] text-black overflow-hidden ${
-                    idx < 3 ? 'border-r-2 border-black' : ''
+                  style={{ width: colWidthPercent, maxWidth: colWidthPercent }}
+                  className={`p-1 sm:p-1.5 font-bold uppercase tracking-wider text-[10px] sm:text-[11px] print:text-[10.5px] text-black overflow-hidden ${
+                    idx < count - 1 ? 'border-r-2 border-black' : ''
                   }`}
                 >
                   <span className="block truncate text-center leading-tight">
@@ -61,19 +70,21 @@ export const F1SignaturesBlock: React.FC<F1SignaturesBlockProps> = ({
           </thead>
           <tbody>
             <tr className="border-b-2 border-black">
-              {safeSigners.map((_, idx) => (
+              {displaySigners.map((_, idx) => (
                 <td
                   key={idx}
-                  className={`w-1/4 max-w-[25%] ${idx < 3 ? 'border-r-2 border-black' : ''} ${gapHeight}`}
+                  style={{ width: colWidthPercent, maxWidth: colWidthPercent }}
+                  className={`${idx < count - 1 ? 'border-r-2 border-black' : ''} ${gapHeight}`}
                 />
               ))}
             </tr>
             <tr>
-              {safeSigners.map((signer, idx) => (
+              {displaySigners.map((signer, idx) => (
                 <td
                   key={idx}
-                  className={`w-1/4 max-w-[25%] px-1 py-1.5 align-top overflow-hidden ${
-                    idx < 3 ? 'border-r-2 border-black' : ''
+                  style={{ width: colWidthPercent, maxWidth: colWidthPercent }}
+                  className={`px-1 py-1.5 align-top overflow-hidden ${
+                    idx < count - 1 ? 'border-r-2 border-black' : ''
                   }`}
                 >
                   <span className="font-bold tracking-tight uppercase text-[10.5px] sm:text-[11.5px] print:text-[11px] text-black block leading-tight text-center break-words">
@@ -93,11 +104,19 @@ export const F1SignaturesBlock: React.FC<F1SignaturesBlockProps> = ({
     );
   }
 
-  // Line Style (Garis Terbuka) with strict CSS Grid layout
+  // Model 2: Hanya Garis Saja Seperti Biasa (Garis Terbuka Bersih)
+  const getGridColsClass = () => {
+    if (count === 1) return 'grid-cols-1 max-w-xs mx-auto';
+    if (count === 2) return 'grid-cols-2 max-w-xl mx-auto';
+    if (count === 3) return 'grid-cols-3';
+    if (count === 4) return 'grid-cols-4';
+    return 'grid-cols-5';
+  };
+
   return (
     <div className={`w-full text-black ${density === 'ultra_dense' ? 'my-1' : 'my-2 sm:my-3 print:my-2'}`}>
-      <div className="grid grid-cols-4 gap-2 sm:gap-2.5 w-full px-0.5 box-border">
-        {safeSigners.map((signer, idx) => (
+      <div className={`grid ${getGridColsClass()} gap-2 sm:gap-3 w-full px-0.5 box-border`}>
+        {displaySigners.map((signer, idx) => (
           <div
             key={idx}
             className="w-full min-w-0 max-w-full flex flex-col items-center text-center overflow-hidden"
@@ -110,8 +129,8 @@ export const F1SignaturesBlock: React.FC<F1SignaturesBlockProps> = ({
             {/* Signature Area Space */}
             <div className={`w-full ${gapHeight}`} />
 
-            {/* Name with thin line separator */}
-            <div className="w-full max-w-[170px] sm:max-w-[185px] border-b border-black pb-0.5 flex items-center justify-center px-0.5 min-w-0">
+            {/* Name with thin line separator underneath */}
+            <div className="w-full max-w-[175px] sm:max-w-[200px] border-b border-black pb-0.5 flex items-center justify-center px-0.5 min-w-0">
               <span className="font-bold tracking-tight uppercase text-[10.5px] sm:text-[11.5px] print:text-[11px] block text-center break-words leading-tight w-full">
                 {signer.name}
               </span>

@@ -14,13 +14,14 @@ import { SlidersHorizontal, UserCheck } from 'lucide-react';
 
 const STORAGE_KEY_F1_SIGNERS = 'nmsa_custom_f1_signers_config';
 const STORAGE_KEY_F2_SIGNERS = 'nmsa_custom_f2_signers_config';
+const STORAGE_KEY_SIGNATURE_STYLE = 'NMSA_SIGNATURE_STYLE';
 
 const getInitialF1Signers = (sub: Submission, verifier: 'rifki' | 'nursyam'): SignerConfigItem[] => {
   try {
     const saved = localStorage.getItem(STORAGE_KEY_F1_SIGNERS);
     if (saved) {
       const parsed = JSON.parse(saved);
-      if (Array.isArray(parsed) && parsed.length === 4) return parsed;
+      if (Array.isArray(parsed) && parsed.length >= 1) return parsed;
     }
   } catch (e) {
     console.warn('Failed to parse saved F1 signers', e);
@@ -578,7 +579,13 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
   const effectiveLogoUrl = submission.companyLogoUrl || userProfile?.companyDetails?.logoUrl || userProfile?.companyLogoUrl;
 
   const [printLayoutMode, setPrintLayoutMode] = useState<'standard' | 'compact_70' | 'eco_1page'>('standard');
-  const [signatureTableStyle, setSignatureTableStyle] = useState<'table' | 'line'>('table');
+  const [signatureTableStyle, setSignatureTableStyle] = useState<'table' | 'line'>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_SIGNATURE_STYLE);
+      if (saved === 'line' || saved === 'table') return saved;
+    } catch (e) {}
+    return 'table';
+  });
   const [showF2, setShowF2] = useState<boolean>(false);
   const [f1Verifier, setF1Verifier] = useState<'rifki' | 'nursyam'>(() => {
     if (submission.diverifikasiOleh?.toLowerCase().includes('nursyam')) return 'nursyam';
@@ -592,12 +599,19 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
   const [f2Signers, setF2Signers] = useState<SignerConfigItem[]>(() => getInitialF2Signers(submission));
   const [isSignerModalOpen, setIsSignerModalOpen] = useState(false);
 
-  const handleSaveSigners = (newF1: SignerConfigItem[], newF2: SignerConfigItem[], saveAsDefault: boolean) => {
+  const handleSaveSigners = (
+    newF1: SignerConfigItem[],
+    newF2: SignerConfigItem[],
+    newStyle: 'table' | 'line',
+    saveAsDefault: boolean
+  ) => {
     setF1Signers(newF1);
     setF2Signers(newF2);
+    setSignatureTableStyle(newStyle);
     if (saveAsDefault) {
       localStorage.setItem(STORAGE_KEY_F1_SIGNERS, JSON.stringify(newF1));
       localStorage.setItem(STORAGE_KEY_F2_SIGNERS, JSON.stringify(newF2));
+      localStorage.setItem(STORAGE_KEY_SIGNATURE_STYLE, newStyle);
     }
   };
 
@@ -2347,6 +2361,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
         onClose={() => setIsSignerModalOpen(false)}
         f1Signers={f1Signers}
         f2Signers={f2Signers}
+        signatureStyle={signatureTableStyle}
         onSave={handleSaveSigners}
         onReset={handleResetSigners}
       />
