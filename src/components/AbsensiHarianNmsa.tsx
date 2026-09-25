@@ -12,6 +12,8 @@ import {
   Edit, 
   Settings, 
   CheckCircle, 
+  CheckCircle2,
+  MoreVertical,
   ShieldCheck,
   Sun,
   AlertCircle, 
@@ -731,6 +733,14 @@ export function AbsensiHarianNmsa({
   const [autoBackupSettings, setAutoBackupSettings] = useState<DriveAutoBackupSettings>(() => googleDriveAutoBackup.getSettings());
   const [autoBackupLogs, setAutoBackupLogs] = useState<BackupSyncLog[]>(() => googleDriveAutoBackup.getLogs());
   const [isDriveAutoSyncing, setIsDriveAutoSyncing] = useState<boolean>(false);
+  const [openReportActionId, setOpenReportActionId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!openReportActionId) return;
+    const handleDocClick = () => setOpenReportActionId(null);
+    window.addEventListener("click", handleDocClick);
+    return () => window.removeEventListener("click", handleDocClick);
+  }, [openReportActionId]);
 
   useEffect(() => {
     const handleSettingsUpdated = (e: any) => {
@@ -6567,46 +6577,242 @@ export function AbsensiHarianNmsa({
                   onClick={async () => {
                     setIsDriveAutoSyncing(true);
                     try {
-                      // 1. Cadangkan presensi aktif hari ini / minggu ini
-                      const res = await googleDriveAutoBackup.backupAbsensi({
-                        exportDate: new Date().toISOString(),
-                        version: "2.0",
-                        module: "Absensi & Uang Makan Karyawan NMSA",
-                        records: attendanceRecords,
-                        workers,
-                        signatures,
-                        weeklyReports,
-                        pettyCashReports
+                      const activeWorkers = workers.filter(w => w.isActive !== false);
+
+                      // 1. Kumpulkan semua tanggal dari absensi & riwayat laporan
+                      const allDateKeys = new Set<string>();
+                      (attendanceRecords || []).forEach(r => {
+                        if (r.attendance) Object.keys(r.attendance).forEach(d => allDateKeys.add(d));
+                        if (r.customStatus) Object.keys(r.customStatus).forEach(d => allDateKeys.add(d));
+                        if (r.reasons) Object.keys(r.reasons).forEach(d => allDateKeys.add(d));
+                      });
+                      (weeklyReports || []).forEach(rep => {
+                        if (rep.weekStartDate) allDateKeys.add(rep.weekStartDate);
+                        if (rep.weekEndDate) allDateKeys.add(rep.weekEndDate);
+                      });
+                      // Masukkan juga minggu aktif saat ini
+                      allDateKeys.add(weekStart);
+
+                      // Helper cari hari Senin dari suatu tanggal
+                      const getMondayStr = (dateStr: string): string => {
+                        const parts = (dateStr || "").split("-").map(Number);
+                        if (parts.length < 3 || isNaN(parts[0]) || isNaN(parts[1]) || isNaN(parts[2])) return "";
+                        const d = new Date(parts[0], parts[1] - 1, parts[2]);
+                        const day = d.getDay();
+                        const diffToMonday = d.getDate() - day + (day === 0 ? -6 : 1);
+                        const monday = new Date(parts[0], parts[1] - 1, diffToMonday);
+                        return formatLocalYYYYMMDD(monday);
+                      };
+
+                      const candidateMondays = new Set<string>();
+                      allDateKeys.forEach(dateStr => {
+                        const mon = getMondayStr(dateStr);
+                        if (mon) candidateMondays.add(mon);
                       });
 
-                      // 2. Cadangkan SEMUA data di Riwayat Laporan Jumat ke Google Drive
-                      let uploadedWeeklyCount = 0;
-                      if (weeklyReports && weeklyReports.length > 0) {
-                        const weeklyBackupRes = await googleDriveAutoBackup.backupAllWeeklyReports(
-                          weeklyReports,
-                          workers,
-                          signatures
-                        );
-                        uploadedWeeklyCount = weeklyBackupRes.totalUploaded;
+                      // Batasi hanya periode yang sudah berlalu atau sedang berjalan (mon <= currentWeekMonday)
+                      const currentWeekMonday = getWeekRange(new Date()).monday;
+                      const sortedMondays = Array.from(candidateMondays)
+                        .filter(mon => mon <= currentWeekMonday)
+                        .sort((a, b) => a.localeCompare(b)); // Urutkan kronologis awal ke akhir untuk proses sekuensial
 
-                        // Perbarui link Google Drive pada tiap laporan
-                        if (weeklyBackupRes.results.length > 0) {
-                          const urlMap = new Map(weeklyBackupRes.results.filter(r => r.url).map(r => [r.id, r.url!]));
-                          const updatedReports = weeklyReports.map(r => {
-                            const newUrl = urlMap.get(r.id);
-                            return newUrl ? { ...r, pdfDriveUrl: newUrl } : r;
+                      const validCompiledReports: WeeklyReport[] = [];
+                      let skippedEmptyCount = 0;
+
+                      for (const mon of sortedMondays) {
+                        const periodDates = getDatesForWeekStart(mon);
+                        const fri = periodDates[4] || mon;
+                        const existingReport = weeklyReports.find(r => r.weekStartDate === mon);
+
+                        // Periksa apakah ada MINIMAL 1 data absensi (hadir, alpa, izin, sakit, cuti, meeting, alasan dll.)
+                        let hasAnyAttendanceData = false;
+
+                        // 1) Cek pada live attendanceRecords
+                        for (const w of activeWorkers) {
+                          const liveRec = attendanceRecords.find(r => r.workerId === w.id);
+                          if (liveRec) {
+                            for (const d of periodDates) {
+                              if (liveRec.attendance && liveRec.attendance[d] === true) {
+                                hasAnyAttendanceData = true;
+                                break;
+                              }
+                              if (liveRec.customStatus && liveRec.customStatus[d] && liveRec.customStatus[d].trim() !== "") {
+                                hasAnyAttendanceData = true;
+                                break;
+                              }
+                              if (liveRec.reasons && liveRec.reasons[d] && liveRec.reasons[d].trim() !== "") {
+                                hasAnyAttendanceData = true;
+                                break;
+                              }
+                            }
+                          }
+                          if (hasAnyAttendanceData) break;
+                        }
+
+                        // 2) Cek pada existingReport jika ada
+                        if (!hasAnyAttendanceData && existingReport?.records && existingReport.records.length > 0) {
+                          for (const rec of existingReport.records) {
+                            for (const d of periodDates) {
+                              if (rec.attendance && rec.attendance[d] === true) {
+                                hasAnyAttendanceData = true;
+                                break;
+                              }
+                              if (rec.customStatus && rec.customStatus[d] && rec.customStatus[d].trim() !== "") {
+                                hasAnyAttendanceData = true;
+                                break;
+                              }
+                              if (rec.reasons && rec.reasons[d] && rec.reasons[d].trim() !== "") {
+                                hasAnyAttendanceData = true;
+                                break;
+                              }
+                            }
+                            if (hasAnyAttendanceData) break;
+                          }
+                        }
+
+                        // Jika MASIH KOSONG / BELUM ADA DATA 1 PUN:
+                        // Sesuai permintaan: Lewati dan jangan diinput ke Google Drive maupun Riwayat Pelaporan!
+                        if (!hasAnyAttendanceData) {
+                          skippedEmptyCount++;
+                          continue;
+                        }
+
+                        // Susun records absensi yang valid untuk periode ini
+                        const periodRecords: AttendanceRecord[] = activeWorkers.map(w => {
+                          const liveRec = attendanceRecords.find(r => r.workerId === w.id);
+                          const histRec = existingReport?.records?.find(r => r.workerId === w.id);
+                          const attCopy: Record<string, boolean> = {};
+                          const custCopy: Record<string, string> = {};
+                          const reasCopy: Record<string, string> = {};
+
+                          periodDates.forEach(d => {
+                            if (liveRec?.attendance && liveRec.attendance[d] !== undefined) {
+                              attCopy[d] = liveRec.attendance[d];
+                            } else if (histRec?.attendance && histRec.attendance[d] !== undefined) {
+                              attCopy[d] = histRec.attendance[d];
+                            }
+
+                            if (liveRec?.customStatus && liveRec.customStatus[d]) {
+                              custCopy[d] = liveRec.customStatus[d];
+                            } else if (histRec?.customStatus && histRec.customStatus[d]) {
+                              custCopy[d] = histRec.customStatus[d];
+                            }
+
+                            if (liveRec?.reasons && liveRec.reasons[d]) {
+                              reasCopy[d] = liveRec.reasons[d];
+                            } else if (histRec?.reasons && histRec.reasons[d]) {
+                              reasCopy[d] = histRec.reasons[d];
+                            }
                           });
-                          setWeeklyReports(updatedReports);
+
+                          return {
+                            workerId: w.id,
+                            dailyAllowance: liveRec?.dailyAllowance || histRec?.dailyAllowance || globalAllowance || 25000,
+                            attendance: attCopy,
+                            customStatus: custCopy,
+                            reasons: reasCopy,
+                          };
+                        });
+
+                        const reportId = existingReport?.id || ("REP-" + mon.replace(/-/g, "") + "-" + Math.floor(Math.random() * 900 + 100));
+                        validCompiledReports.push({
+                          id: reportId,
+                          weekStartDate: mon,
+                          weekEndDate: fri,
+                          records: periodRecords,
+                          isSubmitted: true,
+                          submittedAt: existingReport?.submittedAt || new Date().toISOString(),
+                          sheetsUrl: existingReport?.sheetsUrl,
+                          pdfDriveUrl: existingReport?.pdfDriveUrl,
+                          driveFileId: existingReport?.driveFileId,
+                          driveUrl: existingReport?.driveUrl,
+                        });
+                      }
+
+                      if (validCompiledReports.length === 0) {
+                        alert("Tidak ditemukan data absen pada periode yang sudah berlalu (seluruhnya masih kosong). Periode kosong tidak dicadangkan atau dilaporkan.");
+                        return;
+                      }
+
+                      // Deduplikasi & urutkan secara konsisten dari periode terbaru ke terlama
+                      const updatedWeeklyReports = deduplicateWeeklyReports(validCompiledReports);
+                      setWeeklyReports(updatedWeeklyReports);
+
+                      try {
+                        localStorage.setItem("laporan_uang_makan_log", JSON.stringify(updatedWeeklyReports));
+                        localStorage.setItem("weekly_reports_nmsa", JSON.stringify(updatedWeeklyReports));
+                        localStorage.setItem("weekly_reports", JSON.stringify(updatedWeeklyReports));
+                      } catch (e) {}
+
+                      await syncStateToServer(
+                        workers,
+                        attendanceRecords,
+                        updatedWeeklyReports,
+                        pettyCashReports,
+                        attendancePin,
+                        signatures,
+                        pettyCashHolders,
+                        attendanceLogs,
+                        waMethod,
+                        autoReminderHour
+                      );
+
+                      // Sinkronkan ke Firebase
+                      try {
+                        const { db } = await import('../lib/firebaseAbsen');
+                        const { doc, setDoc } = await import('firebase/firestore');
+                        for (const rep of updatedWeeklyReports) {
+                          await setDoc(doc(db, "weekly_reports", rep.id), rep, { merge: true });
+                        }
+                      } catch (fbErr) {
+                        console.warn("Firebase sync warning during backup:", fbErr);
+                      }
+
+                      // 2. Cadangkan database absensi ke Google Drive
+                      try {
+                        await googleDriveAutoBackup.backupAbsensi({
+                          exportDate: new Date().toISOString(),
+                          version: "2.0",
+                          module: "Absensi & Uang Makan Karyawan NMSA",
+                          records: attendanceRecords,
+                          workers,
+                          signatures,
+                          weeklyReports: updatedWeeklyReports,
+                          pettyCashReports
+                        });
+                      } catch (e) {
+                        console.warn("backupAbsensi error:", e);
+                      }
+
+                      // 3. Cadangkan berkas PDF resmi untuk semua laporan yang valid ke Google Drive
+                      let uploadedPdfCount = 0;
+                      if (isDriveConnected) {
+                        const driveUpdatedReports = [...updatedWeeklyReports];
+                        for (let i = 0; i < driveUpdatedReports.length; i++) {
+                          const rep = driveUpdatedReports[i];
                           try {
-                            localStorage.setItem("laporan_uang_makan_log", JSON.stringify(updatedReports));
-                            localStorage.setItem("weekly_reports_nmsa", JSON.stringify(updatedReports));
-                            localStorage.setItem("weekly_reports", JSON.stringify(updatedReports));
+                            const driveRes = await googleDriveAutoBackup.backupWeeklyAttendanceReport(rep, workers, signatures);
+                            if (driveRes.success && driveRes.url) {
+                              driveUpdatedReports[i] = { ...rep, pdfDriveUrl: driveRes.url };
+                              uploadedPdfCount++;
+                            }
+                          } catch (uploadErr) {
+                            console.warn("Upload PDF err for " + rep.id, uploadErr);
+                          }
+                        }
+
+                        if (uploadedPdfCount > 0) {
+                          setWeeklyReports(driveUpdatedReports);
+                          try {
+                            localStorage.setItem("laporan_uang_makan_log", JSON.stringify(driveUpdatedReports));
+                            localStorage.setItem("weekly_reports_nmsa", JSON.stringify(driveUpdatedReports));
+                            localStorage.setItem("weekly_reports", JSON.stringify(driveUpdatedReports));
                           } catch (e) {}
 
                           await syncStateToServer(
                             workers,
                             attendanceRecords,
-                            updatedReports,
+                            driveUpdatedReports,
                             pettyCashReports,
                             attendancePin,
                             signatures,
@@ -6618,14 +6824,13 @@ export function AbsensiHarianNmsa({
                         }
                       }
 
-                      if (res.success || uploadedWeeklyCount > 0) {
-                        const countText = weeklyReports.length > 0 
-                          ? `✓ Sukses! Seluruh ${weeklyReports.length} berkas Riwayat Laporan Jumat dan data absensi aktif berhasil dicadangkan dan terunggah aman ke Google Drive.`
-                          : "✓ Sukses! Cadangan data Absensi Karyawan berhasil disimpan langsung ke Google Drive Anda.";
-                        alert(countText);
-                      } else {
-                        alert("Gagal mencadangkan ke Google Drive: " + (res.error || "Pastikan akun Google Drive terhubung."));
-                      }
+                      const driveInfo = isDriveConnected 
+                        ? `\n✓ Berkas PDF resmi telah tersimpan rapi & berurutan di Google Drive (${uploadedPdfCount} berkas PDF).`
+                        : `\n(Catatan: Google Drive belum terhubung, hubungkan untuk otomatis mengunggah file PDF ke folder Drive).`;
+
+                      const skippedInfo = skippedEmptyCount > 0 ? `\n(ℹ️ ${skippedEmptyCount} periode minggu yang masih kosong berhasil dilewati).` : "";
+
+                      alert(`✓ Sukses! Berhasil mencadangkan ${validCompiledReports.length} periode absensi yang memiliki data kehadiran ke dalam Riwayat Pelaporan secara berurutan.${driveInfo}${skippedInfo}`);
                     } catch (err: any) {
                       alert("Terjadi kesalahan saat mencadangkan: " + (err.message || String(err)));
                     } finally {
@@ -6634,6 +6839,7 @@ export function AbsensiHarianNmsa({
                   }}
                   disabled={isDriveAutoSyncing}
                   className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-black transition flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-emerald-600/20"
+                  title="Cadangkan semua data absen yang sudah berlalu (hanya periode yang memiliki absensi) ke Google Drive & Riwayat Pelaporan"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isDriveAutoSyncing ? "animate-spin" : ""}`} />
                   <span>{isDriveAutoSyncing ? "Mencadangkan..." : "Cadangkan Sekarang"}</span>
@@ -7092,60 +7298,6 @@ export function AbsensiHarianNmsa({
                             </button>
                           </div>
                         )}
-
-                        {/* CADANGKAN SELURUH RIWAYAT KE GOOGLE DRIVE */}
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            if (sortedWeeklyReports.length === 0) {
-                              alert("Belum ada riwayat laporan mingguan untuk dicadangkan.");
-                              return;
-                            }
-                            if (!window.confirm(`Cadangkan dan pastikan seluruh ${sortedWeeklyReports.length} berkas laporan mingguan terunggah aman ke folder Google Drive?`)) {
-                              return;
-                            }
-                            try {
-                              let count = 0;
-                              const updatedReports = [...weeklyReports];
-                              for (let i = 0; i < updatedReports.length; i++) {
-                                const rep = updatedReports[i];
-                                if (!rep.pdfDriveUrl) {
-                                  const res = await googleDriveAutoBackup.backupWeeklyAttendanceReport(rep, workers, signatures);
-                                  if (res.success && res.url) {
-                                    updatedReports[i] = { ...rep, pdfDriveUrl: res.url };
-                                    count++;
-                                  }
-                                }
-                              }
-                              setWeeklyReports(updatedReports);
-                              try {
-                                localStorage.setItem("laporan_uang_makan_log", JSON.stringify(updatedReports));
-                                localStorage.setItem("weekly_reports_nmsa", JSON.stringify(updatedReports));
-                                localStorage.setItem("weekly_reports", JSON.stringify(updatedReports));
-                              } catch (e) {}
-                              await syncStateToServer(
-                                workers,
-                                attendanceRecords,
-                                updatedReports,
-                                pettyCashReports,
-                                attendancePin,
-                                signatures,
-                                pettyCashHolders,
-                                attendanceLogs,
-                                waMethod,
-                                autoReminderHour
-                              );
-                              alert(`✓ Sukses! Seluruh riwayat (${sortedWeeklyReports.length} periode) telah tersinkronisasi dan tersimpan lengkap di Google Drive.`);
-                            } catch (e: any) {
-                              alert("Gagal mencadangkan: " + (e.message || String(e)));
-                            }
-                          }}
-                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
-                          title="Pastikan semua laporan mingguan tersimpan di Google Drive"
-                        >
-                          <CloudUpload className="w-3.5 h-3.5" />
-                          <span>Cadangkan Semua ke Drive</span>
-                        </button>
                       </div>
                     </div>
                     
@@ -7188,170 +7340,227 @@ export function AbsensiHarianNmsa({
                                 </div>
                               </div>
 
-                              <div className="flex flex-wrap items-center gap-2">
-                                <button
-                                  onClick={() => printWeeklyReportPDF(report, workers, signatures)}
-                                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer shadow-xs hover:shadow-sm"
-                                >
-                                  <FileText className="w-3.5 h-3.5" />
-                                  <span>Cetak PDF</span>
-                                </button>
-
-                                <button
-                                  onClick={async () => {
-                                    try {
-                                      const { generateWeeklyReportPDFBlob } = await import('../lib/attendanceSheetGenerator');
-                                      const blob = await generateWeeklyReportPDFBlob(report, workers, signatures);
-                                      const url = URL.createObjectURL(blob);
-                                      const a = document.createElement('a');
-                                      a.href = url;
-                                      a.download = `Rekap_Uang_Makan_${report.weekStartDate}_s.d._${report.weekEndDate}.pdf`;
-                                      document.body.appendChild(a);
-                                      a.click();
-                                      document.body.removeChild(a);
-                                      setTimeout(() => URL.revokeObjectURL(url), 5000);
-                                    } catch (e) {
-                                      printWeeklyReportPDF(report, workers, signatures);
-                                    }
-                                  }}
-                                  className="bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer"
-                                  title="Unduh Berkas PDF Resmi"
-                                >
-                                  <Download className="w-3.5 h-3.5 text-indigo-600" />
-                                  <span>Unduh PDF</span>
-                                </button>
-
-                                <button
-                                  onClick={() => handleUpdateWeeklyReport(report)}
-                                  className="bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer"
-                                  title="Perbarui & sinkronkan laporan dengan data absensi terkini"
-                                >
-                                  <RefreshCw className="w-3.5 h-3.5 text-amber-600" />
-                                  <span>Perbarui Data</span>
-                                </button>
-
-                                <button
-                                  onClick={() => handleRemoveWeeklyReport(report.id)}
-                                  className="bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer"
-                                  title="Hapus Laporan"
-                                >
-                                  <Trash className="w-3.5 h-3.5 text-rose-500" />
-                                  <span>Hapus</span>
-                                </button>
-
-                                {report.sheetsUrl ? (
-                                  <a
-                                    href={report.sheetsUrl}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition"
-                                  >
-                                    <Globe className="w-3.5 h-3.5 text-emerald-600" />
-                                    <span>Buka Google Sheets</span>
-                                  </a>
-                                ) : (
-                                  isDriveConnected && (
-                                    <button
-                                      onClick={async () => {
-                                        try {
-                                          await executeWithAutoRefreshToken(async (tok) => {
-                                            const sheetTitle = `Rekap Uang Makan Mingguan (${report.weekStartDate} s/d ${report.weekEndDate})`;
-                                            const headers = ["No.", "Nama Karyawan", "Jabatan", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Total Hadir", "Tarif Harian (Rp)", "Total Uang Makan (Rp)"];
-                                            
-                                            const workerMap = new Map<string, Worker>(workers.map((w) => [w.id, w]));
-                                            const rows = report.records.map((rec, index) => {
-                                              const w = workerMap.get(rec.workerId);
-                                              let totalHadir = 0;
-                                              const dayStates = weekDates.map((date) => {
-                                                const hasAtt = rec.attendance[date] || false;
-                                                if (hasAtt) totalHadir++;
-                                                return hasAtt ? "Hadir" : "Absen";
-                                              });
-
-                                              return [
-                                                index + 1,
-                                                w?.name || "Karyawan",
-                                                w?.role || "-",
-                                                ...dayStates,
-                                                totalHadir,
-                                                rec.dailyAllowance,
-                                                totalHadir * rec.dailyAllowance
-                                              ];
-                                            });
-
-                                            const sheetResult = await exportAttendanceToGoogleSheet(
-                                              tok,
-                                              sheetTitle,
-                                              headers,
-                                              rows
-                                            );
-                                            
-                                            setWeeklyReports(weeklyReports.map(lg => lg.id === report.id ? { ...lg, sheetsUrl: sheetResult.spreadsheetUrl } : lg));
-                                            alert("Sukses sinkronisasi rekap ke dokumen Google Spreadsheet baru!");
-                                          });
-                                        } catch (err: any) {
-                                          handleDriveError(err);
-                                        }
-                                      }}
-                                      className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer"
-                                    >
-                                      <CloudUpload className="w-3.5 h-3.5" />
-                                      <span>Sync Sheets</span>
-                                    </button>
-                                  )
-                                )}
-
-                                {report.pdfDriveUrl ? (
+                              <div className="flex items-center gap-2">
+                                {report.pdfDriveUrl && (
                                   <a
                                     href={report.pdfDriveUrl}
                                     target="_blank"
                                     rel="noreferrer"
-                                    className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition font-semibold"
+                                    className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs px-2.5 py-1.5 rounded-lg flex items-center gap-1.5 transition font-semibold"
                                     title="Buka Berkas PDF Resmi di Google Drive"
                                   >
-                                    <ExternalLink className="w-3.5 h-3.5 text-emerald-600" />
-                                    <span>PDF di Drive</span>
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                    <span>Di Drive</span>
                                   </a>
-                                ) : (
-                                  <button
-                                    onClick={async () => {
-                                      try {
-                                        const res = await googleDriveAutoBackup.backupWeeklyAttendanceReport(report, workers, signatures);
-                                        if (res.success && res.url) {
-                                          const updated = weeklyReports.map(r => r.id === report.id ? { ...r, pdfDriveUrl: res.url } : r);
-                                          setWeeklyReports(updated);
-                                          try {
-                                            localStorage.setItem("laporan_uang_makan_log", JSON.stringify(updated));
-                                            localStorage.setItem("weekly_reports_nmsa", JSON.stringify(updated));
-                                            localStorage.setItem("weekly_reports", JSON.stringify(updated));
-                                          } catch (e) {}
-                                          await syncStateToServer(
-                                            workers,
-                                            attendanceRecords,
-                                            updated,
-                                            pettyCashReports,
-                                            attendancePin,
-                                            signatures,
-                                            pettyCashHolders,
-                                            attendanceLogs,
-                                            waMethod,
-                                            autoReminderHour
-                                          );
-                                          alert("✓ Berkas PDF laporan berhasil diunggah ke Google Drive!");
-                                        } else {
-                                          alert("Gagal mengunggah ke Google Drive: " + (res.error || "Pastikan Google Drive terhubung"));
-                                        }
-                                      } catch (e: any) {
-                                        alert("Gagal mengunggah: " + (e.message || String(e)));
-                                      }
-                                    }}
-                                    className="bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition font-medium cursor-pointer"
-                                    title="Unggah berkas PDF laporan ini ke Google Drive"
-                                  >
-                                    <CloudUpload className="w-3.5 h-3.5 text-indigo-600" />
-                                    <span>Upload ke Drive</span>
-                                  </button>
                                 )}
+
+                                {/* TOMBOL TUNGGAL OPSI LAPORAN */}
+                                <div className="relative">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setOpenReportActionId(openReportActionId === report.id ? null : report.id);
+                                    }}
+                                    className="bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 font-bold text-xs px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer shadow-2xs hover:border-slate-400"
+                                    title="Pilihan Aksi Laporan (Cetak, Unduh, Google Drive, Spreadsheet, dll.)"
+                                  >
+                                    <MoreVertical className="w-3.5 h-3.5 text-slate-600" />
+                                    <span>Opsi</span>
+                                    <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-150 ${openReportActionId === report.id ? 'rotate-180' : ''}`} />
+                                  </button>
+
+                                  {openReportActionId === report.id && (
+                                    <div 
+                                      onClick={(e) => e.stopPropagation()}
+                                      className={`absolute right-0 ${
+                                        idx >= displayedReports.length - 1 && displayedReports.length > 1 ? 'bottom-full mb-1.5' : 'top-full mt-1.5'
+                                      } w-52 bg-white border border-slate-200 rounded-xl shadow-xl z-50 py-1 text-xs divide-y divide-slate-100`}
+                                    >
+                                      <div className="py-1">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setOpenReportActionId(null);
+                                            printWeeklyReportPDF(report, workers, signatures);
+                                          }}
+                                          className="w-full text-left px-3.5 py-2 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 flex items-center gap-2.5 transition font-semibold cursor-pointer"
+                                        >
+                                          <FileText className="w-4 h-4 text-indigo-600 shrink-0" />
+                                          <span>Cetak PDF</span>
+                                        </button>
+
+                                        <button
+                                          type="button"
+                                          onClick={async () => {
+                                            setOpenReportActionId(null);
+                                            try {
+                                              const { generateWeeklyReportPDFBlob } = await import('../lib/attendanceSheetGenerator');
+                                              const blob = await generateWeeklyReportPDFBlob(report, workers, signatures);
+                                              const url = URL.createObjectURL(blob);
+                                              const a = document.createElement('a');
+                                              a.href = url;
+                                              a.download = `Rekap_Uang_Makan_${report.weekStartDate}_s.d._${report.weekEndDate}.pdf`;
+                                              document.body.appendChild(a);
+                                              a.click();
+                                              document.body.removeChild(a);
+                                              setTimeout(() => URL.revokeObjectURL(url), 5000);
+                                            } catch (e) {
+                                              printWeeklyReportPDF(report, workers, signatures);
+                                            }
+                                          }}
+                                          className="w-full text-left px-3.5 py-2 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 flex items-center gap-2.5 transition font-semibold cursor-pointer"
+                                        >
+                                          <Download className="w-4 h-4 text-indigo-600 shrink-0" />
+                                          <span>Unduh PDF</span>
+                                        </button>
+                                      </div>
+
+                                      <div className="py-1">
+                                        {report.pdfDriveUrl ? (
+                                          <a
+                                            href={report.pdfDriveUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            onClick={() => setOpenReportActionId(null)}
+                                            className="w-full text-left px-3.5 py-2 hover:bg-emerald-50 text-emerald-800 flex items-center gap-2.5 transition font-semibold cursor-pointer"
+                                          >
+                                            <ExternalLink className="w-4 h-4 text-emerald-600 shrink-0" />
+                                            <span>Buka PDF di Drive</span>
+                                          </a>
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            onClick={async () => {
+                                              setOpenReportActionId(null);
+                                              try {
+                                                const res = await googleDriveAutoBackup.backupWeeklyAttendanceReport(report, workers, signatures);
+                                                if (res.success && res.url) {
+                                                  const updated = weeklyReports.map(r => r.id === report.id ? { ...r, pdfDriveUrl: res.url } : r);
+                                                  setWeeklyReports(updated);
+                                                  try {
+                                                    localStorage.setItem("laporan_uang_makan_log", JSON.stringify(updated));
+                                                    localStorage.setItem("weekly_reports_nmsa", JSON.stringify(updated));
+                                                    localStorage.setItem("weekly_reports", JSON.stringify(updated));
+                                                  } catch (e) {}
+                                                  await syncStateToServer(
+                                                    workers,
+                                                    attendanceRecords,
+                                                    updated,
+                                                    pettyCashReports,
+                                                    attendancePin,
+                                                    signatures,
+                                                    pettyCashHolders,
+                                                    attendanceLogs,
+                                                    waMethod,
+                                                    autoReminderHour
+                                                  );
+                                                  alert("✓ Berkas PDF laporan berhasil diunggah ke Google Drive!");
+                                                } else {
+                                                  alert("Gagal mengunggah ke Google Drive: " + (res.error || "Pastikan Google Drive terhubung"));
+                                                }
+                                              } catch (e: any) {
+                                                alert("Gagal mengunggah: " + (e.message || String(e)));
+                                              }
+                                            }}
+                                            className="w-full text-left px-3.5 py-2 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 flex items-center gap-2.5 transition font-semibold cursor-pointer"
+                                          >
+                                            <CloudUpload className="w-4 h-4 text-emerald-600 shrink-0" />
+                                            <span>Unggah PDF ke Drive</span>
+                                          </button>
+                                        )}
+
+                                        {report.sheetsUrl ? (
+                                          <a
+                                            href={report.sheetsUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            onClick={() => setOpenReportActionId(null)}
+                                            className="w-full text-left px-3.5 py-2 hover:bg-emerald-50 text-emerald-800 flex items-center gap-2.5 transition font-semibold cursor-pointer"
+                                          >
+                                            <Globe className="w-4 h-4 text-emerald-600 shrink-0" />
+                                            <span>Buka Google Sheets</span>
+                                          </a>
+                                        ) : (
+                                          isDriveConnected && (
+                                            <button
+                                              type="button"
+                                              onClick={async () => {
+                                                setOpenReportActionId(null);
+                                                try {
+                                                  await executeWithAutoRefreshToken(async (tok) => {
+                                                    const sheetTitle = `Rekap Uang Makan Mingguan (${report.weekStartDate} s/d ${report.weekEndDate})`;
+                                                    const headers = ["No.", "Nama Karyawan", "Jabatan", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Total Hadir", "Tarif Harian (Rp)", "Total Uang Makan (Rp)"];
+                                                    const workerMap = new Map<string, Worker>(workers.map((w) => [w.id, w]));
+                                                    const rows = report.records.map((rec, index) => {
+                                                      const w = workerMap.get(rec.workerId);
+                                                      let totalHadir = 0;
+                                                      const reportDates = getDatesForWeekStart(report.weekStartDate);
+                                                      const dayStates = reportDates.map((date) => {
+                                                        const hasAtt = rec.attendance[date] || false;
+                                                        if (hasAtt) totalHadir++;
+                                                        return hasAtt ? "Hadir" : "Absen";
+                                                      });
+                                                      return [
+                                                        index + 1,
+                                                        w?.name || "Karyawan",
+                                                        w?.role || "-",
+                                                        ...dayStates,
+                                                        totalHadir,
+                                                        rec.dailyAllowance,
+                                                        totalHadir * rec.dailyAllowance
+                                                      ];
+                                                    });
+                                                    const sheetResult = await exportAttendanceToGoogleSheet(
+                                                      tok,
+                                                      sheetTitle,
+                                                      headers,
+                                                      rows
+                                                    );
+                                                    setWeeklyReports(weeklyReports.map(lg => lg.id === report.id ? { ...lg, sheetsUrl: sheetResult.spreadsheetUrl } : lg));
+                                                    alert("Sukses sinkronisasi rekap ke dokumen Google Spreadsheet baru!");
+                                                  });
+                                                } catch (err: any) {
+                                                  handleDriveError(err);
+                                                }
+                                              }}
+                                              className="w-full text-left px-3.5 py-2 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 flex items-center gap-2.5 transition font-semibold cursor-pointer"
+                                            >
+                                              <Globe className="w-4 h-4 text-indigo-600 shrink-0" />
+                                              <span>Sync ke Sheets</span>
+                                            </button>
+                                          )
+                                        )}
+
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setOpenReportActionId(null);
+                                            handleUpdateWeeklyReport(report);
+                                          }}
+                                          className="w-full text-left px-3.5 py-2 hover:bg-amber-50 text-slate-700 hover:text-amber-700 flex items-center gap-2.5 transition font-semibold cursor-pointer"
+                                        >
+                                          <RefreshCw className="w-4 h-4 text-amber-600 shrink-0" />
+                                          <span>Perbarui Data</span>
+                                        </button>
+                                      </div>
+
+                                      <div className="py-1">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setOpenReportActionId(null);
+                                            handleRemoveWeeklyReport(report.id);
+                                          }}
+                                          className="w-full text-left px-3.5 py-2 hover:bg-rose-50 text-rose-600 flex items-center gap-2.5 transition font-semibold cursor-pointer"
+                                        >
+                                          <Trash className="w-4 h-4 text-rose-500 shrink-0" />
+                                          <span>Hapus Laporan</span>
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
                               </div>
                             </div>
                           );
