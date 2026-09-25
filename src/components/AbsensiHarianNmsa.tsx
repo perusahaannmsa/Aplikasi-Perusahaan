@@ -14,6 +14,7 @@ import {
   CheckCircle, 
   CheckCircle2,
   MoreVertical,
+  X,
   ShieldCheck,
   Sun,
   AlertCircle, 
@@ -733,14 +734,31 @@ export function AbsensiHarianNmsa({
   const [autoBackupSettings, setAutoBackupSettings] = useState<DriveAutoBackupSettings>(() => googleDriveAutoBackup.getSettings());
   const [autoBackupLogs, setAutoBackupLogs] = useState<BackupSyncLog[]>(() => googleDriveAutoBackup.getLogs());
   const [isDriveAutoSyncing, setIsDriveAutoSyncing] = useState<boolean>(false);
-  const [openReportActionId, setOpenReportActionId] = useState<string | null>(null);
+  const [selectedReportForAction, setSelectedReportForAction] = useState<WeeklyReport | null>(null);
+  const [actionMenuPosition, setActionMenuPosition] = useState<{
+    top?: number;
+    bottom?: number;
+    right: number;
+    isCentered?: boolean;
+  } | null>(null);
 
   useEffect(() => {
-    if (!openReportActionId) return;
-    const handleDocClick = () => setOpenReportActionId(null);
-    window.addEventListener("click", handleDocClick);
-    return () => window.removeEventListener("click", handleDocClick);
-  }, [openReportActionId]);
+    if (!selectedReportForAction) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSelectedReportForAction(null);
+    };
+    const handleScroll = () => {
+      if (!actionMenuPosition?.isCentered) {
+        setSelectedReportForAction(null);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("scroll", handleScroll, true);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("scroll", handleScroll, true);
+    };
+  }, [selectedReportForAction, actionMenuPosition]);
 
   useEffect(() => {
     const handleSettingsUpdated = (e: any) => {
@@ -4106,6 +4124,7 @@ export function AbsensiHarianNmsa({
                         <span className="text-emerald-400 font-mono font-bold">~{Math.round(geoDistance)} meter (Aman ✅)</span>
                       </div>
                     )}
+
                   </div>
                 )}
 
@@ -7355,216 +7374,320 @@ export function AbsensiHarianNmsa({
                                 )}
 
                                 {/* TOMBOL TUNGGAL OPSI LAPORAN */}
-                                <div className="relative">
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setOpenReportActionId(openReportActionId === report.id ? null : report.id);
-                                    }}
-                                    className="bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 font-bold text-xs px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer shadow-2xs hover:border-slate-400"
-                                    title="Pilihan Aksi Laporan (Cetak, Unduh, Google Drive, Spreadsheet, dll.)"
-                                  >
-                                    <MoreVertical className="w-3.5 h-3.5 text-slate-600" />
-                                    <span>Opsi</span>
-                                    <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-150 ${openReportActionId === report.id ? 'rotate-180' : ''}`} />
-                                  </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (selectedReportForAction?.id === report.id) {
+                                      setSelectedReportForAction(null);
+                                      return;
+                                    }
+                                    const rect = e.currentTarget.getBoundingClientRect();
+                                    const screenHeight = window.innerHeight;
+                                    const screenWidth = window.innerWidth;
 
-                                  {openReportActionId === report.id && (
-                                    <div 
-                                      onClick={(e) => e.stopPropagation()}
-                                      className={`absolute right-0 ${
-                                        idx >= displayedReports.length - 1 && displayedReports.length > 1 ? 'bottom-full mb-1.5' : 'top-full mt-1.5'
-                                      } w-52 bg-white border border-slate-200 rounded-xl shadow-xl z-50 py-1 text-xs divide-y divide-slate-100`}
-                                    >
-                                      <div className="py-1">
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setOpenReportActionId(null);
-                                            printWeeklyReportPDF(report, workers, signatures);
-                                          }}
-                                          className="w-full text-left px-3.5 py-2 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 flex items-center gap-2.5 transition font-semibold cursor-pointer"
-                                        >
-                                          <FileText className="w-4 h-4 text-indigo-600 shrink-0" />
-                                          <span>Cetak PDF</span>
-                                        </button>
-
-                                        <button
-                                          type="button"
-                                          onClick={async () => {
-                                            setOpenReportActionId(null);
-                                            try {
-                                              const { generateWeeklyReportPDFBlob } = await import('../lib/attendanceSheetGenerator');
-                                              const blob = await generateWeeklyReportPDFBlob(report, workers, signatures);
-                                              const url = URL.createObjectURL(blob);
-                                              const a = document.createElement('a');
-                                              a.href = url;
-                                              a.download = `Rekap_Uang_Makan_${report.weekStartDate}_s.d._${report.weekEndDate}.pdf`;
-                                              document.body.appendChild(a);
-                                              a.click();
-                                              document.body.removeChild(a);
-                                              setTimeout(() => URL.revokeObjectURL(url), 5000);
-                                            } catch (e) {
-                                              printWeeklyReportPDF(report, workers, signatures);
-                                            }
-                                          }}
-                                          className="w-full text-left px-3.5 py-2 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 flex items-center gap-2.5 transition font-semibold cursor-pointer"
-                                        >
-                                          <Download className="w-4 h-4 text-indigo-600 shrink-0" />
-                                          <span>Unduh PDF</span>
-                                        </button>
-                                      </div>
-
-                                      <div className="py-1">
-                                        {report.pdfDriveUrl ? (
-                                          <a
-                                            href={report.pdfDriveUrl}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            onClick={() => setOpenReportActionId(null)}
-                                            className="w-full text-left px-3.5 py-2 hover:bg-emerald-50 text-emerald-800 flex items-center gap-2.5 transition font-semibold cursor-pointer"
-                                          >
-                                            <ExternalLink className="w-4 h-4 text-emerald-600 shrink-0" />
-                                            <span>Buka PDF di Drive</span>
-                                          </a>
-                                        ) : (
-                                          <button
-                                            type="button"
-                                            onClick={async () => {
-                                              setOpenReportActionId(null);
-                                              try {
-                                                const res = await googleDriveAutoBackup.backupWeeklyAttendanceReport(report, workers, signatures);
-                                                if (res.success && res.url) {
-                                                  const updated = weeklyReports.map(r => r.id === report.id ? { ...r, pdfDriveUrl: res.url } : r);
-                                                  setWeeklyReports(updated);
-                                                  try {
-                                                    localStorage.setItem("laporan_uang_makan_log", JSON.stringify(updated));
-                                                    localStorage.setItem("weekly_reports_nmsa", JSON.stringify(updated));
-                                                    localStorage.setItem("weekly_reports", JSON.stringify(updated));
-                                                  } catch (e) {}
-                                                  await syncStateToServer(
-                                                    workers,
-                                                    attendanceRecords,
-                                                    updated,
-                                                    pettyCashReports,
-                                                    attendancePin,
-                                                    signatures,
-                                                    pettyCashHolders,
-                                                    attendanceLogs,
-                                                    waMethod,
-                                                    autoReminderHour
-                                                  );
-                                                  alert("✓ Berkas PDF laporan berhasil diunggah ke Google Drive!");
-                                                } else {
-                                                  alert("Gagal mengunggah ke Google Drive: " + (res.error || "Pastikan Google Drive terhubung"));
-                                                }
-                                              } catch (e: any) {
-                                                alert("Gagal mengunggah: " + (e.message || String(e)));
-                                              }
-                                            }}
-                                            className="w-full text-left px-3.5 py-2 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 flex items-center gap-2.5 transition font-semibold cursor-pointer"
-                                          >
-                                            <CloudUpload className="w-4 h-4 text-emerald-600 shrink-0" />
-                                            <span>Unggah PDF ke Drive</span>
-                                          </button>
-                                        )}
-
-                                        {report.sheetsUrl ? (
-                                          <a
-                                            href={report.sheetsUrl}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            onClick={() => setOpenReportActionId(null)}
-                                            className="w-full text-left px-3.5 py-2 hover:bg-emerald-50 text-emerald-800 flex items-center gap-2.5 transition font-semibold cursor-pointer"
-                                          >
-                                            <Globe className="w-4 h-4 text-emerald-600 shrink-0" />
-                                            <span>Buka Google Sheets</span>
-                                          </a>
-                                        ) : (
-                                          isDriveConnected && (
-                                            <button
-                                              type="button"
-                                              onClick={async () => {
-                                                setOpenReportActionId(null);
-                                                try {
-                                                  await executeWithAutoRefreshToken(async (tok) => {
-                                                    const sheetTitle = `Rekap Uang Makan Mingguan (${report.weekStartDate} s/d ${report.weekEndDate})`;
-                                                    const headers = ["No.", "Nama Karyawan", "Jabatan", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Total Hadir", "Tarif Harian (Rp)", "Total Uang Makan (Rp)"];
-                                                    const workerMap = new Map<string, Worker>(workers.map((w) => [w.id, w]));
-                                                    const rows = report.records.map((rec, index) => {
-                                                      const w = workerMap.get(rec.workerId);
-                                                      let totalHadir = 0;
-                                                      const reportDates = getDatesForWeekStart(report.weekStartDate);
-                                                      const dayStates = reportDates.map((date) => {
-                                                        const hasAtt = rec.attendance[date] || false;
-                                                        if (hasAtt) totalHadir++;
-                                                        return hasAtt ? "Hadir" : "Absen";
-                                                      });
-                                                      return [
-                                                        index + 1,
-                                                        w?.name || "Karyawan",
-                                                        w?.role || "-",
-                                                        ...dayStates,
-                                                        totalHadir,
-                                                        rec.dailyAllowance,
-                                                        totalHadir * rec.dailyAllowance
-                                                      ];
-                                                    });
-                                                    const sheetResult = await exportAttendanceToGoogleSheet(
-                                                      tok,
-                                                      sheetTitle,
-                                                      headers,
-                                                      rows
-                                                    );
-                                                    setWeeklyReports(weeklyReports.map(lg => lg.id === report.id ? { ...lg, sheetsUrl: sheetResult.spreadsheetUrl } : lg));
-                                                    alert("Sukses sinkronisasi rekap ke dokumen Google Spreadsheet baru!");
-                                                  });
-                                                } catch (err: any) {
-                                                  handleDriveError(err);
-                                                }
-                                              }}
-                                              className="w-full text-left px-3.5 py-2 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 flex items-center gap-2.5 transition font-semibold cursor-pointer"
-                                            >
-                                              <Globe className="w-4 h-4 text-indigo-600 shrink-0" />
-                                              <span>Sync ke Sheets</span>
-                                            </button>
-                                          )
-                                        )}
-
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setOpenReportActionId(null);
-                                            handleUpdateWeeklyReport(report);
-                                          }}
-                                          className="w-full text-left px-3.5 py-2 hover:bg-amber-50 text-slate-700 hover:text-amber-700 flex items-center gap-2.5 transition font-semibold cursor-pointer"
-                                        >
-                                          <RefreshCw className="w-4 h-4 text-amber-600 shrink-0" />
-                                          <span>Perbarui Data</span>
-                                        </button>
-                                      </div>
-
-                                      <div className="py-1">
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setOpenReportActionId(null);
-                                            handleRemoveWeeklyReport(report.id);
-                                          }}
-                                          className="w-full text-left px-3.5 py-2 hover:bg-rose-50 text-rose-600 flex items-center gap-2.5 transition font-semibold cursor-pointer"
-                                        >
-                                          <Trash className="w-4 h-4 text-rose-500 shrink-0" />
-                                          <span>Hapus Laporan</span>
-                                        </button>
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
+                                    if (screenWidth < 640) {
+                                      setActionMenuPosition({ isCentered: true, right: 0 });
+                                    } else {
+                                      const menuHeight = 290;
+                                      const opensUpwards = (screenHeight - rect.bottom) < menuHeight && rect.top > menuHeight;
+                                      const right = Math.max(16, screenWidth - rect.right);
+                                      
+                                      if (opensUpwards) {
+                                        setActionMenuPosition({
+                                          bottom: screenHeight - rect.top + 6,
+                                          right,
+                                        });
+                                      } else {
+                                        setActionMenuPosition({
+                                          top: Math.min(rect.bottom + 6, screenHeight - menuHeight - 16),
+                                          right,
+                                        });
+                                      }
+                                    }
+                                    setSelectedReportForAction(report);
+                                  }}
+                                  className={`border text-xs px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer font-bold ${
+                                    selectedReportForAction?.id === report.id
+                                      ? 'bg-indigo-50 border-indigo-400 text-indigo-700 shadow-xs'
+                                      : 'bg-white hover:bg-slate-100 border-slate-300 text-slate-700 shadow-2xs hover:border-slate-400'
+                                  }`}
+                                  title="Pilihan Aksi Laporan (Cetak, Unduh, Google Drive, Spreadsheet, dll.)"
+                                >
+                                  <MoreVertical className="w-3.5 h-3.5 text-slate-600" />
+                                  <span>Opsi</span>
+                                  <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-150 ${selectedReportForAction?.id === report.id ? 'rotate-180' : ''}`} />
+                                </button>
                               </div>
                             </div>
                           );
                         })}
+                      </div>
+                    )}
+
+                    {/* FLOATING ACTION MENU DI LAYER PALING ATAS (Z-INDEX TERTINGGI, DI LUAR CONTAINER SCROLL SEHINGGA TIDAK TERPOTONG) */}
+                    {selectedReportForAction && (
+                      <div className="fixed inset-0 z-[9990] pointer-events-auto">
+                        {/* Latar Belakang Transparan untuk Menutup Menu saat Klik Di Luar */}
+                        <div 
+                          className="fixed inset-0 bg-black/25 backdrop-blur-[1px] transition-opacity"
+                          onClick={() => setSelectedReportForAction(null)}
+                        />
+
+                        {/* Box Menu Opsi */}
+                        <div 
+                          onClick={(e) => e.stopPropagation()}
+                          style={actionMenuPosition?.isCentered ? undefined : {
+                            position: 'fixed',
+                            top: actionMenuPosition?.top !== undefined ? `${actionMenuPosition.top}px` : undefined,
+                            bottom: actionMenuPosition?.bottom !== undefined ? `${actionMenuPosition.bottom}px` : undefined,
+                            right: `${actionMenuPosition?.right || 16}px`,
+                          }}
+                          className={actionMenuPosition?.isCentered 
+                            ? "fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[9999] w-[90vw] max-w-xs bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden divide-y divide-slate-100 animate-in fade-in zoom-in-95 duration-150"
+                            : "z-[9999] w-64 bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden divide-y divide-slate-100 animate-in fade-in zoom-in-95 duration-100"
+                          }
+                        >
+                          {/* Header Opsi */}
+                          <div className="px-3.5 py-2.5 bg-slate-50 flex items-center justify-between border-b border-slate-100">
+                            <div className="min-w-0 pr-2">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] font-mono font-bold bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded">
+                                  #{selectedReportForAction.id}
+                                </span>
+                                <span className="text-xs font-bold text-slate-800">
+                                  Opsi Laporan
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-slate-500 font-medium truncate mt-0.5">
+                                {selectedReportForAction.weekStartDate} s/d {selectedReportForAction.weekEndDate}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedReportForAction(null)}
+                              className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-200/60 transition cursor-pointer shrink-0"
+                              title="Tutup Menu"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+
+                          {/* Dokumen PDF */}
+                          <div className="py-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const rep = selectedReportForAction;
+                                setSelectedReportForAction(null);
+                                printWeeklyReportPDF(rep, workers, signatures);
+                              }}
+                              className="w-full text-left px-3.5 py-2 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 flex items-center gap-2.5 transition font-semibold cursor-pointer"
+                            >
+                              <FileText className="w-4 h-4 text-indigo-600 shrink-0" />
+                              <div>
+                                <div>Cetak PDF</div>
+                                <div className="text-[10px] text-slate-400 font-normal">Cetak berkas fisik langsung</div>
+                              </div>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const rep = selectedReportForAction;
+                                setSelectedReportForAction(null);
+                                try {
+                                  const { generateWeeklyReportPDFBlob } = await import('../lib/attendanceSheetGenerator');
+                                  const blob = await generateWeeklyReportPDFBlob(rep, workers, signatures);
+                                  const url = URL.createObjectURL(blob);
+                                  const a = document.createElement('a');
+                                  a.href = url;
+                                  a.download = `Rekap_Uang_Makan_${rep.weekStartDate}_s.d._${rep.weekEndDate}.pdf`;
+                                  document.body.appendChild(a);
+                                  a.click();
+                                  document.body.removeChild(a);
+                                  setTimeout(() => URL.revokeObjectURL(url), 5000);
+                                } catch (e) {
+                                  printWeeklyReportPDF(rep, workers, signatures);
+                                }
+                              }}
+                              className="w-full text-left px-3.5 py-2 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 flex items-center gap-2.5 transition font-semibold cursor-pointer"
+                            >
+                              <Download className="w-4 h-4 text-indigo-600 shrink-0" />
+                              <div>
+                                <div>Unduh PDF</div>
+                                <div className="text-[10px] text-slate-400 font-normal">Simpan berkas ke perangkat</div>
+                              </div>
+                            </button>
+                          </div>
+
+                          {/* Cloud Drive & Spreadsheet */}
+                          <div className="py-1">
+                            {selectedReportForAction.pdfDriveUrl ? (
+                              <a
+                                href={selectedReportForAction.pdfDriveUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                onClick={() => setSelectedReportForAction(null)}
+                                className="w-full text-left px-3.5 py-2 hover:bg-emerald-50 text-emerald-800 flex items-center gap-2.5 transition font-semibold cursor-pointer"
+                              >
+                                <ExternalLink className="w-4 h-4 text-emerald-600 shrink-0" />
+                                <div>
+                                  <div>Buka PDF di Drive</div>
+                                  <div className="text-[10px] text-emerald-600/70 font-normal">Tersimpan di Google Drive</div>
+                                </div>
+                              </a>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const rep = selectedReportForAction;
+                                  setSelectedReportForAction(null);
+                                  try {
+                                    const res = await googleDriveAutoBackup.backupWeeklyAttendanceReport(rep, workers, signatures);
+                                    if (res.success && res.url) {
+                                      const updated = weeklyReports.map(r => r.id === rep.id ? { ...r, pdfDriveUrl: res.url } : r);
+                                      setWeeklyReports(updated);
+                                      try {
+                                        localStorage.setItem("laporan_uang_makan_log", JSON.stringify(updated));
+                                        localStorage.setItem("weekly_reports_nmsa", JSON.stringify(updated));
+                                        localStorage.setItem("weekly_reports", JSON.stringify(updated));
+                                      } catch (e) {}
+                                      await syncStateToServer(
+                                        workers,
+                                        attendanceRecords,
+                                        updated,
+                                        pettyCashReports,
+                                        attendancePin,
+                                        signatures,
+                                        pettyCashHolders,
+                                        attendanceLogs,
+                                        waMethod,
+                                        autoReminderHour
+                                      );
+                                      alert("✓ Berkas PDF laporan berhasil diunggah ke Google Drive!");
+                                    } else {
+                                      alert("Gagal mengunggah ke Google Drive: " + (res.error || "Pastikan Google Drive terhubung"));
+                                    }
+                                  } catch (e: any) {
+                                    alert("Gagal mengunggah: " + (e.message || String(e)));
+                                  }
+                                }}
+                                className="w-full text-left px-3.5 py-2 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 flex items-center gap-2.5 transition font-semibold cursor-pointer"
+                              >
+                                <CloudUpload className="w-4 h-4 text-emerald-600 shrink-0" />
+                                <div>
+                                  <div>Unggah PDF ke Drive</div>
+                                  <div className="text-[10px] text-slate-400 font-normal">Arsipkan otomatis ke Cloud Drive</div>
+                                </div>
+                              </button>
+                            )}
+
+                            {selectedReportForAction.sheetsUrl ? (
+                              <a
+                                href={selectedReportForAction.sheetsUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                onClick={() => setSelectedReportForAction(null)}
+                                className="w-full text-left px-3.5 py-2 hover:bg-emerald-50 text-emerald-800 flex items-center gap-2.5 transition font-semibold cursor-pointer"
+                              >
+                                <Globe className="w-4 h-4 text-emerald-600 shrink-0" />
+                                <div>
+                                  <div>Buka Google Sheets</div>
+                                  <div className="text-[10px] text-emerald-600/70 font-normal">Lihat tabel spreadsheet</div>
+                                </div>
+                              </a>
+                            ) : (
+                              isDriveConnected && (
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    const rep = selectedReportForAction;
+                                    setSelectedReportForAction(null);
+                                    try {
+                                      await executeWithAutoRefreshToken(async (tok) => {
+                                        const sheetTitle = `Rekap Uang Makan Mingguan (${rep.weekStartDate} s/d ${rep.weekEndDate})`;
+                                        const headers = ["No.", "Nama Karyawan", "Jabatan", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Total Hadir", "Tarif Harian (Rp)", "Total Uang Makan (Rp)"];
+                                        const workerMap = new Map<string, Worker>(workers.map((w) => [w.id, w]));
+                                        const rows = rep.records.map((rec, index) => {
+                                          const w = workerMap.get(rec.workerId);
+                                          let totalHadir = 0;
+                                          const reportDates = getDatesForWeekStart(rep.weekStartDate);
+                                          const dayStates = reportDates.map((date) => {
+                                            const hasAtt = rec.attendance[date] || false;
+                                            if (hasAtt) totalHadir++;
+                                            return hasAtt ? "Hadir" : "Absen";
+                                          });
+                                          return [
+                                            index + 1,
+                                            w?.name || "Karyawan",
+                                            w?.role || "-",
+                                            ...dayStates,
+                                            totalHadir,
+                                            rec.dailyAllowance,
+                                            totalHadir * rec.dailyAllowance
+                                          ];
+                                        });
+                                        const sheetResult = await exportAttendanceToGoogleSheet(
+                                          tok,
+                                          sheetTitle,
+                                          headers,
+                                          rows
+                                        );
+                                        setWeeklyReports(weeklyReports.map(lg => lg.id === rep.id ? { ...lg, sheetsUrl: sheetResult.spreadsheetUrl } : lg));
+                                        alert("Sukses sinkronisasi rekap ke dokumen Google Spreadsheet baru!");
+                                      });
+                                    } catch (err: any) {
+                                      handleDriveError(err);
+                                    }
+                                  }}
+                                  className="w-full text-left px-3.5 py-2 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 flex items-center gap-2.5 transition font-semibold cursor-pointer"
+                                >
+                                  <Globe className="w-4 h-4 text-indigo-600 shrink-0" />
+                                  <div>
+                                    <div>Sync ke Sheets</div>
+                                    <div className="text-[10px] text-slate-400 font-normal">Buat spreadsheet baru di Drive</div>
+                                  </div>
+                                </button>
+                              )
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const rep = selectedReportForAction;
+                                setSelectedReportForAction(null);
+                                handleUpdateWeeklyReport(rep);
+                              }}
+                              className="w-full text-left px-3.5 py-2 hover:bg-amber-50 text-slate-700 hover:text-amber-700 flex items-center gap-2.5 transition font-semibold cursor-pointer"
+                            >
+                              <RefreshCw className="w-4 h-4 text-amber-600 shrink-0" />
+                              <div>
+                                <div>Perbarui Data</div>
+                                <div className="text-[10px] text-slate-400 font-normal">Sinkronkan ulang data absen saat ini</div>
+                              </div>
+                            </button>
+                          </div>
+
+                          {/* Hapus */}
+                          <div className="py-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const rep = selectedReportForAction;
+                                setSelectedReportForAction(null);
+                                handleRemoveWeeklyReport(rep.id);
+                              }}
+                              className="w-full text-left px-3.5 py-2 hover:bg-rose-50 text-rose-600 flex items-center gap-2.5 transition font-semibold cursor-pointer"
+                            >
+                              <Trash className="w-4 h-4 text-rose-500 shrink-0" />
+                              <div>
+                                <div>Hapus Laporan</div>
+                                <div className="text-[10px] text-rose-400 font-normal">Hapus catatan dari riwayat</div>
+                              </div>
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     )}
                   </>
