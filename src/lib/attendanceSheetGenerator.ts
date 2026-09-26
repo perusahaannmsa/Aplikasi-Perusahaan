@@ -240,7 +240,7 @@ export function generateWeeklyReportHTML(
           }
           .signature-title {
             font-size: 9px;
-            margin-bottom: 50px;
+            margin-bottom: 6px;
             color: #334155;
             font-weight: 600;
             line-height: 1.3;
@@ -339,6 +339,11 @@ export function generateWeeklyReportHTML(
         <div class="signature-container">
           <div class="signature-box">
             <div class="signature-title">Diterima &amp; Diperiksa Oleh,</div>
+            <div style="height: 48px; display: flex; align-items: center; justify-content: center; margin-bottom: 2px;">
+              ${signatures?.['finance_receiver'] 
+                ? `<img src="${signatures['finance_receiver']}" style="max-height: 44px; max-width: 130px; object-fit: contain; background: transparent; mix-blend-mode: multiply;" />` 
+                : `<div style="height: 44px;"></div>`}
+            </div>
             <div class="signature-name-wrapper">
               <div class="signature-name">Andi Dhiya Salsabila</div>
               <div class="signature-line"></div>
@@ -347,6 +352,11 @@ export function generateWeeklyReportHTML(
           </div>
           <div class="signature-box">
             <div class="signature-title">Diserahkan &amp; Dilaporkan Oleh,</div>
+            <div style="height: 48px; display: flex; align-items: center; justify-content: center; margin-bottom: 2px;">
+              ${signatures?.['finance_reporter'] 
+                ? `<img src="${signatures['finance_reporter']}" style="max-height: 44px; max-width: 130px; object-fit: contain; background: transparent; mix-blend-mode: multiply;" />` 
+                : `<div style="height: 44px;"></div>`}
+            </div>
             <div class="signature-name-wrapper">
               <div class="signature-name">Nur Wahyudi</div>
               <div class="signature-line"></div>

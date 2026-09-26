@@ -56,7 +56,8 @@ import {
   Cpu,
   ArrowUp,
   ArrowDown,
-  ArrowUpDown
+  ArrowUpDown,
+  PenTool
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -83,6 +84,8 @@ import { initAuth, googleSignIn, googleSignOut, getFreshGoogleToken, saveGoogleT
 import { saveSubmissionToFirestore, saveAbsenDataToFirestore, ensureValidDriveToken, getActiveGoogleDriveAccount, getConnectedDrives, executeDriveApiWithAutoRefresh, getOrRenewDriveToken } from "../firebase";
 import { googleDriveAutoBackup, BackupSyncLog, DriveAutoBackupSettings } from "../utils/googleDriveAutoBackup";
 import { SignaturePad } from "./SignaturePad";
+import { OnlineSignatureModal } from "./OnlineSignatureModal";
+import { SelfSigningPortal } from "./SelfSigningPortal";
 
 // Utility to format Date as local YYYY-MM-DD
 function formatLocalYYYYMMDD(date: Date): string {
@@ -1036,9 +1039,69 @@ export function AbsensiHarianNmsa({
   const [geoErrorMsg, setGeoErrorMsg] = useState<string>("");
   const [geoDistance, setGeoDistance] = useState<number | null>(null);
 
-  // Signatures for Friday Confirmation
-  const [signatures, setSignatures] = useState<Record<string, string>>({});
+  // Signatures for Friday Confirmation & Online Signing
+  const [signatures, setSignatures] = useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem("weekly_signatures_v1");
+      return saved ? JSON.parse(saved) : {};
+    } catch (e) {
+      return {};
+    }
+  });
   const [selfSignature, setSelfSignature] = useState<string | null>(null);
+  const [showSignatureModal, setShowSignatureModal] = useState<boolean>(false);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("weekly_signatures_v1", JSON.stringify(signatures));
+    } catch (e) {}
+  }, [signatures]);
+
+  const handleSaveSignature = async (id: string, signatureBase64: string | null) => {
+    const updated = { ...signatures };
+    if (signatureBase64) {
+      updated[id] = signatureBase64;
+    } else {
+      delete updated[id];
+    }
+    setSignatures(updated);
+    try {
+      localStorage.setItem("weekly_signatures_v1", JSON.stringify(updated));
+    } catch (e) {}
+
+    await syncStateToServer(
+      workers,
+      attendanceRecords,
+      weeklyReports,
+      pettyCashReports,
+      attendancePin,
+      updated,
+      pettyCashHolders,
+      attendanceLogs,
+      waMethod,
+      autoReminderHour
+    );
+  };
+
+  const handleBatchAutoSignAll = async (newSignatures: Record<string, string>) => {
+    setSignatures(newSignatures);
+    try {
+      localStorage.setItem("weekly_signatures_v1", JSON.stringify(newSignatures));
+    } catch (e) {}
+
+    await syncStateToServer(
+      workers,
+      attendanceRecords,
+      weeklyReports,
+      pettyCashReports,
+      attendancePin,
+      newSignatures,
+      pettyCashHolders,
+      attendanceLogs,
+      waMethod,
+      autoReminderHour
+    );
+  };
 
   // Refs to hold latest state for non-leaking listeners & safe backup
   const attendanceRecordsRef = useRef(attendanceRecords);
@@ -3801,6 +3864,34 @@ export function AbsensiHarianNmsa({
     next.setDate(next.getDate() + 7);
     setSelectedDate(next);
   };
+
+  // --- CONDITIONAL RENDER: WORKER SELF-SIGNING PORTAL (VIA WHATSAPP LINK) ---
+  const isSelfSignParam = urlParams.get("sign") === "1" || !!urlParams.get("signWorkerId");
+  const targetSignId = urlParams.get("signWorkerId") || selfWorkerId;
+
+  if (isSelfSignParam && targetSignId) {
+    const targetWorker = workers.find(w => w.id === targetSignId);
+    if (targetWorker) {
+      const rec = attendanceRecords.find(r => r.workerId === targetWorker.id);
+      return (
+        <SelfSigningPortal
+          worker={targetWorker}
+          attendanceRecord={rec}
+          weekStart={weekStart}
+          weekEnd={weekEnd}
+          weekDates={weekDates}
+          existingSignature={signatures[targetWorker.id] || null}
+          onSaveSignature={async (base64) => {
+            await handleSaveSignature(targetWorker.id, base64);
+          }}
+          onClose={() => {
+            const cleanUrl = window.location.pathname;
+            window.location.href = cleanUrl;
+          }}
+        />
+      );
+    }
+  }
 
   // --- CONDITIONAL RENDER: WORKER SELF-ATTENDANCE ---
   if (selfWorkerId) {
@@ -6970,6 +7061,20 @@ export function AbsensiHarianNmsa({
                         <FileCheck className="w-4 h-4 text-indigo-600" />
                         <span>Cetak PDF Aktif</span>
                       </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowSignatureModal(true)}
+                        className="flex items-center gap-1.5 bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 border border-blue-200 text-blue-900 font-bold text-xs px-3.5 py-2 rounded-lg shadow-2xs hover:shadow-xs transition duration-150 cursor-pointer"
+                        title="Buka studio tanda tangan online untuk paraf karyawan dan pengesahan staf keuangan"
+                      >
+                        <PenTool className="w-4 h-4 text-blue-600" />
+                        <span>Tanda Tangan Online</span>
+                        <span className="text-[10px] bg-blue-200/80 text-blue-950 px-2 py-0.5 rounded-full font-mono font-extrabold">
+                          {workers.filter(w => w.isActive && !!signatures[w.id]).length}/{workers.filter(w => w.isActive).length}
+                        </span>
+                      </button>
+
                       <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg text-xs font-semibold text-emerald-800">
                         <CheckCircle className="w-4 h-4 text-emerald-600" />
                         <span>Periode Ini Telah Dilaporkan ({currentWeekReportLog.id})</span>
@@ -7004,6 +7109,20 @@ export function AbsensiHarianNmsa({
                         <FileCheck className="w-4 h-4 text-indigo-600" />
                         <span>Cetak PDF Aktif</span>
                       </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowSignatureModal(true)}
+                        className="flex items-center gap-1.5 bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 border border-blue-200 text-blue-900 font-bold text-xs px-3.5 py-2 rounded-lg shadow-2xs hover:shadow-xs transition duration-150 cursor-pointer"
+                        title="Buka studio tanda tangan online untuk paraf karyawan dan pengesahan staf keuangan"
+                      >
+                        <PenTool className="w-4 h-4 text-blue-600" />
+                        <span>Tanda Tangan Online</span>
+                        <span className="text-[10px] bg-blue-200/80 text-blue-950 px-2 py-0.5 rounded-full font-mono font-extrabold">
+                          {workers.filter(w => w.isActive && !!signatures[w.id]).length}/{workers.filter(w => w.isActive).length}
+                        </span>
+                      </button>
+
                       <button
                         onClick={handleSubmitFridayReport}
                         className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 font-bold text-xs text-white px-4 py-2 border border-transparent rounded-lg shadow-sm hover:shadow transition duration-150 cursor-pointer"
@@ -7052,13 +7171,14 @@ export function AbsensiHarianNmsa({
                       })}
                       <th className="py-3.5 px-4 text-center">Total Hadir</th>
                       <th className="py-3.5 px-4 text-right">Uang Makan</th>
+                      <th className="py-3.5 px-3 text-center min-w-[90px]">Paraf Online</th>
                       <th className="py-3.5 px-4 text-center">Aksi Cepat</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-sm">
                     {workers.filter(w => w.isActive).length === 0 ? (
                       <tr>
-                        <td colSpan={9} className="py-12 text-center text-slate-500 text-xs">
+                        <td colSpan={10} className="py-12 text-center text-slate-500 text-xs">
                           Belum ada karyawan aktif terdaftar. Silakan tambahkan karyawan baru di tab "Kelola Karyawan".
                         </td>
                       </tr>
@@ -7235,6 +7355,36 @@ export function AbsensiHarianNmsa({
                             
                             <td className="py-4 px-4 text-right font-bold font-mono text-slate-900">
                               Rp {(totalDaysPresent * (rec?.dailyAllowance || globalAllowance)).toLocaleString("id-ID")}
+                            </td>
+
+                            <td className="py-3.5 px-3 text-center">
+                              {signatures[worker.id] ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setShowSignatureModal(true)}
+                                  className="group inline-flex flex-col items-center gap-0.5 p-1 hover:bg-indigo-50/80 rounded-lg border border-emerald-200 bg-emerald-50/50 transition cursor-pointer"
+                                  title="Paraf sah tersimpan (Klik untuk melihat atau mengubah di Studio Paraf)"
+                                >
+                                  <img 
+                                    src={signatures[worker.id]} 
+                                    alt="Paraf" 
+                                    className="h-5 max-w-[65px] object-contain mix-blend-multiply" 
+                                  />
+                                  <span className="text-[9px] font-extrabold text-emerald-700 flex items-center gap-0.5">
+                                    <Check className="w-2.5 h-2.5" /> Sah
+                                  </span>
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setShowSignatureModal(true)}
+                                  className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-500 hover:text-indigo-700 bg-slate-100 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 px-2.5 py-1 rounded-lg transition cursor-pointer"
+                                  title="Goreskan paraf digital untuk karyawan ini"
+                                >
+                                  <PenTool className="w-3 h-3 text-slate-400 group-hover:text-indigo-600" />
+                                  <span>✍️ Paraf</span>
+                                </button>
+                              )}
                             </td>
 
                             <td className="py-4 px-4 text-center">
@@ -7694,6 +7844,18 @@ export function AbsensiHarianNmsa({
                 );
               })()}
             </div>
+
+            {/* MODAL STUDIO TANDA TANGAN & PARAF ONLINE */}
+            <OnlineSignatureModal
+              isOpen={showSignatureModal}
+              onClose={() => setShowSignatureModal(false)}
+              workers={workers}
+              signatures={signatures}
+              onSaveSignature={handleSaveSignature}
+              onBatchAutoSignAll={handleBatchAutoSignAll}
+              weekStart={weekStart}
+              weekEnd={weekEnd}
+            />
 
           </div>
         )}

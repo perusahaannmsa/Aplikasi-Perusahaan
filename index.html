@@ -8,9 +8,9 @@
     <meta property="og:title" content="APK Voucher NMSA - PT. Nusantara Mineral Sukses Abadi" />
     <meta property="og:description" content="Aplikasi untuk input data Formulir Pengajuan HO, Bukti Pengeluaran Kas/Bank, SPPD, Internal Memo Direksi, dan Absensi Harian NMSA dengan format cetak resmi." />
     <!-- PWA Settings -->
-    <link rel="manifest" href="/manifest.json" />
-    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
-    <link rel="apple-touch-icon" href="/icon.svg" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/svg+xml" href="icon.svg" />
+    <link rel="apple-touch-icon" href="icon.svg" />
     <meta name="theme-color" content="#1c1917" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -22,7 +22,8 @@
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js')
+          const swUrl = new URL('sw.js', window.location.href).href;
+          navigator.serviceWorker.register(swUrl)
             .then((reg) => console.log('PWA Service Worker registered successfully:', reg.scope))
             .catch((err) => console.error('PWA Service Worker registration failed:', err));
         });
