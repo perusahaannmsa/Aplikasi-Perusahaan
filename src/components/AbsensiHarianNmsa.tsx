@@ -998,6 +998,8 @@ export function AbsensiHarianNmsa({
   const isFridayToday = new Date().toLocaleDateString("en-US", { timeZone: "Asia/Jakarta", weekday: "long" }) === "Friday" || urlParams.get("friday") === "true";
   const [fridaySignatureDraft, setFridaySignatureDraft] = useState<string | null>(null);
   const [fridayServerVerification, setFridayServerVerification] = useState<any | null>(null);
+  const [showFridayMandatorySignModal, setShowFridayMandatorySignModal] = useState<boolean>(false);
+  const [fridaySignPendingSignature, setFridaySignPendingSignature] = useState<string | null>(null);
   const [globalAllowance, setGlobalAllowance] = useState<number>(() => {
     const saved = localStorage.getItem("global_allowance");
     return saved ? Number(saved) : 25000;
@@ -2361,7 +2363,7 @@ export function AbsensiHarianNmsa({
     }
   }, [selfWorkerId]);
 
-  const handleSelfSubmitAttendance = async () => {
+  const handleSelfSubmitAttendance = async (providedSignature?: string) => {
     if (!selfWorker) return;
     if (!selfInputPin.trim()) {
       setSelfAttendStatus("error");
@@ -2379,11 +2381,17 @@ export function AbsensiHarianNmsa({
       return;
     }
 
+    // Friday Mandatory Signature Enforcement
+    const effectiveSignature = providedSignature || fridaySignatureDraft || signatures[selfWorker.id];
+    if (isFridayToday && !effectiveSignature) {
+      setShowFridayMandatorySignModal(true);
+      return;
+    }
 
     try {
       setSelfAttendStatus("idle");
       const todayYMD = formatLocalYYYYMMDD(new Date());
-      const signatureToUse = fridaySignatureDraft || signatures[selfWorker.id] || undefined;
+      const signatureToUse = effectiveSignature || undefined;
       const res = await fetch("/api/self-attend", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -4048,6 +4056,11 @@ export function AbsensiHarianNmsa({
 
     if (isQuickMode) {
       const handleCloseWindow = () => {
+        if (isFridayToday && !signatures[selfWorkerId] && !fridaySignatureDraft) {
+          alert("Perhatian: Hari ini adalah hari Jumat (rekapitulasi mingguan). Anda wajib membubuhkan paraf atau tanda tangan digital terlebih dahulu sebelum meninggalkan website!");
+          setQuickSubmitState("friday_sign");
+          return;
+        }
         try {
           window.close();
         } catch (e) {
@@ -4258,6 +4271,61 @@ export function AbsensiHarianNmsa({
                   </p>
                 </div>
 
+                {/* Friday Signature Check in Already Attended Card */}
+                {isFridayToday && (
+                  !signatures[selfWorkerId] && !fridaySignatureDraft ? (
+                    <div className="bg-amber-950/80 border border-amber-500/50 rounded-2xl p-4 text-left space-y-3 shadow-lg ring-1 ring-amber-500/30">
+                      <div className="flex items-center gap-2">
+                        <FileCheck className="w-5 h-5 text-amber-400" />
+                        <div>
+                          <h4 className="text-xs font-black text-amber-300 uppercase tracking-wider font-display">
+                            Wajib Paraf Hari Jumat Sebelum Keluar
+                          </h4>
+                          <p className="text-[10px] text-amber-200/80">
+                            Presensi Anda sudah tercatat, namun paraf/tanda tangan mingguan wajib dibubuhkan sebelum meninggalkan website.
+                          </p>
+                        </div>
+                      </div>
+                      <SignaturePad
+                        workerName={selfWorker.name}
+                        initialSignature={fridaySignPendingSignature}
+                        onSignatureChange={(sig) => setFridaySignPendingSignature(sig)}
+                        placeholder="Goreskan tanda tangan / paraf Anda di sini"
+                        compact={true}
+                      />
+                      <button
+                        type="button"
+                        disabled={!fridaySignPendingSignature}
+                        onClick={async () => {
+                          if (!fridaySignPendingSignature) return;
+                          setFridaySignatureDraft(fridaySignPendingSignature);
+                          await handleSaveSignature(selfWorkerId, fridaySignPendingSignature);
+                        }}
+                        className="w-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-40 disabled:cursor-not-allowed text-slate-950 font-extrabold py-3 px-4 rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-md uppercase font-display"
+                      >
+                        <CheckCircle className="w-4 h-4" />
+                        <span>Simpan Paraf Resmi Mingguan</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="bg-emerald-950/50 border border-emerald-500/30 rounded-2xl p-3.5 flex items-center justify-between text-left">
+                      <div>
+                        <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1">
+                          <CheckCircle className="w-3.5 h-3.5" /> Paraf Hari Jumat Terverifikasi
+                        </span>
+                        <p className="text-[10px] text-slate-400">Rekap mingguan resmi tersimpan</p>
+                      </div>
+                      <div className="bg-white/10 p-1 rounded-lg border border-emerald-500/20">
+                        <img 
+                          src={signatures[selfWorkerId] || fridaySignatureDraft || ''} 
+                          alt="Paraf" 
+                          className="h-9 max-w-[90px] object-contain"
+                        />
+                      </div>
+                    </div>
+                  )
+                )}
+
                 <div className="space-y-2 pt-1">
                   <motion.button
                     whileHover={{ scale: 1.02 }}
@@ -4272,6 +4340,56 @@ export function AbsensiHarianNmsa({
                     Halaman ini aman untuk ditutup. Terima kasih atas kedisiplinan dan kerja keras Anda!
                   </p>
                 </div>
+              </motion.div>
+            )}
+
+            {/* FRIDAY MANDATORY SIGNATURE STATE (BEFORE ATTENDANCE IN QUICK MODE) */}
+            {!selfIsAttendedToday && quickSubmitState === "friday_sign" && selfWorker && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="w-full bg-slate-900/90 border border-amber-500/40 rounded-3xl p-6 shadow-2xl text-center space-y-4 max-w-md mx-auto backdrop-blur-md"
+              >
+                <div className="w-14 h-14 bg-amber-500/20 border border-amber-500/30 text-amber-400 rounded-2xl flex items-center justify-center mx-auto shadow-md">
+                  <FileCheck className="w-7 h-7" />
+                </div>
+
+                <div className="space-y-1">
+                  <span className="text-[10px] bg-amber-500/20 border border-amber-500/30 text-amber-300 font-extrabold uppercase font-mono px-3 py-0.5 rounded-full tracking-wider">
+                    WAJIB PARAF HARI JUMAT
+                  </span>
+                  <h3 className="text-lg font-extrabold text-white font-display tracking-tight pt-1">
+                    Paraf / Tanda Tangan Karyawan
+                  </h3>
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    Halo <strong className="text-amber-300">{selfWorker.name}</strong>, hari ini adalah hari Jumat (rekapitulasi mingguan). Sebelum data kehadiran Anda disimpan dan sebelum meninggalkan website, Anda diwajibkan membubuhkan paraf atau tanda tangan digital.
+                  </p>
+                </div>
+
+                <div className="text-left">
+                  <SignaturePad
+                    workerName={selfWorker.name}
+                    initialSignature={signatures[selfWorker.id] || fridaySignatureDraft || null}
+                    onSignatureChange={(sig) => setFridaySignPendingSignature(sig)}
+                    placeholder="Goreskan tanda tangan / paraf Anda di sini"
+                    compact={true}
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  disabled={!fridaySignPendingSignature}
+                  onClick={async () => {
+                    if (!fridaySignPendingSignature) return;
+                    setFridaySignatureDraft(fridaySignPendingSignature);
+                    await handleSaveSignature(selfWorker.id, fridaySignPendingSignature);
+                    await triggerQuickCheckIn("Hadir", undefined, undefined, fridaySignPendingSignature);
+                  }}
+                  className="w-full bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-extrabold py-3.5 px-6 rounded-xl transition duration-150 flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-emerald-600/30 text-xs tracking-wider uppercase font-display"
+                >
+                  <CheckCircle className="w-4 h-4" />
+                  <span>Simpan Paraf & Konfirmasi Hadir</span>
+                </button>
               </motion.div>
             )}
 
@@ -4978,6 +5096,61 @@ export function AbsensiHarianNmsa({
                       <p className="text-[10px] text-indigo-300 bg-indigo-500/10 p-2 rounded-lg border border-indigo-500/20 mt-2 max-w-xs mx-auto">
                         {alreadyAttendedInfo.tip}
                       </p>
+
+                      {/* Friday Signature Check in Manual Mode */}
+                      {isFridayToday && (
+                        !signatures[selfWorker.id] && !fridaySignatureDraft ? (
+                          <div className="bg-amber-950/80 border border-amber-500/50 rounded-2xl p-4 text-left space-y-3 mt-4 shadow-lg ring-1 ring-amber-500/30">
+                            <div className="flex items-center gap-2">
+                              <FileCheck className="w-5 h-5 text-amber-400" />
+                              <div>
+                                <h4 className="text-xs font-black text-amber-300 uppercase tracking-wider font-display">
+                                  Wajib Paraf Hari Jumat Sebelum Meninggalkan Website
+                                </h4>
+                                <p className="text-[10px] text-amber-200/80">
+                                  Presensi Anda hari ini telah tercatat, namun rekap mingguan hari Jumat mewajibkan paraf digital sebelum meninggalkan website.
+                                </p>
+                              </div>
+                            </div>
+                            <SignaturePad
+                              workerName={selfWorker.name}
+                              initialSignature={fridaySignPendingSignature}
+                              onSignatureChange={(sig) => setFridaySignPendingSignature(sig)}
+                              placeholder="Goreskan tanda tangan atau paraf Anda di sini"
+                              compact={true}
+                            />
+                            <button
+                              type="button"
+                              disabled={!fridaySignPendingSignature}
+                              onClick={async () => {
+                                if (!fridaySignPendingSignature) return;
+                                setFridaySignatureDraft(fridaySignPendingSignature);
+                                await handleSaveSignature(selfWorker.id, fridaySignPendingSignature);
+                              }}
+                              className="w-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-40 disabled:cursor-not-allowed text-slate-950 font-extrabold py-3 px-4 rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-md uppercase font-display"
+                            >
+                              <CheckCircle className="w-4 h-4" />
+                              <span>Simpan Paraf Resmi Mingguan</span>
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="bg-emerald-950/50 border border-emerald-500/30 rounded-xl p-3 flex items-center justify-between text-left mt-3">
+                            <div>
+                              <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1">
+                                <CheckCircle className="w-3.5 h-3.5" /> Paraf Hari Jumat Terverifikasi
+                              </span>
+                              <p className="text-[10px] text-slate-400">Tersimpan dalam rekapitulasi allowance mingguan</p>
+                            </div>
+                            <div className="bg-white/10 p-1 rounded-lg border border-emerald-500/20">
+                              <img 
+                                src={signatures[selfWorker.id] || fridaySignatureDraft || ''} 
+                                alt="Paraf" 
+                                className="h-9 max-w-[90px] object-contain"
+                              />
+                            </div>
+                          </div>
+                        )
+                      )}
                     </div>
                   </div>
                 ) : (
@@ -5391,6 +5564,78 @@ export function AbsensiHarianNmsa({
           )}
         </AnimatePresence>
 
+        {/* FRIDAY MANDATORY SIGNATURE MODAL (MANUAL SELF-ATTENDANCE) */}
+        <AnimatePresence>
+          {showFridayMandatorySignModal && selfWorker && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="absolute inset-0 bg-slate-950/85 backdrop-blur-md"
+              />
+              <motion.div
+                initial={{ opacity: 0, scale: 0.92, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.92, y: 20 }}
+                className="bg-slate-900 border border-amber-500/40 rounded-3xl p-6 max-w-md w-full text-center relative overflow-hidden shadow-2xl z-10 space-y-4"
+              >
+                <div className="w-14 h-14 bg-amber-500/20 border border-amber-500/30 text-amber-400 rounded-2xl flex items-center justify-center mx-auto shadow-md">
+                  <FileCheck className="w-7 h-7" />
+                </div>
+
+                <div className="space-y-1 text-center">
+                  <span className="text-[10px] bg-amber-500/20 border border-amber-500/30 text-amber-300 font-extrabold uppercase font-mono px-3 py-0.5 rounded-full tracking-wider">
+                    WAJIB PARAF HARI JUMAT
+                  </span>
+                  <h3 className="text-lg font-extrabold text-white font-display tracking-tight pt-1">
+                    Paraf / Tanda Tangan Karyawan
+                  </h3>
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    Sesuai SOP rekapitulasi uang makan mingguan PT. NMSA, setiap hari Jumat karyawan wajib membubuhkan paraf atau tanda tangan digital sebelum absensi dicatat & sebelum meninggalkan website.
+                  </p>
+                </div>
+
+                <div className="text-left">
+                  <SignaturePad
+                    workerName={selfWorker.name}
+                    initialSignature={signatures[selfWorker.id] || fridaySignatureDraft || null}
+                    onSignatureChange={(sig) => setFridaySignPendingSignature(sig)}
+                    placeholder="Goreskan paraf atau tanda tangan Anda di sini"
+                    compact={true}
+                  />
+                </div>
+
+                <div className="flex gap-2.5 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowFridayMandatorySignModal(false)}
+                    className="flex-1 bg-slate-800 hover:bg-slate-750 text-slate-300 font-bold text-xs py-3 rounded-xl transition cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!fridaySignPendingSignature}
+                    onClick={async () => {
+                      if (!fridaySignPendingSignature) return;
+                      const sig = fridaySignPendingSignature;
+                      setFridaySignatureDraft(sig);
+                      await handleSaveSignature(selfWorker.id, sig);
+                      setShowFridayMandatorySignModal(false);
+                      await handleSelfSubmitAttendance(sig);
+                    }}
+                    className="flex-2 bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-extrabold text-xs py-3 rounded-xl transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 uppercase font-display"
+                  >
+                    <CheckCircle className="w-4 h-4" />
+                    <span>Simpan Paraf & Absen Hadir</span>
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
         <AnimatePresence>
           {showSuccessModal && (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -5429,6 +5674,26 @@ export function AbsensiHarianNmsa({
                     Jangan lupa untuk absen lagi besok yaaa.. Semangat terus kerjanya, utamakan keselamatan kerja, dan semoga hari Anda luar biasa menyenangkan! 😄👷‍♂️☀️👍🏼
                   </p>
                 </div>
+
+                {/* Friday Signature Proof in Modal */}
+                {isFridayToday && (signatures[selfWorker?.id || ''] || fridaySignatureDraft) && (
+                  <div className="mt-3 bg-slate-950/70 border border-emerald-500/30 p-3 rounded-2xl text-left space-y-1.5 shadow-inner">
+                    <div className="flex items-center justify-between text-[11px] font-bold text-emerald-400">
+                      <span className="flex items-center gap-1">
+                        <CheckCircle className="w-3.5 h-3.5" /> Paraf Hari Jumat Terverifikasi
+                      </span>
+                      <span className="text-[9px] bg-emerald-500/20 px-2 py-0.5 rounded-full font-mono uppercase">Sah ✅</span>
+                    </div>
+                    <div className="bg-white/10 rounded-xl p-1.5 flex justify-center border border-white/5">
+                      <img 
+                        src={signatures[selfWorker?.id || ''] || fridaySignatureDraft || ''} 
+                        alt="Paraf Karyawan" 
+                        className="h-12 max-w-full object-contain"
+                      />
+                    </div>
+                    <p className="text-[9px] text-slate-400 text-center">Tersimpan dalam rekapitulasi allowance mingguan PT. NMSA</p>
+                  </div>
+                )}
 
                 <button
                   type="button"
