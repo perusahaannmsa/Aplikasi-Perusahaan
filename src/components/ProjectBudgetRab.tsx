@@ -1477,7 +1477,7 @@ export const ProjectBudgetRab: React.FC<ProjectBudgetRabProps> = ({
                   value={editingProject.name}
                   onChange={(e) => setEditingProject({ ...editingProject, name: e.target.value })}
                   className="w-full px-3 py-2 text-xs rounded-xl border border-stone-200 font-bold focus:outline-none focus:ring-1 focus:ring-amber-500"
-                  placeholder="Contoh: Pembangunan Dermaga Tambang Site B"
+                  placeholder="Nama proyek / pekerjaan..."
                 />
               </div>
 
@@ -1636,7 +1636,7 @@ export const ProjectBudgetRab: React.FC<ProjectBudgetRabProps> = ({
                   value={editingRabItem.itemName}
                   onChange={(e) => setEditingRabItem({ ...editingRabItem, itemName: e.target.value })}
                   className="w-full px-3 py-2 text-xs rounded-xl border border-stone-200 font-bold focus:outline-none focus:ring-1 focus:ring-amber-500"
-                  placeholder="Contoh: Pengadaan Solar Industri HSD 5000 Liter"
+                  placeholder="Uraian pekerjaan atau pengadaan..."
                 />
               </div>
 
@@ -1795,7 +1795,7 @@ export const ProjectBudgetRab: React.FC<ProjectBudgetRabProps> = ({
                   value={editingExpense.description}
                   onChange={(e) => setEditingExpense({ ...editingExpense, description: e.target.value })}
                   className="w-full px-3 py-2 text-xs rounded-xl border border-stone-200 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  placeholder="Contoh: Pembelian Solar Dexlite untuk genset camp"
+                  placeholder="Keterangan atau uraian beban..."
                 />
               </div>
 

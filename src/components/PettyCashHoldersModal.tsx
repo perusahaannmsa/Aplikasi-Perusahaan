@@ -226,7 +226,7 @@ export const PettyCashHoldersModal: React.FC<PettyCashHoldersModalProps> = ({
             <div className="flex gap-2">
               <input
                 type="text"
-                placeholder="Contoh: Suryo Pranoto, Muhammad Akbar..."
+                placeholder="Nama pemegang petty cash baru..."
                 className="flex-1 bg-stone-50 border border-stone-200 rounded-xl px-3.5 py-2 text-xs font-bold text-stone-800 focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500"
                 value={newHolderName}
                 onChange={(e) => setNewHolderName(e.target.value)}

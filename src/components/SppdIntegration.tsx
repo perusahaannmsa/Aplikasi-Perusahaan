@@ -27,53 +27,7 @@ export interface SppdRecord {
   fullRecord?: any;
 }
 
-export const INITIAL_SPPD_SAMPLES: SppdRecord[] = [
-  {
-    id: 'SPPD-2026-001',
-    noSppd: '090/SPPD-HO/NMSA/VI/2026',
-    namaPegawai: 'Nur Wahyudi',
-    jabatan: 'Accounting & Finance Supervisor',
-    maksudDinas: 'Pengawasan Lapangan & Verifikasi Aset Tambang Mineral',
-    kotaTujuan: 'Site Kolaka, Sulawesi Tenggara',
-    tanggalBerangkat: '2026-07-15',
-    tanggalKembali: '2026-07-18',
-    uangHarian: 1500000,
-    biayaTransport: 3200000,
-    biayaPenginapan: 2400000,
-    totalBiaya: 7100000,
-    status: 'Disetujui'
-  },
-  {
-    id: 'SPPD-2026-002',
-    noSppd: '091/SPPD-HO/NMSA/VI/2026',
-    namaPegawai: 'Harijon',
-    jabatan: 'Head of Operational',
-    maksudDinas: 'Koordinasi Operasional & Pertemuan Mitra Kerja Regional',
-    kotaTujuan: 'Kendari, Sulawesi Tenggara',
-    tanggalBerangkat: '2026-07-20',
-    tanggalKembali: '2026-07-22',
-    uangHarian: 1200000,
-    biayaTransport: 2800000,
-    biayaPenginapan: 1900000,
-    totalBiaya: 5900000,
-    status: 'Disetujui'
-  },
-  {
-    id: 'SPPD-2026-003',
-    noSppd: '092/SPPD-HO/NMSA/VII/2026',
-    namaPegawai: 'Andi Dhiya Salsabila',
-    jabatan: 'Senior Finance Officer',
-    maksudDinas: 'Audit Internal Petty Cash & Kas Lapangan Morowali',
-    kotaTujuan: 'Morowali, Sulawesi Tengah',
-    tanggalBerangkat: '2026-08-01',
-    tanggalKembali: '2026-08-04',
-    uangHarian: 1600000,
-    biayaTransport: 3500000,
-    biayaPenginapan: 2700000,
-    totalBiaya: 7800000,
-    status: 'Disetujui'
-  }
-];
+export const INITIAL_SPPD_SAMPLES: SppdRecord[] = [];
 
 interface SppdIntegrationProps {
   onImportSppdToSubmission?: (sppd: SppdRecord) => void;
@@ -132,7 +86,7 @@ export const SppdIntegration: React.FC<SppdIntegrationProps> = ({
         };
       });
     } catch (e) {
-      return INITIAL_SPPD_SAMPLES;
+      return [];
     }
   };
 

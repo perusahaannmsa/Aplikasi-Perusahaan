@@ -4,6 +4,9 @@ import {
   saveAndInitializeFirebaseConfig, 
   isFirebaseConfigured,
   loginToFirebase,
+  loginWithGoogle,
+  resetPasswordViaEmail,
+  ensureUserProfile,
   registerUserToFirebase,
   loadSubmissionsFromFirestore,
   getUserProfileFromFirestore
@@ -156,14 +159,114 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
         onLoginSuccess(user, cloudSubmissions);
       }, 500);
     } catch (err: any) {
-      console.error(err);
+      const isInvalidCred = err?.code === 'auth/invalid-credential' || String(err?.message).includes('invalid-credential');
       setStatusMsg({
         type: 'error',
-        text: `Autentikasi Gagal: ${err.message || 'Periksa kembali e-mail dan sandi Anda.'}`
+        text: isInvalidCred
+          ? 'Email atau kata sandi tidak cocok. Jika Anda belum mendaftar, silakan klik tab "Daftar Akun" di atas atau gunakan tombol "Masuk dengan Akun Google" di bawah.'
+          : (err.message || 'Periksa kembali e-mail dan sandi Anda.')
       });
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleGoogleLogin = async () => {
+    setStatusMsg(null);
+    setIsLoading(true);
+    setStatusMsg({
+      type: 'info',
+      text: 'Membuka jendela otentikasi akun Google...'
+    });
+
+    try {
+      const user = await loginWithGoogle();
+      
+      setStatusMsg({
+        type: 'info',
+        text: `Otentikasi Google Sukses (${user.email})! Menyiapkan profil & memuat transaksi...`
+      });
+
+      // Ensure profile exists in Firestore
+      await ensureUserProfile(user, {
+        companyId: 'nmsa',
+        companyName: 'PT Nusantara Mineral Sukses Abadi'
+      });
+
+      const profile = await getUserProfileFromFirestore(user.uid);
+      const companyId = profile?.companyId || 'nmsa';
+
+      let cloudSubmissions: Submission[] = [];
+      try {
+        cloudSubmissions = await loadSubmissionsFromFirestore(companyId);
+      } catch (err: any) {
+        console.warn('Silent read rejection on google login', err);
+      }
+
+      setStatusMsg({
+        type: 'success',
+        text: `Selamat datang, ${user.displayName || user.email}!`
+      });
+
+      setTimeout(() => {
+        onLoginSuccess(user, cloudSubmissions);
+      }, 500);
+    } catch (err: any) {
+      console.warn('Google login error:', err);
+      setStatusMsg({
+        type: 'error',
+        text: err.message || 'Gagal masuk menggunakan Akun Google.'
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleResetPassword = async () => {
+    if (!loginEmail.trim()) {
+      setStatusMsg({
+        type: 'error',
+        text: 'Silakan isi kolom Alamat E-mail terlebih dahulu untuk menerima tautan pemulihan kata sandi.'
+      });
+      return;
+    }
+
+    setIsLoading(true);
+    setStatusMsg({
+      type: 'info',
+      text: `Mengirimkan email pemulihan sandi ke ${loginEmail.trim()}...`
+    });
+
+    try {
+      await resetPasswordViaEmail(loginEmail.trim());
+      setStatusMsg({
+        type: 'success',
+        text: `Email pemulihan kata sandi telah dikirim ke ${loginEmail.trim()}. Silakan periksa kotak masuk (inbox / spam) Anda.`
+      });
+    } catch (err: any) {
+      setStatusMsg({
+        type: 'error',
+        text: err.message || 'Gagal mengirim email reset kata sandi.'
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleQuickSwitchToRegister = () => {
+    setRegEmail(loginEmail.trim());
+    setRegPassword(loginPassword.trim());
+    setRegCompanyId('nmsa');
+    setRegCompanyName('PT Nusantara Mineral Sukses Abadi');
+    const activeConfig = getStoredFirebaseConfig();
+    if (activeConfig?.appId) {
+      setRegAppId(activeConfig.appId);
+    }
+    setMode('register');
+    setStatusMsg({
+      type: 'info',
+      text: 'Silakan lengkapi Nama Lengkap & Jabatan Anda untuk menyelesaikan pendaftaran.'
+    });
   };
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
@@ -334,17 +437,48 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
 
           {/* Status Message Display */}
           {statusMsg && (
-            <div className={`p-3.5 border rounded-xl text-xs leading-relaxed flex items-start gap-2.5 font-medium ${
+            <div className={`p-3.5 border rounded-xl text-xs leading-relaxed space-y-2.5 font-medium ${
               statusMsg.type === 'success' ? 'bg-emerald-50 border-emerald-250 text-emerald-800' :
               statusMsg.type === 'error' ? 'bg-rose-50 border-rose-250 text-rose-800' :
               'bg-amber-50 border-amber-200 text-amber-900 animate-pulse'
             }`}>
-              {isLoading && statusMsg.type === 'info' ? (
-                <Loader2 size={14} className="animate-spin text-amber-600 shrink-0 mt-0.5" />
-              ) : (
-                <Info size={14} className="shrink-0 mt-0.5" />
+              <div className="flex items-start gap-2.5">
+                {isLoading && statusMsg.type === 'info' ? (
+                  <Loader2 size={14} className="animate-spin text-amber-600 shrink-0 mt-0.5" />
+                ) : (
+                  <Info size={14} className="shrink-0 mt-0.5" />
+                )}
+                <span className="flex-1">{statusMsg.text}</span>
+              </div>
+
+              {statusMsg.type === 'error' && mode === 'login' && (
+                <div className="pt-2 flex flex-wrap items-center gap-2 border-t border-rose-200/70">
+                  <button
+                    type="button"
+                    onClick={handleGoogleLogin}
+                    disabled={isLoading}
+                    className="px-3 py-1.5 bg-white hover:bg-stone-50 text-stone-850 border border-stone-300 rounded-lg text-[11px] font-bold transition flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                  >
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24">
+                      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                      <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+                      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+                    </svg>
+                    <span>Coba Masuk dengan Google</span>
+                  </button>
+
+                  {loginEmail && (
+                    <button
+                      type="button"
+                      onClick={handleQuickSwitchToRegister}
+                      className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-stone-950 font-bold rounded-lg text-[11px] transition shadow-2xs cursor-pointer"
+                    >
+                      Daftar Akun Baru dengan Email Ini ➔
+                    </button>
+                  )}
+                </div>
               )}
-              <span>{statusMsg.text}</span>
             </div>
           )}
 
@@ -376,6 +510,14 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
                   <label className="block text-[10px] font-mono font-black text-stone-500 uppercase tracking-widest">
                     SANDI KEAMANAN
                   </label>
+                  <button
+                    type="button"
+                    onClick={handleResetPassword}
+                    className="text-[11px] text-amber-700 hover:text-amber-800 font-bold transition hover:underline cursor-pointer"
+                    title="Kirim email pemulihan sandi ke alamat email Anda"
+                  >
+                    Lupa Sandi?
+                  </button>
                 </div>
                 <div className="relative">
                   <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-stone-400 pointer-events-none">
@@ -403,7 +545,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
               <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full bg-stone-900 hover:bg-stone-800 text-white font-bold py-3 px-4 rounded-xl text-xs uppercase tracking-wider font-mono flex items-center justify-center gap-2 shadow-md transition-all active:scale-[0.98] disabled:opacity-75 disabled:cursor-not-allowed"
+                className="w-full bg-stone-900 hover:bg-stone-800 text-white font-bold py-3 px-4 rounded-xl text-xs uppercase tracking-wider font-mono flex items-center justify-center gap-2 shadow-md transition-all active:scale-[0.98] disabled:opacity-75 disabled:cursor-not-allowed cursor-pointer"
               >
                 {isLoading ? (
                   <>
@@ -418,8 +560,32 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
                 )}
               </button>
 
+              <div className="relative flex py-1 items-center">
+                <div className="flex-grow border-t border-stone-200"></div>
+                <span className="flex-shrink mx-3 text-[10px] font-mono font-bold text-stone-400 uppercase tracking-widest">
+                  ATAU MASUK LEBIH MUDAH
+                </span>
+                <div className="flex-grow border-t border-stone-200"></div>
+              </div>
+
+              {/* Google Sign-In Button */}
+              <button
+                type="button"
+                onClick={handleGoogleLogin}
+                disabled={isLoading}
+                className="w-full bg-white hover:bg-stone-50 text-stone-850 font-bold py-3 px-4 rounded-xl text-xs font-mono border border-stone-300 hover:border-stone-400 flex items-center justify-center gap-2.5 shadow-xs transition-all active:scale-[0.98] disabled:opacity-75 disabled:cursor-not-allowed cursor-pointer"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24">
+                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+                </svg>
+                <span>Masuk dengan Akun Google</span>
+              </button>
+
               <div className="pt-2 text-center text-xs text-stone-400 font-mono">
-                Butuh akses pertama kali? Silakan klik tab <strong>Daftar Akun</strong>.
+                Belum memiliki akun? Silakan klik tab <button type="button" onClick={() => setMode('register')} className="text-amber-700 font-bold hover:underline cursor-pointer">Daftar Akun</button>.
               </div>
 
               {!(window.location.hash === '#/input-bukti-transfer' || window.location.hash === '#input-bukti-transfer' || window.location.pathname === '/input-bukti-transfer') && (
@@ -454,7 +620,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
                   required
                   value={regFullName}
                   onChange={(e) => setRegFullName(e.target.value)}
-                  placeholder="Contoh: Nur Wahyudi"
+                  placeholder="Nama Lengkap"
                   disabled={isLoading}
                   className="w-full px-3.5 py-2 bg-stone-50 border border-stone-250 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-amber-500 focus:bg-white text-stone-850 placeholder:text-stone-300 transition"
                 />
@@ -469,7 +635,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
                   required
                   value={regRole}
                   onChange={(e) => setRegRole(e.target.value)}
-                  placeholder="Contoh: Divisi Keuangan / Accounting"
+                  placeholder="Divisi Keuangan / Accounting"
                   disabled={isLoading}
                   className="w-full px-3.5 py-2 bg-stone-50 border border-stone-250 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-amber-500 focus:bg-white text-stone-850 placeholder:text-stone-300 transition"
                 />
@@ -589,9 +755,9 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
                       type="button"
                       onClick={() => setRegLogoUrl('https://i.ibb.co.com/gFHNJ1JD/LOGO-NH.png')}
                       className="px-2.5 py-2 bg-stone-200 hover:bg-stone-300 text-stone-700 rounded-lg text-[10px] font-mono font-semibold transition shrink-0 whitespace-nowrap"
-                      title="Gunakan link contoh ImgBB"
+                      title="Gunakan Logo Resmi NMSA"
                     >
-                      Contoh ImgBB
+                      Logo NMSA
                     </button>
                   )}
                 </div>
@@ -609,7 +775,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
                   required
                   value={regEmail}
                   onChange={(e) => setRegEmail(e.target.value)}
-                  placeholder="misal: nama@nmsa.com"
+                  placeholder="nama@email.com"
                   disabled={isLoading}
                   className="w-full px-3.5 py-2 bg-stone-50 border border-stone-250 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-amber-500 focus:bg-white text-stone-850 placeholder:text-stone-300 transition"
                 />
@@ -625,7 +791,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
                   minLength={6}
                   value={regPassword}
                   onChange={(e) => setRegPassword(e.target.value)}
-                  placeholder="Sandi Rahasia"
+                  placeholder="Kata Sandi (min. 6 karakter)"
                   disabled={isLoading}
                   className="w-full px-3.5 py-2 bg-stone-50 border border-stone-250 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-amber-500 focus:bg-white text-stone-850 placeholder:text-stone-300 transition"
                 />

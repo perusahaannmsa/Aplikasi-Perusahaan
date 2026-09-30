@@ -102,12 +102,12 @@ export function AccountMappingContainer({
           </div>
 
           {/* Sub-tab Navigation Selector */}
-          <div className="flex items-center bg-stone-100 p-1.5 rounded-2xl border border-stone-200 shadow-3xs self-start md:self-auto">
+          <div className="flex items-center gap-1 bg-stone-100 p-1.5 rounded-2xl border border-stone-200 shadow-3xs max-w-full overflow-x-auto no-scrollbar self-stretch sm:self-auto shrink-0">
             {/* Tab 1: Pemetaan Akun Accurate */}
             <button
               type="button"
               onClick={() => handleSwitchTab('accurate')}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+              className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-3.5 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap cursor-pointer ${
                 selectedSubTab === 'accurate'
                   ? 'bg-emerald-800 text-white shadow-xs font-black'
                   : 'text-stone-700 hover:text-stone-900 hover:bg-stone-200/60'
@@ -126,7 +126,7 @@ export function AccountMappingContainer({
             <button
               type="button"
               onClick={() => handleSwitchTab('sppd')}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+              className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-3.5 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap cursor-pointer ${
                 selectedSubTab === 'sppd'
                   ? 'bg-amber-600 text-white shadow-xs font-black'
                   : 'text-stone-700 hover:text-stone-900 hover:bg-stone-200/60'

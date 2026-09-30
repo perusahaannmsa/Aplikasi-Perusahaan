@@ -27,7 +27,13 @@ import {
   FileText,
   FileCheck,
   Database,
-  X
+  X,
+  Activity,
+  Zap,
+  Clock,
+  ArrowRight,
+  Radio,
+  CheckCheck
 } from 'lucide-react';
 import { Submission } from '../types';
 
@@ -38,7 +44,7 @@ interface WhatsAppAiModalProps {
 }
 
 export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClose, submissions = [] }) => {
-  const [activeTab, setActiveTab] = useState<'connect' | 'security' | 'attendance' | 'test' | 'webhook'>('connect');
+  const [activeTab, setActiveTab] = useState<'connect' | 'uptime' | 'security' | 'attendance' | 'test' | 'webhook'>('connect');
   
   // Status states
   const [status, setStatus] = useState<string>('connecting');
@@ -46,6 +52,11 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
   const [connectedUser, setConnectedUser] = useState<any>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+
+  // Keep-Alive & UptimeRobot states
+  const [keepAliveStats, setKeepAliveStats] = useState<any>(null);
+  const [isTestingPing, setIsTestingPing] = useState<boolean>(false);
+  const [pingTestResult, setPingTestResult] = useState<any>(null);
   
   // Pairing Code state
   const [pairingPhone, setPairingPhone] = useState<string>('');
@@ -89,9 +100,60 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+  const healthUrl = `${baseUrl}/api/health`;
   const webhookUrl = `${baseUrl}/api/whatsapp-webhook`;
   const fonnteWebhookUrl = `${baseUrl}/api/fonnte-webhook`;
   const dataApiUrl = `${baseUrl}/api/data`;
+
+  // Fetch Keep-Alive stats
+  const fetchKeepAliveStats = async () => {
+    try {
+      const res = await fetch('/api/wa/keepalive-stats');
+      if (res.ok) {
+        const data = await res.json();
+        setKeepAliveStats(data);
+      }
+    } catch (e) {
+      console.warn('Could not fetch keepalive stats:', e);
+    }
+  };
+
+  // Test ping manually from browser
+  const handleTestPing = async () => {
+    setIsTestingPing(true);
+    setPingTestResult(null);
+    const start = performance.now();
+    try {
+      const res = await fetch('/api/health');
+      const timeMs = Math.round(performance.now() - start);
+      if (res.ok) {
+        const data = await res.json();
+        setPingTestResult({
+          success: true,
+          latencyMs: timeMs,
+          status: res.status,
+          data
+        });
+        fetchKeepAliveStats();
+        fetchStatus();
+      } else {
+        setPingTestResult({
+          success: false,
+          latencyMs: timeMs,
+          status: res.status,
+          error: `HTTP ${res.status}`
+        });
+      }
+    } catch (err: any) {
+      setPingTestResult({
+        success: false,
+        latencyMs: 0,
+        error: err.message || 'Koneksi gagal'
+      });
+    } finally {
+      setIsTestingPing(false);
+    }
+  };
 
   // Fetch WhatsApp connection status
   const fetchStatus = async () => {
@@ -134,7 +196,11 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
     if (isOpen) {
       fetchStatus();
       fetchSecuritySettings();
-      const interval = setInterval(fetchStatus, 3500);
+      fetchKeepAliveStats();
+      const interval = setInterval(() => {
+        fetchStatus();
+        fetchKeepAliveStats();
+      }, 4000);
       return () => clearInterval(interval);
     }
   }, [isOpen]);
@@ -423,6 +489,20 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
 
           <button
             type="button"
+            onClick={() => setActiveTab('uptime')}
+            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold rounded-t-xl transition cursor-pointer border-t border-x shrink-0 ${
+              activeTab === 'uptime'
+                ? 'bg-white border-stone-200 text-emerald-800 shadow-xs'
+                : 'border-transparent text-stone-500 hover:text-stone-800'
+            }`}
+          >
+            <Activity size={15} className={activeTab === 'uptime' ? 'text-emerald-600 animate-pulse' : 'text-stone-400'} />
+            <span>2. Keep-Alive 24/7 (UptimeRobot)</span>
+            <span className="px-1.5 py-0.2 text-[9px] bg-emerald-100 text-emerald-800 font-bold rounded">Bebas Scan</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setActiveTab('security')}
             className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold rounded-t-xl transition cursor-pointer border-t border-x shrink-0 ${
               activeTab === 'security'
@@ -431,7 +511,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
             }`}
           >
             <Lock size={15} className={activeTab === 'security' ? 'text-emerald-600' : 'text-stone-400'} />
-            <span>2. Keamanan & Otorisasi Voucher</span>
+            <span>3. Keamanan & Otorisasi Voucher</span>
             <span className="px-1.5 py-0.2 text-[9px] bg-rose-100 text-rose-800 font-bold rounded">Privasi</span>
           </button>
 
@@ -445,7 +525,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
             }`}
           >
             <CalendarCheck size={15} className={activeTab === 'attendance' ? 'text-emerald-600' : 'text-stone-400'} />
-            <span>3. Kirim Link Absen & Broadcast</span>
+            <span>4. Kirim Link Absen & Broadcast</span>
           </button>
 
           <button
@@ -458,7 +538,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
             }`}
           >
             <Bot size={15} className={activeTab === 'test' ? 'text-emerald-600' : 'text-stone-400'} />
-            <span>4. Uji Chat AI Transaksi & File</span>
+            <span>5. Uji Chat AI Transaksi & File</span>
             <Sparkles size={12} className="text-amber-500" />
           </button>
 
@@ -472,7 +552,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
             }`}
           >
             <Globe size={15} className={activeTab === 'webhook' ? 'text-emerald-600' : 'text-stone-400'} />
-            <span>5. Webhook (Make.com / Fonnte)</span>
+            <span>6. Webhook (Make.com / Fonnte)</span>
           </button>
         </div>
 
@@ -482,6 +562,34 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
           {/* TAB 1: CONNECT WHATSAPP DIRECTLY */}
           {activeTab === 'connect' && (
             <div className="space-y-6">
+              {/* Keep-Alive 24/7 Feature Callout Banner */}
+              <div className="bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-100/70 border border-emerald-300 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-emerald-600 text-white rounded-xl shadow-xs shrink-0">
+                    <Zap size={20} />
+                  </div>
+                  <div>
+                    <h4 className="text-xs sm:text-sm font-bold text-emerald-950 flex items-center gap-2">
+                      <span>Ingin Penautan WhatsApp Aktif 24 Jam Tanpa Scan Ulang?</span>
+                      <span className="px-1.5 py-0.5 text-[9px] bg-emerald-700 text-white font-mono font-bold rounded uppercase">
+                        100% Gratis
+                      </span>
+                    </h4>
+                    <p className="text-[11px] text-emerald-800 mt-0.5">
+                      Gunakan pemantau UptimeRobot agar hosting (Render) tidak pernah tidur (sleep) dan sesi WhatsApp Anda tetap aktif selamanya.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('uptime')}
+                  className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl transition cursor-pointer shrink-0 flex items-center gap-1.5 shadow-xs"
+                >
+                  <span>Buka Panduan UptimeRobot</span>
+                  <ArrowRight size={14} />
+                </button>
+              </div>
+
               {/* Status Banner */}
               <div className={`p-4 rounded-2xl border flex items-center justify-between gap-4 ${
                 status === 'connected'
@@ -675,7 +783,270 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
             </div>
           )}
 
-          {/* TAB 2: SECURITY & PRIVACY SETTINGS FOR VOUCHERS */}
+          {/* TAB 2: KEEP-ALIVE 24/7 & UPTIMEROBOT GUIDE (BEBAS SCAN SELAMANYA) */}
+          {activeTab === 'uptime' && (
+            <div className="space-y-6">
+              {/* Header Banner */}
+              <div className="p-5 bg-gradient-to-r from-emerald-950 via-teal-900 to-stone-900 text-white rounded-3xl shadow-lg border border-emerald-800/40 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 flex items-center justify-center shrink-0 shadow-inner">
+                      <Activity size={26} className="text-emerald-400 animate-pulse" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="text-base sm:text-lg font-black tracking-tight text-white">
+                          Keep-Alive 24/7 &amp; Bebas Scan QR Selamanya
+                        </h3>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider bg-emerald-500/30 text-emerald-200 border border-emerald-400/40">
+                          UptimeRobot Ready
+                        </span>
+                      </div>
+                      <p className="text-xs text-emerald-100/80 mt-0.5">
+                        Menjaga server hosting (Render) tetap aktif 24 jam nonstop &amp; memulihkan koneksi WhatsApp otomatis tanpa perlu scan ulang.
+                      </p>
+                    </div>
+                  </div>
+
+                  <a
+                    href="https://uptimerobot.com"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-stone-950 font-bold text-xs rounded-xl transition cursor-pointer flex items-center gap-2 shrink-0 shadow-sm"
+                  >
+                    <span>Buka UptimeRobot.com</span>
+                    <ExternalLink size={14} />
+                  </a>
+                </div>
+              </div>
+
+              {/* URL Health Check Box */}
+              <div className="bg-stone-50 border border-stone-200 rounded-3xl p-5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Radio size={16} className="text-emerald-600" />
+                    <h4 className="text-xs font-black uppercase tracking-wider text-stone-900 font-mono">
+                      URL Endpoint Health Check (Salin untuk UptimeRobot)
+                    </h4>
+                  </div>
+                  <span className="text-[11px] text-stone-500 font-mono">Metode: GET / HEAD</span>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                  <div className="flex-1 bg-white border border-stone-300 rounded-2xl px-4 py-3 font-mono text-xs text-stone-850 break-all select-all shadow-inner">
+                    {healthUrl}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleCopy(healthUrl, 'health-url')}
+                    className={`px-5 py-3 rounded-2xl text-xs font-bold transition flex items-center justify-center gap-2 shrink-0 cursor-pointer shadow-xs ${
+                      copiedKey === 'health-url'
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-stone-900 hover:bg-stone-800 text-white'
+                    }`}
+                  >
+                    {copiedKey === 'health-url' ? <Check size={16} /> : <Copy size={16} />}
+                    <span>{copiedKey === 'health-url' ? 'Tersalin!' : 'Salin URL'}</span>
+                  </button>
+                </div>
+                <p className="text-[11px] text-stone-500 font-sans">
+                  * URL ini dapat diakses secara publik oleh layanan pemantau (tanpa perlu token otentikasi) untuk menjaga server tetap terjaga.
+                </p>
+              </div>
+
+              {/* Status Pemantauan & Test Live Button */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Metric 1: Uptime & Ping Stats */}
+                <div className="bg-white border border-stone-200 rounded-3xl p-5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-stone-900 uppercase tracking-wider flex items-center gap-1.5 font-mono">
+                      <Clock size={15} className="text-emerald-600" />
+                      Status Server &amp; Ping
+                    </span>
+                    <button
+                      type="button"
+                      onClick={fetchKeepAliveStats}
+                      className="p-1.5 text-stone-400 hover:text-stone-700 hover:bg-stone-100 rounded-lg transition"
+                      title="Segarkan Metrik"
+                    >
+                      <RefreshCw size={13} />
+                    </button>
+                  </div>
+
+                  <div className="space-y-2 text-xs">
+                    <div className="flex items-center justify-between py-1.5 border-b border-stone-100">
+                      <span className="text-stone-500">Uptime Server:</span>
+                      <span className="font-mono font-bold text-stone-900">
+                        {keepAliveStats?.uptimeSeconds
+                          ? `${Math.floor(keepAliveStats.uptimeSeconds / 3600)} jam ${Math.floor((keepAliveStats.uptimeSeconds % 3600) / 60)} menit`
+                          : 'Aktif'}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between py-1.5 border-b border-stone-100">
+                      <span className="text-stone-500">Total Ping UptimeRobot:</span>
+                      <span className="font-mono font-bold text-emerald-700">
+                        {keepAliveStats?.totalPings ?? 0} kali
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between py-1.5 border-b border-stone-100">
+                      <span className="text-stone-500">Ping Terakhir:</span>
+                      <span className="font-mono text-stone-800">
+                        {keepAliveStats?.lastPing
+                          ? new Date(keepAliveStats.lastPing).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                          : 'Menunggu ping pertama'}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between py-1.5">
+                      <span className="text-stone-500">Backup Sesi Persisten:</span>
+                      <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                        keepAliveStats?.hasSessionBackup 
+                          ? 'bg-emerald-100 text-emerald-800' 
+                          : 'bg-stone-100 text-stone-600'
+                      }`}>
+                        {keepAliveStats?.hasSessionBackup ? 'Tersimpan (Aman saat Restart)' : 'Belum Ada Sesi'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Metric 2: Uji Coba Health Check Live */}
+                <div className="bg-white border border-stone-200 rounded-3xl p-5 space-y-3 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-black text-stone-900 uppercase tracking-wider flex items-center gap-1.5 font-mono">
+                        <Zap size={15} className="text-amber-500" />
+                        Uji Health Check Langsung
+                      </span>
+                    </div>
+                    <p className="text-xs text-stone-600">
+                      Uji coba endpoint <code>/api/health</code> sekarang dari browser Anda untuk memverifikasi respons server dan fitur auto-revive WhatsApp.
+                    </p>
+                  </div>
+
+                  <div className="space-y-3">
+                    {pingTestResult && (
+                      <div className={`p-3 rounded-2xl text-xs space-y-1 border ${
+                        pingTestResult.success
+                          ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
+                          : 'bg-rose-50 border-rose-200 text-rose-950'
+                      }`}>
+                        <div className="flex items-center justify-between font-bold">
+                          <span className="flex items-center gap-1.5">
+                            {pingTestResult.success ? <CheckCircle2 size={14} className="text-emerald-600" /> : <AlertCircle size={14} className="text-rose-600" />}
+                            <span>Respons: {pingTestResult.status || 200} OK</span>
+                          </span>
+                          <span className="font-mono text-[11px] bg-white px-2 py-0.5 rounded border border-emerald-200">
+                            {pingTestResult.latencyMs} ms
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-stone-600">
+                          {pingTestResult.success
+                            ? 'Server merespons normal! WhatsApp Bot dipantau & terlindungi dari sleep.'
+                            : pingTestResult.error}
+                        </p>
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={handleTestPing}
+                      disabled={isTestingPing}
+                      className="w-full py-2.5 bg-stone-900 hover:bg-stone-800 text-white rounded-2xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-xs disabled:opacity-50"
+                    >
+                      <RefreshCw size={14} className={isTestingPing ? 'animate-spin' : ''} />
+                      <span>{isTestingPing ? 'Menguji Endpoint...' : 'Uji Health Check Sekarang'}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Panduan Langkah Demi Langkah UptimeRobot */}
+              <div className="bg-emerald-50/70 border border-emerald-200 rounded-3xl p-6 space-y-4">
+                <div className="flex items-center gap-2 text-emerald-950 font-black text-sm uppercase tracking-wider font-mono">
+                  <ShieldCheck size={18} className="text-emerald-700" />
+                  <span>Panduan Langkah Demi Langkah Setup UptimeRobot (100% Gratis)</span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
+                  <div className="bg-white p-4 rounded-2xl border border-emerald-100 space-y-1.5 shadow-2xs">
+                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-extrabold flex items-center justify-center text-xs">
+                      1
+                    </span>
+                    <h5 className="font-bold text-stone-900">Daftar Akun Gratis</h5>
+                    <p className="text-[11px] text-stone-600 leading-relaxed">
+                      Buka <strong>uptimerobot.com</strong> lalu klik <em>Register for FREE</em>. Paket gratis menyediakan 50 monitor tanpa biaya selamanya.
+                    </p>
+                  </div>
+
+                  <div className="bg-white p-4 rounded-2xl border border-emerald-100 space-y-1.5 shadow-2xs">
+                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-extrabold flex items-center justify-center text-xs">
+                      2
+                    </span>
+                    <h5 className="font-bold text-stone-900">Add New Monitor</h5>
+                    <p className="text-[11px] text-stone-600 leading-relaxed">
+                      Di halaman Dashboard UptimeRobot, klik tombol biru <strong>+ Add New Monitor</strong> di pojok kiri atas.
+                    </p>
+                  </div>
+
+                  <div className="bg-white p-4 rounded-2xl border border-emerald-100 space-y-1.5 shadow-2xs">
+                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-extrabold flex items-center justify-center text-xs">
+                      3
+                    </span>
+                    <h5 className="font-bold text-stone-900">Isi Pengaturan</h5>
+                    <ul className="text-[11px] text-stone-600 leading-relaxed list-disc list-inside space-y-0.5">
+                      <li><strong>Type:</strong> HTTP(s)</li>
+                      <li><strong>Name:</strong> Bot WA NMSA 24/7</li>
+                      <li><strong>URL:</strong> <em>Tempelkan URL di atas</em></li>
+                      <li><strong>Interval:</strong> 5 minutes</li>
+                    </ul>
+                  </div>
+
+                  <div className="bg-white p-4 rounded-2xl border border-emerald-100 space-y-1.5 shadow-2xs">
+                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-extrabold flex items-center justify-center text-xs">
+                      4
+                    </span>
+                    <h5 className="font-bold text-stone-900">Simpan &amp; Aktif</h5>
+                    <p className="text-[11px] text-stone-600 leading-relaxed">
+                      Klik tombol <strong>Create Monitor</strong> di bawah. UptimeRobot akan otomatis mengirim ping tiap 5 menit. Selesai!
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Mengapa ini bekerja selamanya? */}
+              <div className="border border-stone-200 rounded-3xl p-5 bg-white space-y-3">
+                <h4 className="text-xs font-black uppercase tracking-wider text-stone-900 font-mono flex items-center gap-2">
+                  <Sparkles size={16} className="text-amber-500" />
+                  <span>Bagaimana Ini Mencegah Anda Harus Scan Ulang Selamanya?</span>
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-stone-700">
+                  <div className="p-3 bg-stone-50 rounded-2xl border border-stone-200 space-y-1">
+                    <p className="font-bold text-stone-900">1. Anti-Sleep Render</p>
+                    <p className="text-[11px] text-stone-600 leading-relaxed">
+                      Render Free-tier akan mematikan server setelah 15 menit tanpa traffic. UptimeRobot mem-ping setiap 5 menit sehingga Render tidak pernah tidur.
+                    </p>
+                  </div>
+                  <div className="p-3 bg-stone-50 rounded-2xl border border-stone-200 space-y-1">
+                    <p className="font-bold text-stone-900">2. Auto-Revive Bot Otomatis</p>
+                    <p className="text-[11px] text-stone-600 leading-relaxed">
+                      Setiap kali menerima ping, server mengecek status koneksi WhatsApp. Jika sempat putus, server langsung memulihkannya kembali secara otomatis.
+                    </p>
+                  </div>
+                  <div className="p-3 bg-stone-50 rounded-2xl border border-stone-200 space-y-1">
+                    <p className="font-bold text-stone-900">3. Sesi Persisten Ganda</p>
+                    <p className="text-[11px] text-stone-600 leading-relaxed">
+                      Kredensial akun di-backup otomatis ke penyimpanan persisten. Bahkan jika Render me-restart container, sesi langsung dimuat kembali tanpa scan QR!
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: SECURITY & PRIVACY SETTINGS FOR VOUCHERS */}
           {activeTab === 'security' && (
             <div className="space-y-6">
               {/* Security Header Banner */}

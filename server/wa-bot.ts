@@ -1,43 +1,52 @@
-import * as baileys from "@whiskeysockets/baileys";
 import pino from "pino";
 import path from "path";
 import fs from "fs";
 import QRCode from "qrcode";
 
-// Safely extract baileys methods handling any ESM/CJS interop issues
-const getBaileysModule = () => {
-  if (!baileys) return {} as any;
-  return baileys;
-};
+// Safely dynamically load @whiskeysockets/baileys to support both ESM and CJS (Node 20+ on Railway & Replit)
+let baileysModuleCache: any = null;
 
-const getMakeWASocket = () => {
-  const pkg = getBaileysModule();
+async function getBaileysModule(): Promise<any> {
+  if (baileysModuleCache) return baileysModuleCache;
+  try {
+    baileysModuleCache = await import("@whiskeysockets/baileys");
+    return baileysModuleCache;
+  } catch (err: any) {
+    console.error("[WhatsApp Bot] Gagal memuat modul @whiskeysockets/baileys:", err);
+    throw err;
+  }
+}
+
+async function getMakeWASocket() {
+  const pkg = await getBaileysModule();
   if (typeof pkg.makeWASocket === "function") return pkg.makeWASocket;
   if (pkg.default && typeof pkg.default.makeWASocket === "function") return pkg.default.makeWASocket;
   if (pkg.default && typeof pkg.default.default === "function") return pkg.default.default;
   if (typeof pkg.default === "function") return pkg.default;
   return (pkg as any).makeWASocket || (pkg as any).default;
-};
+}
 
-const getUseMultiFileAuthState = () => {
-  const pkg = getBaileysModule();
+async function getUseMultiFileAuthState() {
+  const pkg = await getBaileysModule();
   if (typeof pkg.useMultiFileAuthState === "function") return pkg.useMultiFileAuthState;
   if (pkg.default && typeof pkg.default.useMultiFileAuthState === "function") return pkg.default.useMultiFileAuthState;
   return (pkg as any).useMultiFileAuthState;
-};
+}
 
-const getDisconnectReason = () => {
-  const pkg = getBaileysModule();
-  if (pkg.DisconnectReason) return pkg.DisconnectReason;
-  if (pkg.default && pkg.default.DisconnectReason) return pkg.default.DisconnectReason;
-  return (pkg as any).DisconnectReason || {};
-};
-
-const makeWASocket = getMakeWASocket();
-const useMultiFileAuthState = getUseMultiFileAuthState();
-const DisconnectReason = getDisconnectReason();
+async function getDisconnectReason() {
+  try {
+    const pkg = await getBaileysModule();
+    if (pkg.DisconnectReason) return pkg.DisconnectReason;
+    if (pkg.default && pkg.default.DisconnectReason) return pkg.default.DisconnectReason;
+    return (pkg as any).DisconnectReason || { loggedOut: 401 };
+  } catch (e) {
+    return { loggedOut: 401 };
+  }
+}
 
 const AUTH_DIR = path.join(process.cwd(), "auth_info_baileys");
+const BACKUP_FILE = path.join(process.cwd(), "wa_session_backup.json");
+const DATA_FILE = path.join(process.cwd(), "data-store.json");
 
 // Global state variables for WhatsApp Bot
 let sock: any = null;
@@ -45,6 +54,13 @@ let connectionStatus: "disconnected" | "connecting" | "connected" | "qr" = "disc
 let qrCodeDataUrl: string | null = null;
 let connectedUser: { id: string; name?: string } | null = null;
 let lastError: string | null = null;
+let reconnectAttempts = 0;
+let presenceKeepAliveTimer: NodeJS.Timeout | null = null;
+
+// Keep-Alive / UptimeRobot metrics
+let lastKeepAlivePing: string | null = null;
+let totalKeepAlivePings = 0;
+let recentPings: Array<{ timestamp: string; ip: string; userAgent: string; method: string }> = [];
 
 // Convert Indonesian/regular phone numbers to WhatsApp JID format
 export function formatToWaJid(phone: string): string {
@@ -61,25 +77,192 @@ export function formatToWaJid(phone: string): string {
   return cleaned;
 }
 
+// Helper to check if credentials or backup exist
+export function hasAuthBackup(): boolean {
+  if (fs.existsSync(BACKUP_FILE)) return true;
+  try {
+    if (fs.existsSync(DATA_FILE)) {
+      const raw = fs.readFileSync(DATA_FILE, "utf-8");
+      const parsed = JSON.parse(raw);
+      if (parsed.waSessionBackup && parsed.waSessionBackup["creds.json"]) return true;
+    }
+  } catch (e) {}
+  return false;
+}
+
+// Backup all auth credentials files to persistent store (files & data-store.json)
+export function backupAuthStateToPersistentStore() {
+  try {
+    if (!fs.existsSync(AUTH_DIR)) return;
+    const credsFile = path.join(AUTH_DIR, "creds.json");
+    if (!fs.existsSync(credsFile)) return;
+
+    const files = fs.readdirSync(AUTH_DIR);
+    const bundle: Record<string, string> = {};
+    for (const f of files) {
+      const fullPath = path.join(AUTH_DIR, f);
+      if (fs.statSync(fullPath).isFile()) {
+        bundle[f] = fs.readFileSync(fullPath, "utf-8");
+      }
+    }
+
+    if (Object.keys(bundle).length > 0) {
+      // 1. Save to dedicated backup file
+      fs.writeFileSync(BACKUP_FILE, JSON.stringify(bundle), "utf-8");
+      
+      // 2. Also persist into data-store.json so it survives container restarts
+      if (fs.existsSync(DATA_FILE)) {
+        try {
+          const ds = JSON.parse(fs.readFileSync(DATA_FILE, "utf-8"));
+          ds.waSessionBackup = bundle;
+          fs.writeFileSync(DATA_FILE, JSON.stringify(ds, null, 2), "utf-8");
+        } catch (e) {}
+      }
+      console.log(`[WhatsApp Bot] Sesi WhatsApp berhasil dibackup secara persisten (${Object.keys(bundle).length} file).`);
+    }
+  } catch (err) {
+    console.error("[WhatsApp Bot] Gagal membackup status auth:", err);
+  }
+}
+
+// Restore auth credentials from persistent store if local directory was cleared
+export function restoreAuthStateFromPersistentStore(): boolean {
+  try {
+    const credsFile = path.join(AUTH_DIR, "creds.json");
+    if (fs.existsSync(credsFile)) {
+      return true; // Local folder already has creds
+    }
+
+    let bundle: Record<string, string> | null = null;
+    if (fs.existsSync(BACKUP_FILE)) {
+      try {
+        bundle = JSON.parse(fs.readFileSync(BACKUP_FILE, "utf-8"));
+      } catch (e) {}
+    }
+
+    if (!bundle && fs.existsSync(DATA_FILE)) {
+      try {
+        const ds = JSON.parse(fs.readFileSync(DATA_FILE, "utf-8"));
+        if (ds.waSessionBackup && typeof ds.waSessionBackup === "object" && ds.waSessionBackup["creds.json"]) {
+          bundle = ds.waSessionBackup;
+        }
+      } catch (e) {}
+    }
+
+    if (bundle && bundle["creds.json"]) {
+      if (!fs.existsSync(AUTH_DIR)) {
+        fs.mkdirSync(AUTH_DIR, { recursive: true });
+      }
+      for (const [filename, content] of Object.entries(bundle)) {
+        fs.writeFileSync(path.join(AUTH_DIR, filename), content, "utf-8");
+      }
+      console.log(`[WhatsApp Bot] Berhasil memulihkan sesi WhatsApp (${Object.keys(bundle).length} file) dari penyimpanan persisten!`);
+      return true;
+    }
+  } catch (err) {
+    console.error("[WhatsApp Bot] Gagal memulihkan status auth:", err);
+  }
+  return false;
+}
+
+// Clear all auth backups when user explicitly clicks Disconnect / Logout
+export function clearAuthBackup() {
+  try {
+    if (fs.existsSync(BACKUP_FILE)) {
+      fs.unlinkSync(BACKUP_FILE);
+    }
+    if (fs.existsSync(DATA_FILE)) {
+      try {
+        const ds = JSON.parse(fs.readFileSync(DATA_FILE, "utf-8"));
+        delete ds.waSessionBackup;
+        fs.writeFileSync(DATA_FILE, JSON.stringify(ds, null, 2), "utf-8");
+      } catch (e) {}
+    }
+    console.log("[WhatsApp Bot] Semua backup sesi WhatsApp telah dibersihkan.");
+  } catch (err) {
+    console.error("[WhatsApp Bot] Gagal membersihkan backup auth:", err);
+  }
+}
+
+// Record Keep-Alive ping from UptimeRobot or health check
+export function recordKeepAlivePing(originInfo?: { ip?: string; userAgent?: string; method?: string }) {
+  totalKeepAlivePings++;
+  lastKeepAlivePing = new Date().toISOString();
+  
+  if (originInfo) {
+    recentPings.unshift({
+      timestamp: lastKeepAlivePing,
+      ip: originInfo.ip || "unknown",
+      userAgent: originInfo.userAgent || "UptimeRobot",
+      method: originInfo.method || "GET",
+    });
+    if (recentPings.length > 20) {
+      recentPings.pop();
+    }
+  }
+
+  return {
+    lastPing: lastKeepAlivePing,
+    totalPings: totalKeepAlivePings,
+    status: "active",
+  };
+}
+
+// Get Keep-Alive metrics for UI modal
+export function getKeepAliveInfo() {
+  return {
+    lastPing: lastKeepAlivePing,
+    totalPings: totalKeepAlivePings,
+    hasSessionBackup: hasAuthBackup(),
+    recentPings: recentPings.slice(0, 5),
+  };
+}
+
 // Check status helper
 export function getWhatsAppStatus() {
+  const hasLocalCreds = fs.existsSync(path.join(AUTH_DIR, "creds.json"));
+  const hasBackup = hasAuthBackup();
   return {
     status: connectionStatus,
     qr: qrCodeDataUrl,
     user: connectedUser,
-    error: lastError
+    error: lastError,
+    hasCredentials: hasLocalCreds || hasBackup,
+    hasBackup,
+    totalKeepAlivePings,
+    lastKeepAlivePing,
   };
+}
+
+export function getSafeHostOrigin(stateData?: any): string {
+  if (process.env.APP_URL && !process.env.APP_URL.includes("localhost")) {
+    return process.env.APP_URL.replace(/\/+$/, "");
+  }
+  if (process.env.HOST_ORIGIN && !process.env.HOST_ORIGIN.includes("localhost")) {
+    return process.env.HOST_ORIGIN.replace(/\/+$/, "");
+  }
+  if (stateData?.lastHostOrigin && !stateData.lastHostOrigin.includes("localhost") && !stateData.lastHostOrigin.includes("127.0.0.1")) {
+    return stateData.lastHostOrigin.replace(/\/+$/, "");
+  }
+  return "https://ais-dev-grtpupgmszidexaiv2ievt-958431568317.asia-east1.run.app";
 }
 
 // Initialize/Start WhatsApp connection
 export async function initWhatsApp() {
   try {
+    // Restore persistent session from backup if local folder is empty
+    restoreAuthStateFromPersistentStore();
+
     if (connectionStatus === "connected" && sock) {
       return sock;
     }
 
     connectionStatus = "connecting";
     lastError = null;
+
+    const makeWASocket = await getMakeWASocket();
+    const useMultiFileAuthState = await getUseMultiFileAuthState();
+    const DisconnectReason = await getDisconnectReason();
 
     console.log("Baileys integration checks:", {
       makeWASocketType: typeof makeWASocket,
@@ -105,8 +288,15 @@ export async function initWhatsApp() {
       logger: pino({ level: "silent" }) as any,
     });
 
-    // Handle credential updates
-    sock.ev.on("creds.update", saveCreds);
+    // Handle credential updates & persist to backup store
+    sock.ev.on("creds.update", async () => {
+      try {
+        await saveCreds();
+        backupAuthStateToPersistentStore();
+      } catch (e) {
+        console.warn("Error updating WhatsApp creds:", e);
+      }
+    });
 
     // Handle incoming message replies from workers
     sock.ev.on("messages.upsert", async (m: any) => {
@@ -283,32 +473,56 @@ Silakan pilih alasan ketidakhadiran Anda hari ini dengan membalas pesan ini meng
             const cleanMsg = messageText.toLowerCase().trim();
             const isMenuKeyword = cleanMsg === "menu" || cleanMsg === "bantuan" || cleanMsg === "help";
             
-            // Extract selected status first to see if they are trying to set/change a status
+            // Check if user is asking for Attendance link or how to check in
+            const isAttendanceLinkQuery = 
+              cleanMsg.includes("link") || 
+              cleanMsg.includes("tautan") || 
+              cleanMsg.includes("url") || 
+              cleanMsg.includes("portal") || 
+              cleanMsg.includes("web") || 
+              cleanMsg.includes("akses") || 
+              cleanMsg === "absen" || 
+              cleanMsg === "hadir" || 
+              cleanMsg === "presensi" || 
+              cleanMsg === "kehadiran" || 
+              cleanMsg.includes("mau absen") || 
+              cleanMsg.includes("absen dong") || 
+              cleanMsg.includes("buka absen") || 
+              cleanMsg.includes("kirim link") || 
+              cleanMsg.includes("minta link") || 
+              cleanMsg.includes("cekin") || 
+              cleanMsg.includes("check in") || 
+              cleanMsg.includes("checkin") || 
+              cleanMsg === "pagi" || 
+              cleanMsg === "siang" || 
+              cleanMsg === "ping" || 
+              cleanMsg === "bot" ||
+              isMenuKeyword;
+
+            // Extract selected status ONLY when explicitly declaring a non-attendance status (NEVER from asking for attendance links!)
             let selectedStatus: string | null = null;
-            if (cleanMsg === "1" || cleanMsg === "sakit" || (cleanMsg.includes("sakit") && cleanMsg.length < 15)) {
+            if (cleanMsg === "1" || cleanMsg === "sakit" || cleanMsg.startsWith("sakit ")) {
               selectedStatus = "Sakit";
-            } else if (cleanMsg === "2" || cleanMsg === "izin" || (cleanMsg.includes("izin") && cleanMsg.length < 15)) {
+            } else if (cleanMsg === "2" || cleanMsg === "izin" || cleanMsg.startsWith("izin ")) {
               selectedStatus = "Izin";
-            } else if (cleanMsg === "3" || cleanMsg === "cuti" || (cleanMsg.includes("cuti") && cleanMsg.length < 15)) {
+            } else if (cleanMsg === "3" || cleanMsg === "cuti" || cleanMsg.startsWith("cuti ")) {
               selectedStatus = "Cuti";
-            } else if (cleanMsg === "4" || cleanMsg === "meeting" || (cleanMsg.includes("meeting") && cleanMsg.length < 15)) {
+            } else if (cleanMsg === "4" || cleanMsg === "meeting" || cleanMsg.startsWith("meeting ")) {
               selectedStatus = "Meeting";
-            } else if (cleanMsg === "5" || cleanMsg === "absen" || cleanMsg === "alpa" || (cleanMsg.includes("absen") && cleanMsg.length < 15)) {
+            } else if (cleanMsg === "5" || cleanMsg === "alpa" || cleanMsg === "tidak hadir" || cleanMsg === "tidak masuk") {
               selectedStatus = "Absen";
             }
 
             const isPresentToday = matchedRecord && matchedRecord.attendance && matchedRecord.attendance[todayDate] === true;
             
             // If they are already checked in as "Hadir" (Present) today, completely ignore normal texts
-            // so they can chat with the admin/staff about work things normally.
-            if (isPresentToday && !isMenuKeyword) {
+            // so they can chat with the admin/staff about work things normally, unless asking for link or explicit status.
+            if (isPresentToday && !isMenuKeyword && !isAttendanceLinkQuery && !selectedStatus) {
               continue;
             }
 
-            // If they already have a custom status set (like Sakit/Izin), we ignore normal chats.
-            // But if they sent an explicit, strict option or status keyword, we let them overwrite/correct it!
-            if (isCheckedInToday && !selectedStatus && !isMenuKeyword) {
-              // Silent skip, let admin and worker chat about work naturally
+            // If they already have a custom status set (like Sakit/Izin), ignore normal chat unless explicit
+            if (isCheckedInToday && !selectedStatus && !isMenuKeyword && !isAttendanceLinkQuery) {
               continue;
             }
             
@@ -362,37 +576,39 @@ Silakan pilih alasan ketidakhadiran Anda hari ini dengan membalas pesan ini meng
               state.attendanceRecords = records;
               fs.writeFileSync(DATA_FILE, JSON.stringify(state, null, 2), "utf-8");
               
+              const hostOrigin = getSafeHostOrigin(state);
+              const attendanceUrl = `${hostOrigin}/?view=absen&workerId=${encodeURIComponent(worker.id)}&quick=true`;
+
               const responseText = `✅ *Status Absensi Tercatat!*
 
 Halo *${workerName}*, status absensi Anda hari ini tanggal *${todayDate}* telah dicatat sebagai *${selectedStatus}* di sistem admin. 
 
-💡 *Salah pilih / Tidak sengaja?*
-Jika Anda tidak sengaja mengirimkan nomor/status ini, Anda dapat memperbaikinya kapan saja sebelum jam kerja berakhir dengan:
-📍 **Kirimkan lokasi aktif Anda (Share Location)** sekarang untuk mengubah status menjadi *Hadir*, atau ketik angka/status pilihan lainnya jika ingin mengganti status.`;
+💡 *Salah pilih / Ingin Hadir?*
+Jika Anda ingin mengubah status menjadi *Hadir*, silakan:
+📍 **Kirimkan lokasi aktif Anda (Share Location)** sekarang, atau buka portal:
+👉 ${attendanceUrl}`;
               await sock.sendMessage(senderJid, { text: responseText });
-            } else if (
-              cleanMsg === "absen" || 
-              cleanMsg === "hadir" || 
-              cleanMsg === "pagi" || 
-              cleanMsg === "siang" || 
-              cleanMsg === "ping" || 
-              cleanMsg === "bot" ||
-              isMenuKeyword
-            ) {
-              // Send a help menu
+            } else if (isAttendanceLinkQuery) {
+              // Send direct personalized attendance link
+              const hostOrigin = getSafeHostOrigin(state);
+              const attendanceUrl = `${hostOrigin}/?view=absen&workerId=${encodeURIComponent(worker.id)}&quick=true`;
+
               const responseText = `Halo *${workerName}*! 👋
 
-Silakan pilih cara melakukan absensi hari ini:
-1️⃣ *Kirimkan Lokasi Aktif Anda (Share Location)* melalui WhatsApp ini untuk absen Hadir langsung di kantor.
-2️⃣ Atau ketik angka/status di bawah jika berhalangan hadir:
-   👉 *Sakit*
-   👉 *Izin*
-   👉 *Cuti*
-   👉 *Meeting*
-   👉 *Absen* (Alpa)
-3️⃣ 🤖 *Tanya AI Bisnis*: Anda juga dapat bertanya langsung seputar voucher transaksi, rekap petty cash, atau informasi operasional perusahaan!
+Berikut tautan resmi untuk mengakses kehadiran hari ini (*${todayDate}*):
+👉 *Portal Presensi Mandiri:*
+${attendanceUrl}
 
-_Catatan: Jika Anda ingin melakukan absensi normal dengan tanda tangan & foto, silakan klik link absensi harian yang dikirim sebelumnya._`;
+📍 *Ketentuan Absen:*
+1️⃣ Buka link di atas untuk verifikasi foto selfie & tanda tangan digital di lokasi kantor.
+2️⃣ Atau cukup **Kirimkan Lokasi Aktif Anda (Share Location)** langsung ke WhatsApp ini untuk presensi instan.
+3️⃣ Jika berhalangan hadir, balas pesan ini dengan status:
+   • *Sakit*
+   • *Izin*
+   • *Cuti*
+   • *Meeting*
+   • *Alpa* (Tidak Hadir)
+4️⃣ 🤖 *Tanya AI Bisnis*: Anda juga dapat bertanya seputar info pengeluaran, voucher, atau petty cash!`;
               await sock.sendMessage(senderJid, { text: responseText });
             } else {
               // Route to Gemini AI Knowledge for business/transaction queries
@@ -400,7 +616,33 @@ _Catatan: Jika Anda ingin melakukan absensi normal dengan tanda tangan & foto, s
             }
           } else if (messageText && !worker) {
             // General query from an unlisted number or admin
-            await handleBusinessAiQuery(messageText, senderJid);
+            const cleanMsg = messageText.toLowerCase().trim();
+            const isAttendanceLinkQuery = 
+              cleanMsg.includes("link") || 
+              cleanMsg.includes("tautan") || 
+              cleanMsg.includes("url") || 
+              cleanMsg.includes("portal") || 
+              cleanMsg.includes("web") || 
+              cleanMsg.includes("akses") || 
+              cleanMsg === "absen" || 
+              cleanMsg === "hadir" || 
+              cleanMsg === "presensi" || 
+              cleanMsg === "kehadiran" ||
+              cleanMsg.includes("absen");
+
+            if (isAttendanceLinkQuery) {
+              const hostOrigin = getSafeHostOrigin(state);
+              const generalAttendanceUrl = `${hostOrigin}/?view=absen`;
+              const responseText = `Halo! 👋
+
+Berikut tautan resmi Portal Presensi Mandiri PT NMSA:
+👉 ${generalAttendanceUrl}
+
+Silakan buka tautan di atas untuk mengakses menu absensi dan mencatat kehadiran harian.`;
+              await sock.sendMessage(senderJid, { text: responseText });
+            } else {
+              await handleBusinessAiQuery(messageText, senderJid);
+            }
           }
         }
       } catch (err) {
@@ -425,29 +667,57 @@ _Catatan: Jika Anda ingin melakukan absensi normal dengan tanda tangan & foto, s
       if (connection === "open") {
         connectionStatus = "connected";
         qrCodeDataUrl = null;
+        reconnectAttempts = 0;
+        lastError = null;
         const user = sock?.user;
         connectedUser = user ? { id: user.id, name: user.name || "Admin WhatsApp" } : { id: "unknown" };
-        console.log("WhatsApp connection successfully opened for", connectedUser);
+        console.log("[WhatsApp Bot] WhatsApp connection successfully opened for", connectedUser);
+
+        // Backup session files immediately upon successful connection
+        backupAuthStateToPersistentStore();
+
+        // Start presence keep-alive loop (send presence update every 45s)
+        if (presenceKeepAliveTimer) clearInterval(presenceKeepAliveTimer);
+        presenceKeepAliveTimer = setInterval(() => {
+          if (sock && connectionStatus === "connected") {
+            try {
+              sock.sendPresenceUpdate?.("available").catch(() => {});
+            } catch (e) {}
+          }
+        }, 45000);
       }
 
       if (connection === "close") {
         const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
-        const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+        const DisconnectReason = await getDisconnectReason();
+        const isLoggedOut = statusCode === DisconnectReason?.loggedOut;
+        const shouldReconnect = !isLoggedOut;
         
-        console.log(`WhatsApp connection closed. Status Code: ${statusCode}, Reconnecting: ${shouldReconnect}`);
+        console.log(`[WhatsApp Bot] Connection closed. StatusCode: ${statusCode}, Should Reconnect: ${shouldReconnect}, Attempts: ${reconnectAttempts}`);
         
         connectedUser = null;
         qrCodeDataUrl = null;
 
+        if (presenceKeepAliveTimer) {
+          clearInterval(presenceKeepAliveTimer);
+          presenceKeepAliveTimer = null;
+        }
+
         if (shouldReconnect) {
+          reconnectAttempts++;
           connectionStatus = "connecting";
+          // Resilient progressive backoff: 3s, 5s, 8s, up to max 25s
+          const delay = Math.min(25000, 2000 + Math.min(reconnectAttempts, 8) * 2500);
+          console.log(`[WhatsApp Bot] Auto-reconnecting in ${Math.round(delay / 1000)}s (Percobaan #${reconnectAttempts})...`);
           setTimeout(() => {
-            initWhatsApp();
-          }, 5000);
+            initWhatsApp().catch((err) => console.error("Error in auto-reconnecting WhatsApp:", err));
+          }, delay);
         } else {
           connectionStatus = "disconnected";
-          lastError = "Logged out of WhatsApp. Please scan QR Code again.";
+          lastError = "Sesi WhatsApp telah dikeluarkan (logged out) dari perangkat HP. Silakan scan ulang QR Code.";
           cleanupAuthFolder();
+          clearAuthBackup();
+          reconnectAttempts = 0;
         }
       }
     });
@@ -491,6 +761,7 @@ export async function disconnectWhatsApp() {
     
     connectionStatus = "disconnected";
     cleanupAuthFolder();
+    clearAuthBackup();
     
     // Trigger a fresh connection after 2 seconds to regenerate a clean QR code
     setTimeout(() => {
@@ -721,6 +992,42 @@ export async function generateBusinessAiReply(userQuery: string, senderName?: st
   const pinMatch = userQuery.match(pinPattern);
   const providedPin = pinMatch ? (pinMatch[1] || pinMatch[2]) : "";
   const isPinValid = providedPin && String(providedPin).trim() === String(secSettings.securityPin || "1234").trim();
+
+  // Intercept direct inquiries for application links (Attendance, SPPD, Memo, Voucher, etc.)
+  const hostOrigin = getSafeHostOrigin(stateData);
+  const isLinkInquiry = qLower.includes("link") || qLower.includes("tautan") || qLower.includes("url") || qLower.includes("web") || qLower.includes("portal") || qLower.includes("akses");
+
+  if (isLinkInquiry) {
+    if (qLower.includes("absen") || qLower.includes("hadir") || qLower.includes("presensi") || qLower.includes("kehadiran")) {
+      const matchedW = (stateData.workers || []).find((w: any) => cleanSenderPhone && normalizePhoneNumber(w.phoneNumber) === cleanSenderPhone);
+      const attUrl = matchedW ? `${hostOrigin}/?view=absen&workerId=${encodeURIComponent(matchedW.id)}&quick=true` : `${hostOrigin}/?view=absen`;
+      return `📱 *LINK PORTAL ABSENSI HARIAN PT NMSA*\n\nBerikut tautan resmi untuk mengakses presensi mandiri:\n👉 ${attUrl}\n\n📍 _Tautan ini resmi dan terhubung langsung ke sistem pencatatan kehadiran PT NMSA._`;
+    }
+    if (qLower.includes("sppd") || qLower.includes("dinas")) {
+      return `📑 *LINK FORMULIR SPPD DINAS PT NMSA*\n\n• Form Pengajuan Mandiri Publik: 👉 ${hostOrigin}/#/input-sppd\n• Portal SPPD Admin: 👉 ${hostOrigin}/?view=sppd\n\n💡 _Gunakan link di atas untuk mengisi formulir Surat Perintah Perjalanan Dinas._`;
+    }
+    if (qLower.includes("memo")) {
+      return `📝 *LINK INTERNAL MEMO DIREKSI PT NMSA*\n\n👉 ${hostOrigin}/?view=memo\n\n💡 _Tautan langsung untuk mengakses dokumen Internal Memo Direksi PT NMSA._`;
+    }
+    if (qLower.includes("voucher") || qLower.includes("bkk") || qLower.includes("transaksi")) {
+      return `💰 *PORTAL TRANSAKSI & VOUCHER PT NMSA*\n\n👉 ${hostOrigin}/\n\n💡 _Untuk membuka bukti voucher tertentu, klik tombol Bagikan di dalam aplikasi untuk memperoleh link pratinjau resmi._`;
+    }
+    if (qLower.includes("agenda")) {
+      return `⏰ *LINK AGENDA KERJA & PAJAK PT NMSA*\n\n👉 ${hostOrigin}/?view=agenda`;
+    }
+    if (qLower.includes("rab") || qLower.includes("proyek")) {
+      return `🏗️ *LINK ANGGARAN RAB & PROYEK PT NMSA*\n\n👉 ${hostOrigin}/?view=rab`;
+    }
+    if (qLower.includes("npwp") || qLower.includes("vendor")) {
+      return `🏢 *LINK MASTER NPWP & VENDOR PT NMSA*\n\n👉 ${hostOrigin}/?view=npwp`;
+    }
+    if (qLower.includes("accurate") || qLower.includes("kas kecil") || qLower.includes("petty cash")) {
+      return `📊 *LINK PEMETAAN AKUN ACCURATE & KAS KECIL*\n\n👉 ${hostOrigin}/?view=accurate`;
+    }
+    if (qLower.includes("semua") || qLower.includes("menu") || qLower.includes("daftar")) {
+      return `🌐 *DAFTAR LINK RESMI SEMUA MENU APLIKASI PT NMSA*\n\n1️⃣ 👥 *Absensi Harian:* ${hostOrigin}/?view=absen\n2️⃣ 💰 *Voucher Transaksi:* ${hostOrigin}/\n3️⃣ 📑 *Form Input SPPD:* ${hostOrigin}/#/input-sppd\n4️⃣ 📝 *Internal Memo:* ${hostOrigin}/?view=memo\n5️⃣ ⏰ *Agenda Kerja:* ${hostOrigin}/?view=agenda\n6️⃣ 🏗️ *Proyek RAB:* ${hostOrigin}/?view=rab\n7️⃣ 🏢 *Master NPWP:* ${hostOrigin}/?view=npwp\n8️⃣ 📊 *Accurate & Kas Kecil:* ${hostOrigin}/?view=accurate\n\n💡 _Semua tautan di atas telah dipatenkan dan dapat diakses langsung._`;
+    }
+  }
 
   // Access Control enforcement for sensitive financial queries
   if (isFinancialQuery) {
@@ -1190,6 +1497,18 @@ PANDUAN MENJAWAB (AKURAT, DETAIL, & PROFESIONAL):
 8. JIKA DITANYA TENTANG FITUR APLIKASI ATAU BANTUAN KATA KUNCI:
    - Jelaskan ke-6 menu aplikasi secara terstruktur dan berikan contoh kata kunci pertanyaan yang dapat diajukan.
 
+9. STANDAR PATEN TAUTAN APLIKASI PT NMSA:
+   - Domain Utama: ${hostOrigin}
+   - Tautan Absensi Harian: ${hostOrigin}/?view=absen
+   - Tautan Voucher Transaksi: ${hostOrigin}/
+   - Tautan Formulir SPPD: ${hostOrigin}/#/input-sppd (dan ${hostOrigin}/?view=sppd)
+   - Tautan Internal Memo: ${hostOrigin}/?view=memo
+   - Tautan Agenda Kerja: ${hostOrigin}/?view=agenda
+   - Tautan Proyek RAB: ${hostOrigin}/?view=rab
+   - Tautan Master NPWP: ${hostOrigin}/?view=npwp
+   - Tautan Kas Kecil & Accurate: ${hostOrigin}/?view=accurate
+   *ATURAN WAJIB:* Jika pengguna meminta tautan/link kehadiran atau absensi, SELALU berikan ${hostOrigin}/?view=absen. JANGAN PERNAH memberikan tautan voucher untuk pertanyaan kehadiran!
+
 Gunakan format Markdown WhatsApp yang estetik dan rapi (*tebal*, •, ✅, ⏳, 📎, 👉, 📋) yang nyaman dibaca di smartphone.`;
 
   const modelsToTry = [
@@ -1243,7 +1562,8 @@ Gunakan format Markdown WhatsApp yang estetik dan rapi (*tebal*, •, ✅, ⏳, 
     paidList,
     unpaidList,
     totalPaidNominal,
-    totalUnpaidNominal
+    totalUnpaidNominal,
+    hostOrigin
   );
 }
 
@@ -1270,9 +1590,39 @@ function generateDeterministicBusinessReply(
   paidList: any[],
   unpaidList: any[],
   totalPaidNominal: number,
-  totalUnpaidNominal: number
+  totalUnpaidNominal: number,
+  hostOrigin: string = "https://ais-dev-grtpupgmszidexaiv2ievt-958431568317.asia-east1.run.app"
 ): string {
   const q = userQuery.toLowerCase().trim();
+
+  // Link & Portal requests (High Priority Patented Handling)
+  if (q.includes("link") || q.includes("tautan") || q.includes("url") || q.includes("web") || q.includes("portal") || q.includes("akses")) {
+    if (q.includes("absen") || q.includes("hadir") || q.includes("presensi") || q.includes("kehadiran")) {
+      return `📱 *LINK PORTAL ABSENSI HARIAN PT NMSA*\n\nBerikut tautan resmi untuk mengakses presensi mandiri:\n👉 ${hostOrigin}/?view=absen\n\n📍 _Buka tautan di atas untuk foto selfie & tanda tangan kehadiran hari ini._`;
+    }
+    if (q.includes("sppd") || q.includes("dinas")) {
+      return `📑 *LINK FORMULIR SPPD DINAS PT NMSA*\n\n• Form Mandiri Publik: 👉 ${hostOrigin}/#/input-sppd\n• Modul SPPD Admin: 👉 ${hostOrigin}/?view=sppd\n\n💡 _Gunakan tautan di atas untuk mengisi Surat Perintah Perjalanan Dinas._`;
+    }
+    if (q.includes("memo")) {
+      return `📝 *LINK INTERNAL MEMO DIREKSI PT NMSA*\n\n👉 ${hostOrigin}/?view=memo\n\n💡 _Tautan langsung dokumen Internal Memo PT NMSA._`;
+    }
+    if (q.includes("voucher") || q.includes("transaksi") || q.includes("bkk")) {
+      return `💰 *PORTAL TRANSAKSI & VOUCHER HO PT NMSA*\n\n👉 ${hostOrigin}/`;
+    }
+    if (q.includes("agenda")) {
+      return `⏰ *LINK AGENDA KERJA & PAJAK PT NMSA*\n\n👉 ${hostOrigin}/?view=agenda`;
+    }
+    if (q.includes("rab") || q.includes("proyek")) {
+      return `🏗️ *LINK ANGGARAN RAB & PROYEK PT NMSA*\n\n👉 ${hostOrigin}/?view=rab`;
+    }
+    if (q.includes("npwp") || q.includes("vendor")) {
+      return `🏢 *LINK MASTER NPWP & VENDOR PT NMSA*\n\n👉 ${hostOrigin}/?view=npwp`;
+    }
+    if (q.includes("accurate") || q.includes("kas kecil") || q.includes("petty cash")) {
+      return `📊 *LINK PEMETAAN AKUN ACCURATE & KAS KECIL*\n\n👉 ${hostOrigin}/?view=accurate`;
+    }
+    return `🌐 *DAFTAR LINK RESMI MENU APLIKASI PT NMSA*\n\n1️⃣ 👥 *Absensi Harian:* ${hostOrigin}/?view=absen\n2️⃣ 💰 *Voucher Transaksi:* ${hostOrigin}/\n3️⃣ 📑 *Form Input SPPD:* ${hostOrigin}/#/input-sppd\n4️⃣ 📝 *Internal Memo:* ${hostOrigin}/?view=memo\n5️⃣ ⏰ *Agenda Kerja:* ${hostOrigin}/?view=agenda\n6️⃣ 🏗️ *Proyek RAB:* ${hostOrigin}/?view=rab\n7️⃣ 🏢 *Master NPWP:* ${hostOrigin}/?view=npwp\n8️⃣ 📊 *Accurate & Kas Kecil:* ${hostOrigin}/?view=accurate\n\n💡 _Semua tautan di atas telah dipatenkan dan dapat diakses langsung._`;
+  }
 
   // 1. Menu & Help / Panduan Kata Kunci
   if (q === "menu" || q === "bantuan" || q === "help" || q.includes("kata kunci") || q.includes("fitur") || q.includes("bisa apa") || q === "halo" || q === "hi" || q === "p") {

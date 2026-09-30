@@ -315,7 +315,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                 <input
                   type="text"
                   required
-                  placeholder="Contoh: Nur Wahyudi"
+                  placeholder="Nama Pembuat"
                   value={creatorName}
                   onChange={(e) => setCreatorName(e.target.value)}
                   className="w-full bg-white hover:bg-stone-50 text-xs font-bold text-stone-800 px-3 py-2 rounded-lg border border-stone-250 focus:border-[#d4af37] outline-hidden transition"
@@ -355,7 +355,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                 <input
                   type="text"
                   required
-                  placeholder="Contoh: Harijon"
+                  placeholder="Nama Penyetuju"
                   value={approverName}
                   onChange={(e) => setApproverName(e.target.value)}
                   className="w-full bg-white hover:bg-stone-50 text-xs font-bold text-stone-800 px-3 py-2 rounded-lg border border-stone-250 focus:border-[#d4af37] outline-hidden transition"

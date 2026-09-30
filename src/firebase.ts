@@ -8,6 +8,8 @@ import {
   deleteDoc, 
   query, 
   orderBy,
+  where,
+  limit,
   Firestore,
   getDocFromServer,
   getDoc,
@@ -23,9 +25,10 @@ import {
   Auth, 
   User,
   GoogleAuthProvider,
-  signInWithPopup
+  signInWithPopup,
+  sendPasswordResetEmail
 } from 'firebase/auth';
-import { Submission, SubmissionItem, ActivityLog, NpwpRecord, CompanyProfile } from './types';
+import { Submission, SubmissionItem, ActivityLog, NpwpRecord, CompanyProfile, InternalMemo } from './types';
 import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission } from './utils';
 
 export enum OperationType {
@@ -187,7 +190,7 @@ export const mapFirestoreToSubmission = (docId: string, data: any): Submission =
     id: docId,
     lokasi: data.lokasi || firstItem.lokasi || 'Lt. 1',
     tanggal: data.tanggal || data.tanggal_pengajuan || firstItem.tanggal || new Date().toISOString().split('T')[0],
-    jenisPengajuan: data.jenisPengajuan || data.jenis_pengajuan || data.jenis || firstItem.jenis || 'Biaya Gaji',
+    jenisPengajuan: data.jenisPengajuan || data.jenis_pengajuan || data.jenis || firstItem.jenis || '',
     kode: docCode,
     dibayarkanKepada: data.dibayarkanKepada || data.dibayarkan_kepada || 'Penerima',
     dibayarkanDengan: data.dibayarkanDengan || data.dibayarkan_dengan || (finalStatus === 'Lunas' ? 'Cek/Transfer' : 'Tunai'),
@@ -772,6 +775,56 @@ export const loginToFirebase = async (email: string, password: string): Promise<
   } catch (error) {
     console.error('Authentication Failed:', error);
     throw error;
+  }
+};
+
+export const loginWithGoogle = async (): Promise<User> => {
+  if (!firebaseAuth) {
+    throw new Error('Firebase Auth belum dikonfigurasi.');
+  }
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: 'select_account' });
+  const result = await signInWithPopup(firebaseAuth, provider);
+  currentUser = result.user;
+  return result.user;
+};
+
+export const resetPasswordViaEmail = async (email: string): Promise<void> => {
+  if (!firebaseAuth) {
+    throw new Error('Firebase Auth belum dikonfigurasi.');
+  }
+  await sendPasswordResetEmail(firebaseAuth, email);
+};
+
+export const ensureUserProfile = async (
+  user: User,
+  defaults: { companyId?: string; companyName?: string } = {}
+): Promise<void> => {
+  if (!firestoreDb || !user) return;
+  try {
+    const docRef = doc(firestoreDb, 'users', user.uid);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) {
+      const companyId = (defaults.companyId || 'nmsa').toLowerCase().trim();
+      const companyName = defaults.companyName || 'PT Nusantara Mineral Sukses Abadi';
+      await setDoc(docRef, {
+        uid: user.uid,
+        email: user.email,
+        fullName: user.displayName || user.email?.split('@')[0] || 'User',
+        role: 'Divisi Keuangan',
+        companyId: companyId,
+        companyName: companyName,
+        createdAt: new Date().toISOString()
+      });
+      setActiveCompanyId(companyId);
+    } else {
+      const data = snap.data();
+      if (data?.companyId) {
+        setActiveCompanyId(data.companyId);
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to ensure user profile in Firestore:', err);
   }
 };
 
@@ -1726,6 +1779,13 @@ export const executeDriveApiWithAutoRefresh = async <T>(
       token = googleDriveTokenMemory || localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN') || '';
     }
 
+    if (!token || token.trim() === '') {
+      throw new Error(
+        'Akun Google Drive belum terhubung atau sesi login telah berakhir. ' +
+        'Silakan buka menu pengaturan Google Drive dan klik "Hubungkan Akun Google Drive" terlebih dahulu.'
+      );
+    }
+
     try {
       const result = await action(token);
 
@@ -1996,6 +2056,19 @@ export const googleDriveLogin = async (
 
     return { user: result.user, accessToken: credential.accessToken, driveDetails };
   } catch (error: any) {
+    if (error?.code === 'auth/unauthorized-domain' || String(error?.message).includes('unauthorized-domain')) {
+      const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'aplikasi-perusahaan.onrender.com';
+      console.warn(`[Firebase Auth] Domain '${currentHost}' belum terdaftar di Authorized Domains.`);
+      throw new Error(
+        `Domain aplikasi ini (${currentHost}) belum didaftarkan di Firebase Authentication Authorized Domains.\n\n` +
+        `Langkah mengatasinya:\n` +
+        `1. Buka Firebase Console (https://console.firebase.google.com/)\n` +
+        `2. Pilih project: pencatatan-voucher-perusahaan\n` +
+        `3. Masuk ke menu: Authentication -> Settings -> tab "Authorized domains"\n` +
+        `4. Klik tombol "Add domain" lalu masukkan: ${currentHost}\n` +
+        `5. Klik Save / Simpan, kemudian coba klik Hubungkan Akun Google Drive kembali.`
+      );
+    }
     if (error?.code === 'auth/popup-blocked' || String(error?.message).includes('popup-blocked')) {
       console.warn('Google Auth popup was blocked by browser. User interaction required.');
       throw new Error('Jendela pop-up login Google diblokir oleh browser. Silakan izinkan pop-up (Pop-ups Allowed) di pengaturan browser Anda lalu klik Hubungkan Akun kembali.');
@@ -2050,6 +2123,25 @@ export const getSubmissionFromFirestore = async (docId: string): Promise<Submiss
     if (snap.exists()) {
       return mapFirestoreToSubmission(snap.id, snap.data());
     }
+
+    // Secondary fallback: query by field 'kode' or 'id'
+    try {
+      const qKode = query(collection(firestoreDb, 'submissions'), where('kode', '==', docId), limit(1));
+      const snapKode = await getDocs(qKode);
+      if (!snapKode.empty) {
+        const first = snapKode.docs[0];
+        return mapFirestoreToSubmission(first.id, first.data());
+      }
+    } catch (_) {}
+
+    try {
+      const qId = query(collection(firestoreDb, 'submissions'), where('id', '==', docId), limit(1));
+      const snapId = await getDocs(qId);
+      if (!snapId.empty) {
+        const first = snapId.docs[0];
+        return mapFirestoreToSubmission(first.id, first.data());
+      }
+    } catch (_) {}
   } catch (err) {
     console.warn('Error fetching single submission:', err);
   }
@@ -2571,6 +2663,51 @@ export const clearFirebaseConfig = () => {
   firebaseApp = null;
   firestoreDb = null;
   firebaseAuth = null;
+};
+
+// --- Internal Memo Firestore Cloud Methods ---
+export const saveInternalMemoToFirestore = async (memo: InternalMemo): Promise<void> => {
+  if (!isFirebaseConfigured() || !firestoreDb) return;
+  try {
+    const docRef = doc(firestoreDb, 'internal_memos', memo.id);
+    const cleaned = cleanUndefined({
+      ...memo,
+      updatedAt: new Date().toISOString()
+    });
+    await setDoc(docRef, cleaned, { merge: true });
+    console.log(`☁️ Internal Memo ${memo.id} (${memo.nomorMemo}) successfully saved to Firestore.`);
+  } catch (err) {
+    console.warn('Failed to save internal memo to Firestore:', err);
+  }
+};
+
+export const getInternalMemosFromFirestore = async (): Promise<InternalMemo[]> => {
+  if (!isFirebaseConfigured() || !firestoreDb) return [];
+  try {
+    const colRef = collection(firestoreDb, 'internal_memos');
+    const snap = await getDocs(colRef);
+    const list: InternalMemo[] = [];
+    snap.forEach((d) => {
+      list.push({ id: d.id, ...d.data() } as InternalMemo);
+    });
+    // Sort descending by createdAt or tanggal
+    list.sort((a, b) => new Date(b.createdAt || b.tanggal).getTime() - new Date(a.createdAt || a.tanggal).getTime());
+    return list;
+  } catch (err) {
+    console.warn('Failed to fetch internal memos from Firestore:', err);
+    return [];
+  }
+};
+
+export const deleteInternalMemoFromFirestore = async (id: string): Promise<void> => {
+  if (!isFirebaseConfigured() || !firestoreDb) return;
+  try {
+    const docRef = doc(firestoreDb, 'internal_memos', id);
+    await deleteDoc(docRef);
+    console.log(`☁️ Internal Memo ${id} deleted from Firestore.`);
+  } catch (err) {
+    console.warn('Failed to delete internal memo from Firestore:', err);
+  }
 };
 
 // Load initial config checking

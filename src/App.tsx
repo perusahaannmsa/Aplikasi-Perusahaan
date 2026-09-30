@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Submission, SubmissionItem, PettyCashReport, TransactionType, NpwpRecord, AgendaItem, Project, ProjectRabItem, ProjectExpense } from './types';
+import { Submission, SubmissionItem, PettyCashReport, TransactionType, NpwpRecord, AgendaItem, Project, ProjectRabItem, ProjectExpense, InternalMemo } from './types';
 import { INITIAL_SUBMISSIONS } from './data/initialData';
 import { INITIAL_AGENDA_ITEMS } from './data/initialAgenda';
 import { SubmissionsList } from './components/SubmissionsList';
@@ -63,7 +63,7 @@ import {
   switchUserCompany,
   setActiveCompanyId
 } from './firebase';
-import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, ArrowLeftRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell, MessageSquare, Bot, Sparkles, BookOpen, Wrench, Building2 } from 'lucide-react';
+import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, ArrowLeftRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell, MessageSquare, Bot, Sparkles, BookOpen, Wrench, Building2, Plus } from 'lucide-react';
 
 export default function App() {
   const [theme, setTheme] = useState<'classic' | 'gold-dark' | 'emerald' | 'slate'>(() => {
@@ -117,7 +117,7 @@ export default function App() {
 
   // Petty Cash master state
   const [pettyCashHolders, setPettyCashHolders] = useState<string[]>(() => {
-    const defaultHolders = ['Suryo Pranoto', 'Muhammad Akbar', 'Nurul Izza', 'Andi Dhiya Salsabila'];
+    const defaultHolders: string[] = [];
     try {
       const stored = localStorage.getItem('petty_cash_holders_v2');
       if (!stored || stored === 'undefined' || stored === 'null') return defaultHolders;
@@ -175,9 +175,9 @@ export default function App() {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       }
-      return INITIAL_AGENDA_ITEMS;
+      return [];
     } catch (e) {
-      return INITIAL_AGENDA_ITEMS;
+      return [];
     }
   });
 
@@ -789,7 +789,27 @@ export default function App() {
     };
   }, []);
 
-  const [view, setViewInternal] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab' | 'memo'>('list');
+  const [view, setViewInternal] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab' | 'memo'>(() => {
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      const h = window.location.hash;
+      const p = window.location.pathname;
+      if (
+        sp.get('view') === 'absen' || 
+        sp.get('tab') === 'absen' || 
+        sp.has('quick') || 
+        sp.has('workerId') || 
+        p === '/absen' || 
+        p === '/absensi' || 
+        h.includes('absen')
+      ) {
+        return 'absen';
+      }
+      const saved = sessionStorage.getItem('NUSANTARA_ACTIVE_VIEW');
+      if (saved) return saved as any;
+    } catch (e) {}
+    return 'list';
+  });
 
   const [previousView, setPreviousView] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab' | 'memo'>('list');
 
@@ -1293,28 +1313,33 @@ export default function App() {
       } catch (ssErr) {}
 
       // Tier 6: High-Resilience URL Parameter Fallback
-      // When shared via link containing ?id=...&transaksi=...&nominal=..., synthesize official voucher
+      // When shared via link containing ?id=...&kode=...&transaksi=...&nominal=..., synthesize official voucher
       try {
         const sp = new URLSearchParams(window.location.search);
         const transaksiParam = sp.get('transaksi');
         const nominalParam = sp.get('nominal');
-        if (transaksiParam || nominalParam) {
+        const kodeParam = sp.get('kode');
+        const idParam = sp.get('id') || sharedId;
+
+        if (transaksiParam || nominalParam || kodeParam || idParam) {
           const rawNom = Number(nominalParam) || 0;
           const formattedJenis = (transaksiParam || 'Biaya Transaksi')
             .split('-')
             .map(w => w.charAt(0).toUpperCase() + w.slice(1))
             .join(' ');
 
-          const numericId = sharedId.replace(/[^0-9]/g, '');
-          const generatedCode = sp.get('kode') || `VCR-${numericId ? numericId.slice(-6) : Date.now().toString().slice(-6)}`;
+          const numericId = String(idParam).replace(/[^0-9]/g, '');
+          const generatedCode = kodeParam || (idParam.toUpperCase().startsWith('DOC-') || idParam.toUpperCase().startsWith('VCR-') 
+            ? idParam.toUpperCase() 
+            : `VCR-${numericId ? numericId.slice(-6) : Date.now().toString().slice(-6)}`);
 
           const fallbackSubmission: Submission = {
-            id: sharedId,
+            id: idParam || `sub-${Date.now()}`,
             kode: generatedCode,
             tanggal: sp.get('tanggal') || new Date().toISOString().split('T')[0],
             jenisPengajuan: formattedJenis,
-            dibayarkanKepada: sp.get('kepada') || 'Pihak Terkait / Vendor',
-            dibayarkanDengan: 'Cek/Transfer',
+            dibayarkanKepada: sp.get('kepada') || 'Pihak Terkait / Rekanan',
+            dibayarkanDengan: (sp.get('bayar') as any) || 'Cek/Transfer',
             lokasi: 'Head Office',
             diajukanOleh: 'Sri Ekowati',
             diajukanJabatan: 'Manager Keuangan',
@@ -1358,7 +1383,7 @@ export default function App() {
                 }
               ];
             })(),
-            status: 'Lunas',
+            status: (sp.get('status') as any) || 'Lunas',
             notes: 'Dokumen transaksi resmi PT Nusantara Mineral Sukses Abadi.'
           };
 
@@ -1373,7 +1398,7 @@ export default function App() {
     };
 
     resolveSubmission();
-  }, [currentHash, currentPath]);
+  }, [currentHash, currentPath, submissions.length]);
 
   // Synchronous route popstate and hashchange tracking
   useEffect(() => {
@@ -2181,7 +2206,53 @@ export default function App() {
     setView('form');
   };
 
-  // 1. Check Public Share View Route before anything else (Highest Priority for Public Links)
+  // Handler to create a new Voucher HO draft directly from an Internal Memo
+  const handleCreateVoucherFromMemo = (memo: InternalMemo) => {
+    const docKode = `VCR-${Date.now().toString().slice(-6)}`;
+    const amount = Number(memo.linkedAmount) || 0;
+    const recipient = memo.accountHolder || memo.kepada?.split('–')[0]?.split('-')[0]?.trim() || 'Pihak Terkait';
+
+    const newMemoSubmission: Submission = {
+      id: 'sub-memo-' + Date.now(),
+      lokasi: 'Lt.1',
+      tanggal: memo.tanggal || new Date().toISOString().split('T')[0],
+      jenisPengajuan: 'Operasional Direksi',
+      kode: docKode,
+      dibayarkanKepada: recipient,
+      dibayarkanDengan: 'Cek/Transfer',
+      status: 'Belum Lunas',
+      notes: `Ref Internal Memo No. ${memo.nomorMemo}: ${memo.perihal || ''}`,
+      rekeningTujuan: memo.accountNumber || '',
+      noRekeningTujuan: memo.accountNumber || '',
+      namaBankTujuan: memo.bankName || 'Bank Mandiri',
+      atasNamaRekeningTujuan: memo.accountHolder || recipient,
+      dibuatOleh: userProfile ? userProfile.fullName : 'Nur Wahyudi',
+      disetujuiOleh: memo.penandatanganNama2 || 'Harijon',
+      disetujuiJabatan: memo.penandatanganJabatan2 || 'Direktur Keuangan',
+      diverifikasiOleh: 'Andi Muhammad Rifki',
+      diverifikasiJabatan: 'Direktur',
+      disetujuiOleh2: memo.penandatanganNama3 || 'Abdul Aziz Halid',
+      disetujuiJabatan2: memo.penandatanganJabatan3 || 'Direktur Utama ANH',
+      dibukukanOleh: 'Sri Ekowati',
+      dibukukanJabatan: 'Accounting',
+      items: [
+        {
+          id: 'item_memo_' + Date.now(),
+          no: 1,
+          item: memo.perihal || 'Pengeluaran sesuai Internal Memo',
+          jumlahVolume: '1 Paket',
+          total: amount,
+          keterangan: `Internal Memo No. ${memo.nomorMemo}`
+        }
+      ],
+      createdAt: new Date().toISOString()
+    };
+
+    setEditingSubmission(newMemoSubmission);
+    setView('form');
+  };
+
+  // 1. Direct Absensi Harian NMSA (Highest Priority when worker opens attendance link from WhatsApp / Web)
   const searchParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
   const rawIdParam = (searchParams.get('id') || '').toLowerCase().trim();
   const isSubmissionIdParam = 
@@ -2189,9 +2260,47 @@ export default function App() {
     rawIdParam.startsWith('tx-') || 
     rawIdParam.startsWith('vcr-') || 
     rawIdParam.startsWith('inv-') ||
-    rawIdParam.length > 10;
+    (rawIdParam.length > 10 && !rawIdParam.startsWith('w-') && !rawIdParam.startsWith('kar-') && !rawIdParam.startsWith('worker-'));
 
-  const isSharedViewRoute = Boolean(
+  const isAbsenRoute = Boolean(
+    currentPath === '/absen' || 
+    currentPath === '/absensi' || 
+    currentPath === '/absen-mandiri' ||
+    currentHash.includes('absen') || 
+    currentHash.includes('absensi') ||
+    searchParams.has('workerId') || 
+    searchParams.has('quick') || 
+    searchParams.get('view') === 'absen' || 
+    searchParams.get('tab') === 'absen' ||
+    (searchParams.has('id') && !isSubmissionIdParam && !searchParams.has('transaksi') && !searchParams.has('nominal') && !searchParams.has('kode'))
+  );
+
+  if (isAbsenRoute && (!authUser || searchParams.has('quick') || searchParams.has('workerId') || searchParams.get('view') === 'absen' || currentPath.includes('absen') || currentHash.includes('absen'))) {
+    return (
+      <div id="app-root" className={`min-h-screen bg-slate-950 text-slate-100 flex flex-col antialiased theme-${theme}`}>
+        <AbsensiHarianNmsa
+          onClose={() => {
+            window.history.pushState({}, '', '/');
+            window.location.hash = '';
+            setCurrentPath('/');
+            setCurrentHash('');
+            setView('list');
+          }}
+          pettyCashHolders={pettyCashHolders}
+          onUpdatePettyCashHolders={setPettyCashHolders}
+          pettyCashReports={pettyCashReports}
+          onUpdatePettyCashReports={handleSavePettyCashReports}
+          submissions={submissions}
+          onPostToVoucherHO={(newSub) => {
+            handleSaveSubmission(newSub);
+          }}
+        />
+      </div>
+    );
+  }
+
+  // 2. Check Public Share View Route (Only for valid Voucher / Pengeluaran links)
+  const isSharedViewRoute = !isAbsenRoute && Boolean(
     currentHash.includes('shared-view') ||
     currentPath.includes('shared-view') ||
     currentPath.includes('/voucher') ||
@@ -2201,8 +2310,8 @@ export default function App() {
     currentHash.includes('transaksi') ||
     searchParams.has('transaksi') ||
     searchParams.has('nominal') ||
-    (searchParams.has('id') && isSubmissionIdParam) ||
-    (searchParams.has('id') && (currentHash.includes('shared') || currentPath.includes('shared') || window.location.pathname.includes('shared-view')))
+    searchParams.has('kode') ||
+    (searchParams.has('id') && isSubmissionIdParam)
   );
 
   if (isSharedViewRoute) {
@@ -2325,44 +2434,6 @@ export default function App() {
     );
   }
 
-  // 2. Direct Absensi Harian NMSA (Only for valid worker attendance routes)
-  const isAbsenRoute = !isSharedViewRoute && Boolean(
-    currentPath === '/absen' || 
-    currentPath === '/absensi' || 
-    currentPath === '/absen-mandiri' ||
-    currentHash.includes('absen') || 
-    currentHash.includes('absensi') ||
-    searchParams.has('workerId') || 
-    searchParams.has('quick') || 
-    searchParams.get('view') === 'absen' || 
-    searchParams.get('tab') === 'absen' ||
-    (searchParams.has('id') && !isSubmissionIdParam && (currentPath.includes('absen') || currentHash.includes('absen')))
-  );
-
-  if (isAbsenRoute && !authUser) {
-    return (
-      <div id="app-root" className={`min-h-screen bg-slate-950 text-slate-100 flex flex-col antialiased theme-${theme}`}>
-        <AbsensiHarianNmsa
-          onClose={() => {
-            window.history.pushState({}, '', '/');
-            window.location.hash = '';
-            setCurrentPath('/');
-            setCurrentHash('');
-            setView('list');
-          }}
-          pettyCashHolders={pettyCashHolders}
-          onUpdatePettyCashHolders={setPettyCashHolders}
-          pettyCashReports={pettyCashReports}
-          onUpdatePettyCashReports={handleSavePettyCashReports}
-          submissions={submissions}
-          onPostToVoucherHO={(newSub) => {
-            handleSaveSubmission(newSub);
-          }}
-        />
-      </div>
-    );
-  }
-
   const isPublicSppdView = 
     currentPath === '/input-sppd' || 
     currentPath === '/sppd-form' ||
@@ -2470,7 +2541,7 @@ export default function App() {
                     <div className="w-7 h-7 rounded-full bg-emerald-100 border border-emerald-300 flex items-center justify-center text-emerald-800 font-bold text-xs">
                       {(userProfile?.fullName || 'Nur Wahyudi').substring(0, 2).toUpperCase()}
                     </div>
-                    <div className="flex flex-col items-start text-left">
+                    <div className="hidden sm:flex flex-col items-start text-left">
                       <div className="flex items-center gap-1 text-xs font-sans font-black text-stone-900 leading-tight">
                         <span className="truncate max-w-[120px] sm:max-w-[160px]">
                           {userProfile?.fullName || 'Nur Wahyudi'}
@@ -2645,21 +2716,21 @@ export default function App() {
   return (
     <div id="app-root" className={`min-h-screen bg-stone-50 text-stone-850 flex flex-col antialiased theme-${theme}`}>
       
-      {/* GLOBAL HEADER HEADER - Hidden on print */}
-      <header className="bg-white border-b border-stone-200 sticky top-0 z-40 shadow-xs print:hidden">
+      {/* GLOBAL HEADER - Sticky at the top on scroll */}
+      <header className="app-global-header bg-white border-b border-stone-200 sticky top-0 z-[1000] shadow-xs print:hidden">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between min-h-18 py-2 md:py-0">
             {/* Logo area */}
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-3 cursor-pointer" onClick={() => setView('list')}>
-                <div className="p-2.5 bg-stone-100 rounded-xl text-stone-850">
-                  <Database size={20} className="text-gold-dynamic" />
+            <div className="hidden sm:flex items-center gap-2 sm:gap-3 min-w-0">
+              <div className="flex items-center gap-2 sm:gap-3 cursor-pointer min-w-0" onClick={() => setView('list')}>
+                <div className="p-2 sm:p-2.5 bg-stone-100 rounded-xl text-stone-850 shrink-0">
+                  <Database size={18} className="text-gold-dynamic sm:w-5 sm:h-5" />
                 </div>
-                <div className="space-y-0.5">
-                  <span className="font-mono text-xs uppercase tracking-wider text-stone-400 font-bold block">
+                <div className="space-y-0.5 min-w-0">
+                  <span className="font-mono text-[10px] sm:text-xs uppercase tracking-wider text-stone-400 font-bold block truncate max-w-[100px] sm:max-w-none">
                     {userProfile?.companyDetails?.displayName || 'Internal HO System'}
                   </span>
-                  <h1 className="text-xs sm:text-sm font-black text-stone-900 tracking-tight flex items-center gap-1.5 font-sans">
+                  <h1 className="text-xs sm:text-sm font-black text-stone-900 tracking-tight flex items-center gap-1.5 font-sans truncate max-w-[120px] sm:max-w-none">
                     {userProfile?.companyName ? `${userProfile.companyName} Portal` : 'Nusantara Mineral Payment Portal'}
                   </h1>
                 </div>
@@ -2686,7 +2757,7 @@ export default function App() {
             {/* HEADER RIGHT ACTIONS: CLEAN, COMPACT & PROFESSIONAL */}
             <div className="flex items-center gap-2 sm:gap-2.5">
               {/* Real-time System Clock (WIB) */}
-              <LiveClock variant="badge" className="hidden xl:inline-flex" />
+              <LiveClock variant="badge" className="inline-flex min-w-0 max-w-[160px] sm:max-w-[220px]" />
 
               {/* Compact Agenda / Notif Button with Red Badge */}
               <button
@@ -2728,7 +2799,7 @@ export default function App() {
 
                 {/* Dropdown Popover */}
                 {isToolsDropdownOpen && (
-                  <div className="absolute right-0 top-full mt-2 w-80 sm:w-88 bg-white rounded-2xl shadow-xl border border-stone-200 z-50 overflow-hidden p-2.5 animate-in fade-in zoom-in-95 duration-150 font-sans space-y-2 max-h-[85vh] overflow-y-auto">
+                  <div className="app-header-dropdown absolute right-0 top-full mt-2 w-[min(22rem,calc(100vw-1.5rem))] max-h-[calc(100vh-5rem)] bg-white rounded-2xl shadow-2xl border border-stone-200 z-[1010] overflow-y-auto p-2.5 animate-in fade-in zoom-in-95 duration-150 font-sans space-y-2">
                     <div className="px-2.5 py-1 border-b border-stone-150 flex items-center justify-between">
                       <span className="text-[10px] font-mono font-bold text-stone-400 uppercase tracking-wider">
                         Layanan &amp; Integrasi Cloud
@@ -3039,13 +3110,13 @@ export default function App() {
               <div className="relative" ref={userMenuRef}>
                 <button
                   onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-                  className="flex items-center gap-2 py-1.5 px-3 rounded-2xl hover:bg-stone-100 border border-stone-200 transition cursor-pointer select-none bg-stone-50"
+                  className="flex items-center gap-1.5 sm:gap-2 py-1.5 px-2 sm:px-3 rounded-2xl hover:bg-stone-100 border border-stone-200 transition cursor-pointer select-none bg-stone-50 shrink-0"
                   title="Klik untuk menu profil, ganti tema, & logout"
                 >
-                  <div className="w-7 h-7 rounded-full bg-emerald-100 border border-emerald-300 flex items-center justify-center text-emerald-800 font-bold text-xs">
+                  <div className="w-7 h-7 rounded-full bg-emerald-100 border border-emerald-300 flex items-center justify-center text-emerald-800 font-bold text-xs shrink-0">
                     {(userProfile?.fullName || 'Nur Wahyudi').substring(0, 2).toUpperCase()}
                   </div>
-                  <div className="flex flex-col items-start text-left">
+                  <div className="hidden sm:flex flex-col items-start text-left">
                     <div className="flex items-center gap-1 text-xs font-sans font-black text-stone-900 leading-tight">
                       <span className="truncate max-w-[120px] sm:max-w-[160px]">
                         {userProfile?.fullName || 'Nur Wahyudi'}
@@ -3056,11 +3127,12 @@ export default function App() {
                       {userProfile?.role || 'Divisi Keuangan'}
                     </span>
                   </div>
+                  <ChevronDown size={13} className={`sm:hidden text-stone-400 transition-transform duration-200 ${isUserMenuOpen ? 'rotate-180' : ''}`} />
                 </button>
 
                 {/* User Dropdown Popover */}
                 {isUserMenuOpen && (
-                  <div className="absolute right-0 top-full mt-2 w-72 bg-white rounded-2xl shadow-xl border border-stone-200 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150 font-sans">
+                  <div className="app-header-dropdown absolute right-0 top-full mt-2 w-[min(18rem,calc(100vw-1.5rem))] max-h-[calc(100vh-5rem)] bg-white rounded-2xl shadow-2xl border border-stone-200 z-[1010] overflow-y-auto animate-in fade-in zoom-in-95 duration-150 font-sans">
                     <div className="p-3.5 bg-stone-50 border-b border-stone-200">
                       <div className="flex items-center gap-2.5">
                         <div className="w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center text-sm shadow-xs shrink-0">
@@ -3237,7 +3309,7 @@ export default function App() {
     />
 
       {/* MAIN CONTAINER */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-5 sm:py-8 pb-24 md:pb-8">
         
         {/* VIEW 1: Submissions Data History & Backup Operations */}
         <div className={view === 'list' ? 'space-y-6' : 'hidden'}>
@@ -3545,6 +3617,7 @@ export default function App() {
             initialSubmissionForMemo={memoSubmissionTarget}
             onBackToList={() => setView('list')}
             userProfile={userProfile}
+            onCreateVoucher={handleCreateVoucherFromMemo}
           />
         )}
 

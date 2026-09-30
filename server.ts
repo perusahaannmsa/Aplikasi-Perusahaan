@@ -13,14 +13,41 @@ import {
   disconnectWhatsApp, 
   sendWhatsAppMessage, 
   requestWhatsAppPairingCode,
-  generateBusinessAiReply
+  generateBusinessAiReply,
+  recordKeepAlivePing,
+  getKeepAliveInfo,
+  hasAuthBackup
 } from "./server/wa-bot";
+import { getDynamicReminderMessage } from "./src/utils/reminderMessageGenerator";
 
 dotenv.config();
 
 const app = express();
-// Bind to 3000 in AI Studio (where nginx proxy routes to 3000), or use Railway/cloud PORT when deployed externally
-const PORT = process.env.APPLET_ID ? 3000 : (process.env.PORT ? parseInt(process.env.PORT, 10) : 3000);
+// Port configuration: AI Studio dev server MUST run on port 3000 (nginx listens on 8080 and proxies to 3000).
+// In external platforms (e.g. Render, Railway), use process.env.PORT.
+let PORT = 3000;
+const portArgIndex = process.argv.indexOf("--port");
+if (portArgIndex !== -1 && process.argv[portArgIndex + 1]) {
+  PORT = parseInt(process.argv[portArgIndex + 1], 10);
+} else if (process.env.RENDER || process.env.RAILWAY_ENVIRONMENT) {
+  PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+} else if (process.env.NODE_ENV === "production" && process.env.PORT && process.env.PORT !== "8080") {
+  PORT = parseInt(process.env.PORT, 10);
+} else {
+  PORT = 3000;
+}
+
+process.on("SIGTERM", () => {
+  console.log("Received SIGTERM, gracefully shutting down server...");
+  process.exit(0);
+});
+process.on("SIGINT", () => {
+  console.log("Received SIGINT, shutting down server...");
+  process.exit(0);
+});
+
+// Global reference to Vite dev server instance for HTML transforms
+let viteInstance: any = null;
 
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
@@ -29,7 +56,7 @@ app.use(express.static(path.join(process.cwd(), "public")));
 function getGeminiClient() {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    throw new Error("GEMINI_API_KEY tidak dikonfigurasi di server.");
+    throw new Error("GEMINI_API_KEY belum dikonfigurasi di environment server. Tambahkan GEMINI_API_KEY di tab Variables (Railway) atau Secrets (Replit).");
   }
   return new GoogleGenAI({
     apiKey: apiKey,
@@ -43,8 +70,22 @@ const PRIMARY_GEMINI_MODELS = [
   "gemini-3.8-flash",
   "gemini-flash-latest",
   "gemini-3.1-flash-lite",
-  "gemini-3.8-pro",
+  "gemini-3.1-pro-preview",
 ];
+
+// Normalize MIME types from base64 signature for robust document reading
+export function normalizeDocumentMimeType(cleanBase64: string, fallbackMime?: string): string {
+  if (!cleanBase64) return fallbackMime || "application/pdf";
+  const trimmed = cleanBase64.trim();
+  if (trimmed.startsWith("JVBERi")) return "application/pdf";
+  if (trimmed.startsWith("/9j/")) return "image/jpeg";
+  if (trimmed.startsWith("iVBORw")) return "image/png";
+  if (trimmed.startsWith("UklGR")) return "image/webp";
+  if (fallbackMime && fallbackMime !== "application/octet-stream" && fallbackMime.includes("/")) {
+    return fallbackMime;
+  }
+  return "application/pdf";
+}
 
 async function generateWithModelFallback(
   ai: ReturnType<typeof getGeminiClient>,
@@ -55,11 +96,16 @@ async function generateWithModelFallback(
   }
 ) {
   let lastError: any = null;
+  // Normalize contents to parts format required by @google/genai SDK for multimodal
+  const payloadContents = Array.isArray(generateOptions.contents)
+    ? { parts: generateOptions.contents }
+    : generateOptions.contents;
+
   for (const modelName of models) {
     try {
       const response = await ai.models.generateContent({
         model: modelName,
-        contents: generateOptions.contents,
+        contents: payloadContents,
         config: generateOptions.config,
       });
       if (response && response.text) {
@@ -104,16 +150,32 @@ app.get("/api/gemini/status", async (req, res) => {
 app.post("/api/gemini/parse-receipt", async (req, res) => {
   try {
     const { fileBase64, mimeType } = req.body;
-    if (!fileBase64 || !mimeType) {
+    if (!fileBase64) {
       return res.status(400).json({ error: "Missing fileBase64 or mimeType representation." });
     }
     if (!process.env.GEMINI_API_KEY) {
       return res.status(500).json({ error: "GEMINI_API_KEY tidak dikonfigurasi di server." });
     }
     const ai = getGeminiClient();
-    const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, "");
-    const documentPart = { inlineData: { mimeType, data: cleanBase64 } };
-    const promptText = `Anda adalah sistem AI ekstraksi dokumen keuangan profesional. Ekstrak informasi kwitansi/faktur dalam JSON valid.`;
+    const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, "").trim();
+    const resolvedMime = normalizeDocumentMimeType(cleanBase64, mimeType);
+    const documentPart = { inlineData: { mimeType: resolvedMime, data: cleanBase64 } };
+    const promptText = `Anda adalah sistem AI ekstraksi dokumen keuangan profesional PT. Nusantara Mineral Sukses Abadi.
+Ekstrak informasi kwitansi/faktur/nota belanja ini ke dalam JSON valid:
+{
+  "tanggal": "YYYY-MM-DD",
+  "deskripsi": "Nama Toko / Merchant / Penerima Pembayaran",
+  "nominal": 1250000,
+  "keterangan": "Rincian singkat pembelian / keperluan barang / jasa",
+  "items": [
+    {
+      "item": "Nama barang/jasa",
+      "jumlahVolume": "1 Ls",
+      "total": 1250000,
+      "keterangan": "Rincian"
+    }
+  ]
+}`;
 
     const { response } = await generateWithModelFallback(ai, PRIMARY_GEMINI_MODELS, {
       contents: [documentPart, { text: promptText }],
@@ -123,9 +185,16 @@ app.post("/api/gemini/parse-receipt", async (req, res) => {
       },
     });
 
-    const parsedData = JSON.parse(response.text || "{}");
+    let textClean = (response.text || "").trim();
+    if (textClean.startsWith("```json")) {
+      textClean = textClean.replace(/^```json\s*/, "").replace(/\s*```$/, "");
+    } else if (textClean.startsWith("```")) {
+      textClean = textClean.replace(/^```\s*/, "").replace(/\s*```$/, "");
+    }
+    const parsedData = JSON.parse(textClean || "{}");
     return res.json({ success: true, result: parsedData });
   } catch (error: any) {
+    console.error("Error in parse-receipt:", error);
     return res.status(500).json({ error: "Gagal memproses kwitansi.", details: error.message });
   }
 });
@@ -284,9 +353,10 @@ app.post("/api/gemini/parse-petty-cash", async (req, res) => {
       const ai = getGeminiClient();
       const contents: any[] = [];
 
-      if (fileBase64 && mimeType) {
-        const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, "");
-        contents.push({ inlineData: { mimeType, data: cleanBase64 } });
+      if (fileBase64) {
+        const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, "").trim();
+        const resolvedMime = normalizeDocumentMimeType(cleanBase64, mimeType);
+        contents.push({ inlineData: { mimeType: resolvedMime, data: cleanBase64 } });
       }
 
       const coaPromptList = accounts && Array.isArray(accounts)
@@ -411,9 +481,10 @@ app.post("/api/gemini/parse-sppd", async (req, res) => {
     const ai = getGeminiClient();
     const contents: any[] = [];
 
-    if (fileBase64 && mimeType) {
-      const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, "");
-      contents.push({ inlineData: { mimeType, data: cleanBase64 } });
+    if (fileBase64) {
+      const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, "").trim();
+      const resolvedMime = normalizeDocumentMimeType(cleanBase64, mimeType);
+      contents.push({ inlineData: { mimeType: resolvedMime, data: cleanBase64 } });
     }
 
     const coaPromptList = accounts && Array.isArray(accounts)
@@ -1417,6 +1488,9 @@ function readState() {
       if (!parsed.submissions) {
         parsed.submissions = [];
       }
+      if (!parsed.internalMemos) {
+        parsed.internalMemos = [];
+      }
       if (!parsed.accurateAccounts) {
         parsed.accurateAccounts = [];
       }
@@ -1446,6 +1520,18 @@ function readState() {
       }
       if (parsed.autoReminderHour === undefined) {
         parsed.autoReminderHour = "09:00";
+      }
+      if (parsed.autoReminderEnabled === undefined) {
+        parsed.autoReminderEnabled = true;
+      }
+      if (!parsed.reminderActiveDays) {
+        parsed.reminderActiveDays = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"];
+      }
+      if (parsed.requireFridaySignature === undefined) {
+        parsed.requireFridaySignature = true;
+      }
+      if (!parsed.fridayVerifications) {
+        parsed.fridayVerifications = {};
       }
       if (parsed.lastCronPing === undefined) {
         parsed.lastCronPing = "";
@@ -1495,6 +1581,7 @@ function readState() {
     sppdRecords: [],
     agendaItems: [],
     submissions: [],
+    internalMemos: [],
     accurateAccounts: [],
     accurateMappedReports: [],
     auditLogs: [],
@@ -1504,6 +1591,10 @@ function readState() {
     projectExpenses: defaultProjectExpenses,
     waMethod: "desktop",
     autoReminderHour: "09:00",
+    autoReminderEnabled: true,
+    reminderActiveDays: ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"],
+    requireFridaySignature: true,
+    fridayVerifications: {},
     lastCronPing: "",
     lastCronStatus: "",
     lastCronSentDate: "",
@@ -1541,10 +1632,6 @@ function validateAdminToken(req: express.Request): boolean {
 }
 
 // Server API Routes
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", time: new Date().toISOString() });
-});
-
 // Admin Login endpoint
 app.post("/api/admin/login", (req, res) => {
   const { username, password } = req.body;
@@ -1582,6 +1669,9 @@ app.get("/api/shared-state", (req, res) => {
       workerId: r.workerId,
       workerName: r.workerName,
       attendance: r.attendance || {},
+      customStatus: r.customStatus || {},
+      reasons: r.reasons || {},
+      dailyAllowance: r.dailyAllowance || 25000,
       allowanceRate: r.allowanceRate,
       signatures: r.signatures || {},
       notes: r.notes || {}
@@ -1629,6 +1719,10 @@ app.post("/api/shared-state", (req, res) => {
       waSecuritySettings,
       waMethod,
       autoReminderHour,
+      autoReminderEnabled,
+      reminderActiveDays,
+      requireFridaySignature,
+      fridayVerifications,
       lastCronPing,
       lastCronStatus,
       lastCronSentDate
@@ -1653,38 +1747,75 @@ app.post("/api/shared-state", (req, res) => {
       });
     }
 
-    // Merge attendance records worker-by-worker to prevent accidental loss of historical or concurrent attendance dates
+    // Merge attendance records worker-by-worker authoritatively
     let mergedAttendance = currentState.attendanceRecords || [];
     if (attendanceRecords !== undefined && Array.isArray(attendanceRecords)) {
-      const attMap = new Map();
-      for (const r of mergedAttendance) {
-        if (r && r.workerId) {
-          attMap.set(r.workerId, {
-            ...r,
-            attendance: { ...(r.attendance || {}) },
-            customStatus: { ...(r.customStatus || {}) },
-            reasons: { ...(r.reasons || {}) }
-          });
-        }
-      }
-      for (const r of attendanceRecords) {
-        if (r && r.workerId) {
-          const existing = attMap.get(r.workerId);
-          if (!existing) {
-            attMap.set(r.workerId, { ...r });
-          } else {
+      if (req.body.replaceAttendance) {
+        mergedAttendance = attendanceRecords;
+      } else {
+        const attMap = new Map();
+        for (const r of mergedAttendance) {
+          if (r && r.workerId) {
             attMap.set(r.workerId, {
-              ...existing,
               ...r,
-              dailyAllowance: r.dailyAllowance || existing.dailyAllowance || 25000,
-              attendance: { ...(existing.attendance || {}), ...(r.attendance || {}) },
-              customStatus: { ...(existing.customStatus || {}), ...(r.customStatus || {}) },
-              reasons: { ...(existing.reasons || {}), ...(r.reasons || {}) }
+              attendance: { ...(r.attendance || {}) },
+              customStatus: { ...(r.customStatus || {}) },
+              reasons: { ...(r.reasons || {}) }
             });
           }
         }
+        for (const r of attendanceRecords) {
+          if (r && r.workerId) {
+            const existing = attMap.get(r.workerId);
+            if (!existing) {
+              attMap.set(r.workerId, { ...r });
+            } else {
+              // Update scalar properties
+              existing.workerName = r.workerName || existing.workerName;
+              existing.dailyAllowance = r.dailyAllowance || existing.dailyAllowance || 25000;
+              existing.allowanceRate = r.allowanceRate || existing.allowanceRate;
+              if (r.signatures) {
+                existing.signatures = { ...(existing.signatures || {}), ...(r.signatures || {}) };
+              }
+              if (r.notes) {
+                existing.notes = { ...(existing.notes || {}), ...(r.notes || {}) };
+              }
+
+              // Update attendance, customStatus, and reasons per date authoritatively
+              if (r.attendance && typeof r.attendance === "object") {
+                if (!existing.attendance) existing.attendance = {};
+                if (!existing.customStatus) existing.customStatus = {};
+                if (!existing.reasons) existing.reasons = {};
+
+                Object.keys(r.attendance).forEach((d) => {
+                  const isPresent = r.attendance[d] === true;
+                  existing.attendance[d] = isPresent;
+
+                  if (isPresent) {
+                    // When marked Hadir (present), definitively CLEAR any custom status & reason
+                    delete existing.customStatus[d];
+                    delete existing.reasons[d];
+                  } else {
+                    // When not present (false), check if custom status is specified
+                    if (r.customStatus && r.customStatus[d]) {
+                      existing.customStatus[d] = r.customStatus[d];
+                    } else {
+                      // Explicitly cleared to standard Absen / Alpa
+                      delete existing.customStatus[d];
+                    }
+                    if (r.reasons && r.reasons[d]) {
+                      existing.reasons[d] = r.reasons[d];
+                    } else {
+                      delete existing.reasons[d];
+                    }
+                  }
+                });
+              }
+            }
+          }
+        }
+        mergedAttendance = Array.from(attMap.values());
       }
-      mergedAttendance = Array.from(attMap.values());
     }
 
     let mergedWeeklyReports = currentState.weeklyReports || [];
@@ -1755,6 +1886,10 @@ app.post("/api/shared-state", (req, res) => {
       waSecuritySettings: waSecuritySettings !== undefined ? waSecuritySettings : currentState.waSecuritySettings,
       waMethod: waMethod !== undefined ? waMethod : currentState.waMethod,
       autoReminderHour: autoReminderHour !== undefined ? autoReminderHour : currentState.autoReminderHour,
+      autoReminderEnabled: autoReminderEnabled !== undefined ? autoReminderEnabled : currentState.autoReminderEnabled,
+      reminderActiveDays: reminderActiveDays !== undefined ? reminderActiveDays : currentState.reminderActiveDays,
+      requireFridaySignature: requireFridaySignature !== undefined ? requireFridaySignature : currentState.requireFridaySignature,
+      fridayVerifications: fridayVerifications !== undefined ? { ...(currentState.fridayVerifications || {}), ...fridayVerifications } : (currentState.fridayVerifications || {}),
       lastCronPing: lastCronPing !== undefined ? lastCronPing : currentState.lastCronPing,
       lastCronStatus: lastCronStatus !== undefined ? lastCronStatus : currentState.lastCronStatus,
       lastCronSentDate: lastCronSentDate !== undefined ? lastCronSentDate : currentState.lastCronSentDate,
@@ -1803,6 +1938,9 @@ app.get("/api/unified-storage", (req, res) => {
       menu6_agenda_kerja: {
         agendaItems: state.agendaItems || []
       },
+      menu_internal_memos: {
+        internalMemos: state.internalMemos || []
+      },
       menu7_proyek_rab: {
         projects: state.projects || [],
         projectRab: state.projectRab || [],
@@ -1833,6 +1971,7 @@ app.post("/api/unified-storage", (req, res) => {
     if (incoming.npwpRecords !== undefined) state.npwpRecords = incoming.npwpRecords;
     if (incoming.sppdRecords !== undefined) state.sppdRecords = incoming.sppdRecords;
     if (incoming.agendaItems !== undefined) state.agendaItems = incoming.agendaItems;
+    if (incoming.internalMemos !== undefined) state.internalMemos = incoming.internalMemos;
     if (incoming.projects !== undefined) state.projects = incoming.projects;
     if (incoming.projectRab !== undefined) state.projectRab = incoming.projectRab;
     if (incoming.projectExpenses !== undefined) state.projectExpenses = incoming.projectExpenses;
@@ -2135,54 +2274,17 @@ const OFFICE_LAT = -6.244342;
 const OFFICE_LON = 106.843073;
 const MAX_DISTANCE_METERS = 150;
 
-// Array of dynamic templates to prevent WhatsApp spam/block detection
-const REMINDER_TEMPLATES = [
-  (name: string, url: string) => `Halo *${name}*! 👋
-
-Sudah masuk jam kerja. Silakan lakukan absen mandiri uang makan harian Anda melalui tautan cepat berikut:
-👉 ${url}
-
-*PENTING:* Absensi ini hanya berlaku bagi karyawan yang hadir fisik di kantor Wisma NH Pasar Minggu. Sistem mendeteksi lokasi GPS Anda secara real-time. Jika Anda sedang di luar kantor atau meeting eksternal, Anda tidak dapat melakukan absen ini. Tetap jaga kesehatan dan selamat beraktivitas! 💼✨`,
-
-  (name: string, url: string) => `Selamat pagi *${name}*! ☀️
-
-Mohon segera catat kehadiran harian Anda untuk kelancaran administrasi uang makan melalui link di bawah:
-👉 ${url}
-
-*Informasi Aturan:* Presensi wajib dilakukan langsung dari area kantor Wisma NH Pasar Minggu. Absen tidak dapat diproses apabila Anda sedang berada di luar kantor atau memiliki agenda meeting di luar. Terima kasih atas disiplin Anda, mari selalu jaga kesehatan diri! 💪🏢`,
-
-  (name: string, url: string) => `Pemberitahuan Presensi Kantor - *${name}* 📍
-
-Yth. Rekan Karyawan, silakan klik tautan di bawah ini untuk mencatat kehadiran harian Anda:
-👉 ${url}
-
-Sistem mendeteksi radius lokasi Anda secara ketat. Harap diingat bahwa absen uang makan ini hanya valid jika dilakukan langsung di dalam Wisma NH Pasar Minggu (tidak berlaku bagi yang sedang dinas luar/meeting luar). Semoga aktivitas hari ini berjalan lancar, tetap jaga kesehatan dan keselamatan kerja! 🛠️💼`,
-
-  (name: string, url: string) => `Halo *${name}*! Salam sukses untuk Anda hari ini. 🏆
-
-Sebelum beraktivitas lebih lanjut, harap klik link instan berikut untuk melakukan absen uang makan hari ini:
-👉 ${url}
-
-*Peringatan Ketentuan:* Absen ini mendeteksi titik koordinat Anda dan hanya dapat diakses dari kantor Wisma NH Pasar Minggu. Bagi yang sedang bertugas atau meeting di luar kantor, absen tidak diperkenankan. Mari jaga kesehatan dan tetap profesional dalam bertugas! 🏁🏢`,
-
-  (name: string, url: string) => `Semangat pagi *${name}*! 🌟
-
-Untuk pencatatan uang makan harian yang akurat, silakan lakukan check-in melalui tautan instan di bawah ini:
-👉 ${url}
-
-*Harap diperhatikan:* Absensi ini dirancang khusus untuk karyawan yang bekerja langsung dari kantor Wisma NH Pasar Minggu. Bagi karyawan yang berada di luar area kantor atau meeting luar, akses absen tidak berlaku. Jaga kondisi tubuh agar selalu prima dan selamat bekerja! 🤝💼`,
-
-  (name: string, url: string) => `Pemberitahuan Kehadiran Wisma NH - *${name}* 🏢
-
-Mari mulai hari kerja ini dengan disiplin. Segera verifikasi kehadiran Anda dengan mengetuk link di bawah:
-👉 ${url}
-
-*Ketentuan Absensi:* Sesuai aturan, absensi uang makan hanya dapat dilakukan secara fisik di area kantor Wisma NH Pasar Minggu. Segala bentuk absensi di luar kantor (termasuk saat meeting luar) tidak akan terverifikasi oleh sistem lokasi. Terima kasih atas pengertiannya, mari utamakan kesehatan dan keselamatan! 📈❤️`
-];
-
-function getRandomReminderMessage(name: string, url: string): string {
-  const randomIndex = Math.floor(Math.random() * REMINDER_TEMPLATES.length);
-  return REMINDER_TEMPLATES[randomIndex](name, url);
+// Dynamic, multi-format WhatsApp Attendance Reminder Generator (24 Distinct Layouts, Day-of-Week & Time-of-Day Aware)
+function getRandomReminderMessage(name: string, url: string, workerId?: string, dateStr?: string): string {
+  const dStr = dateStr || getJakartaDateStr();
+  let hour = 9;
+  try {
+    const jktTimeString = new Date().toLocaleTimeString("en-US", { timeZone: "Asia/Jakarta", hour12: false });
+    hour = parseInt(jktTimeString.split(":")[0], 10) || 9;
+  } catch (e) {
+    hour = new Date().getHours();
+  }
+  return getDynamicReminderMessage(name, workerId || name, url, dStr, hour);
 }
 
 function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number) {
@@ -2322,6 +2424,8 @@ app.post("/api/self-attend", async (req, res) => {
     for (const r of records) {
       if (r.workerId === workerId && r.attendance && r.attendance[date] !== undefined) {
         r.attendance[date] = true;
+        if (r.customStatus) delete r.customStatus[date];
+        if (r.reasons) delete r.reasons[date];
         recordUpdated = true;
         break;
       }
@@ -2335,6 +2439,8 @@ app.post("/api/self-attend", async (req, res) => {
           workerRecord.attendance = {};
         }
         workerRecord.attendance[date] = true;
+        if (workerRecord.customStatus) delete workerRecord.customStatus[date];
+        if (workerRecord.reasons) delete workerRecord.reasons[date];
       } else {
         records.push({
           workerId,
@@ -2349,18 +2455,45 @@ app.post("/api/self-attend", async (req, res) => {
       signatures[workerId] = signature;
     }
 
+    // Friday Digital Signature Verification to Server
+    const dateObj = new Date(date + "T00:00:00");
+    const isFridayDate = dateObj.getDay() === 5 || req.body.isFriday;
+    let verificationInfo: any = null;
+    if (signature || isFridayDate) {
+      const serverTimestamp = new Date().toLocaleString("id-ID", { timeZone: "Asia/Jakarta" }) + " WIB";
+      const token = `VERIF-NMSA-JUMAT-${workerId.slice(0, 6).toUpperCase()}-${Date.now().toString(36).toUpperCase()}`;
+      verificationInfo = {
+        token,
+        workerId,
+        workerName: worker.name,
+        date,
+        verified: true,
+        verifiedAt: serverTimestamp,
+        distance: Math.round(distance),
+        latitude,
+        longitude,
+        serverStamp: "TERVERIFIKASI RESMI SERVER APLIKASI PT NMSA",
+        device: String(req.headers["user-agent"] || "Mobile Browser").slice(0, 100)
+      };
+      if (!state.fridayVerifications) state.fridayVerifications = {};
+      state.fridayVerifications[`${workerId}_${date}`] = verificationInfo;
+    }
+
     addLog("BERHASIL");
 
     writeState({
       ...state,
       attendanceRecords: records,
-      signatures
+      signatures,
+      fridayVerifications: state.fridayVerifications
     });
 
     res.json({ 
       success: true, 
-      message: `Presensi berhasil tercatat! Terima kasih ${worker.name}.`,
-      workerName: worker.name
+      message: `Presensi berhasil tercatat! Terima kasih ${worker.name}.${verificationInfo ? " Tanda Tangan Digital Resmi TERVERIFIKASI ke Server!" : ""}`,
+      workerName: worker.name,
+      verified: !!verificationInfo,
+      verification: verificationInfo
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message || "Gagal melakukan absen mandiri" });
@@ -2370,7 +2503,7 @@ app.post("/api/self-attend", async (req, res) => {
 // POST Quick/Instant Attendance Check-in via Bot link
 app.post("/api/quick-self-attend", async (req, res) => {
   try {
-    const { workerId, date, latitude, longitude, status, reason } = req.body;
+    const { workerId, date, latitude, longitude, status, reason, signature, isFriday } = req.body;
     if (!workerId || !date) {
       return res.status(400).json({ error: "ID karyawan dan tanggal wajib diisi." });
     }
@@ -2481,14 +2614,48 @@ app.post("/api/quick-self-attend", async (req, res) => {
         state.attendanceLogs = state.attendanceLogs.slice(0, 500);
       }
 
+      // Friday verification token & signature saving
+      const dateObj = new Date(date + "T00:00:00");
+      const isFridayDate = isFriday || dateObj.getDay() === 5;
+      let verificationInfo: any = null;
+      if (signature || isFridayDate) {
+        const serverTimestamp = new Date().toLocaleString("id-ID", { timeZone: "Asia/Jakarta" }) + " WIB";
+        const token = `VERIF-NMSA-JUMAT-${workerId.slice(0, 6).toUpperCase()}-${Date.now().toString(36).toUpperCase()}`;
+        verificationInfo = {
+          token,
+          workerId,
+          workerName,
+          date,
+          verified: true,
+          verifiedAt: serverTimestamp,
+          distance: Math.round(distance),
+          latitude,
+          longitude,
+          serverStamp: "TERVERIFIKASI RESMI SERVER APLIKASI PT NMSA",
+          device: String(req.headers["user-agent"] || "Mobile Browser").slice(0, 100)
+        };
+        if (!state.fridayVerifications) state.fridayVerifications = {};
+        state.fridayVerifications[`${workerId}_${date}`] = verificationInfo;
+
+        const signatures = state.signatures || {};
+        if (signature) {
+          signatures[workerId] = signature;
+        }
+        state.signatures = signatures;
+      }
+
       writeState({
         ...state,
-        attendanceRecords: records
+        attendanceRecords: records,
+        signatures: state.signatures,
+        fridayVerifications: state.fridayVerifications
       });
 
       return res.json({
         success: true,
-        message: `Absen Berhasil! Halo *${workerName}*, presensi kehadiran Anda hari ini tanggal *${date}* berhasil dicatat secara otomatis karena lokasi Anda berada di jangkauan kantor (jarak: *${Math.round(distance)}* meter dari kantor).`
+        message: `Absen Berhasil! Halo *${workerName}*, presensi kehadiran Anda hari ini tanggal *${date}* berhasil dicatat.${verificationInfo ? " Tanda Tangan Digital Resmi TERVERIFIKASI ke Server!" : ` Lokasi: ${Math.round(distance)} meter dari kantor.`}`,
+        verified: !!verificationInfo,
+        verification: verificationInfo
       });
 
     } else {
@@ -2772,12 +2939,13 @@ app.post("/api/parse-petty-cash", async (req, res) => {
     }
 
     const ai = getGeminiClient();
-    const defaultMime = mimeType || "application/pdf";
+    const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, "").trim();
+    const defaultMime = normalizeDocumentMimeType(cleanBase64, mimeType);
     
     const inlinePart = {
       inlineData: {
         mimeType: defaultMime,
-        data: fileBase64,
+        data: cleanBase64,
       },
     };
 
@@ -2819,10 +2987,11 @@ Return a strict JSON response conforming exactly to this structure:
     "workerName": "Budiono",
     "reportMonth": "Juni 2026"
   }
-}`,
+}
+`,
     };
 
-    console.log("Analyzing file: size =" + fileBase64.length + " bytes, type =" + defaultMime);
+    console.log("Analyzing file: size =" + cleanBase64.length + " bytes, type =" + defaultMime);
 
     const modelsToTry = PRIMARY_GEMINI_MODELS;
     let response = null;
@@ -2833,7 +3002,7 @@ Return a strict JSON response conforming exactly to this structure:
         console.log(`Attempting document analysis with model: ${modelName}`);
         response = await ai.models.generateContent({
           model: modelName,
-          contents: [inlinePart, textPart],
+          contents: { parts: [inlinePart, textPart] },
           config: {
             responseMimeType: "application/json",
             responseSchema: {
@@ -2918,12 +3087,13 @@ app.post("/api/parse-bank-statement", async (req, res) => {
     }
 
     const ai = getGeminiClient();
-    const defaultMime = mimeType || "application/pdf";
+    const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, "").trim();
+    const defaultMime = normalizeDocumentMimeType(cleanBase64, mimeType);
     
     const inlinePart = {
       inlineData: {
         mimeType: defaultMime,
-        data: fileBase64,
+        data: cleanBase64,
       },
     };
 
@@ -2984,7 +3154,7 @@ Return a strict JSON response conforming exactly to this structure:
         console.log(`Attempting bank statement analysis with model: ${modelName}`);
         response = await ai.models.generateContent({
           model: modelName,
-          contents: [inlinePart, textPart],
+          contents: { parts: [inlinePart, textPart] },
           config: {
             responseMimeType: "application/json",
             responseSchema: {
@@ -3049,6 +3219,69 @@ Return a strict JSON response conforming exactly to this structure:
     console.error("Gemini Bank Statement Parsing error:", error);
     res.status(500).json({ error: error.message || "Failed to analyze bank statement" });
   }
+});
+
+// --- UPTIMEROBOT & 24/7 KEEP-ALIVE HEALTH CHECK ENDPOINTS ---
+// Public keep-alive ping for UptimeRobot, Cron-Job.org, or any external monitor
+// Keeps Render / Railway / Replit instances awake 24/7 and auto-revives WhatsApp if idle
+app.all(["/api/health", "/api/ping", "/api/keepalive", "/health", "/ping"], (req, res) => {
+  const originInfo = {
+    ip: (req.headers["x-forwarded-for"] as string) || req.ip || req.socket.remoteAddress || "unknown",
+    userAgent: (req.headers["user-agent"] as string) || "UptimeRobot",
+    method: req.method,
+  };
+
+  const pingResult = recordKeepAlivePing(originInfo);
+  const waStatus = getWhatsAppStatus();
+  const hasCreds = fs.existsSync(path.join(process.cwd(), "auth_info_baileys", "creds.json")) || hasAuthBackup();
+  
+  let revived = false;
+  // If credentials exist but WhatsApp dropped or disconnected, revive it on ping!
+  if (hasCreds && waStatus.status === "disconnected") {
+    console.log("[Uptime Keep-Alive] Menerima ping dari pemantau 24/7, mengaktifkan kembali bot WhatsApp secara otomatis...");
+    initWhatsApp().catch((err) => console.error("Error auto-reviving WhatsApp on health ping:", err));
+    revived = true;
+  }
+
+  if (req.method === "HEAD") {
+    return res.status(200).end();
+  }
+
+  return res.status(200).json({
+    status: "ok",
+    service: "Sistem Terpadu & Bot WhatsApp PT NMSA",
+    uptimeSeconds: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+    keepAlive: {
+      totalPings: pingResult.totalPings,
+      lastPing: pingResult.lastPing,
+      autoReviveWhatsApp: true,
+      revivedThisPing: revived,
+    },
+    whatsapp: {
+      status: waStatus.status,
+      connectedUser: waStatus.user,
+      hasCredentials: hasCreds,
+      autoReconnect: "enabled",
+    },
+  });
+});
+
+// GET Keep-alive stats for frontend modal
+app.get("/api/wa/keepalive-stats", (req, res) => {
+  const info = getKeepAliveInfo();
+  const waStatus = getWhatsAppStatus();
+  const hasCreds = fs.existsSync(path.join(process.cwd(), "auth_info_baileys", "creds.json")) || hasAuthBackup();
+  res.json({
+    success: true,
+    ...info,
+    uptimeSeconds: Math.floor(process.uptime()),
+    whatsapp: {
+      status: waStatus.status,
+      user: waStatus.user,
+      hasCredentials: hasCreds,
+    }
+  });
 });
 
 // --- WHATSAPP BAILEYS BOT INTEGRATION ENDPOINTS ---
@@ -3370,9 +3603,9 @@ app.post("/api/sync-submissions", (req, res) => {
 });
 
 // GET /api/submissions/:id (Fetch single submission for public share-view / voucher)
-app.get("/api/submissions/:id", (req, res) => {
+app.get(["/api/submissions/:id", "/api/submissions/single"], (req, res) => {
   try {
-    const { id } = req.params;
+    const id = req.params?.id || req.query?.id || req.query?.kode;
     const cleanId = String(id || "").toLowerCase().trim();
     const state = readState();
     const sub = (state.submissions || []).find((s: any) => 
@@ -3384,6 +3617,60 @@ app.get("/api/submissions/:id", (req, res) => {
       return res.json({ success: true, submission: sub });
     }
     return res.status(404).json({ success: false, error: "Transaksi tidak ditemukan di penyimpanan server." });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/internal-memos (Fetch all saved internal memos)
+app.get("/api/internal-memos", (req, res) => {
+  try {
+    const state = readState();
+    return res.json({ success: true, memos: state.internalMemos || [] });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/internal-memos (Save single memo or sync batch of memos)
+app.post("/api/internal-memos", (req, res) => {
+  try {
+    const { memo, memos } = req.body;
+    const state = readState();
+    if (!state.internalMemos) state.internalMemos = [];
+
+    if (Array.isArray(memos)) {
+      const map = new Map();
+      (state.internalMemos || []).forEach((m: any) => { if (m && m.id) map.set(m.id, m); });
+      memos.forEach((m: any) => { if (m && m.id) map.set(m.id, m); });
+      state.internalMemos = Array.from(map.values());
+      writeState(state);
+      return res.json({ success: true, count: state.internalMemos.length });
+    } else if (memo && memo.id) {
+      const idx = state.internalMemos.findIndex((m: any) => m.id === memo.id);
+      if (idx >= 0) {
+        state.internalMemos[idx] = memo;
+      } else {
+        state.internalMemos.unshift(memo);
+      }
+      writeState(state);
+      return res.json({ success: true, memo });
+    } else {
+      return res.status(400).json({ error: "Payload harus berisi memo atau memos." });
+    }
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// DELETE /api/internal-memos/:id (Delete memo from backend state)
+app.delete("/api/internal-memos/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    const state = readState();
+    state.internalMemos = (state.internalMemos || []).filter((m: any) => m.id !== id);
+    writeState(state);
+    return res.json({ success: true, id });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -3666,11 +3953,13 @@ app.get("/api/cron-reminder", async (req, res) => {
         continue;
       }
 
-      // Generate instant check-in URL with quick=true
-      const loginUrl = `${hostOrigin}/?id=${worker.id}&quick=true`;
+      // Generate instant check-in URL with explicit view=absen and quick=true (plus friday=true if Friday)
+      const isFriday = new Date().toLocaleDateString("en-US", { timeZone: "Asia/Jakarta", weekday: "long" }) === "Friday";
+      const fridayParam = isFriday ? "&friday=true" : "";
+      const loginUrl = `${hostOrigin}/?view=absen&workerId=${encodeURIComponent(worker.id)}&id=${encodeURIComponent(worker.id)}&quick=true${fridayParam}`;
       
-      // Select a random anti-spam message template
-      const message = getRandomReminderMessage(worker.name, loginUrl);
+      // Select an energetic, highly varied personalized message template
+      const message = getRandomReminderMessage(worker.name, loginUrl, worker.id, todayYMD);
 
       const result = await sendWhatsAppMessage(worker.phoneNumber, message);
       if (result.success) {
@@ -3715,6 +4004,246 @@ app.get("/api/cron-reminder", async (req, res) => {
     });
   }
 });
+
+// GET /api/bot-reminder-settings (Fetch full reminder configuration & status)
+app.get("/api/bot-reminder-settings", (req, res) => {
+  try {
+    const state = readState();
+    const waStatus = getWhatsAppStatus();
+    const jktTimeString = new Date().toLocaleTimeString("id-ID", { timeZone: "Asia/Jakarta" });
+    const todayYMD = getJakartaDateStr();
+    
+    const workers = state.workers || [];
+    const records = state.attendanceRecords || [];
+    const activeWorkers = workers.filter((w: any) => w.isActive);
+    const pendingWorkers = activeWorkers.filter((worker: any) => {
+      const record = records.find((r: any) => r.workerId === worker.id);
+      return !record || !record.attendance || !record.attendance[todayYMD];
+    });
+
+    res.json({
+      success: true,
+      autoReminderHour: state.autoReminderHour || "09:00",
+      autoReminderEnabled: state.autoReminderEnabled !== false,
+      reminderActiveDays: state.reminderActiveDays || ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"],
+      requireFridaySignature: state.requireFridaySignature !== false,
+      lastCronPing: state.lastCronPing || "",
+      lastCronStatus: state.lastCronStatus || "",
+      lastCronSentDate: state.lastCronSentDate || "",
+      serverTimeWIB: `${todayYMD} ${jktTimeString} WIB`,
+      totalActiveWorkers: activeWorkers.length,
+      pendingAttendanceCount: pendingWorkers.length,
+      waConnected: waStatus.status === "connected",
+      waPhone: waStatus.user?.id ? waStatus.user.id.split(":")[0] : null
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/bot-reminder-settings (Update reminder configuration)
+app.post("/api/bot-reminder-settings", (req, res) => {
+  try {
+    const { autoReminderHour, autoReminderEnabled, reminderActiveDays, requireFridaySignature } = req.body;
+    const state = readState();
+    if (autoReminderHour !== undefined) state.autoReminderHour = autoReminderHour;
+    if (autoReminderEnabled !== undefined) state.autoReminderEnabled = autoReminderEnabled;
+    if (reminderActiveDays !== undefined) state.reminderActiveDays = reminderActiveDays;
+    if (requireFridaySignature !== undefined) state.requireFridaySignature = requireFridaySignature;
+    writeState(state);
+    res.json({
+      success: true,
+      message: "Pengaturan jadwal pengingat bot WhatsApp berhasil disimpan ke server!",
+      settings: {
+        autoReminderHour: state.autoReminderHour,
+        autoReminderEnabled: state.autoReminderEnabled,
+        reminderActiveDays: state.reminderActiveDays,
+        requireFridaySignature: state.requireFridaySignature
+      }
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/trigger-bot-reminder (Manual force trigger from Attendance UI)
+app.post("/api/trigger-bot-reminder", async (req, res) => {
+  try {
+    const state = readState();
+    const todayYMD = getJakartaDateStr();
+    const waStatus = getWhatsAppStatus();
+    
+    if (waStatus.status !== "connected") {
+      return res.status(500).json({ 
+        success: false, 
+        message: "Gagal: WhatsApp Bot belum terhubung. Silakan scan QR code WhatsApp terlebih dahulu." 
+      });
+    }
+
+    const workers = state.workers || [];
+    const records = state.attendanceRecords || [];
+    const activeWorkers = workers.filter((w: any) => w.isActive);
+    
+    const absentWorkers = activeWorkers.filter((worker: any) => {
+      const record = records.find((r: any) => r.workerId === worker.id);
+      return !record || !record.attendance || !record.attendance[todayYMD];
+    });
+
+    if (absentWorkers.length === 0) {
+      return res.json({ 
+        success: true, 
+        message: "Seluruh karyawan aktif sudah absen hari ini. Tidak ada pengingat yang perlu dikirim.",
+        sentCount: 0,
+        failedCount: 0
+      });
+    }
+
+    let sentCount = 0;
+    let failedCount = 0;
+    const errors: string[] = [];
+    const hostOrigin = state.lastHostOrigin || (req.protocol + "://" + req.get("host"));
+    const isFriday = new Date().toLocaleDateString("en-US", { timeZone: "Asia/Jakarta", weekday: "long" }) === "Friday";
+    const fridayParam = isFriday ? "&friday=true" : "";
+
+    for (const worker of absentWorkers) {
+      if (!worker.phoneNumber) {
+        failedCount++;
+        continue;
+      }
+
+      const loginUrl = `${hostOrigin}/?view=absen&workerId=${encodeURIComponent(worker.id)}&id=${encodeURIComponent(worker.id)}&quick=true${fridayParam}`;
+      const message = getRandomReminderMessage(worker.name, loginUrl, worker.id, todayYMD);
+
+      const result = await sendWhatsAppMessage(worker.phoneNumber, message);
+      if (result.success) {
+        sentCount++;
+      } else {
+        failedCount++;
+        if (result.error) errors.push(result.error);
+      }
+
+      // Safe delay between messages
+      await new Promise(r => setTimeout(r, 1500));
+    }
+
+    state.lastCronStatus = `Pengingat manual terkirim ke ${sentCount} karyawan.${failedCount > 0 ? ` Gagal: ${failedCount} karyawan.` : ""}`;
+    state.lastCronSentDate = todayYMD;
+    writeState(state);
+
+    return res.json({
+      success: true,
+      message: `Berhasil mengirimkan pengingat ke ${sentCount} karyawan.${failedCount > 0 ? ` (Gagal: ${failedCount})` : ""}`,
+      sentCount,
+      failedCount,
+      errors
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || "Gagal memproses pengingat." });
+  }
+});
+
+// GET /api/friday-verifications (Fetch Friday digital signature server verifications)
+app.get("/api/friday-verifications", (req, res) => {
+  try {
+    const state = readState();
+    const verifications = state.fridayVerifications || {};
+    const date = req.query.date as string;
+    const workerId = req.query.workerId as string;
+
+    if (date && workerId) {
+      const key = `${workerId}_${date}`;
+      return res.json({ success: true, verification: verifications[key] || null });
+    }
+
+    if (date) {
+      const filtered: Record<string, any> = {};
+      for (const [k, v] of Object.entries(verifications)) {
+        if ((v as any).date === date) {
+          filtered[k] = v;
+        }
+      }
+      return res.json({ success: true, verifications: filtered });
+    }
+
+    return res.json({ success: true, verifications });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Internal Background Daemon: Check every 30s to auto-send reminder when target hour arrives
+let autoReminderTimer: NodeJS.Timeout | null = null;
+function initBackgroundAutoReminder() {
+  if (autoReminderTimer) clearInterval(autoReminderTimer);
+  autoReminderTimer = setInterval(async () => {
+    try {
+      const state = readState();
+      if (state.autoReminderEnabled === false) return;
+
+      const todayYMD = getJakartaDateStr();
+      const jktTimeString = new Date().toLocaleTimeString("en-US", { timeZone: "Asia/Jakarta", hour12: false });
+      const [currentHour, currentMinute] = jktTimeString.split(":").map(Number);
+      
+      const scheduledTime = state.autoReminderHour || "09:00";
+      const [targetHour, targetMinute] = scheduledTime.split(":").map(Number);
+
+      const isTimeTrigger = currentHour > targetHour || (currentHour === targetHour && currentMinute >= targetMinute);
+      const alreadySentToday = state.lastCronSentDate === todayYMD;
+
+      if (!alreadySentToday && isTimeTrigger) {
+        const holidayCheck = await checkIsHolidayOrWeekend(todayYMD);
+        if (holidayCheck.isBlocked) {
+          state.lastCronSentDate = todayYMD;
+          state.lastCronStatus = `Dilewati otomatis: ${holidayCheck.reason}.`;
+          writeState(state);
+          return;
+        }
+
+        const waStatus = getWhatsAppStatus();
+        if (waStatus.status !== "connected") {
+          return;
+        }
+
+        const workers = state.workers || [];
+        const records = state.attendanceRecords || [];
+        const activeWorkers = workers.filter((w: any) => w.isActive);
+        const absentWorkers = activeWorkers.filter((worker: any) => {
+          const record = records.find((r: any) => r.workerId === worker.id);
+          return !record || !record.attendance || !record.attendance[todayYMD];
+        });
+
+        if (absentWorkers.length === 0) {
+          state.lastCronSentDate = todayYMD;
+          state.lastCronStatus = `Selesai otomatis: Semua karyawan aktif telah absen.`;
+          writeState(state);
+          return;
+        }
+
+        const hostOrigin = state.lastHostOrigin || "http://localhost:3000";
+        const isFriday = new Date().toLocaleDateString("en-US", { timeZone: "Asia/Jakarta", weekday: "long" }) === "Friday";
+        const fridayParam = isFriday ? "&friday=true" : "";
+        let sentCount = 0;
+
+        for (const worker of absentWorkers) {
+          if (!worker.phoneNumber) continue;
+          const loginUrl = `${hostOrigin}/?view=absen&workerId=${encodeURIComponent(worker.id)}&id=${encodeURIComponent(worker.id)}&quick=true${fridayParam}`;
+          const message = getRandomReminderMessage(worker.name, loginUrl, worker.id, todayYMD);
+          const result = await sendWhatsAppMessage(worker.phoneNumber, message);
+          if (result.success) sentCount++;
+          await new Promise(r => setTimeout(r, 1500));
+        }
+
+        state.lastCronSentDate = todayYMD;
+        state.lastCronStatus = `Pengingat otomatis terkirim ke ${sentCount} karyawan pada jam ${scheduledTime} WIB.`;
+        writeState(state);
+        console.log(`[AutoReminder Daemon] Sent to ${sentCount} workers at ${scheduledTime} WIB.`);
+      }
+    } catch (e) {
+      console.error("[AutoReminder Daemon Error]", e);
+    }
+  }, 30000);
+}
+initBackgroundAutoReminder();
 
 // ==========================================
 // DYNAMIC SHARE IMAGE & OPEN GRAPH PREVIEW
@@ -4050,12 +4579,22 @@ app.get(["/shared-view*", "/voucher/:id*"], async (req, res, next) => {
 
     const imageUrl = `${protocol}://${host}/api/share-image?${imgParams.toString()}`;
 
-    const indexPath = process.env.NODE_ENV === "production" 
+    const isDev = process.env.NODE_ENV !== "production" || !fs.existsSync(path.join(process.cwd(), "dist"));
+    const indexPath = !isDev
       ? path.join(process.cwd(), "dist", "index.html")
       : path.join(process.cwd(), "index.html");
 
     if (fs.existsSync(indexPath)) {
       let html = fs.readFileSync(indexPath, "utf-8");
+
+      // In dev mode, run Vite's HTML transformer so /@vite/client & React scripts are properly injected
+      if (isDev && viteInstance) {
+        try {
+          html = await viteInstance.transformIndexHtml(req.originalUrl, html);
+        } catch (vErr) {
+          console.warn("Vite transformIndexHtml warning:", vErr);
+        }
+      }
 
       // Inject / Replace Open Graph & Twitter meta tags
       const ogMetaTags = `
@@ -4088,23 +4627,63 @@ async function bootstrap() {
   if (isDev) {
     console.log("Starting dev server with Vite middleware...");
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+        watch: null,
+      },
       appType: "spa",
     });
+    viteInstance = vite;
     app.use(vite.middlewares);
+
+    // Dev fallback for SPA navigation
+    app.use("*", async (req, res, next) => {
+      if (req.method !== "GET") return next();
+      const url = req.originalUrl;
+      try {
+        const indexPath = path.join(process.cwd(), "index.html");
+        let template = fs.readFileSync(indexPath, "utf-8");
+        template = await vite.transformIndexHtml(url, template);
+        res.status(200).set({ "Content-Type": "text/html; charset=utf-8" }).end(template);
+      } catch (e: any) {
+        vite.ssrFixStacktrace?.(e);
+        next(e);
+      }
+    });
   } else {
     console.log("Starting production server...");
     const distPath = path.join(process.cwd(), "dist");
+    app.use("/assets", express.static(path.join(distPath, "assets")));
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  const serverInstance = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server is running at http://localhost:${PORT}`);
-    // Boot up WhatsApp Bot service
-    initWhatsApp().catch((err) => console.error("Error initializing WhatsApp Bot on startup:", err));
+    // Boot up WhatsApp Bot service if local credentials or session backup exists
+    setTimeout(() => {
+      try {
+        if (fs.existsSync(path.join(process.cwd(), "auth_info_baileys", "creds.json")) || hasAuthBackup()) {
+          console.log("[Startup] Kredensial / backup sesi WhatsApp terdeteksi, mengaktifkan bot...");
+          initWhatsApp().catch((err) => console.error("Error initializing WhatsApp Bot on startup:", err));
+        }
+      } catch (e) {
+        console.warn("Could not check WhatsApp credentials on startup:", e);
+      }
+    }, 1000);
+  });
+
+  serverInstance.on("error", (err: any) => {
+    console.error("Server listen error:", err);
+    if (err.code === "EADDRINUSE" && PORT !== 3000) {
+      console.log("Port in use, falling back to 3000...");
+      app.listen(3000, "0.0.0.0", () => {
+        console.log("Server fallback running at http://localhost:3000");
+      });
+    }
   });
 }
 

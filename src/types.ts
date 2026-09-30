@@ -104,6 +104,9 @@ export interface Submission {
   companyName?: string;
   companyLogoUrl?: string;
   rekeningTujuan?: string;
+  noRekeningTujuan?: string;
+  namaBankTujuan?: string;
+  atasNamaRekeningTujuan?: string;
 
   // Signatures for Bukti Pengeluaran Kas/Bank (F1)
   diajukanOleh?: string; // e.g. "Andi Dhiya Salsabila"
@@ -523,6 +526,22 @@ export interface InternalMemo {
   companyLogoUrl?: string;
   companyHeaderUrl?: string;
   useImageHeader?: boolean;
+  driveFileId?: string;
+  driveUrl?: string;
+  driveFolderId?: string;
+  driveFolderPath?: string;
+  driveSyncedAt?: string;
+  // Berkas Scan & Tanda Tangan Fisik (Hasil Scan Printer / Kamera / Upload Berkas)
+  signedDocumentUrl?: string; // Data URL atau remote storage URL
+  signedDocumentName?: string;
+  signedDocumentType?: string; // 'pdf' | 'image' | mime
+  signedDocumentSize?: number;
+  signedAt?: string;
+  signedDriveUrl?: string; // Tautan langsung ke berkas scan bertanda tangan di Google Drive
+  signedDriveFileId?: string;
+  signedDriveFolderPath?: string;
+  signedUploadedBy?: string;
+  signedNotes?: string;
   createdAt: string;
   updatedAt?: string;
 }

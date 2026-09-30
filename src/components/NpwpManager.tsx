@@ -308,17 +308,17 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto shrink-0">
           <button
             onClick={handleExportCsv}
-            className="px-3.5 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 border border-stone-700 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-3xs"
+            className="flex-1 sm:flex-initial px-3.5 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 border border-stone-700 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-3xs whitespace-nowrap"
           >
             <Download size={14} />
             <span>Ekspor CSV/Excel</span>
           </button>
           <button
             onClick={handleOpenAddModal}
-            className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-md"
+            className="flex-1 sm:flex-initial px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-md whitespace-nowrap"
           >
             <Plus size={16} />
             <span>Tambah NPWP Baru</span>

@@ -1,6 +1,5 @@
 import React from 'react';
 import { InternalMemo } from '../types';
-import { NusantaraLogo } from './NusantaraLogo';
 import { OFFICIAL_KOP_SURAT_IMAGE_URL, parseDari } from '../utils/memoUtils';
 
 interface InternalMemoDocumentProps {
@@ -8,6 +7,7 @@ interface InternalMemoDocumentProps {
   customLogoUrl?: string;
   customHeaderUrl?: string;
   className?: string;
+  id?: string;
 }
 
 // Cleanly format and sanitize rich text HTML from Word editor or plain text legacy memos
@@ -36,9 +36,10 @@ export const InternalMemoDocument: React.FC<InternalMemoDocumentProps> = ({
   customLogoUrl,
   customHeaderUrl,
   className = '',
+  id = 'internal-memo-printable-document',
 }) => {
-  // Check whether to use image banner or official vector layout (matching user's Word layout)
-  const isImageHeader = memo.useImageHeader === true;
+  // Kop Surat Banner Gambar Resmi PT. NMSA (Full Width)
+  const isImageHeader = true;
   const rawHeaderUrl = customHeaderUrl || memo.companyHeaderUrl || OFFICIAL_KOP_SURAT_IMAGE_URL;
   const headerImageUrl =
     !rawHeaderUrl ||
@@ -63,7 +64,7 @@ export const InternalMemoDocument: React.FC<InternalMemoDocumentProps> = ({
 
   return (
     <div
-      id="internal-memo-printable-document"
+      id={id}
       className={`bg-white text-black shadow-md border border-stone-200 mx-auto p-8 sm:p-12 md:p-14 max-w-[850px] w-full min-h-[1050px] flex flex-col justify-between select-text internal-memo-page memo-word-document ${className}`}
       style={{
         boxSizing: 'border-box',
@@ -73,59 +74,21 @@ export const InternalMemoDocument: React.FC<InternalMemoDocumentProps> = ({
       }}
     >
       <div>
-        {/* KOP SURAT NMSA (Garis Panjang 100% Full Width Ujung ke Ujung Sesuai Lebar Tabel) */}
-        {isImageHeader ? (
-          <div className="w-full pb-1 -mt-2 print:mt-0 print:pb-1">
-            <img
-              src={headerImageUrl}
-              alt="Kop Surat PT. Nusantara Mineral Sukses Abadi"
-              className="w-full h-auto block"
-              style={{
-                width: '100%',
-                maxWidth: '100%',
-                height: 'auto',
-                display: 'block',
-              }}
-              referrerPolicy="no-referrer"
-            />
-          </div>
-        ) : (
-          <div className="w-full">
-            {/* Header Two-Column: Logo on Left, Address Details on Right */}
-            <div className="flex items-start justify-between gap-4 pb-1">
-              {/* Logo Nusantara (Diamond Gold Emblem) */}
-              <div className="w-2/5 sm:w-1/3 flex justify-start items-center shrink-0">
-                <NusantaraLogo
-                  size="md"
-                  className="h-18 sm:h-22 print:h-20 w-auto object-contain"
-                  logoUrl={customLogoUrl || memo.companyLogoUrl}
-                />
-              </div>
-
-              {/* Company Details (Right aligned, uppercase, bold corporate) */}
-              <div className="w-3/5 sm:w-2/3 text-right">
-                <h1 className="font-bold text-[14pt] print:text-[14pt] text-black tracking-wide leading-tight uppercase">
-                  {memo.companyName || 'PT. NUSANTARA MINERAL SUKSES ABADI'}
-                </h1>
-                <div className="text-[9.5pt] print:text-[9.5pt] font-bold text-black mt-1 leading-snug">
-                  <p>WISMA NH BUILDING No.. 2B – C LT. 1</p>
-                  <p>JL. RAYA PASAR MINGGU</p>
-                  <p>JAKARTA SELATAN, DKI Jakarta 12780</p>
-                  <p className="mt-0.5">
-                    Email :{' '}
-                    <span className="text-[#0066cc] underline font-semibold">
-                      nusantaramineralsuksesabadi@gmail.com
-                    </span>
-                  </p>
-                  <p>Phone : 021.27533169</p>
-                </div>
-              </div>
-            </div>
-
-            {/* GARIS PANJANG HEADER (100% Full Width across the entire document width) */}
-            <div className="w-full border-b-[2.5px] border-black mt-2 mb-5 print:mt-1 print:mb-4"></div>
-          </div>
-        )}
+        {/* KOP SURAT RESMI PT. NMSA (Banner Gambar Full Width Ujung ke Ujung Sesuai Format Resmi) */}
+        <div className="w-full pb-1 -mt-2 print:mt-0 print:pb-1">
+          <img
+            src={headerImageUrl}
+            alt="Kop Surat PT. Nusantara Mineral Sukses Abadi"
+            className="w-full h-auto block"
+            style={{
+              width: '100%',
+              maxWidth: '100%',
+              height: 'auto',
+              display: 'block',
+            }}
+            referrerPolicy="no-referrer"
+          />
+        </div>
 
         {/* TITLE & NUMBER - Spasi Renggang Sesuai Word */}
         <div className="text-center my-4 sm:my-5 print:my-4">

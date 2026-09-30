@@ -164,7 +164,7 @@ export const ManageBankAccountsModal: React.FC<ManageBankAccountsModalProps> = (
                 </label>
                 <input
                   type="text"
-                  placeholder="Contoh: Bank Mandiri"
+                  placeholder="Nama Bank (Mandiri / BCA / BNI)"
                   value={bankName}
                   onChange={(e) => setBankName(e.target.value)}
                   className="w-full px-2.5 py-1.5 text-xs bg-white border border-stone-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none"
@@ -177,7 +177,7 @@ export const ManageBankAccountsModal: React.FC<ManageBankAccountsModalProps> = (
                 </label>
                 <input
                   type="text"
-                  placeholder="Contoh: 1030013139064"
+                  placeholder="Nomor Rekening Bank"
                   value={accountNumber}
                   onChange={(e) => setAccountNumber(e.target.value)}
                   className="w-full px-2.5 py-1.5 text-xs font-mono bg-white border border-stone-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none"

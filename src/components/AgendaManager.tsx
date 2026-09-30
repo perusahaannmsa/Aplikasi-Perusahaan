@@ -417,21 +417,21 @@ export function AgendaManager({
       
       {/* Top Banner / Breadcrumb & Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-stone-200 shadow-xs">
-        <div className="flex items-center gap-3.5">
-          <div className="p-3 bg-amber-500 text-white rounded-2xl shadow-xs">
+        <div className="flex items-center gap-3.5 min-w-0">
+          <div className="p-3 bg-amber-500 text-white rounded-2xl shadow-xs shrink-0">
             <CalendarDays size={24} />
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-xs uppercase tracking-wider text-amber-700 font-bold bg-amber-100 px-2 py-0.5 rounded">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-mono text-xs uppercase tracking-wider text-amber-700 font-bold bg-amber-100 px-2 py-0.5 rounded shrink-0">
                 Manajemen Jadwal &amp; Tugas
               </span>
               <span className="text-xs text-stone-400 font-mono">Real-time Reminder</span>
             </div>
-            <h1 className="text-xl sm:text-2xl font-black text-stone-900 tracking-tight mt-0.5">
+            <h1 className="text-xl sm:text-2xl font-black text-stone-900 tracking-tight mt-0.5 truncate">
               Pengingat Kegiatan &amp; Agenda Kerja
             </h1>
-            <p className="text-xs text-stone-500 mt-0.5">
+            <p className="text-xs text-stone-500 mt-0.5 line-clamp-2 sm:line-clamp-none">
               Pengingat otomatis untuk tenggat waktu pajak, rekonsiliasi kas, slip gaji, dan SPPD operasional.
             </p>
           </div>
@@ -1379,7 +1379,7 @@ export function AgendaManager({
                 <input
                   type="text"
                   required
-                  placeholder="Contoh: Pembayaran Pajak PPh 21 / 23 Masa Ini"
+                  placeholder="Judul kegiatan atau pekerjaan..."
                   value={formTitle}
                   onChange={(e) => setFormTitle(e.target.value)}
                   className="w-full px-3.5 py-2 text-xs bg-stone-50 border border-stone-250 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500 font-sans font-medium"

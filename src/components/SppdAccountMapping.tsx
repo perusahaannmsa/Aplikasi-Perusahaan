@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import * as XLSX from 'xlsx';
+import * as XLSX from '@e965/xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { 
@@ -2198,10 +2198,10 @@ export function SppdAccountMapping({
                                           {isMenuOpen && (
                                             <>
                                               <div 
-                                                className="fixed inset-0 z-30" 
+                                                className="fixed inset-0 z-[99998]" 
                                                 onClick={() => setActiveActionMenuId(null)}
                                               />
-                                              <div className="absolute right-0 mt-1.5 w-48 bg-white rounded-2xl shadow-2xl border border-stone-200 py-1.5 z-40 font-sans text-left animate-in fade-in zoom-in-95 duration-100">
+                                              <div className="absolute right-0 mt-1.5 w-48 bg-white rounded-2xl shadow-2xl border border-stone-200 py-1.5 z-[99999] font-sans text-left animate-in fade-in zoom-in-95 duration-100">
                                                 <button
                                                   type="button"
                                                   onClick={() => handleOpenEditModal(t)}
@@ -2399,10 +2399,10 @@ export function SppdAccountMapping({
                                 {isMenuOpen && (
                                   <>
                                     <div 
-                                      className="fixed inset-0 z-30" 
+                                      className="fixed inset-0 z-[99998]" 
                                       onClick={() => setActiveActionMenuId(null)}
                                     />
-                                    <div className="absolute right-0 mt-1.5 w-52 bg-white rounded-2xl shadow-2xl border border-stone-200 py-1.5 z-40 font-sans text-left animate-in fade-in zoom-in-95 duration-100">
+                                    <div className="absolute right-0 mt-1.5 w-52 bg-white rounded-2xl shadow-2xl border border-stone-200 py-1.5 z-[99999] font-sans text-left animate-in fade-in zoom-in-95 duration-100">
                                       <div className="px-3 py-1.5 text-[10px] font-mono font-bold text-stone-400 uppercase tracking-wider border-b border-stone-100 flex items-center justify-between">
                                         <span>Baris #{idx + 1}</span>
                                         <span className="text-amber-700 font-bold">SPPD</span>

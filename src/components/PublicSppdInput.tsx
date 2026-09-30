@@ -3,6 +3,7 @@ import { NusantaraLogo } from './NusantaraLogo';
 import { PrintSppdDocument, terbilangRupiah } from './PrintSppdDocument';
 import { SPPDRecord, SPPDCostItem, SPPDCostAttachment } from './SppdManager';
 import { JabatanDinas } from '../data/pedomanBiaya';
+import { getPublicSppdLink } from '../utils/appLinks';
 import { 
   saveSppdRecordsToFirestore, 
   loadSppdRecordsFromFirestore 
@@ -278,7 +279,7 @@ export const PublicSppdInput: React.FC<PublicSppdInputProps> = ({ onBackToHome }
   };
 
   const handleCopyLink = () => {
-    const url = window.location.href;
+    const url = getPublicSppdLink();
     navigator.clipboard.writeText(url);
     setIsCopied(true);
     setTimeout(() => setIsCopied(false), 2500);
@@ -590,7 +591,7 @@ export const PublicSppdInput: React.FC<PublicSppdInputProps> = ({ onBackToHome }
                   type="text"
                   value={namaPekerja}
                   onChange={(e) => setNamaPekerja(e.target.value)}
-                  placeholder="Contoh: Nur Wahyudi"
+                  placeholder="Nama Pegawai"
                   className="w-full px-3 py-2 border border-stone-300 rounded-xl font-bold text-stone-900 focus:outline-none focus:border-amber-500"
                   required
                 />
@@ -622,7 +623,7 @@ export const PublicSppdInput: React.FC<PublicSppdInputProps> = ({ onBackToHome }
                   type="text"
                   value={divisi}
                   onChange={(e) => setDivisi(e.target.value)}
-                  placeholder="Contoh: Operasional Lapangan / Finance"
+                  placeholder="Operasional Lapangan / Finance"
                   className="w-full px-3 py-2 border border-stone-200 rounded-xl text-stone-800 focus:outline-none focus:border-amber-500"
                 />
               </div>
@@ -659,7 +660,7 @@ export const PublicSppdInput: React.FC<PublicSppdInputProps> = ({ onBackToHome }
                   type="text"
                   value={kotaTujuan}
                   onChange={(e) => setKotaTujuan(e.target.value)}
-                  placeholder="Contoh: Site Kolaka / Kendari"
+                  placeholder="Site Kolaka / Kendari"
                   className="w-full px-3 py-2 border border-stone-300 rounded-xl font-bold text-stone-900 focus:outline-none focus:border-amber-500"
                   required
                 />
@@ -729,7 +730,7 @@ export const PublicSppdInput: React.FC<PublicSppdInputProps> = ({ onBackToHome }
                   rows={2}
                   value={tujuanPerjalanan}
                   onChange={(e) => setTujuanPerjalanan(e.target.value)}
-                  placeholder="Contoh: Pengawasan operasional lapangan, verifikasi aset tambang mineral, dan rekonsiliasi site."
+                  placeholder="Pengawasan operasional lapangan, verifikasi aset tambang mineral, dan rekonsiliasi site."
                   className="w-full px-3 py-2 border border-stone-300 rounded-xl text-stone-900 focus:outline-none focus:border-amber-500"
                   required
                 />
@@ -743,7 +744,7 @@ export const PublicSppdInput: React.FC<PublicSppdInputProps> = ({ onBackToHome }
                   type="text"
                   value={keteranganSppd}
                   onChange={(e) => setKeteranganSppd(e.target.value)}
-                  placeholder="Contoh: Bon dan kwitansi telah diunggah lengkap pada setiap pos biaya."
+                  placeholder="Bon dan kwitansi telah diunggah lengkap pada setiap pos biaya."
                   className="w-full px-3 py-2 border border-stone-200 rounded-xl text-stone-800 focus:outline-none focus:border-amber-500"
                 />
               </div>

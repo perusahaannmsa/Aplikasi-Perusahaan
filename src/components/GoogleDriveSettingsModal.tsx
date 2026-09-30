@@ -85,9 +85,10 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
 
   const showFeedback = (type: 'success' | 'error', text: string) => {
     setFeedbackMessage({ type, text });
+    const timer = type === 'error' && text.includes('Authorized Domains') ? 20000 : 5000;
     setTimeout(() => {
       setFeedbackMessage(null);
-    }, 4500);
+    }, timer);
   };
 
   const handleAddAuthorizedEmail = async (e: React.FormEvent) => {
@@ -237,7 +238,7 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
             ) : (
               <AlertTriangle size={16} className="text-rose-600 shrink-0" />
             )}
-            <span className="flex-1">{feedbackMessage.text}</span>
+            <span className="flex-1 whitespace-pre-line leading-relaxed">{feedbackMessage.text}</span>
           </div>
         )}
 

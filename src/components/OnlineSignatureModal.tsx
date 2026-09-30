@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { Worker } from "../types";
 import { SignaturePad } from "./SignaturePad";
+import { getAttendanceLink } from "../utils/appLinks";
 
 interface OnlineSignatureModalProps {
   isOpen: boolean;
@@ -77,18 +78,14 @@ export function OnlineSignatureModal({
   };
 
   const handleCopyShareLink = (workerId: string) => {
-    const origin = typeof window !== "undefined" ? window.location.origin : "";
-    const pathname = typeof window !== "undefined" ? window.location.pathname : "";
-    const link = `${origin}${pathname}?sign=1&workerId=${workerId}`;
+    const link = getAttendanceLink(workerId, { sign: true });
     navigator.clipboard.writeText(link);
     setCopiedId(workerId);
     setTimeout(() => setCopiedId(null), 2500);
   };
 
   const handleSendWhatsAppLink = (worker: Worker) => {
-    const origin = typeof window !== "undefined" ? window.location.origin : "";
-    const pathname = typeof window !== "undefined" ? window.location.pathname : "";
-    const link = `${origin}${pathname}?sign=1&workerId=${worker.id}`;
+    const link = getAttendanceLink(worker.id, { sign: true });
     
     const message = `Halo *${worker.name}*,\n\nMohon untuk menandatangani berkas rekap absensi & uang makan mingguan Anda periode *${weekStart} s/d ${weekEnd}* melalui link penanda tanganan online berikut:\n\n👉 ${link}\n\nTerima kasih atas kerja samanya.\n_PT. Nusantara Mineral Sukses Abadi_`;
     

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import QRCode from 'qrcode';
 import { Submission } from '../types';
 import { formatRupiah, formatDateIndonesian, numberToTerbilang } from '../utils';
+import { getVoucherShareLink } from '../utils/appLinks';
 import { NusantaraLogo } from './NusantaraLogo';
 import { Printer, ArrowLeft, Layers, FileText, CheckCircle, Cloud, Loader2, Lock, ShieldAlert, RefreshCw, Share2, Copy, Check, Send, Edit2, Trash, Trash2, RotateCw, Coins, ExternalLink, QrCode, Upload, AlertTriangle } from 'lucide-react';
 import { getStoredGoogleDriveToken, ensureValidDriveToken, googleDriveLogin, saveSubmissionToFirestore, getAllConnectedDriveTokens, getConnectedDrives, ensureGoogleDriveFileSharing } from '../firebase';
@@ -2166,8 +2167,31 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ submission, onBack
         const shareSlug = cleanSlug(submission.jenisPengajuan);
         const isLunas = (submission.status || '').toLowerCase() === 'lunas' || submission.dibayarkanDengan === 'Cek/Transfer';
 
-        const shareUrl = `${window.location.origin}/shared-view?id=${submission.id}&transaksi=${encodeURIComponent(shareSlug)}&nominal=${grandTotal}`;
-        const shareImageUrl = `/api/share-image?id=${encodeURIComponent(submission.id)}&transaksi=${encodeURIComponent(shareSlug)}&nominal=${grandTotal}`;
+        const shareParams = new URLSearchParams();
+        shareParams.set('id', submission.id);
+        if (submission.kode) shareParams.set('kode', submission.kode);
+        shareParams.set('transaksi', shareSlug);
+        shareParams.set('nominal', String(grandTotal));
+        if (submission.dibayarkanKepada) shareParams.set('kepada', submission.dibayarkanKepada);
+        if (submission.tanggal) shareParams.set('tanggal', submission.tanggal);
+        if (submission.status) shareParams.set('status', submission.status);
+        if (submission.dibayarkanDengan) shareParams.set('bayar', submission.dibayarkanDengan);
+        if (submission.items && submission.items.length > 0) {
+          try {
+            shareParams.set('items', JSON.stringify(submission.items.slice(0, 10)));
+          } catch (_) {}
+        }
+
+        const shareUrl = getVoucherShareLink(submission.id, {
+          kode: submission.kode,
+          transaksi: shareSlug,
+          nominal: grandTotal,
+          kepada: submission.dibayarkanKepada,
+          tanggal: submission.tanggal,
+          status: submission.status,
+          bayar: submission.dibayarkanDengan
+        });
+        const shareImageUrl = `/api/share-image?${shareParams.toString()}`;
 
         // Ensure backend memory and persistent store has the latest submission record for share-image
         try {

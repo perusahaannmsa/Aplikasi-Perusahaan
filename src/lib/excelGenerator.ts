@@ -1,4 +1,4 @@
-import * as XLSX from "xlsx";
+import * as XLSX from "@e965/xlsx";
 import { PettyCashTransaction, PettyCashSummary, BankStatementTransaction, BankStatementSummary } from "../types";
 
 export function generatePettyCashExcelBlob(

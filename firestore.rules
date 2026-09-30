@@ -65,6 +65,11 @@ service cloud.firestore {
     match /test/{docId} {
       allow read, write: if true;
     }
+
+    // 12. Internal Memos (Riwayat Dokumen Memo Direksi)
+    match /internal_memos/{memoId} {
+      allow read, write: if true;
+    }
   }
 }
 

@@ -601,9 +601,9 @@ export const CompanySwitcherModal: React.FC<CompanySwitcherModalProps> = ({
                   type="button"
                   onClick={() => setNewLogoUrl('https://i.ibb.co.com/gFHNJ1JD/LOGO-NH.png')}
                   className="w-full sm:w-auto px-3 py-2.5 bg-stone-200 hover:bg-stone-300 text-stone-800 font-mono text-[11px] font-bold rounded-xl transition shrink-0 whitespace-nowrap cursor-pointer shadow-3xs"
-                  title="Gunakan link ImgBB contoh"
+                  title="Gunakan Logo Resmi NMSA"
                 >
-                  Gunakan Link Contoh ImgBB
+                  Gunakan Logo NMSA
                 </button>
               </div>
 

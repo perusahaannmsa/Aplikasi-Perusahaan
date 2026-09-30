@@ -3,6 +3,7 @@ import { SPPDRecord } from './SppdManager';
 import { NusantaraLogo } from './NusantaraLogo';
 import { Printer, ArrowLeft, Download, CheckCircle, FileText, MapPin, Calendar, User, Briefcase, Share2, Copy, Check } from 'lucide-react';
 import { formatDateIndonesian } from '../utils';
+import { getSppdViewLink } from '../utils/appLinks';
 
 interface PrintSppdDocumentProps {
   sppd: SPPDRecord;
@@ -855,7 +856,7 @@ export const PrintSppdDocument: React.FC<PrintSppdDocumentProps> = ({
   };
 
   const handleCopyLink = () => {
-    const url = `${window.location.origin}${window.location.pathname}#/sppd-view?id=${encodeURIComponent(sppd.id || sppd.noSppd)}`;
+    const url = getSppdViewLink(sppd.id || sppd.noSppd || '');
     navigator.clipboard.writeText(url);
     setIsCopied(true);
     setTimeout(() => setIsCopied(false), 2500);

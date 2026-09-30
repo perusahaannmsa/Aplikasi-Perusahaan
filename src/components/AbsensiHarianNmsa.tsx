@@ -86,6 +86,8 @@ import { googleDriveAutoBackup, BackupSyncLog, DriveAutoBackupSettings } from ".
 import { SignaturePad } from "./SignaturePad";
 import { OnlineSignatureModal } from "./OnlineSignatureModal";
 import { SelfSigningPortal } from "./SelfSigningPortal";
+import { WhatsAppBotReminderMenu } from "./WhatsAppBotReminderMenu";
+import { getDynamicReminderMessage } from "../utils/reminderMessageGenerator";
 
 // Utility to format Date as local YYYY-MM-DD
 function formatLocalYYYYMMDD(date: Date): string {
@@ -145,25 +147,9 @@ function parseYearAndMonthFromPeriod(periodText: string): { targetYear: string; 
   return { targetYear, targetMonth };
 }
 
-const FRONTEND_REMINDER_TEMPLATES = [
-  (name: string, url: string) => `Halo *${name}*! 👋\n\nSudah masuk jam kerja. Silakan lakukan absen mandiri uang makan harian Anda melalui tautan cepat berikut:\n👉 ${url}\n\n*PENTING:* Absensi ini hanya berlaku bagi karyawan yang hadir fisik di kantor Wisma NH Pasar Minggu. Sistem mendeteksi lokasi GPS Anda secara real-time. Jika Anda sedang di luar kantor atau meeting eksternal, Anda tidak dapat melakukan absen ini. Tetap jaga kesehatan dan selamat beraktivitas! 💼✨`,
-  (name: string, url: string) => `Selamat pagi *${name}*! ☀️\n\nMohon segera catat kehadiran harian Anda untuk kelancaran administrasi uang makan melalui link di bawah:\n👉 ${url}\n\n*Informasi Aturan:* Presensi wajib dilakukan langsung dari area kantor Wisma NH Pasar Minggu. Absen tidak dapat diproses apabila Anda sedang berada di luar kantor atau memiliki agenda meeting di luar. Terima kasih atas disiplin Anda, mari selalu jaga kesehatan diri! 💪🏢`,
-  (name: string, url: string) => `Pemberitahuan Presensi Kantor - *${name}* 📍\n\nYth. Rekan Karyawan, silakan klik tautan di bawah ini untuk mencatat kehadiran harian Anda:\n👉 ${url}\n\nSistem mendeteksi radius lokasi Anda secara ketat. Harap diingat bahwa absen uang makan ini hanya valid jika dilakukan langsung di dalam Wisma NH Pasar Minggu (tidak berlaku bagi yang sedang dinas luar/meeting luar). Semoga aktivitas hari ini berjalan lancar, tetap jaga kesehatan dan keselamatan kerja! 🛠️💼`,
-  (name: string, url: string) => `Halo *${name}*! Salam sukses untuk Anda hari ini. 🏆\n\nSebelum beraktivitas lebih lanjut, harap klik link instan berikut untuk melakukan absen uang makan hari ini:\n👉 ${url}\n\n*Peringatan Ketentuan:* Absen ini mendeteksi titik koordinat Anda dan hanya dapat diakses dari kantor Wisma NH Pasar Minggu. Bagi yang sedang bertugas atau meeting di luar kantor, absen tidak diperkenankan. Mari jaga kesehatan dan tetap profesional dalam bertugas! 🏁🏢`,
-  (name: string, url: string) => `Semangat pagi *${name}*! 🌟\n\nUntuk pencatatan uang makan harian yang akurat, silakan lakukan check-in melalui tautan instan di bawah ini:\n👉 ${url}\n\n*Harap diperhatikan:* Absensi ini dirancang khusus untuk karyawan yang bekerja langsung dari kantor Wisma NH Pasar Minggu. Bagi karyawan yang berada di luar area kantor atau meeting luar, akses absen tidak berlaku. Jaga kondisi tubuh agar selalu prima dan selamat bekerja! 🤝💼`,
-  (name: string, url: string) => `Pemberitahuan Kehadiran Wisma NH - *${name}* 🏢\n\nMari mulai hari kerja ini dengan disiplin. Segera verifikasi kehadiran Anda dengan mengetuk link di bawah:\n👉 ${url}\n\n*Ketentuan Absensi:* Sesuai aturan, absensi uang makan hanya dapat dilakukan secara fisik di area kantor Wisma NH Pasar Minggu. Segala bentuk absensi di luar kantor (termasuk saat meeting luar) tidak akan terverifikasi oleh sistem lokasi. Terima kasih atas pengertiannya, mari utamakan kesehatan dan keselamatan! 📈❤️`
-];
-
+// Dynamic, multi-format WhatsApp Attendance Reminder Generator (24 Distinct Layouts, Day-of-Week & Time-of-Day Aware)
 function getDeterministicReminderMessage(name: string, workerId: string, url: string): string {
-  // Use today's date so it changes daily but stays identical if triggered multiple times in one day
-  const todayStr = new Date().toLocaleDateString("id-ID", { year: "numeric", month: "numeric", day: "numeric" });
-  const str = workerId + todayStr;
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  const idx = Math.abs(hash) % FRONTEND_REMINDER_TEMPLATES.length;
-  return FRONTEND_REMINDER_TEMPLATES[idx](name, url);
+  return getDynamicReminderMessage(name, workerId, url);
 }
 
 // Helper to sort transactions putting "Saldo Awal" at the very top, and then the rest by date ascending
@@ -989,20 +975,25 @@ export function AbsensiHarianNmsa({
   const [isAgreedToDataVerification, setIsAgreedToDataVerification] = useState<boolean>(false);
 
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
-  const [activeTab, setActiveTabInternal] = useState<"absen" | "workers" | "dashboard" | "pettycash">(() => {
+  const [activeTab, setActiveTabInternal] = useState<"absen" | "workers" | "dashboard" | "pettycash" | "bot_reminder">(() => {
     try {
       const saved = sessionStorage.getItem("nmsa_absen_active_tab");
-      if (saved && ["absen", "workers", "dashboard", "pettycash"].includes(saved)) {
+      if (saved && ["absen", "workers", "dashboard", "pettycash", "bot_reminder"].includes(saved)) {
         return saved as any;
       }
     } catch (e) {}
     return "absen";
   });
 
-  const setActiveTab = (tab: "absen" | "workers" | "dashboard" | "pettycash") => {
+  const setActiveTab = (tab: "absen" | "workers" | "dashboard" | "pettycash" | "bot_reminder") => {
     setActiveTabInternal(tab);
     try { sessionStorage.setItem("nmsa_absen_active_tab", tab); } catch (e) {}
   };
+
+  // Friday Digital Signature & Server Verification States
+  const isFridayToday = new Date().toLocaleDateString("en-US", { timeZone: "Asia/Jakarta", weekday: "long" }) === "Friday" || urlParams.get("friday") === "true";
+  const [fridaySignatureDraft, setFridaySignatureDraft] = useState<string | null>(null);
+  const [fridayServerVerification, setFridayServerVerification] = useState<any | null>(null);
   const [globalAllowance, setGlobalAllowance] = useState<number>(() => {
     const saved = localStorage.getItem("global_allowance");
     return saved ? Number(saved) : 25000;
@@ -1885,28 +1876,29 @@ export function AbsensiHarianNmsa({
           }
 
           if (data.attendanceRecords && Array.isArray(data.attendanceRecords)) {
-            // Guard: If quiet background poll and user interacted within last 60s or is currently focused on an input/form, skip overwriting
+            // Guard: If quiet background poll and user interacted within last 2.5s or is currently focused on an input/form, skip overwriting
             const isInputActive = typeof document !== "undefined" && document.activeElement && 
               (document.activeElement.tagName === "INPUT" || document.activeElement.tagName === "TEXTAREA" || document.activeElement.tagName === "SELECT");
-            const isRecentInteraction = Date.now() - lastUserInteractionTimeRef.current < 60000;
+            const isRecentInteraction = Date.now() - lastUserInteractionTimeRef.current < 2500;
 
             if (!(quiet && (isInputActive || isRecentInteraction))) {
               const allWorkerIds = new Set(resolvedWorkers.map((w: any) => w.id));
               setAttendanceRecords((prevLocal) => {
                 const map = new Map<string, AttendanceRecord>();
 
-                // 1. Keep local records first so local checkmarks are never wiped out
+                // 1. Keep local records baseline for workers not yet registered on server
                 (prevLocal || []).forEach((r) => {
                   if (allWorkerIds.has(r.workerId)) {
                     map.set(r.workerId, {
                       ...r,
                       attendance: { ...(r.attendance || {}) },
-                      customStatus: { ...(r.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">
+                      customStatus: { ...(r.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">,
+                      reasons: { ...(r.reasons || {}) }
                     });
                   }
                 });
 
-                // 2. Merge incoming server records (local records take priority over older server data)
+                // 2. Server state is authoritative (1 pintu 1 server online sync)
                 data.attendanceRecords.forEach((r: AttendanceRecord) => {
                   if (!allWorkerIds.has(r.workerId)) return;
                   const existing = map.get(r.workerId);
@@ -1914,13 +1906,18 @@ export function AbsensiHarianNmsa({
                     map.set(r.workerId, {
                       ...r,
                       attendance: { ...(r.attendance || {}) },
-                      customStatus: { ...(r.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">
+                      customStatus: { ...(r.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">,
+                      reasons: { ...(r.reasons || {}) }
                     });
                   } else {
-                    // Local state always takes priority to avoid checkmarks disappearing
-                    existing.attendance = { ...(r.attendance || {}), ...(existing.attendance || {}) };
-                    existing.customStatus = { ...(r.customStatus || {}), ...(existing.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">;
-                    if (r.dailyAllowance && !existing.dailyAllowance) existing.dailyAllowance = r.dailyAllowance;
+                    // Update authoritative online values from server
+                    existing.attendance = { ...(r.attendance || {}) };
+                    existing.customStatus = { ...(r.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">;
+                    existing.reasons = { ...(r.reasons || {}) };
+                    if (r.dailyAllowance) existing.dailyAllowance = r.dailyAllowance;
+                    if (r.allowanceRate) existing.allowanceRate = r.allowanceRate;
+                    if (r.signatures) existing.signatures = { ...(r.signatures || {}) };
+                    if (r.notes) existing.notes = { ...(r.notes || {}) };
                   }
                 });
 
@@ -2012,15 +2009,30 @@ export function AbsensiHarianNmsa({
     return () => clearTimeout(fallbackTimer);
   }, []);
 
-  // 1b. Periodic quiet background sync (every 30 seconds) to get worker updates automatically
+  // 1b. Periodic quiet background sync (every 10 seconds) to get worker updates automatically
   useEffect(() => {
     if (!initialFetchDone) return;
     const interval = setInterval(() => {
       if (typeof document !== "undefined" && document.visibilityState === "visible") {
         fetchSharedState(true);
       }
-    }, 30000);
-    return () => clearInterval(interval);
+    }, 10000);
+
+    const onFocus = () => {
+      fetchSharedState(true);
+    };
+    const onOnline = () => {
+      fetchSharedState(true);
+    };
+
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("online", onOnline);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("online", onOnline);
+    };
   }, [initialFetchDone]);
 
   // 2. Debounced auto-save to server when states change (only after initial load)
@@ -2141,63 +2153,129 @@ export function AbsensiHarianNmsa({
 
   // --- QUICK ATTENDANCE INJECTED STATES & ACTIONS ---
   const isQuickMode = urlParams.get("quick") === "true";
-  const [quickSubmitState, setQuickSubmitState] = useState<"idle" | "submitting" | "success" | "error" | "outside">("idle");
+  const [quickSubmitState, setQuickSubmitState] = useState<"idle" | "submitting" | "success" | "error" | "outside" | "friday_sign">("idle");
   const [quickSubmitMessage, setQuickSubmitMessage] = useState<string>("");
   const [selectedQuickStatus, setSelectedQuickStatus] = useState<string>("");
   const [showReasonInputFor, setShowReasonInputFor] = useState<string | null>(null);
   const [customReasonText, setCustomReasonText] = useState<string>("");
 
-  const triggerQuickCheckIn = async (status: string, overrideCoords?: { latitude: number; longitude: number }, customReason?: string) => {
+  const triggerQuickCheckIn = async (
+    status: string, 
+    overrideCoords?: { latitude: number; longitude: number }, 
+    customReason?: string,
+    customSignature?: string | null
+  ) => {
     if (!selfWorkerId) return;
     setQuickSubmitState("submitting");
     setSelectedQuickStatus(status);
     try {
       const todayYMD = formatLocalYYYYMMDD(new Date());
       const activeCoords = overrideCoords || userCoords;
-      const response = await fetch("/api/quick-self-attend", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          workerId: selfWorkerId,
-          date: todayYMD,
-          latitude: activeCoords ? activeCoords.latitude : undefined,
-          longitude: activeCoords ? activeCoords.longitude : undefined,
-          status: status,
-          reason: customReason
-        })
-      });
-      const data = await response.json();
-      if (response.ok && data.success) {
-        setQuickSubmitState("success");
-        setQuickSubmitMessage(data.message);
-        setSelfIsAttendedToday(true);
-        // Synchronize locally to keep states reactive
-        const updatedRecords = attendanceRecords.map((r) => {
-          if (r.workerId === selfWorkerId) {
-            return {
-              ...r,
-              attendance: {
-                ...r.attendance,
-                [todayYMD]: status === "Hadir",
-              },
-              customStatus: {
-                ...r.customStatus,
-                [todayYMD]: status !== "Hadir" ? status : undefined
-              }
-            };
-          }
-          return r;
+      const signatureToUse = customSignature || fridaySignatureDraft || signatures[selfWorkerId] || undefined;
+      let handledByServer = false;
+
+      try {
+        const response = await fetch("/api/quick-self-attend", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            workerId: selfWorkerId,
+            date: todayYMD,
+            latitude: activeCoords ? activeCoords.latitude : undefined,
+            longitude: activeCoords ? activeCoords.longitude : undefined,
+            status: status,
+            reason: customReason,
+            signature: signatureToUse,
+            isFriday: isFridayToday
+          })
         });
-        setAttendanceRecords(updatedRecords);
-      } else if (response.ok && data.reason === "OUTSIDE") {
-        setQuickSubmitState("outside");
-      } else {
-        setQuickSubmitState("error");
-        setQuickSubmitMessage(data.error || "Gagal memproses absensi otomatis.");
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success) {
+            handledByServer = true;
+            setQuickSubmitState("success");
+            setQuickSubmitMessage(data.message);
+            setSelfIsAttendedToday(true);
+            if (data.verification) {
+              setFridayServerVerification(data.verification);
+            }
+            if (signatureToUse) {
+              setSignatures(prev => ({ ...prev, [selfWorkerId]: signatureToUse }));
+              try {
+                const current = JSON.parse(localStorage.getItem("weekly_signatures_v1") || "{}");
+                current[selfWorkerId] = signatureToUse;
+                localStorage.setItem("weekly_signatures_v1", JSON.stringify(current));
+              } catch (e) {}
+            }
+          } else if (data.reason === "OUTSIDE") {
+            handledByServer = true;
+            setQuickSubmitState("outside");
+            return;
+          }
+        } else if (response.status === 403 || response.status === 400) {
+          const data = await response.json().catch(() => ({}));
+          handledByServer = true;
+          setQuickSubmitState("error");
+          setQuickSubmitMessage(data.error || "Gagal memproses absensi.");
+          return;
+        }
+      } catch (netErr) {
+        console.warn("Server API not available (client-side/GitHub Pages mode):", netErr);
       }
+
+      // If backend was unreachable or returned 404 (e.g. GitHub Pages static deployment), perform resilient client-side check-in
+      if (!handledByServer) {
+        setQuickSubmitState("success");
+        setQuickSubmitMessage(`Presensi ${status} berhasil dicatat.`);
+        setSelfIsAttendedToday(true);
+      }
+
+      // Synchronize locally to keep states reactive
+      const updatedRecords = attendanceRecords.map((r) => {
+        if (r.workerId === selfWorkerId) {
+          const newAtt = { ...(r.attendance || {}), [todayYMD]: status === "Hadir" };
+          const newCust = { ...(r.customStatus || {}) };
+          const newReas = { ...(r.reasons || {}) };
+
+          if (status === "Hadir" || status === "Absen") {
+            delete newCust[todayYMD];
+            delete newReas[todayYMD];
+          } else {
+            newCust[todayYMD] = status as any;
+            newReas[todayYMD] = customReason || `Diajukan via tautan mandiri (${status})`;
+          }
+
+          return {
+            ...r,
+            attendance: newAtt,
+            customStatus: newCust,
+            reasons: newReas
+          };
+        }
+        return r;
+      });
+      setAttendanceRecords(updatedRecords);
+      try {
+        localStorage.setItem("absensi_uang_makan_records", JSON.stringify(updatedRecords));
+      } catch (e) {}
+
+      // Save to Cloud Firestore
+      saveAbsenDataToFirestore({
+        id: `absen_${selfWorkerId}_${todayYMD}`,
+        workerId: selfWorkerId,
+        date: todayYMD,
+        status,
+        reason: customReason,
+        signature: signatureToUse,
+        isFriday: isFridayToday,
+        coords: activeCoords,
+        timestamp: new Date().toISOString()
+      }).catch(e => console.warn("Firestore save fallback error:", e));
+
     } catch (err: any) {
       setQuickSubmitState("error");
-      setQuickSubmitMessage(err.message || "Gagal menghubungi server.");
+      setQuickSubmitMessage(err.message || "Gagal memproses absensi.");
     }
   };
 
@@ -2206,12 +2284,16 @@ export function AbsensiHarianNmsa({
       if (selfIsAttendedToday || activeHolidayStatus.isHoliday) return;
       const isNear = geoDistance <= MAX_DISTANCE_METERS;
       if (isNear) {
-        triggerQuickCheckIn("Hadir");
+        if (isFridayToday && !signatures[selfWorkerId] && !fridaySignatureDraft) {
+          setQuickSubmitState("friday_sign");
+        } else {
+          triggerQuickCheckIn("Hadir");
+        }
       } else {
         setQuickSubmitState("outside");
       }
     }
-  }, [selfWorkerId, isQuickMode, geoStatus, geoDistance, quickSubmitState, userCoords, selfIsAttendedToday, activeHolidayStatus.isHoliday]);
+  }, [selfWorkerId, isQuickMode, geoStatus, geoDistance, quickSubmitState, userCoords, selfIsAttendedToday, activeHolidayStatus.isHoliday, isFridayToday]);
 
   // Geolocation Constants & Calculations
   const OFFICE_LAT = -6.244342;
@@ -2301,6 +2383,7 @@ export function AbsensiHarianNmsa({
     try {
       setSelfAttendStatus("idle");
       const todayYMD = formatLocalYYYYMMDD(new Date());
+      const signatureToUse = fridaySignatureDraft || signatures[selfWorker.id] || undefined;
       const res = await fetch("/api/self-attend", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2309,7 +2392,9 @@ export function AbsensiHarianNmsa({
           date: todayYMD, 
           pin: selfInputPin,
           latitude: userCoords.latitude,
-          longitude: userCoords.longitude
+          longitude: userCoords.longitude,
+          signature: signatureToUse,
+          isFriday: isFridayToday
         }),
       });
       const data = await res.json();
@@ -2318,6 +2403,17 @@ export function AbsensiHarianNmsa({
         setSelfAttendMessage(data.message);
         setSelfIsAttendedToday(true);
         setShowSuccessModal(true);
+        if (data.verification) {
+          setFridayServerVerification(data.verification);
+        }
+        if (signatureToUse) {
+          setSignatures(prev => ({ ...prev, [selfWorker.id]: signatureToUse }));
+          try {
+            const current = JSON.parse(localStorage.getItem("weekly_signatures_v1") || "{}");
+            current[selfWorker.id] = signatureToUse;
+            localStorage.setItem("weekly_signatures_v1", JSON.stringify(current));
+          } catch (e) {}
+        }
 
         // Update locally to keep visual states reactive
         const updatedRecords = attendanceRecords.map((r) => {
@@ -2423,23 +2519,56 @@ export function AbsensiHarianNmsa({
       localStorage.setItem("absensi_uang_makan_records", JSON.stringify(updated));
     } catch (e) {}
     setAttendanceRecords(updated);
+    // Instantly sync to server so phone and desktop stay 100% online 1 pintu 1 server
+    syncStateToServer(
+      workers,
+      updated,
+      weeklyReports,
+      pettyCashReports,
+      attendancePin,
+      signatures,
+      pettyCashHolders,
+      attendanceLogs,
+      waMethod,
+      autoReminderHour
+    );
   };
 
   const handleToggleAllForDay = (date: string, forceCheck: boolean) => {
     lastUserInteractionTimeRef.current = Date.now();
     const updated = attendanceRecords.map((r) => {
+      const newCustomStatus = { ...(r.customStatus || {}) };
+      const newReasons = { ...(r.reasons || {}) };
+      if (forceCheck) {
+        delete newCustomStatus[date];
+        delete newReasons[date];
+      }
       return {
         ...r,
         attendance: {
           ...(r.attendance || {}),
           [date]: forceCheck,
         },
+        customStatus: newCustomStatus,
+        reasons: newReasons,
       };
     });
     try {
       localStorage.setItem("absensi_uang_makan_records", JSON.stringify(updated));
     } catch (e) {}
     setAttendanceRecords(updated);
+    syncStateToServer(
+      workers,
+      updated,
+      weeklyReports,
+      pettyCashReports,
+      attendancePin,
+      signatures,
+      pettyCashHolders,
+      attendanceLogs,
+      waMethod,
+      autoReminderHour
+    );
   };
 
   const handleToggleAllForWorker = (workerId: string, forceCheck: boolean) => {
@@ -2447,12 +2576,20 @@ export function AbsensiHarianNmsa({
     const updated = attendanceRecords.map((r) => {
       if (r.workerId === workerId) {
         const newAttMap = { ...(r.attendance || {}) };
+        const newCustomStatus = { ...(r.customStatus || {}) };
+        const newReasons = { ...(r.reasons || {}) };
         weekDates.forEach((d) => {
           newAttMap[d] = forceCheck;
+          if (forceCheck) {
+            delete newCustomStatus[d];
+            delete newReasons[d];
+          }
         });
         return {
           ...r,
           attendance: newAttMap,
+          customStatus: newCustomStatus,
+          reasons: newReasons,
         };
       }
       return r;
@@ -2461,6 +2598,18 @@ export function AbsensiHarianNmsa({
       localStorage.setItem("absensi_uang_makan_records", JSON.stringify(updated));
     } catch (e) {}
     setAttendanceRecords(updated);
+    syncStateToServer(
+      workers,
+      updated,
+      weeklyReports,
+      pettyCashReports,
+      attendancePin,
+      signatures,
+      pettyCashHolders,
+      attendanceLogs,
+      waMethod,
+      autoReminderHour
+    );
   };
 
   // Check if current week's report is submitted
@@ -5489,8 +5638,8 @@ export function AbsensiHarianNmsa({
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col selection:bg-indigo-500 selection:text-white" id="main_container">
       
-      {/* HEADER NAVBAR - CLEAN TOOLBAR */}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-xs" id="nav_header">
+      {/* HEADER TOOLBAR - CLEAN TOOLBAR */}
+      <div className="bg-white border-b border-slate-200 relative z-10 shadow-2xs" id="nav_header">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           
           <div className="flex items-center gap-3">
@@ -5549,7 +5698,7 @@ export function AbsensiHarianNmsa({
             </div>
           </div>
         </div>
-      </header>
+      </div>
 
       {/* WORKSPACE AREA */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full" id="workspace_main">
@@ -9444,7 +9593,7 @@ export function AbsensiHarianNmsa({
                                 <button
                                   type="button"
                                   onClick={async () => {
-                                    const quickUrl = `${window.location.origin}/?id=${worker.id}&quick=true`;
+                                    const quickUrl = `${window.location.origin}/?view=absen&workerId=${encodeURIComponent(worker.id)}&id=${encodeURIComponent(worker.id)}&quick=true`;
                                     const customMsg = getDeterministicReminderMessage(worker.name, worker.id, quickUrl);
                                     setSendingBotMsgId(worker.id);
                                     try {
@@ -9483,7 +9632,7 @@ export function AbsensiHarianNmsa({
 
                                 {(() => {
                                   const isSentToday = !!bulkSentStatus[worker.id];
-                                  const quickUrl = `${window.location.origin}/?id=${worker.id}&quick=true`;
+                                  const quickUrl = `${window.location.origin}/?view=absen&workerId=${encodeURIComponent(worker.id)}&id=${encodeURIComponent(worker.id)}&quick=true`;
                                   const customMsg = getDeterministicReminderMessage(worker.name, worker.id, quickUrl);
                                   const encodedMsg = encodeURIComponent(customMsg);
                                   let phoneClean = worker.phoneNumber?.replace(/[^0-9]/g, "") || "";
@@ -9978,6 +10127,18 @@ export function AbsensiHarianNmsa({
                          } catch (e) {}
                          setAttendanceRecords(updated);
                          setManageStatusModal(null);
+                         syncStateToServer(
+                           workers,
+                           updated,
+                           weeklyReports,
+                           pettyCashReports,
+                           attendancePin,
+                           signatures,
+                           pettyCashHolders,
+                           attendanceLogs,
+                           waMethod,
+                           autoReminderHour
+                         );
                        };
 
                        return (
@@ -10312,7 +10473,7 @@ export function AbsensiHarianNmsa({
                       }
                       
                       const currentWorker = activeWorkers[currentStepIndex];
-                      const link = `${window.location.origin}/?id=${currentWorker.id}&quick=true`;
+                      const link = `${window.location.origin}/?view=absen&workerId=${encodeURIComponent(currentWorker.id)}&id=${encodeURIComponent(currentWorker.id)}&quick=true`;
                       const customMsg = getDeterministicReminderMessage(currentWorker.name, currentWorker.id, link);
                       const encodedMsg = encodeURIComponent(customMsg);
                       
@@ -10608,7 +10769,7 @@ export function AbsensiHarianNmsa({
                                 onClick={() => {
                                   const activeWorkers = workers.filter(w => w.isActive);
                                   const compiled = activeWorkers.map(w => {
-                                    const link = `${window.location.origin}/?id=${w.id}&quick=true`;
+                                    const link = `${window.location.origin}/?view=absen&workerId=${encodeURIComponent(w.id)}&id=${encodeURIComponent(w.id)}&quick=true`;
                                     return getDeterministicReminderMessage(w.name, w.id, link);
                                   }).join("\n\n-------------------------\n\n");
                                   navigator.clipboard.writeText(compiled);
@@ -10641,8 +10802,8 @@ export function AbsensiHarianNmsa({
                         <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Daftar Pengiriman</h4>
                         <div className="border border-slate-150 rounded-xl overflow-hidden divide-y divide-slate-100">
                           {workers.filter(w => w.isActive).map((w) => {
-                                    const link = `${window.location.origin}/?id=${w.id}&quick=true`;
-                                    const customMsg = getDeterministicReminderMessage(w.name, w.id, link);
+                            const link = `${window.location.origin}/?view=absen&workerId=${encodeURIComponent(w.id)}&id=${encodeURIComponent(w.id)}&quick=true`;
+                            const customMsg = getDeterministicReminderMessage(w.name, w.id, link);
                             const encodedMsg = encodeURIComponent(customMsg);
                             
                             // Sanitize phone number (remove non-digits and replace leading '0' with '62' if necessary)

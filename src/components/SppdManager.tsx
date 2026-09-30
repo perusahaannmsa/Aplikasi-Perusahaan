@@ -10,6 +10,7 @@ import {
 import { generateNextSppdNumber, saveSppdNumberUsage } from '../utils/sppdNumbering';
 import { terbilang } from '../lib/terbilang';
 import { PrintSppdDocument } from './PrintSppdDocument';
+import { getPublicSppdLink } from '../utils/appLinks';
 import { 
   saveSppdRecordsToFirestore, 
   loadSppdRecordsFromFirestore, 
@@ -135,40 +136,7 @@ interface SppdManagerProps {
   initialSppdId?: string | null;
 }
 
-const INITIAL_SAMPLES: SPPDRecord[] = [
-  {
-    id: 'sppd_2026_01',
-    noSppd: 'SPPD-NMSA/VII/2026/001',
-    hariTanggal: '15 Juli 2026',
-    pemberiPerintah: 'H. A. Nursyam Halid',
-    pemberiPerintahJabatan: 'Direktur Utama',
-    namaPekerja: 'Nur Wahyudi',
-    jabatan: 'Supervisor',
-    divisi: 'Accounting & Finance',
-    kotaAsal: 'Jakarta (HO)',
-    kotaTujuan: 'Site Kolaka, Sulawesi Tenggara',
-    transportasi: 'Pesawat + Mobil Double Cabin',
-    lamaPerjalanan: '4 Hari 3 Malam',
-    tanggalMulai: '2026-07-15',
-    tanggalSelesai: '2026-07-18',
-    tujuanPerjalanan: 'Pengawasan Lapangan & Verifikasi Aset Tambang Mineral',
-    keteranganSppd: 'Semua bukti tiket & kwitansi hotel dilampirkan lengkap',
-    costItems: [
-      { id: 'c1', kategori: 'Uang Makan Per Hari', rincian: '4 Hari @ Rp 100.000', hargaAcuan: 400000, jumlah: 400000 },
-      { id: 'c2', kategori: 'Uang Saku Per Hari', rincian: '4 Hari @ Rp 100.000', hargaAcuan: 400000, jumlah: 400000 },
-      { id: 'c3', kategori: 'Transport Lokal Jakarta / Bandara', rincian: '2x Jalan (PP)', hargaAcuan: 400000, jumlah: 400000 },
-      { id: 'c4', kategori: 'Tiket Pesawat PP', rincian: 'Jakarta - Kendari PP', hargaAcuan: 3000000, jumlah: 3200000 },
-      { id: 'c5', kategori: 'Penginapan / Hotel', rincian: '3 Malam @ Rp 450.000', hargaAcuan: 1350000, jumlah: 1500000 },
-      { id: 'c6', kategori: 'Sewa Mobil Operational Site', rincian: 'Double Cabin 3 Hari', hargaAcuan: 4500000, jumlah: 4200000 },
-    ],
-    pemberiPerintahName: 'H. A. Nursyam Halid',
-    sppdDisetujuiName: 'Harijon',
-    sppdDisetujuiJabatan: 'Head of Operational',
-    sppdMengetahuiName: 'Nur Wahyudi',
-    status: 'Disetujui',
-    createdAt: new Date().toISOString()
-  }
-];
+const INITIAL_SAMPLES: SPPDRecord[] = [];
 
 export const SppdManager: React.FC<SppdManagerProps> = ({
   onPostToVoucherHO,
@@ -181,7 +149,7 @@ export const SppdManager: React.FC<SppdManagerProps> = ({
       if (stored !== null) {
         return JSON.parse(stored);
       }
-      return INITIAL_SAMPLES;
+      return [];
     } catch {
       return [];
     }
@@ -608,7 +576,7 @@ export const SppdManager: React.FC<SppdManagerProps> = ({
   };
 
   const handleCopyPublicSppdLink = () => {
-    const url = `${window.location.origin}${window.location.pathname}#/input-sppd`;
+    const url = getPublicSppdLink();
     navigator.clipboard.writeText(url);
     setIsLinkCopied(true);
     setTimeout(() => setIsLinkCopied(false), 2500);
@@ -642,16 +610,16 @@ export const SppdManager: React.FC<SppdManagerProps> = ({
           <div className="p-2.5 bg-amber-500/20 border border-amber-500/30 rounded-xl text-amber-400">
             <FileText size={22} />
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-sm font-black uppercase font-display tracking-wider text-amber-300">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-sm font-black uppercase font-display tracking-wider text-amber-300 truncate">
                 Kelola SPPD & Perjalanan Dinas
               </h2>
-              <span className="bg-amber-400/20 text-amber-300 border border-amber-400/30 text-[10px] px-2 py-0.5 rounded-full font-mono font-bold">
+              <span className="bg-amber-400/20 text-amber-300 border border-amber-400/30 text-[10px] px-2 py-0.5 rounded-full font-mono font-bold shrink-0">
                 Modul SPPD Head Office
               </span>
             </div>
-            <p className="text-xs text-stone-300 mt-0.5">
+            <p className="text-xs text-stone-300 mt-0.5 line-clamp-2 sm:line-clamp-none">
               Input data SPPD, cetak dokumen resmi ber-kop surat, lalu posting langsung ke Voucher Pengajuan HO.
             </p>
           </div>
