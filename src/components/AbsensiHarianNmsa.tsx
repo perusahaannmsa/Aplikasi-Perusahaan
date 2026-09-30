@@ -598,6 +598,10 @@ export function AbsensiHarianNmsa({
   submissions,
   onPostToVoucherHO
 }: AbsensiHarianNmsaProps) {
+  // Get selfWorkerId and query params safely at the top of the component
+  const urlParams = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
+  const selfWorkerId = urlParams.get("workerId") || urlParams.get("id");
+
   // --- States ---
   const [workers, setWorkers] = useState<Worker[]>(() => {
     const saved = localStorage.getItem("karyawan_uang_makan");
@@ -1331,10 +1335,6 @@ export function AbsensiHarianNmsa({
   useEffect(() => {
     localStorage.setItem("wa_auto_reminder_hour", autoReminderHour);
   }, [autoReminderHour]);
-
-  // Get selfWorkerId if present in URL query params
-  const urlParams = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
-  const selfWorkerId = urlParams.get("workerId") || urlParams.get("id");
 
   // Automatically pre-fill the PIN if present in URL parameters
   useEffect(() => {
