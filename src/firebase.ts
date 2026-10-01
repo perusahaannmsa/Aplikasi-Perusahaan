@@ -30,6 +30,7 @@ import {
 } from 'firebase/auth';
 import { Submission, SubmissionItem, ActivityLog, NpwpRecord, CompanyProfile, InternalMemo } from './types';
 import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission } from './utils';
+import firebaseAppletConfig from '../firebase-applet-config.json';
 
 export enum OperationType {
   CREATE = 'create',
@@ -92,6 +93,21 @@ export const getStoredFirebaseConfig = (): any | null => {
       messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '',
       appId: import.meta.env.VITE_FIREBASE_APP_ID || '',
       measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || ''
+    };
+  }
+
+  // Check if provisioned firebase-applet-config.json exists
+  if (firebaseAppletConfig && (firebaseAppletConfig as any).apiKey && (firebaseAppletConfig as any).projectId) {
+    const appletCfg = firebaseAppletConfig as any;
+    return {
+      apiKey: appletCfg.apiKey,
+      authDomain: appletCfg.authDomain || `${appletCfg.projectId}.firebaseapp.com`,
+      databaseURL: `https://${appletCfg.projectId}-default-rtdb.asia-southeast1.firebasedatabase.app`,
+      projectId: appletCfg.projectId,
+      storageBucket: appletCfg.storageBucket || `${appletCfg.projectId}.firebasestorage.app`,
+      messagingSenderId: appletCfg.messagingSenderId || '',
+      appId: appletCfg.appId || '',
+      measurementId: appletCfg.measurementId || ''
     };
   }
 
