@@ -18,7 +18,6 @@ import { InputBuktiTransfer } from './components/InputBuktiTransfer';
 import { UserProfileModal } from './components/UserProfileModal';
 import { GoogleDriveSettingsModal } from './components/GoogleDriveSettingsModal';
 import { AbsensiHarianNmsa } from './components/AbsensiHarianNmsa';
-import { MyAttendanceModal } from './components/MyAttendanceModal';
 import { PettyCashHoldersModal } from './components/PettyCashHoldersModal';
 import { ConsolidateNamesModal } from './components/ConsolidateNamesModal';
 import { NpwpManager } from './components/NpwpManager';
@@ -1037,7 +1036,6 @@ export default function App() {
   const [isFirebaseMigrationOpen, setIsFirebaseMigrationOpen] = useState(false);
   const [isGoogleDriveSettingsOpen, setIsGoogleDriveSettingsOpen] = useState(false);
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
-  const [isMyAttendanceModalOpen, setIsMyAttendanceModalOpen] = useState(false);
   const [masterDriveEmail, setMasterDriveEmailState] = useState<string>(() => getMasterDriveEmail());
 
   // Multi-Company switching handler with strictly segregated Firestore & local storage
@@ -2298,7 +2296,7 @@ export default function App() {
             handleSaveSubmission(newSub);
           }}
           userProfile={userProfile}
-          initialSelfAttendanceMode={searchParams.has('self') || currentPath === '/absen-mandiri' || currentPath === '/absen'}
+          initialSelfAttendanceMode={searchParams.has('self') || currentPath === '/absen-mandiri'}
         />
       </div>
     );
@@ -2764,18 +2762,6 @@ export default function App() {
               {/* Real-time System Clock (WIB) */}
               <LiveClock variant="badge" className="inline-flex min-w-0 max-w-[160px] sm:max-w-[220px]" />
 
-              {/* TOMBOL ABSEN SAYA (PRESENSI MANDIRI) */}
-              <button
-                type="button"
-                onClick={() => setIsMyAttendanceModalOpen(true)}
-                className="flex items-center gap-1.5 py-1.5 px-3 rounded-xl bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs shadow-xs hover:shadow transition cursor-pointer border border-emerald-400/40 ring-1 ring-emerald-500/20 active:scale-95"
-                title="Buka Formulir Presensi & Kehadiran Saya Hari Ini (Absen Mandiri)"
-              >
-                <CheckSquare size={14} className="text-emerald-100 shrink-0" />
-                <span className="hidden sm:inline font-sans">Absen Saya</span>
-                <span className="sm:hidden font-sans">Absen</span>
-              </button>
-
               {/* Compact Agenda / Notif Button with Red Badge */}
               <button
                 type="button"
@@ -2880,22 +2866,6 @@ export default function App() {
                       <div className="px-2 py-0.5 text-[10px] font-mono font-bold text-stone-400 uppercase tracking-wider">
                         Semua Menu Dashboard &amp; Modul:
                       </div>
-
-                      {/* 0. Absen Saya (Presensi Mandiri) */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsToolsDropdownOpen(false);
-                          setIsMyAttendanceModalOpen(true);
-                        }}
-                        className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer bg-emerald-50 hover:bg-emerald-100 text-emerald-950 border border-emerald-300 shadow-3xs"
-                      >
-                        <div className="flex items-center gap-2">
-                          <CheckSquare size={14} className="text-emerald-700" />
-                          <span className="font-extrabold text-emerald-950">Absen Saya (Presensi Mandiri)</span>
-                        </div>
-                        <span className="text-[9px] font-mono bg-emerald-600 text-white font-bold px-2 py-0.5 rounded-full">Buka</span>
-                      </button>
 
                       {/* 1. Voucher HO */}
                       <button
@@ -3763,12 +3733,6 @@ export default function App() {
         submissions={submissions}
       />
 
-      {/* Modal Presensi Mandiri Karyawan (Absen Saya) */}
-      <MyAttendanceModal
-        isOpen={isMyAttendanceModalOpen}
-        onClose={() => setIsMyAttendanceModalOpen(false)}
-        userProfile={userProfile}
-      />
 
       {/* Salin Data ke Akun Firebase Lain (Migrasi Proyek) Modal */}
       {isFirebaseMigrationOpen && (

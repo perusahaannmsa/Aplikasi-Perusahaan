@@ -6476,25 +6476,6 @@ export function AbsensiHarianNmsa({
           </div>
 
           <div className="flex items-center gap-2">
-            {/* BUTTON BUKA ABSEN SAYA (PRESENSI MANDIRI) */}
-            <button
-              type="button"
-              onClick={() => {
-                const mySavedId = localStorage.getItem("nmsa_my_worker_id");
-                let matchedId = mySavedId;
-                if (!matchedId && userProfile?.fullName) {
-                  const found = workers.find(w => w.name.toLowerCase().includes(userProfile.fullName.toLowerCase()) || userProfile.fullName.toLowerCase().includes(w.name.toLowerCase()));
-                  if (found) matchedId = found.id;
-                }
-                setActiveWorkerIdOverride(matchedId || "W06");
-              }}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs shadow-xs hover:shadow transition cursor-pointer border border-emerald-400/40"
-              title="Buka Formulir Presensi & Kehadiran Saya Sendiri Hari Ini"
-            >
-              <CheckSquare className="w-3.5 h-3.5 text-emerald-200" />
-              <span>Buka Absen Saya</span>
-            </button>
-
             {/* 2 MAIN TABS: ABSEN UANG MAKAN & KELOLA KARYAWAN */}
             <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 w-full sm:w-auto overflow-x-auto">
               <button
