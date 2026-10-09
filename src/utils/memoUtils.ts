@@ -300,6 +300,7 @@ export function createInitialMemo(
     companyName: 'PT. NUSANTARA MINERAL SUKSES ABADI',
     companyHeaderUrl: OFFICIAL_KOP_SURAT_IMAGE_URL,
     useImageHeader: true, // Always use banner kop surat as requested
+    showKopSurat: true,
     createdAt: new Date().toISOString(),
   };
 }

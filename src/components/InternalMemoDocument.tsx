@@ -6,6 +6,7 @@ interface InternalMemoDocumentProps {
   memo: InternalMemo;
   customLogoUrl?: string;
   customHeaderUrl?: string;
+  showKopSurat?: boolean;
   className?: string;
   id?: string;
 }
@@ -35,9 +36,13 @@ export const InternalMemoDocument: React.FC<InternalMemoDocumentProps> = ({
   memo,
   customLogoUrl,
   customHeaderUrl,
+  showKopSurat,
   className = '',
   id = 'internal-memo-printable-document',
 }) => {
+  // Pilihan apakah memo menggunakan kop surat atau tanpa kop surat (default: true)
+  const isKopSuratEnabled = showKopSurat !== undefined ? showKopSurat : (memo.showKopSurat !== false);
+
   // Kop Surat Banner Gambar Resmi PT. NMSA (Full Width)
   const isImageHeader = true;
   const rawHeaderUrl = customHeaderUrl || memo.companyHeaderUrl || OFFICIAL_KOP_SURAT_IMAGE_URL;
@@ -74,21 +79,33 @@ export const InternalMemoDocument: React.FC<InternalMemoDocumentProps> = ({
       }}
     >
       <div>
-        {/* KOP SURAT RESMI PT. NMSA (Banner Gambar Full Width Ujung ke Ujung Sesuai Format Resmi) */}
-        <div className="w-full pb-1 -mt-2 print:mt-0 print:pb-1">
-          <img
-            src={headerImageUrl}
-            alt="Kop Surat PT. Nusantara Mineral Sukses Abadi"
-            className="w-full h-auto block"
-            style={{
-              width: '100%',
-              maxWidth: '100%',
-              height: 'auto',
-              display: 'block',
-            }}
-            referrerPolicy="no-referrer"
-          />
-        </div>
+        {/* KOP SURAT RESMI PT. NMSA ATAU MODE TANPA KOP SURAT */}
+        {isKopSuratEnabled ? (
+          <div className="w-full pb-1 -mt-2 print:mt-0 print:pb-1">
+            <img
+              src={headerImageUrl}
+              alt="Kop Surat PT. Nusantara Mineral Sukses Abadi"
+              className="w-full h-auto block"
+              style={{
+                width: '100%',
+                maxWidth: '100%',
+                height: 'auto',
+                display: 'block',
+              }}
+              referrerPolicy="no-referrer"
+            />
+          </div>
+        ) : (
+          <div className="w-full">
+            {/* Indikator Mode Tanpa Kop Surat (Hanya Tampil di Layar, Tersembunyi Saat Dicetak) */}
+            <div className="print:hidden mb-4 p-2.5 bg-amber-50 border border-amber-300 rounded-xl text-center text-xs font-mono text-amber-900 flex items-center justify-center gap-2 select-none shadow-2xs">
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+              <strong>Mode Memo Tanpa Kop Surat</strong> &bull; Disediakan ruang atas untuk dicetak langsung pada kertas blanko / berkop fisik perusahaan.
+            </div>
+            {/* Spasi kosong proporsional untuk kertas berkop fisik */}
+            <div className="w-full h-16 sm:h-20 print:h-24 print:block" />
+          </div>
+        )}
 
         {/* TITLE & NUMBER - Spasi Renggang Sesuai Word */}
         <div className="text-center my-4 sm:my-5 print:my-4">

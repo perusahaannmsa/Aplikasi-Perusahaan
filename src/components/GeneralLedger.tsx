@@ -32,6 +32,7 @@ interface GeneralLedgerProps {
   onOpenSubmissionForPrint?: (sub: Submission) => void;
   onEditSubmissionNote?: (sub: Submission) => void;
   onClose?: () => void;
+  onOpenRab?: () => void;
 }
 
 interface LedgerRow {
@@ -57,7 +58,8 @@ export const GeneralLedger: React.FC<GeneralLedgerProps> = ({
   userProfile,
   onOpenSubmissionForPrint,
   onEditSubmissionNote,
-  onClose
+  onClose,
+  onOpenRab
 }) => {
   // Filter States
   const [selectedJenis, setSelectedJenis] = useState<string>('all');
@@ -423,8 +425,20 @@ export const GeneralLedger: React.FC<GeneralLedgerProps> = ({
           </div>
         </div>
 
-        {/* Action Buttons: Cetak & Export */}
+        {/* Action Buttons: RAB, Cetak & Export */}
         <div className="flex items-center gap-2.5 flex-wrap">
+          {onOpenRab && (
+            <button
+              type="button"
+              onClick={onOpenRab}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-stone-950 text-xs font-black transition cursor-pointer shadow-3xs active:scale-95"
+              title="Buka Rencana Anggaran Biaya (RAB) & Pengeluaran Proyek"
+            >
+              <Building2 size={15} className="text-stone-950" />
+              <span>RAB &amp; Anggaran Proyek</span>
+            </button>
+          )}
+
           <button
             onClick={() => window.print()}
             className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white hover:bg-stone-50 border border-stone-250 text-stone-700 text-xs font-bold transition cursor-pointer shadow-3xs active:scale-95"
@@ -453,6 +467,29 @@ export const GeneralLedger: React.FC<GeneralLedgerProps> = ({
             </button>
           )}
         </div>
+      </div>
+
+      {/* Sub-Navigation: Buku Besar & RAB Proyek */}
+      <div className="flex items-center gap-2 border-b border-stone-200 pb-2 print:hidden">
+        <div className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-black bg-amber-100 text-amber-950 border border-amber-300 shadow-3xs">
+          <BookOpen size={15} className="text-amber-700" />
+          <span>Buku Besar Sub-Jenis</span>
+        </div>
+
+        {onOpenRab && (
+          <button
+            type="button"
+            onClick={onOpenRab}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-stone-700 hover:text-stone-950 hover:bg-stone-100 border border-stone-200 transition cursor-pointer shadow-3xs"
+            title="Buka Rencana Anggaran Biaya (RAB) & Pengeluaran Proyek"
+          >
+            <Building2 size={15} className="text-amber-600" />
+            <span>RAB &amp; Anggaran Proyek</span>
+            <span className="font-mono text-[9px] bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded font-bold">
+              Accurate
+            </span>
+          </button>
+        )}
       </div>
 
       {/* FILTER CONTROL PANEL */}

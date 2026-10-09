@@ -534,6 +534,7 @@ export interface InternalMemo {
   companyLogoUrl?: string;
   companyHeaderUrl?: string;
   useImageHeader?: boolean;
+  showKopSurat?: boolean; // true = Dengan Kop Surat (Banner Resmi), false = Tanpa Kop Surat (Kertas Berkop Fisik / Polos)
   driveFileId?: string;
   driveUrl?: string;
   driveFolderId?: string;

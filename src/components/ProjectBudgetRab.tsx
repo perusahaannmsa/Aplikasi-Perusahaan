@@ -29,7 +29,8 @@ import {
   ChevronDown,
   Settings,
   Sparkles,
-  Eye
+  Eye,
+  BookOpen
 } from 'lucide-react';
 import { formatCurrency, formatDateIndonesian } from '../utils';
 import { useAccurateCoa, mapCoaToRabCategory } from '../utils/accurateCoaStore';
@@ -49,6 +50,7 @@ interface ProjectBudgetRabProps {
   onCreateVoucherForProject?: (projectId: string, projectRabItemId?: string) => void;
   onViewSubmission?: (sub: Submission) => void;
   onBackToVoucher?: () => void;
+  onBackToLedger?: () => void;
 }
 
 export const ProjectBudgetRab: React.FC<ProjectBudgetRabProps> = ({
@@ -64,7 +66,8 @@ export const ProjectBudgetRab: React.FC<ProjectBudgetRabProps> = ({
   onDeleteExpense,
   onCreateVoucherForProject,
   onViewSubmission,
-  onBackToVoucher
+  onBackToVoucher,
+  onBackToLedger,
 }) => {
   const { accounts: coaAccounts } = useAccurateCoa();
   const [isCoaModalOpen, setIsCoaModalOpen] = useState(false);
@@ -634,6 +637,17 @@ export const ProjectBudgetRab: React.FC<ProjectBudgetRabProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          {onBackToLedger && (
+            <button
+              onClick={onBackToLedger}
+              className="px-3 py-2 rounded-xl border border-stone-250 bg-stone-100 hover:bg-stone-200 text-stone-850 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
+              title="Kembali ke Buku Besar Sub-Jenis"
+            >
+              <BookOpen className="w-3.5 h-3.5 text-amber-700" />
+              <span>Kembali ke Buku Besar</span>
+            </button>
+          )}
+
           {onBackToVoucher && (
             <button
               onClick={onBackToVoucher}

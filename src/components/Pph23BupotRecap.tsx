@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Submission, NpwpRecord } from '../types';
 import { formatRupiah, formatDateIndonesian, isVendorOrCompanyMatch, isInvoiceSubmission } from '../utils';
+import { NpwpManager } from './NpwpManager';
 import {
   FileText,
   Search,
@@ -109,6 +110,7 @@ export const Pph23BupotRecap: React.FC<Pph23BupotRecapProps> = ({
   onSelectSubmission,
   onBackToVoucher
 }) => {
+  const [activeTab, setActiveTab] = useState<'recap' | 'npwp_list'>('recap');
   const [searchQuery, setSearchQuery] = useState('');
   
   // Default filter: previous month (e.g. if current is September, default is August)
@@ -440,6 +442,27 @@ export const Pph23BupotRecap: React.FC<Pph23BupotRecapProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 shrink-0">
+          {/* Tombol Akses Master NPWP Perusahaan yang Tercatat */}
+          {activeTab === 'recap' ? (
+            <button
+              onClick={() => setActiveTab('npwp_list')}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition text-xs shadow-3xs cursor-pointer"
+              title="Lihat & Kelola Daftar Master NPWP Perusahaan yang Tercatat"
+            >
+              <Building2 size={14} />
+              <span>Daftar NPWP Perusahaan ({npwpRecords.length})</span>
+            </button>
+          ) : (
+            <button
+              onClick={() => setActiveTab('recap')}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-stone-950 font-black rounded-xl transition text-xs shadow-3xs cursor-pointer"
+              title="Kembali ke Rekap Bukti Potong PPh 23"
+            >
+              <Receipt size={14} />
+              <span>Rekap Bukti Potong PPh 23</span>
+            </button>
+          )}
+
           {onBackToVoucher && (
             <button
               onClick={onBackToVoucher}
@@ -489,6 +512,47 @@ export const Pph23BupotRecap: React.FC<Pph23BupotRecapProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Sub-Menu Tabs Navigation */}
+      <div className="flex items-center gap-2 border-b border-stone-200 pb-2 print:hidden">
+        <button
+          onClick={() => setActiveTab('recap')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+            activeTab === 'recap'
+              ? 'bg-amber-100 text-amber-950 border border-amber-300 shadow-3xs font-black'
+              : 'text-stone-600 hover:bg-stone-100'
+          }`}
+        >
+          <Receipt size={15} className={activeTab === 'recap' ? 'text-amber-700' : 'text-stone-400'} />
+          <span>Rekap Bukti Potong PPh 23 (Coretax)</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('npwp_list')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+            activeTab === 'npwp_list'
+              ? 'bg-indigo-100 text-indigo-950 border border-indigo-300 shadow-3xs font-black'
+              : 'text-stone-600 hover:bg-stone-100'
+          }`}
+        >
+          <Building2 size={15} className={activeTab === 'npwp_list' ? 'text-indigo-700' : 'text-stone-400'} />
+          <span>Daftar NPWP Perusahaan Tercatat</span>
+          <span className="font-mono text-[10px] bg-indigo-200 text-indigo-900 px-1.5 py-0.2 rounded font-bold">
+            {npwpRecords.length}
+          </span>
+        </button>
+      </div>
+
+      {activeTab === 'npwp_list' ? (
+        <NpwpManager
+          npwpRecords={npwpRecords}
+          onSaveNpwpRecords={onSaveNpwpRecords}
+          submissions={submissions}
+          onSelectSubmissionForPrint={onSelectSubmission}
+          onBack={() => setActiveTab('recap')}
+        />
+      ) : (
+        <>
 
       {/* SUMMARY KPI CARDS */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 print:hidden">
@@ -1403,25 +1467,42 @@ export const Pph23BupotRecap: React.FC<Pph23BupotRecapProps> = ({
               </div>
             </div>
 
-            <div className="p-4 bg-stone-50 border-t border-stone-200 flex justify-end gap-2">
+            <div className="p-4 bg-stone-50 border-t border-stone-200 flex items-center justify-between gap-2">
               <button
                 type="button"
-                onClick={() => setNpwpModalVendor(null)}
-                className="px-4 py-2 rounded-xl border border-stone-300 text-stone-700 font-bold hover:bg-stone-100 transition text-xs"
+                onClick={() => {
+                  setNpwpModalVendor(null);
+                  setActiveTab('npwp_list');
+                }}
+                className="text-xs text-indigo-700 hover:text-indigo-900 font-bold underline flex items-center gap-1 cursor-pointer"
+                title="Buka seluruh daftar master NPWP perusahaan"
               >
-                Batal
+                <Building2 size={13} />
+                <span>Lihat Semua NPWP Tercatat</span>
               </button>
-              <button
-                type="button"
-                onClick={handleSaveQuickNpwp}
-                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-stone-950 font-black transition text-xs flex items-center gap-1.5 shadow-xs"
-              >
-                <Save size={13} />
-                <span>Simpan ke Master NPWP</span>
-              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setNpwpModalVendor(null)}
+                  className="px-4 py-2 rounded-xl border border-stone-300 text-stone-700 font-bold hover:bg-stone-100 transition text-xs cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveQuickNpwp}
+                  className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-stone-950 font-black transition text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
+                >
+                  <Save size={13} />
+                  <span>Simpan ke Master NPWP</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );

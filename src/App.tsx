@@ -2945,7 +2945,7 @@ export default function App() {
                         )}
                       </button>
 
-                      {/* 5. Bukti Potong PPh 23 Coretax */}
+                      {/* 5. Bukti Potong PPh 23 & Master NPWP Perusahaan */}
                       <button
                         type="button"
                         onClick={() => {
@@ -2953,35 +2953,18 @@ export default function App() {
                           setView('pph23');
                         }}
                         className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
-                          view === 'pph23' ? 'bg-amber-100 text-amber-950 border border-amber-300 font-black' : 'text-stone-750 hover:bg-amber-50'
+                          view === 'pph23' || view === 'npwp' ? 'bg-amber-100 text-amber-950 border border-amber-300 font-black' : 'text-stone-750 hover:bg-amber-50'
                         }`}
+                        title="Rekapitulasi Bukti Potong PPh 23 Coretax dan Master Daftar NPWP Perusahaan"
                       >
                         <div className="flex items-center gap-2">
                           <Receipt size={14} className="text-amber-600" />
-                          <span>Bukti Potong PPh 23 (Tagihan)</span>
+                          <span>Bukti Potong PPh 23 &amp; Master NPWP</span>
                         </div>
-                        <span className="text-[9px] font-mono text-amber-800 bg-amber-100 px-1.5 rounded font-bold">Coretax</span>
+                        <span className="text-[9px] font-mono text-amber-800 bg-amber-100 px-1.5 rounded font-bold">Coretax + NPWP</span>
                       </button>
 
-                      {/* 6. Master NPWP & Vendor */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsToolsDropdownOpen(false);
-                          setView('npwp');
-                        }}
-                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
-                          view === 'npwp' ? 'bg-indigo-100 text-indigo-950 border border-indigo-300 font-black' : 'text-stone-750 hover:bg-stone-100'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <Receipt size={14} className="text-indigo-600" />
-                          <span>Master NPWP &amp; Vendor</span>
-                        </div>
-                        <span className="text-[9px] font-mono text-stone-400">Pajak</span>
-                      </button>
-
-                      {/* 7. SPPD Dinas */}
+                      {/* 6. SPPD Dinas */}
                       <button
                         type="button"
                         onClick={() => {
@@ -2999,7 +2982,7 @@ export default function App() {
                         <span className="text-[9px] font-mono text-stone-400">Tugas</span>
                       </button>
 
-                      {/* 8. Buku Besar Sub-Jenis */}
+                      {/* 7. Buku Besar & Anggaran RAB Proyek */}
                       <button
                         type="button"
                         onClick={() => {
@@ -3007,32 +2990,15 @@ export default function App() {
                           setView('ledger');
                         }}
                         className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
-                          view === 'ledger' ? 'bg-amber-100 text-amber-950 border border-amber-300 font-black' : 'text-stone-750 hover:bg-stone-100'
+                          view === 'ledger' || view === 'rab' ? 'bg-amber-100 text-amber-950 border border-amber-300 font-black' : 'text-stone-750 hover:bg-stone-100'
                         }`}
+                        title="Buku Besar Akuntansi Sub-Jenis dan Rencana Anggaran Biaya (RAB) Proyek"
                       >
                         <div className="flex items-center gap-2">
                           <BookOpen size={14} className="text-amber-600" />
-                          <span>Buku Besar Sub-Jenis</span>
+                          <span>Buku Besar &amp; Anggaran RAB Proyek</span>
                         </div>
                         <span className="text-[9px] font-mono text-stone-400">Akuntansi</span>
-                      </button>
-
-                      {/* 9. RAB & Anggaran Proyek Accurate */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsToolsDropdownOpen(false);
-                          setView('rab');
-                        }}
-                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
-                          view === 'rab' ? 'bg-emerald-100 text-emerald-950 border border-emerald-300 font-black' : 'text-stone-750 hover:bg-emerald-50'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <Building2 size={14} className="text-emerald-600" />
-                          <span>RAB &amp; Anggaran Proyek</span>
-                        </div>
-                        <span className="text-[9px] font-mono text-emerald-800 bg-emerald-100 px-1.5 rounded font-bold">Accurate</span>
                       </button>
 
                       {/* 10. Internal Memo Resmi Direksi */}
@@ -3543,6 +3509,7 @@ export default function App() {
               setView('form');
             }}
             onClose={() => setView(previousView || 'list')}
+            onOpenRab={() => setView('rab')}
           />
         )}
 
@@ -3617,6 +3584,7 @@ export default function App() {
                 setView('print');
               }
             }}
+            onBackToLedger={() => setView('ledger')}
             onBackToVoucher={() => setView('list')}
           />
         )}

@@ -1058,78 +1058,127 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
 
             {/* Fields Grid */}
             <div className="space-y-3.5">
-              {/* Kop Surat Setting - Hanya 1 Header: Banner Gambar Kop Surat dengan Link Direct di Bawahnya */}
+              {/* Kop Surat Setting - Pilihan Dengan Kop Surat atau Tanpa Kop Surat */}
               <div className="p-3.5 bg-stone-50 border border-stone-200 rounded-xl space-y-2.5">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <label className="text-[11px] font-bold text-stone-700 flex items-center gap-1.5">
                     <ImageIcon size={13} className="text-amber-600" />
-                    <span>Header Kop Surat Resmi (Banner Gambar)</span>
+                    <span>Pilihan Format Kop Surat</span>
                   </label>
-                  <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full">
-                    Resmi PT. NMSA
-                  </span>
+                  {/* Segmented Button: Dengan Kop vs Tanpa Kop */}
+                  <div className="inline-flex rounded-lg border border-stone-300 p-0.5 bg-stone-200/70 text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCurrentMemo((prev) => ({
+                          ...prev,
+                          showKopSurat: true,
+                          useImageHeader: true,
+                        }))
+                      }
+                      className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer flex items-center gap-1 ${
+                        currentMemo.showKopSurat !== false
+                          ? 'bg-amber-600 text-white shadow-xs'
+                          : 'text-stone-700 hover:text-stone-900'
+                      }`}
+                      title="Tampilkan banner kop surat resmi PT. NMSA"
+                    >
+                      <Check size={12} />
+                      <span>Dengan Kop Surat</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCurrentMemo((prev) => ({
+                          ...prev,
+                          showKopSurat: false,
+                        }))
+                      }
+                      className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer flex items-center gap-1 ${
+                        currentMemo.showKopSurat === false
+                          ? 'bg-amber-600 text-white shadow-xs'
+                          : 'text-stone-700 hover:text-stone-900'
+                      }`}
+                      title="Sembunyikan kop surat (untuk cetak pada kertas blanko berkop fisik)"
+                    >
+                      <X size={12} />
+                      <span>Tanpa Kop Surat</span>
+                    </button>
+                  </div>
                 </div>
 
-                <div className="bg-white border border-stone-200 rounded-xl p-2.5 shadow-2xs space-y-2">
-                  <div className="w-full bg-stone-100 rounded-lg overflow-hidden border border-stone-200/80 p-1 flex items-center justify-center">
-                    <img
-                      src={currentMemo.companyHeaderUrl || OFFICIAL_KOP_SURAT_IMAGE_URL}
-                      alt="Banner Kop Surat PT. NMSA"
-                      className="w-full h-auto max-h-16 object-contain"
-                      referrerPolicy="no-referrer"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] font-bold text-stone-600 mb-1">
-                      Link Direct Gambar Kop Surat :
-                    </label>
-                    <div className="flex items-center gap-1.5">
-                      <input
-                        type="text"
-                        value={currentMemo.companyHeaderUrl || OFFICIAL_KOP_SURAT_IMAGE_URL}
-                        onChange={(e) =>
-                          setCurrentMemo((prev) => ({
-                            ...prev,
-                            useImageHeader: true,
-                            companyHeaderUrl: e.target.value,
-                          }))
-                        }
-                        placeholder="https://... atau /kop-surat-nmsa-full.png"
-                        className="flex-1 px-2.5 py-1.5 text-[11px] font-mono bg-stone-50 border border-stone-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500 focus:bg-white"
+                {currentMemo.showKopSurat !== false ? (
+                  <div className="bg-white border border-stone-200 rounded-xl p-2.5 shadow-2xs space-y-2">
+                    <div className="w-full bg-stone-100 rounded-lg overflow-hidden border border-stone-200/80 p-1 flex items-center justify-center">
+                      <img
+                        src={currentMemo.companyHeaderUrl || OFFICIAL_KOP_SURAT_IMAGE_URL}
+                        alt="Banner Kop Surat PT. NMSA"
+                        className="w-full h-auto max-h-16 object-contain"
+                        referrerPolicy="no-referrer"
                       />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const url = currentMemo.companyHeaderUrl || OFFICIAL_KOP_SURAT_IMAGE_URL;
-                          const fullUrl = url.startsWith('http') ? url : `${window.location.origin}${url}`;
-                          navigator.clipboard.writeText(fullUrl);
-                          setSaveSuccessMsg('Link direct kop surat berhasil disalin!');
-                          setTimeout(() => setSaveSuccessMsg(''), 2500);
-                        }}
-                        className="px-2.5 py-1.5 bg-stone-100 hover:bg-stone-200 text-[10.5px] font-bold text-stone-700 rounded-lg transition shrink-0 cursor-pointer flex items-center gap-1"
-                        title="Salin link direct kop surat"
-                      >
-                        <Copy size={12} />
-                        <span>Salin Link</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setCurrentMemo((prev) => ({
-                            ...prev,
-                            useImageHeader: true,
-                            companyHeaderUrl: OFFICIAL_KOP_SURAT_IMAGE_URL,
-                          }))
-                        }
-                        className="px-2.5 py-1.5 bg-stone-100 hover:bg-amber-100 text-[10.5px] font-bold text-stone-600 hover:text-amber-900 rounded-lg transition shrink-0 cursor-pointer"
-                        title="Reset ke Kop Surat Resmi Default NMSA"
-                      >
-                        Reset
-                      </button>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-stone-600 mb-1">
+                        Link Direct Gambar Kop Surat :
+                      </label>
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="text"
+                          value={currentMemo.companyHeaderUrl || OFFICIAL_KOP_SURAT_IMAGE_URL}
+                          onChange={(e) =>
+                            setCurrentMemo((prev) => ({
+                              ...prev,
+                              useImageHeader: true,
+                              companyHeaderUrl: e.target.value,
+                            }))
+                          }
+                          placeholder="https://... atau /kop-surat-nmsa-full.png"
+                          className="flex-1 px-2.5 py-1.5 text-[11px] font-mono bg-stone-50 border border-stone-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500 focus:bg-white"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const url = currentMemo.companyHeaderUrl || OFFICIAL_KOP_SURAT_IMAGE_URL;
+                            const fullUrl = url.startsWith('http') ? url : `${window.location.origin}${url}`;
+                            navigator.clipboard.writeText(fullUrl);
+                            setSaveSuccessMsg('Link direct kop surat berhasil disalin!');
+                            setTimeout(() => setSaveSuccessMsg(''), 2500);
+                          }}
+                          className="px-2.5 py-1.5 bg-stone-100 hover:bg-stone-200 text-[10.5px] font-bold text-stone-700 rounded-lg transition shrink-0 cursor-pointer flex items-center gap-1"
+                          title="Salin link direct kop surat"
+                        >
+                          <Copy size={12} />
+                          <span>Salin Link</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setCurrentMemo((prev) => ({
+                              ...prev,
+                              useImageHeader: true,
+                              companyHeaderUrl: OFFICIAL_KOP_SURAT_IMAGE_URL,
+                            }))
+                          }
+                          className="px-2.5 py-1.5 bg-stone-100 hover:bg-amber-100 text-[10.5px] font-bold text-stone-600 hover:text-amber-900 rounded-lg transition shrink-0 cursor-pointer"
+                          title="Reset ke Kop Surat Resmi Default NMSA"
+                        >
+                          Reset
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="p-3 bg-amber-50/80 border border-amber-200 rounded-xl text-stone-700 text-xs flex items-center gap-2.5">
+                    <AlertCircle size={16} className="text-amber-600 shrink-0" />
+                    <div>
+                      <strong className="text-amber-950 font-bold block">Mode Tanpa Kop Surat Aktif</strong>
+                      <span className="text-[11px] text-stone-600">
+                        Banner kop surat dihilangkan dan ruang margin atas otomatis disiapkan untuk dicetak langsung pada kertas blanko berkop fisik resmi perusahaan.
+                      </span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* No Memo */}
@@ -1981,17 +2030,61 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
 
           {/* LIVE A4 DOCUMENT PREVIEW (Right side 7 cols on lg) */}
           <div className="lg:col-span-7 flex flex-col items-center print:block print:w-full print:p-0 print:m-0">
-            <div className="w-full flex items-center justify-between mb-3 px-1 print:hidden">
+            <div className="w-full flex flex-wrap items-center justify-between gap-2 mb-3 px-1 print:hidden">
               <span className="text-xs font-bold text-stone-500 font-mono">
                 Pratinjau Resmi Lembar A4 (Siap Cetak / PDF)
               </span>
-              <button
-                onClick={handlePrint}
-                className="px-3 py-1 bg-stone-900 hover:bg-black text-white text-xs font-bold rounded-lg transition flex items-center gap-1 cursor-pointer"
-              >
-                <Printer size={13} />
-                <span>Cetak A4</span>
-              </button>
+
+              <div className="flex items-center gap-2">
+                {/* Quick Toggle: Dengan Kop Surat vs Tanpa Kop Surat */}
+                <div className="inline-flex rounded-lg border border-stone-300 p-0.5 bg-stone-100 text-[11px] shadow-2xs">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setCurrentMemo((prev) => ({
+                        ...prev,
+                        showKopSurat: true,
+                        useImageHeader: true,
+                      }))
+                    }
+                    className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer flex items-center gap-1 ${
+                      currentMemo.showKopSurat !== false
+                        ? 'bg-amber-600 text-white shadow-xs'
+                        : 'text-stone-600 hover:text-stone-900'
+                    }`}
+                    title="Tampilkan kop surat resmi pada pratinjau & cetakan"
+                  >
+                    <Check size={11} />
+                    <span>Dengan Kop</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setCurrentMemo((prev) => ({
+                        ...prev,
+                        showKopSurat: false,
+                      }))
+                    }
+                    className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer flex items-center gap-1 ${
+                      currentMemo.showKopSurat === false
+                        ? 'bg-amber-600 text-white shadow-xs'
+                        : 'text-stone-600 hover:text-stone-900'
+                    }`}
+                    title="Sembunyikan kop surat untuk cetak pada kertas blanko berkop fisik"
+                  >
+                    <X size={11} />
+                    <span>Tanpa Kop</span>
+                  </button>
+                </div>
+
+                <button
+                  onClick={handlePrint}
+                  className="px-3 py-1.5 bg-stone-900 hover:bg-black text-white text-xs font-bold rounded-lg transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                >
+                  <Printer size={13} />
+                  <span>Cetak A4</span>
+                </button>
+              </div>
             </div>
 
             {/* Document wrapper */}
@@ -1999,6 +2092,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
               <div className="min-w-[680px] sm:min-w-[740px] max-w-[860px] w-full mx-auto print:min-w-0 print:w-full print:max-w-none print:m-0 print:p-0">
                 <InternalMemoDocument
                   memo={currentMemo}
+                  showKopSurat={currentMemo.showKopSurat !== false}
                   customLogoUrl={userProfile?.companyDetails?.logoUrl}
                 />
               </div>
