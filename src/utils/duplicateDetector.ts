@@ -106,7 +106,10 @@ export function findPotentialDuplicateSubmissions(
     notes?: string;
     id?: string;
   },
-  existingSubmissions: Submission[] = []
+  existingSubmissions: Submission[] = [],
+  options?: {
+    onlyCompareWithLastTransaction?: boolean;
+  }
 ): DuplicateSubmissionMatch[] {
   if (!existingSubmissions || existingSubmissions.length === 0) return [];
   const currentTotal = Number(current.total) || (current.items?.reduce((acc, it) => acc + (Number(it.total) || 0), 0) || 0);
@@ -119,10 +122,28 @@ export function findPotentialDuplicateSubmissions(
   const cleanNotes = normalizeText(current.notes);
   const matches: DuplicateSubmissionMatch[] = [];
 
-  for (const existing of existingSubmissions) {
-    // Skip if comparing against itself (e.g. during edit)
-    if (current.id && existing.id === current.id) continue;
+  // Filter out self
+  const candidates = existingSubmissions.filter(s => !current.id || s.id !== current.id);
+  if (candidates.length === 0) return [];
 
+  const onlyCompareWithLast = options?.onlyCompareWithLastTransaction ?? true;
+
+  // Sesuai permintaan pengguna:
+  // "Saya ingin potensi double itu hanya muncul jika ada transaksi yang sama dengan transaksi yang terakhir, bukan transaksi sebelum sebelumnya."
+  // Urutkan transaksi dari yang paling terakhir/terbaru berdasarkan tanggal & ID
+  let targetSubmissions = candidates;
+  if (onlyCompareWithLast) {
+    const sortedCandidates = [...candidates].sort((a, b) => {
+      const timeA = new Date(a.tanggal || 0).getTime();
+      const timeB = new Date(b.tanggal || 0).getTime();
+      if (timeB !== timeA) return timeB - timeA;
+      return String(b.id || '').localeCompare(String(a.id || ''));
+    });
+    // Ambil hanya transaksi paling terakhir
+    targetSubmissions = sortedCandidates.slice(0, 1);
+  }
+
+  for (const existing of targetSubmissions) {
     const existingTotal = (existing.items && existing.items.length > 0)
       ? existing.items.reduce((acc, it) => acc + (Number(it.total) || 0), 0)
       : (Number((existing as any).nominal) || Number((existing as any).total) || 0);

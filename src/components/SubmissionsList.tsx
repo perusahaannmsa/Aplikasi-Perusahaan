@@ -98,47 +98,104 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   const [isDuplicateModalOpen, setIsDuplicateModalOpen] = useState(false);
   const [duplicateModalSearch, setDuplicateModalSearch] = useState('');
   const [selectedClusterKey, setSelectedClusterKey] = useState<string | null>(null);
+  const [showArchivedDuplicates, setShowArchivedDuplicates] = useState(false);
 
-  // Deteksi & Pengelompokan Potensi Double Input Lintas Seluruh Data Voucher (Penerima Sama & Nominal Sama)
+  // Status tanda aman / bukan dobel (agar status potensi dobel menjadi 0 & tidak ada bacaan potensi dobel)
+  const [acknowledgedDuplicateIds, setAcknowledgedDuplicateIds] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem('acknowledged_double_submission_ids');
+      return stored ? JSON.parse(stored) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+
+  // Cutoff timestamp untuk mengabaikan seluruh riwayat sebelumnya
+  const [acknowledgedAllHistoryTimestamp, setAcknowledgedAllHistoryTimestamp] = useState<number>(() => {
+    try {
+      return Number(localStorage.getItem('acknowledged_double_all_history_until') || 0);
+    } catch (e) {
+      return 0;
+    }
+  });
+
+  const handleToggleAcknowledgeDuplicate = (submissionId: string) => {
+    setAcknowledgedDuplicateIds(prev => {
+      const next = prev.includes(submissionId) ? prev.filter(id => id !== submissionId) : [...prev, submissionId];
+      try { localStorage.setItem('acknowledged_double_submission_ids', JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
+  };
+
+  const handleAcknowledgeAllDuplicates = (idsToAcknowledge: string[]) => {
+    setAcknowledgedDuplicateIds(prev => {
+      const next = Array.from(new Set([...prev, ...idsToAcknowledge]));
+      try { localStorage.setItem('acknowledged_double_submission_ids', JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
+  };
+
+  const handleAcknowledgeCluster = (clusterSubmissions: Submission[]) => {
+    const clusterIds = clusterSubmissions.map(s => s.id);
+    handleAcknowledgeAllDuplicates(clusterIds);
+  };
+
+  // User requirement:
+  // "untuk tampilan dari daftar rekap double ini tolong tambahkan tombol untuk memilih bahwa transaksi ini seluruhnya tidak double dan aplikasi tidak akan mendeteksinya lagi. dan jika ada transaksi baru yang serupa baru terdeteksi lagi."
+  const handleAcknowledgeAllHistory = () => {
+    const now = Date.now();
+    setAcknowledgedAllHistoryTimestamp(now);
+    const allIds = submissions.map(s => s.id);
+    setAcknowledgedDuplicateIds(allIds);
+    try {
+      localStorage.setItem('acknowledged_double_all_history_until', String(now));
+      localStorage.setItem('acknowledged_double_submission_ids', JSON.stringify(allIds));
+    } catch (e) {}
+  };
+
+  const handleResetAcknowledgeDuplicates = () => {
+    setAcknowledgedDuplicateIds([]);
+    setAcknowledgedAllHistoryTimestamp(0);
+    try {
+      localStorage.removeItem('acknowledged_double_submission_ids');
+      localStorage.removeItem('acknowledged_double_all_history_until');
+    } catch (e) {}
+  };
+
+  // Seluruh kelompok dobel dari sistem berdasarkan Nama Penerima + Nominal (menampilkan rekap kelompok seperti di Gambar 1)
   const duplicateClusters = useMemo(() => {
-    const clusterMap = new Map<string, { recipientName: string; nominal: number; subs: Submission[] }>();
+    if (!submissions || submissions.length < 2) return [];
+
+    const map = new Map<string, { recipientName: string; nominal: number; submissions: Submission[] }>();
 
     submissions.forEach(sub => {
-      const total = (sub.items || []).reduce((acc, it) => acc + (Number(it.total) || 0), 0) || (sub as any).nominal || 0;
-      const recipient = normalizeText(sub.dibayarkanKepada);
-      if (recipient && total > 0) {
-        const key = `${recipient}_${total}`;
-        const cluster = clusterMap.get(key) || {
-          recipientName: sub.dibayarkanKepada || 'Tanpa Nama',
-          nominal: total,
-          subs: []
-        };
-        cluster.subs.push(sub);
-        clusterMap.set(key, cluster);
-      }
-    });
+      const subTotal = (sub.items || []).reduce((acc, it) => acc + (Number(it.total) || 0), 0) || (sub as any).nominal || 0;
+      const cleanRec = normalizeText(sub.dibayarkanKepada);
+      if (!cleanRec || subTotal <= 0) return;
 
-    const result: { key: string; recipientName: string; nominal: number; submissions: Submission[] }[] = [];
-    clusterMap.forEach((val, key) => {
-      if (val.subs.length > 1) {
-        val.subs.sort((a, b) => new Date(b.tanggal || 0).getTime() - new Date(a.tanggal || 0).getTime());
-        result.push({
-          key,
-          recipientName: val.recipientName,
-          nominal: val.nominal,
-          submissions: val.subs
+      const key = `${cleanRec}_${subTotal}`;
+      if (!map.has(key)) {
+        map.set(key, {
+          recipientName: sub.dibayarkanKepada || 'Tanpa Nama',
+          nominal: subTotal,
+          submissions: []
         });
       }
+      map.get(key)!.submissions.push(sub);
     });
 
-    return result.sort((a, b) => {
-      if (b.submissions.length !== a.submissions.length) {
-        return b.submissions.length - a.submissions.length;
-      }
-      return b.nominal - a.nominal;
-    });
+    return Array.from(map.values())
+      .filter(g => g.submissions.length > 1)
+      .map(g => ({
+        key: `${normalizeText(g.recipientName)}_${g.nominal}`,
+        recipientName: g.recipientName,
+        nominal: g.nominal,
+        submissions: g.submissions.sort((a, b) => new Date(b.tanggal || 0).getTime() - new Date(a.tanggal || 0).getTime())
+      }))
+      .sort((a, b) => b.submissions.length - a.submissions.length);
   }, [submissions]);
 
+  // Seluruh ID yang terkelompok serupa
   const duplicateSubmissionIds = useMemo(() => {
     const ids = new Set<string>();
     duplicateClusters.forEach(cluster => {
@@ -146,6 +203,21 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
     });
     return ids;
   }, [duplicateClusters]);
+
+  // ID yang masih aktif (belum diberi tanda / dibuat setelah cutoff tanda):
+  const activeDuplicateSubmissionIds = useMemo(() => {
+    const ids = new Set<string>();
+    duplicateSubmissionIds.forEach(id => {
+      if (acknowledgedDuplicateIds.includes(id)) return;
+      const sub = submissions.find(s => s.id === id);
+      if (acknowledgedAllHistoryTimestamp > 0 && sub) {
+        const subTime = new Date(sub.tanggal || 0).getTime();
+        if (subTime <= acknowledgedAllHistoryTimestamp) return;
+      }
+      ids.add(id);
+    });
+    return ids;
+  }, [duplicateSubmissionIds, acknowledgedDuplicateIds, acknowledgedAllHistoryTimestamp, submissions]);
 
   const [shareModalSub, setShareModalSub] = useState<Submission | null>(null);
   const [isCopiedShare, setIsCopiedShare] = useState(false);
@@ -193,7 +265,8 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   } | null>(null);
 
   const updateActionMenuPosition = (subId: string) => {
-    const btn = document.getElementById(`btn-action-trigger-${subId}`);
+    const cleanId = subId.replace(/^mob-/, '');
+    const btn = document.getElementById(`btn-action-trigger-${cleanId}`) || document.getElementById(`btn-action-trigger-mob-${cleanId}`);
     if (!btn) return;
     const rect = btn.getBoundingClientRect();
     const menuWidth = 224;
@@ -530,7 +603,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
         matchDate = yearFilter === 'All' && monthFilter === 'All' && !dateFilter;
       }
 
-      const matchDuplicates = !showOnlyDuplicates || duplicateSubmissionIds.has(sub.id);
+      const matchDuplicates = !showOnlyDuplicates || (activeDuplicateSubmissionIds.size > 0 ? activeDuplicateSubmissionIds.has(sub.id) : duplicateSubmissionIds.has(sub.id));
 
       return matchSearch && matchMethod && matchStatus && matchDate && matchDuplicates;
     });
@@ -1166,10 +1239,10 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
       {layoutMode === 'standard' && (
         <div className="bg-white rounded-2xl border border-stone-200 shadow-xs divide-y divide-stone-150 print:hidden animate-fade-in">
           {/* Row 1: General search & core criteria */}
-          <div className="p-5 flex flex-col xl:flex-row xl:items-center justify-between gap-4">
-            <div className="flex-1 flex flex-col md:flex-row items-stretch gap-3">
+          <div className="p-3.5 sm:p-5 flex flex-col xl:flex-row xl:items-center justify-between gap-3 sm:gap-4">
+            <div className="flex-1 flex flex-col md:flex-row items-stretch gap-2.5 sm:gap-3">
               {/* Dropdown Kategori Pencarian */}
-              <div className="relative md:w-56 shrink-0">
+              <div className="relative w-full md:w-56 shrink-0">
                 <select
                   value={searchCategory}
                   onChange={(e) => setSearchCategory(e.target.value)}
@@ -1222,7 +1295,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
             </div>
 
             {/* Action Button Container */}
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0">
+            <div className="grid grid-cols-1 sm:flex sm:flex-row items-stretch sm:items-center gap-2 shrink-0 w-full xl:w-auto">
 
               {onOpenSppdManager && (
                 <button
@@ -1257,51 +1330,53 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
           </div>
 
           {/* Row 2: Monthly, Yearly, and Date Filters & Download reports */}
-          <div className="p-5 bg-stone-50/40 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-            <div className="flex-1 flex flex-wrap items-center gap-4">
+          <div className="p-3.5 sm:p-5 bg-stone-50/40 flex flex-col lg:flex-row lg:items-center justify-between gap-3 sm:gap-4">
+            <div className="flex-1 flex flex-wrap items-center gap-3 sm:gap-4">
               {/* Year Filter Option */}
-              <div className="flex flex-col gap-1.5">
-                <span className="text-[10px] font-bold text-stone-400 uppercase tracking-wider font-mono">Tahun Transaksi</span>
-                <select
-                  className="px-3.5 py-2 bg-white border border-stone-250 rounded-xl text-xs focus:ring-2 focus:ring-stone-400 focus:outline-none text-stone-850 min-w-[130px] font-medium"
-                  value={yearFilter}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    setYearFilter(val);
-                    try {
-                      sessionStorage.setItem('sublist_yearFilter', val);
-                      sessionStorage.setItem('sublist_hasCustomPeriodFilter', 'true');
-                    } catch (err) {}
-                  }}
-                >
-                  <option value="All">Semua Tahun</option>
-                  {availableYears.map(year => (
-                    <option key={year} value={year}>{year}</option>
-                  ))}
-                </select>
-              </div>
+              <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-end gap-2.5 sm:gap-4 w-full sm:w-auto">
+                <div className="flex flex-col gap-1.5 min-w-0">
+                  <span className="text-[10px] font-bold text-stone-400 uppercase tracking-wider font-mono">Tahun Transaksi</span>
+                  <select
+                    className="w-full sm:w-auto px-3.5 py-2 bg-white border border-stone-250 rounded-xl text-xs focus:ring-2 focus:ring-stone-400 focus:outline-none text-stone-850 sm:min-w-[130px] font-medium"
+                    value={yearFilter}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setYearFilter(val);
+                      try {
+                        sessionStorage.setItem('sublist_yearFilter', val);
+                        sessionStorage.setItem('sublist_hasCustomPeriodFilter', 'true');
+                      } catch (err) {}
+                    }}
+                  >
+                    <option value="All">Semua Tahun</option>
+                    {availableYears.map(year => (
+                      <option key={year} value={year}>{year}</option>
+                    ))}
+                  </select>
+                </div>
 
-              {/* Month Filter Option */}
-              <div className="flex flex-col gap-1.5">
-                <span className="text-[10px] font-bold text-stone-400 uppercase tracking-wider font-mono">Bulan Transaksi</span>
-                <select
-                  className="px-3.5 py-2 bg-white border border-stone-250 rounded-xl text-xs focus:ring-2 focus:ring-stone-400 focus:outline-none text-stone-850 min-w-[150px] font-medium"
-                  value={monthFilter}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    setMonthFilter(val);
-                    try {
-                      sessionStorage.setItem('sublist_monthFilter', val);
-                      sessionStorage.setItem('sublist_hasCustomPeriodFilter', 'true');
-                    } catch (err) {}
-                  }}
-                >
-                  {MONTHS_LIST.map(m => (
-                    <option key={m.value} value={m.value}>
-                      {m.label} {m.value === currentMonthDefault ? '★ (Bulan Ini)' : ''}
-                    </option>
-                  ))}
-                </select>
+                {/* Month Filter Option */}
+                <div className="flex flex-col gap-1.5 min-w-0">
+                  <span className="text-[10px] font-bold text-stone-400 uppercase tracking-wider font-mono">Bulan Transaksi</span>
+                  <select
+                    className="w-full sm:w-auto px-3.5 py-2 bg-white border border-stone-250 rounded-xl text-xs focus:ring-2 focus:ring-stone-400 focus:outline-none text-stone-850 sm:min-w-[150px] font-medium"
+                    value={monthFilter}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setMonthFilter(val);
+                      try {
+                        sessionStorage.setItem('sublist_monthFilter', val);
+                        sessionStorage.setItem('sublist_hasCustomPeriodFilter', 'true');
+                      } catch (err) {}
+                    }}
+                  >
+                    {MONTHS_LIST.map(m => (
+                      <option key={m.value} value={m.value}>
+                        {m.label} {m.value === currentMonthDefault ? '★ (Bulan Ini)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               {/* Quick Jump to Current Month Button */}
@@ -1333,20 +1408,48 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
               {/* Quick Filter & Analisis: Potensi Dobel Input */}
               {duplicateSubmissionIds.size > 0 && (
                 <div className="self-end pb-0.5 flex items-center gap-1.5 flex-wrap">
-                  <button
-                    type="button"
-                    id="btn-open-duplicate-modal"
-                    onClick={() => {
-                      setSelectedClusterKey(null);
-                      setDuplicateModalSearch('');
-                      setIsDuplicateModalOpen(true);
-                    }}
-                    title="Klik untuk membuka dialog analisis & rekap lengkap seluruh voucher yang berpotensi dobel"
-                    className="px-3.5 py-2 text-xs font-bold font-mono rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-xs bg-amber-500 hover:bg-amber-600 text-stone-950 font-black ring-2 ring-amber-400 active:scale-95"
-                  >
-                    <AlertTriangle size={14} className="text-stone-950" />
-                    <span>⚠️ Potensi Dobel ({duplicateSubmissionIds.size})</span>
-                  </button>
+                  {activeDuplicateSubmissionIds.size > 0 ? (
+                    <>
+                      <button
+                        type="button"
+                        id="btn-open-duplicate-modal"
+                        onClick={() => {
+                          setSelectedClusterKey(null);
+                          setDuplicateModalSearch('');
+                          setIsDuplicateModalOpen(true);
+                        }}
+                        title="Klik untuk membuka dialog analisis & rekap voucher yang berpotensi dobel dengan transaksi terakhir"
+                        className="px-3.5 py-2 text-xs font-bold font-mono rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-xs bg-amber-500 hover:bg-amber-600 text-stone-950 font-black ring-2 ring-amber-400 active:scale-95"
+                      >
+                        <AlertTriangle size={14} className="text-stone-950" />
+                        <span>⚠️ Potensi Dobel ({activeDuplicateSubmissionIds.size})</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleAcknowledgeAllHistory}
+                        title="Pilih bahwa transaksi ini seluruhnya tidak dobel (Status potensi dobel menjadi 0 & riwayat diabaikan)"
+                        className="px-3 py-2 text-xs font-bold font-mono rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-3xs bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold active:scale-95"
+                      >
+                        <Check size={13} className="text-white font-bold" />
+                        <span>✓ Beri Tanda (Set 0)</span>
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedClusterKey(null);
+                        setDuplicateModalSearch('');
+                        setIsDuplicateModalOpen(true);
+                      }}
+                      title="Status potensi dobel 0 (sudah ditandai aman). Klik untuk melihat detail atau mengatur ulang."
+                      className="px-3 py-2 text-xs font-bold font-mono rounded-xl transition flex items-center gap-1.5 cursor-pointer border bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border-emerald-300 shadow-3xs"
+                    >
+                      <Check size={13} className="text-emerald-700" />
+                      <span>✓ Potensi Dobel: 0 (Aman)</span>
+                    </button>
+                  )}
 
                   <button
                     type="button"
@@ -1364,19 +1467,19 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
               )}
 
               {/* Specific Date Picker Input */}
-              <div className="flex flex-col gap-1.5">
+              <div className="flex flex-col gap-1.5 w-full sm:w-auto">
                 <span className="text-[10px] font-bold text-stone-400 uppercase tracking-wider font-mono">Tanggal Spesifik</span>
                 <div className="flex items-center gap-2">
                   <input
                     type="date"
-                    className="px-3.5 py-2 bg-white border border-stone-250 rounded-xl text-xs focus:ring-2 focus:ring-stone-400 focus:outline-none text-stone-850 font-mono"
+                    className="w-full sm:w-auto px-3.5 py-2 bg-white border border-stone-250 rounded-xl text-xs focus:ring-2 focus:ring-stone-400 focus:outline-none text-stone-850 font-mono"
                     value={dateFilter}
                     onChange={(e) => setDateFilter(e.target.value)}
                   />
                   {dateFilter && (
                     <button
                       onClick={() => setDateFilter('')}
-                      className="px-2.5 py-2 hover:bg-stone-200/60 text-stone-550 hover:text-stone-800 text-[11px] font-mono font-bold rounded-lg transition"
+                      className="px-2.5 py-2 hover:bg-stone-200/60 text-stone-550 hover:text-stone-800 text-[11px] font-mono font-bold rounded-lg transition shrink-0"
                       title="Bersihkan Tanggal"
                     >
                       Reset
@@ -1475,9 +1578,187 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
 
       {/* Main Content Layout Block: Standard List vs Google Sheets Simulator */}
       {layoutMode === 'standard' ? (
-        /* Standard Table View */
-        <div className="bg-white rounded-2xl border border-stone-200 shadow-xs print:hidden">
-          <div className="overflow-x-auto min-h-[220px]">
+        /* Standard Table & Mobile Card View */
+        <div className="bg-white rounded-2xl border border-stone-200 shadow-xs print:hidden overflow-hidden">
+          {/* Mobile Screen Card View (Layar HP) - Responsif, Bebas Terpotong & Melebihi Layar */}
+          <div className="block md:hidden divide-y divide-stone-150">
+            {filteredSubmissions.length > 0 ? (
+              filteredSubmissions.map((sub) => {
+                const subTotal = sub.items.reduce((sum, i) => sum + i.total, 0);
+                const isDuplicateActive = activeDuplicateSubmissionIds.has(sub.id);
+                return (
+                  <div
+                    key={`mob-${sub.id}`}
+                    className={`p-3.5 sm:p-4 transition space-y-2.5 ${
+                      isDuplicateActive ? 'bg-amber-50/40' : 'bg-white hover:bg-stone-50/50'
+                    }`}
+                  >
+                    {/* Header bar: Tanggal, Kode & Status */}
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="font-extrabold text-stone-900 text-xs flex items-center gap-1.5">
+                          <span>📅 {formatDateIndonesian(sub.tanggal)}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                          <span className="font-mono text-[10px] font-bold bg-stone-100 text-stone-700 px-2 py-0.5 rounded border border-stone-200">
+                            Kode: {sub.kode || '-'}
+                          </span>
+                          <span className="text-[10px] text-stone-500 font-medium truncate max-w-[130px]">
+                            📍 {sub.lokasi || '-'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="shrink-0">
+                        {sub.status === 'DP / Cicilan' ? (
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full font-extrabold bg-amber-50 text-amber-800 border border-amber-200">
+                            DP: Rp {formatRupiah(sub.dpAmount || 0)}
+                          </span>
+                        ) : (
+                          <span className={`text-[10px] font-mono px-2.5 py-0.5 rounded-full font-extrabold border ${
+                            (sub.status || 'Lunas') === 'Lunas'
+                              ? 'bg-teal-50 text-teal-700 border-teal-150'
+                              : 'bg-rose-50 text-rose-700 border-rose-150'
+                          }`}>
+                            {sub.status || 'Lunas'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Middle: Penerima & Jenis Pengajuan */}
+                    <div>
+                      <div className="font-black text-stone-900 text-sm leading-snug">
+                        {sub.dibayarkanKepada}
+                      </div>
+                      <div className="text-xs text-stone-600 font-medium mt-0.5 flex items-center gap-1.5 flex-wrap">
+                        <span className="font-semibold text-stone-700">{sub.jenisPengajuan}</span>
+                        <span className="text-stone-300">•</span>
+                        <span className="font-mono text-[11px] text-stone-500">{sub.items.length} item</span>
+                      </div>
+
+                      {/* Badges container */}
+                      <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                        {isDuplicateActive && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const total = (sub.items || []).reduce((acc, it) => acc + (Number(it.total) || 0), 0) || (sub as any).nominal || 0;
+                              const key = `${normalizeText(sub.dibayarkanKepada)}_${total}`;
+                              setSelectedClusterKey(key);
+                              setDuplicateModalSearch(sub.dibayarkanKepada || '');
+                              setIsDuplicateModalOpen(true);
+                            }}
+                            className="inline-flex items-center gap-1 text-[9px] font-mono bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 font-black px-2 py-0.5 rounded-md shadow-3xs cursor-pointer"
+                            title="Klik untuk membuka rincian pasangan transaksi yang sama persis di sistem"
+                          >
+                            <span>⚠️ Potensi Dobel</span>
+                          </button>
+                        )}
+
+                        {sub.isInvoice && (
+                          <span className="text-[9px] font-mono bg-amber-500 text-white font-black px-2 py-0.5 rounded-md shadow-3xs uppercase">
+                            Invoice
+                          </span>
+                        )}
+
+                        {sub.isPettyCash && (
+                          <span className="text-[9px] font-mono bg-violet-600 text-white font-black px-2 py-0.5 rounded-md shadow-3xs uppercase">
+                            Petty Cash
+                          </span>
+                        )}
+
+                        {(() => {
+                          const displayFileObj = (sub.googleDriveFiles || []).find(f => !f.isF1 && !f.isF2 && !f.isBuktiPembayaran) || 
+                                                 (sub.googleDriveFileUrl && !sub.googleDriveFileName?.startsWith('F1 -') && !sub.googleDriveFileName?.startsWith('F2 -') ? { url: sub.googleDriveFileUrl, name: sub.googleDriveFileName } : null) || 
+                                                 sub.pettyCashFile || 
+                                                 sub.buktiPembayaran || 
+                                                 (sub.googleDriveFiles && sub.googleDriveFiles.length > 0 ? sub.googleDriveFiles[0] : null);
+                          if (!displayFileObj?.url) return null;
+                          return (
+                            <a
+                              href={displayFileObj.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-[9px] font-mono bg-amber-50 text-amber-850 border border-amber-200 px-2 py-0.5 rounded-md hover:bg-amber-100 transition font-bold"
+                            >
+                              <Cloud size={10} className="text-amber-600" />
+                              <span>Drive</span>
+                            </a>
+                          );
+                        })()}
+                      </div>
+                    </div>
+
+                    {/* Bottom: Nominal & Action Buttons */}
+                    <div className="pt-2 border-t border-stone-150 flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <span className="text-[9px] font-mono text-stone-400 block uppercase font-bold">Total Nilai</span>
+                        <span className="text-sm sm:text-base font-black font-mono text-stone-900 truncate block">
+                          Rp {formatRupiah(subTotal)}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => onSelect(sub)}
+                          className="px-2.5 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-800 font-bold rounded-xl text-xs transition cursor-pointer flex items-center gap-1 shadow-3xs"
+                          title="Lihat / Cetak Voucher"
+                        >
+                          <Eye size={13} className="text-[#D4AF37]" />
+                          <span>Lihat</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => onEdit(sub)}
+                          className="px-2.5 py-1.5 bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 font-bold rounded-xl text-xs transition cursor-pointer flex items-center gap-1 shadow-3xs"
+                          title="Edit Transaksi"
+                        >
+                          <Edit2 size={13} className="text-sky-600" />
+                          <span>Edit</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          id={`btn-action-trigger-mob-${sub.id}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (openActionMenuId === sub.id) {
+                              setOpenActionMenuId(null);
+                              setActionMenuPosition(null);
+                            } else {
+                              setOpenActionMenuId(sub.id);
+                              updateActionMenuPosition(`mob-${sub.id}`);
+                            }
+                          }}
+                          className={`p-1.5 rounded-xl border transition shadow-3xs cursor-pointer ${
+                            openActionMenuId === sub.id
+                              ? 'bg-amber-600 text-white border-amber-700'
+                              : 'bg-white hover:bg-stone-100 text-stone-700 border-stone-250'
+                          }`}
+                          title="Menu Tindakan Lengkap"
+                        >
+                          <MoreVertical size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="text-center py-12 px-4">
+                <FileText size={36} className="mx-auto text-stone-300 mb-2" />
+                <p className="text-sm font-bold text-stone-700">Tidak ada data transaksi</p>
+                <p className="text-xs text-stone-500 mt-1">Coba sesuaikan kata kunci pencarian atau filter periode.</p>
+              </div>
+            )}
+          </div>
+
+          {/* Desktop Table View (Layar Komputer) */}
+          <div className="hidden md:block overflow-x-auto min-h-[220px]">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-stone-50 border-b border-stone-200 text-stone-500 font-display text-[10px] uppercase tracking-widest font-extrabold">
@@ -1550,7 +1831,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                               </span>
                             )}
 
-                            {duplicateSubmissionIds.has(sub.id) && (
+                            {activeDuplicateSubmissionIds.has(sub.id) && (
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -4086,29 +4367,53 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
         <div className="fixed inset-0 z-50 bg-stone-900/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 overflow-y-auto animate-fade-in font-sans">
           <div className="relative w-full max-w-4xl bg-white rounded-3xl shadow-2xl border border-stone-200 overflow-hidden flex flex-col max-h-[90vh] my-auto animate-in zoom-in-95 duration-150">
             {/* Modal Header */}
-            <div className="bg-gradient-to-r from-amber-500 via-amber-400 to-orange-400 text-stone-950 p-5 sm:p-6 flex items-start gap-4 border-b border-amber-300">
-              <div className="p-3 rounded-2xl bg-white/80 text-amber-950 shadow-3xs shrink-0 border border-amber-400 mt-0.5">
-                <AlertTriangle size={24} className="animate-pulse" />
+            <div className={`p-5 sm:p-6 flex items-start gap-4 border-b ${
+              activeDuplicateSubmissionIds.size > 0 
+                ? 'bg-gradient-to-r from-amber-500 via-amber-400 to-orange-400 text-stone-950 border-amber-300'
+                : 'bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-600 text-white border-emerald-400'
+            }`}>
+              <div className={`p-3 rounded-2xl shrink-0 shadow-3xs mt-0.5 border ${
+                activeDuplicateSubmissionIds.size > 0
+                  ? 'bg-white/80 text-amber-950 border-amber-400'
+                  : 'bg-white/20 text-white border-emerald-300'
+              }`}>
+                {activeDuplicateSubmissionIds.size > 0 ? (
+                  <AlertTriangle size={24} className="animate-pulse" />
+                ) : (
+                  <Check size={24} className="font-extrabold" />
+                )}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-amber-950 bg-white/80 px-2.5 py-0.5 rounded-full inline-block mb-1 border border-amber-300 shadow-3xs">
-                    Pusat Analisis & Audit Dobel Input
+                  <span className={`text-[10px] font-mono font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full inline-block mb-1 border shadow-3xs ${
+                    activeDuplicateSubmissionIds.size > 0
+                      ? 'text-amber-950 bg-white/80 border-amber-300'
+                      : 'text-emerald-950 bg-emerald-100 border-emerald-300'
+                  }`}>
+                    {activeDuplicateSubmissionIds.size > 0 ? 'Pusat Analisis & Audit Dobel Input' : 'Status: 0 Potensi Dobel (Aman)'}
                   </span>
                   <button
                     type="button"
                     onClick={() => setIsDuplicateModalOpen(false)}
-                    className="p-1.5 text-stone-800 hover:text-stone-950 rounded-xl hover:bg-white/50 transition cursor-pointer"
+                    className="p-1.5 rounded-xl hover:bg-black/10 transition cursor-pointer"
                     title="Tutup dialog"
                   >
                     <X size={20} />
                   </button>
                 </div>
-                <h3 className="text-base sm:text-xl font-black text-stone-950 tracking-tight">
-                  Daftar & Rekap Potensi Transaksi Dobel
+                <h3 className="text-base sm:text-xl font-black tracking-tight">
+                  Daftar &amp; Rekap Potensi Transaksi Dobel
                 </h3>
-                <p className="text-xs text-stone-850 mt-1 leading-relaxed">
-                  Menampilkan <strong>{duplicateSubmissionIds.size} voucher</strong> yang terkelompok ke dalam <strong>{duplicateClusters.length} grup transaksi</strong> karena memiliki nama penerima dan nominal sama persis.
+                <p className="text-xs mt-1 leading-relaxed opacity-95">
+                  {activeDuplicateSubmissionIds.size > 0 ? (
+                    <>
+                      Menampilkan <strong>{activeDuplicateSubmissionIds.size} voucher</strong> yang terindikasi serupa. Anda dapat memilih tombol <strong>✓ Transaksi Ini Seluruhnya Tidak Dobel (Set 0)</strong> agar aplikasi tidak mendeteksinya lagi sampai ada transaksi baru yang serupa.
+                    </>
+                  ) : (
+                    <>
+                      ✓ Seluruh <strong>{duplicateSubmissionIds.size} riwayat voucher</strong> telah diverifikasi SAH &amp; Bukan Dobel. Aplikasi tidak akan mendeteksinya lagi. Transaksi baru yang serupa barulah akan dideteksi kembali.
+                    </>
+                  )}
                 </p>
               </div>
             </div>
@@ -4120,7 +4425,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 <input
                   type="text"
                   placeholder="Cari nama penerima atau nominal di daftar dobel..."
-                  className="w-full pl-9 pr-4 py-2 bg-white border border-stone-300 rounded-xl text-xs focus:ring-2 focus:ring-amber-400 focus:outline-none text-stone-800 font-medium"
+                  className="w-full pl-9 pr-4 py-2 bg-white border border-stone-300 rounded-xl text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none text-stone-800 font-medium"
                   value={duplicateModalSearch}
                   onChange={(e) => setDuplicateModalSearch(e.target.value)}
                 />
@@ -4135,7 +4440,30 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 )}
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* Tombol Utama: Transaksi Ini Seluruhnya Tidak Dobel (Set 0 & Abaikan Riwayat Ini) */}
+                {activeDuplicateSubmissionIds.size > 0 ? (
+                  <button
+                    type="button"
+                    id="btn-acknowledge-all-history"
+                    onClick={handleAcknowledgeAllHistory}
+                    className="px-3.5 py-2 text-xs font-black font-mono rounded-xl transition cursor-pointer border flex items-center gap-1.5 shadow-sm bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700 active:scale-95"
+                    title="Pilih bahwa transaksi ini seluruhnya tidak dobel dan aplikasi tidak akan mendeteksinya lagi sampai ada transaksi baru serupa"
+                  >
+                    <Check size={14} className="text-white font-bold" />
+                    <span>✓ Transaksi Ini Seluruhnya Tidak Dobel (Set 0)</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleResetAcknowledgeDuplicates}
+                    className="px-3 py-2 text-xs font-bold font-mono rounded-xl transition cursor-pointer border flex items-center gap-1.5 bg-stone-100 hover:bg-rose-50 text-stone-700 hover:text-rose-700 border-stone-300"
+                    title="Atur ulang verifikasi tanda jika ingin mendeteksi ulang seluruh riwayat"
+                  >
+                    <span>Reset Tanda (Deteksi Ulang)</span>
+                  </button>
+                )}
+
                 <button
                   type="button"
                   onClick={() => setShowOnlyDuplicates(prev => !prev)}
@@ -4146,7 +4474,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                   }`}
                 >
                   <Filter size={13} />
-                  <span>{showOnlyDuplicates ? '✓ Filter Tabel Utama Aktif' : 'Terapkan Filter ke Tabel'}</span>
+                  <span>{showOnlyDuplicates ? '✓ Filter Aktif' : 'Saring Tabel'}</span>
                 </button>
               </div>
             </div>
@@ -4155,7 +4483,52 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
             <div className="p-5 sm:p-6 overflow-y-auto space-y-4 max-h-[60vh]">
               {(() => {
                 const searchLower = duplicateModalSearch.trim().toLowerCase();
-                const filteredClusters = duplicateClusters.filter(cluster => {
+
+                // If active duplicates is 0 and user is not searching or explicitly viewing archived, show clean verified card
+                if (activeDuplicateSubmissionIds.size === 0 && !showArchivedDuplicates && !searchLower) {
+                  return (
+                    <div className="text-center py-10 px-5 bg-gradient-to-b from-emerald-50/80 to-white rounded-3xl border-2 border-emerald-300 shadow-sm space-y-3.5">
+                      <div className="w-14 h-14 bg-emerald-100 text-emerald-700 rounded-2xl flex items-center justify-center mx-auto border border-emerald-300 shadow-3xs">
+                        <Check size={30} className="font-black" />
+                      </div>
+                      <div className="space-y-1">
+                        <h4 className="text-base sm:text-lg font-black text-emerald-950">
+                          Seluruh Transaksi Telah Ditandai SAH &amp; Bukan Dobel
+                        </h4>
+                        <p className="text-xs text-emerald-900 max-w-xl mx-auto leading-relaxed">
+                          Sesuai pilihan Anda, seluruh <strong>{duplicateSubmissionIds.size} voucher</strong> riwayat ini telah dinyatakan sah. Aplikasi <strong>tidak mendeteksi potensi dobel</strong> lagi (Status: 0 Dobel).
+                        </p>
+                        <p className="text-[11px] text-stone-600 max-w-md mx-auto pt-1">
+                          Jika di kemudian hari ada <strong>transaksi baru</strong> yang diinput dengan nama dan nominal serupa, barulah sistem akan memunculkan peringatan potensi dobel kembali.
+                        </p>
+                      </div>
+                      <div className="pt-2 flex items-center justify-center gap-2.5 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => setShowArchivedDuplicates(true)}
+                          className="px-4 py-2 bg-white hover:bg-stone-50 text-stone-800 border border-stone-300 font-bold rounded-xl text-xs transition cursor-pointer shadow-3xs flex items-center gap-1.5"
+                        >
+                          <Eye size={13} className="text-emerald-600" />
+                          <span>Lihat Arsip {duplicateClusters.length} Grup ({duplicateSubmissionIds.size} Voucher) yang Ditandai Sah</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleResetAcknowledgeDuplicates}
+                          className="px-3.5 py-2 bg-stone-100 hover:bg-rose-50 text-stone-600 hover:text-rose-700 border border-stone-200 rounded-xl text-xs font-semibold transition cursor-pointer"
+                        >
+                          <span>Reset Tanda (Deteksi Ulang)</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+
+                // If showArchivedDuplicates is false and there are active clusters, only show clusters that have active unacknowledged duplicates!
+                const sourceClusters = (!showArchivedDuplicates && activeDuplicateSubmissionIds.size > 0)
+                  ? duplicateClusters.filter(c => c.submissions.some(s => activeDuplicateSubmissionIds.has(s.id)))
+                  : duplicateClusters;
+
+                const filteredClusters = sourceClusters.filter(cluster => {
                   if (!searchLower) return true;
                   const matchRecipient = cluster.recipientName.toLowerCase().includes(searchLower);
                   const matchNominal = String(cluster.nominal).includes(searchLower) || formatRupiah(cluster.nominal).toLowerCase().includes(searchLower);
@@ -4165,143 +4538,227 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
 
                 if (filteredClusters.length === 0) {
                   return (
-                    <div className="text-center py-12 px-4 bg-stone-50 rounded-2xl border border-stone-200">
+                    <div className="text-center py-12 px-4 bg-stone-50 rounded-2xl border border-stone-200 space-y-2">
                       <AlertCircle size={32} className="mx-auto text-stone-400 mb-2" />
-                      <p className="text-sm font-bold text-stone-700">Tidak ada kelompok dobel yang sesuai pencarian</p>
-                      <p className="text-xs text-stone-500 mt-1">Coba gunakan kata kunci nama penerima atau nominal lain.</p>
+                      <p className="text-sm font-bold text-stone-700">Tidak ada kelompok transaksi dobel yang sesuai</p>
+                      <p className="text-xs text-stone-500">
+                        {searchLower ? 'Coba gunakan kata kunci nama penerima atau nominal lain.' : 'Seluruh potensi transaksi dobel telah bersih (0 dobel).'}
+                      </p>
                     </div>
                   );
                 }
 
-                return filteredClusters.map((cluster, cIdx) => {
-                  const isSelected = selectedClusterKey === cluster.key;
-                  return (
-                    <div 
-                      key={cIdx}
-                      className={`rounded-2xl border transition-all ${
-                        isSelected 
-                          ? 'border-amber-400 bg-amber-50/40 ring-2 ring-amber-300 shadow-sm' 
-                          : 'border-stone-200 bg-white hover:border-amber-300 shadow-3xs'
-                      }`}
-                    >
-                      {/* Cluster Header */}
-                      <div className="p-4 bg-stone-50/80 border-b border-stone-200 rounded-t-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                        <div className="flex items-center gap-2.5 flex-wrap">
-                          <span className="font-mono text-xs font-bold text-stone-500 bg-stone-200 px-2 py-0.5 rounded">
-                            Kelompok #{cIdx + 1}
-                          </span>
-                          <span className="text-sm font-black text-stone-900">
-                            👤 {cluster.recipientName}
-                          </span>
-                          <span className="text-xs font-bold text-amber-900 bg-amber-100 px-2.5 py-0.5 rounded-full border border-amber-300 font-mono">
-                            💰 Rp {formatRupiah(cluster.nominal)}
-                          </span>
-                        </div>
-                        <span className="text-[11px] font-mono font-bold text-stone-600 bg-white px-2.5 py-1 rounded-lg border border-stone-250 shrink-0 self-start sm:self-auto">
-                          {cluster.submissions.length} Transaksi Serupa
-                        </span>
+                return (
+                  <>
+                    {showArchivedDuplicates && (
+                      <div className="p-3 bg-stone-100 rounded-xl flex items-center justify-between text-xs text-stone-700 font-medium">
+                        <span>Menampilkan riwayat seluruh kelompok yang telah diverifikasi sah.</span>
+                        <button
+                          type="button"
+                          onClick={() => setShowArchivedDuplicates(false)}
+                          className="text-stone-900 font-bold underline cursor-pointer"
+                        >
+                          Tutup Tampilan Arsip
+                        </button>
                       </div>
+                    )}
+                    {filteredClusters.map((cluster, cIdx) => {
+                      const isSelected = selectedClusterKey === cluster.key;
+                      const activeInCluster = cluster.submissions.filter(s => activeDuplicateSubmissionIds.has(s.id));
+                      const isClusterAllAcknowledged = activeInCluster.length === 0;
 
-                      {/* Cluster Items List */}
-                      <div className="p-3 sm:p-4 divide-y divide-stone-100">
-                        {cluster.submissions.map((sub, sIdx) => {
-                          const itemsCount = sub.items?.length || 0;
-                          return (
-                            <div key={sIdx} className="py-2.5 first:pt-0 last:pb-0 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 flex-wrap mb-1">
-                                  <span className="font-mono font-bold text-stone-900 bg-stone-100 px-2 py-0.5 rounded border border-stone-250">
-                                    {sub.kode || 'Tanpa Kode'}
-                                  </span>
-                                  <span className="text-stone-600 font-medium">
-                                    📅 {formatDateIndonesian(sub.tanggal)}
-                                  </span>
-                                  <span className="text-stone-500 font-mono text-[11px]">
-                                    ({sub.jenisPengajuan})
-                                  </span>
-                                  <span className={`text-[10px] font-bold font-mono px-2 py-0.5 rounded-full border ${
-                                    sub.status === 'Lunas' 
-                                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
-                                      : 'bg-rose-50 text-rose-700 border-rose-200'
-                                  }`}>
-                                    {sub.status || 'Belum Lunas'}
-                                  </span>
-                                </div>
-                                <div className="text-[11px] text-stone-600 line-clamp-1">
-                                  {sub.notes ? (
-                                    <span>Catatan: <em>{sub.notes}</em></span>
-                                  ) : itemsCount > 0 ? (
-                                    <span>Rincian: {sub.items?.map(it => it.item).join(', ')}</span>
-                                  ) : (
-                                    <span className="italic text-stone-400">Tidak ada catatan tambahan</span>
-                                  )}
-                                </div>
-                              </div>
-
-                              {/* Row Action Buttons */}
-                              <div className="flex items-center gap-1.5 shrink-0 self-end md:self-auto">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setIsDuplicateModalOpen(false);
-                                    onSelect(sub);
-                                  }}
-                                  className="px-2.5 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-750 font-bold rounded-lg text-xs transition cursor-pointer flex items-center gap-1 shadow-3xs"
-                                  title="Lihat rincian & cetak voucher ini"
-                                >
-                                  <Eye size={12} />
-                                  <span>Lihat</span>
-                                </button>
-
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setIsDuplicateModalOpen(false);
-                                    onEdit(sub);
-                                  }}
-                                  className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold rounded-lg text-xs transition cursor-pointer flex items-center gap-1 shadow-3xs"
-                                  title="Edit data voucher ini"
-                                >
-                                  <Edit2 size={12} />
-                                  <span>Edit</span>
-                                </button>
-
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (window.confirm(`Hapus voucher ${sub.kode || 'ini'} milik ${sub.dibayarkanKepada} senilai Rp ${formatRupiah(cluster.nominal)}?`)) {
-                                      onDelete(sub.id);
-                                    }
-                                  }}
-                                  className="px-2 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold rounded-lg text-xs transition cursor-pointer flex items-center gap-1 shadow-3xs"
-                                  title="Hapus jika voucher ini tidak sengaja terinput dua kali"
-                                >
-                                  <Trash2 size={12} />
-                                  <span>Hapus</span>
-                                </button>
-                              </div>
+                      return (
+                        <div 
+                          key={cIdx}
+                          className={`rounded-2xl border transition-all ${
+                            isSelected 
+                              ? 'border-amber-400 bg-amber-50/40 ring-2 ring-amber-300 shadow-sm' 
+                              : isClusterAllAcknowledged
+                                ? 'border-emerald-200 bg-emerald-50/20 shadow-3xs'
+                                : 'border-stone-200 bg-white hover:border-amber-300 shadow-3xs'
+                          }`}
+                        >
+                          {/* Cluster Header */}
+                          <div className={`p-4 border-b rounded-t-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 ${
+                            isClusterAllAcknowledged ? 'bg-emerald-50/60 border-emerald-200' : 'bg-stone-50/80 border-stone-200'
+                          }`}>
+                            <div className="flex items-center gap-2.5 flex-wrap">
+                              <span className="font-mono text-xs font-bold text-stone-500 bg-stone-200 px-2 py-0.5 rounded">
+                                Kelompok #{cIdx + 1}
+                              </span>
+                              <span className="text-sm font-black text-stone-900">
+                                👤 {cluster.recipientName}
+                              </span>
+                              <span className="text-xs font-bold text-amber-900 bg-amber-100 px-2.5 py-0.5 rounded-full border border-amber-300 font-mono">
+                                💰 Rp {formatRupiah(cluster.nominal)}
+                              </span>
+                              {isClusterAllAcknowledged ? (
+                                <span className="text-[10px] font-bold font-mono text-emerald-800 bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded-full">
+                                  ✓ Ditandai Sah
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-bold font-mono text-amber-900 bg-amber-200 border border-amber-300 px-2 py-0.5 rounded-full">
+                                  ⚠️ {activeInCluster.length} Belum Ditandai
+                                </span>
+                              )}
                             </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                });
+                            
+                            <div className="flex items-center gap-2">
+                              {!isClusterAllAcknowledged && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleAcknowledgeCluster(cluster.submissions)}
+                                  className="px-2.5 py-1 text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition shadow-3xs cursor-pointer flex items-center gap-1"
+                                  title="Tandai seluruh voucher dalam grup ini sah / bukan dobel"
+                                >
+                                  <Check size={11} />
+                                  <span>Tandai Grup Ini Sah</span>
+                                </button>
+                              )}
+                              <span className="text-[11px] font-mono font-bold text-stone-600 bg-white px-2.5 py-1 rounded-lg border border-stone-250 shrink-0 self-start sm:self-auto">
+                                {cluster.submissions.length} Transaksi Serupa
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Cluster Items List */}
+                          <div className="p-3 sm:p-4 divide-y divide-stone-100">
+                            {cluster.submissions.map((sub, sIdx) => {
+                              const itemsCount = sub.items?.length || 0;
+                              const isSubAcknowledged = acknowledgedDuplicateIds.includes(sub.id) || (acknowledgedAllHistoryTimestamp > 0 && new Date(sub.createdAt || sub.tanggal || 0).getTime() <= acknowledgedAllHistoryTimestamp);
+
+                              return (
+                                <div key={sIdx} className="py-2.5 first:pt-0 last:pb-0 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                                      <span className="font-mono font-bold text-stone-900 bg-stone-100 px-2 py-0.5 rounded border border-stone-250">
+                                        {sub.kode || 'Tanpa Kode'}
+                                      </span>
+                                      <span className="text-stone-600 font-medium">
+                                        📅 {formatDateIndonesian(sub.tanggal)}
+                                      </span>
+                                      <span className="text-stone-500 font-mono text-[11px]">
+                                        ({sub.jenisPengajuan})
+                                      </span>
+                                      <span className={`text-[10px] font-bold font-mono px-2 py-0.5 rounded-full border ${
+                                        sub.status === 'Lunas' 
+                                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                                          : 'bg-rose-50 text-rose-700 border-rose-200'
+                                      }`}>
+                                        {sub.status || 'Belum Lunas'}
+                                      </span>
+                                      {isSubAcknowledged && (
+                                        <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                                          ✓ Sah
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="text-[11px] text-stone-600 line-clamp-1">
+                                      {sub.notes ? (
+                                        <span>Catatan: <em>{sub.notes}</em></span>
+                                      ) : itemsCount > 0 ? (
+                                        <span>Rincian: {sub.items?.map(it => it.item).join(', ')}</span>
+                                      ) : (
+                                        <span className="italic text-stone-400">Tidak ada catatan tambahan</span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* Row Action Buttons */}
+                                  <div className="flex items-center gap-1.5 flex-wrap shrink-0 self-stretch sm:self-auto justify-end sm:justify-start pt-1 sm:pt-0">
+                                    {/* Tombol Beri Tanda Aman untuk Voucher Ini */}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleToggleAcknowledgeDuplicate(sub.id)}
+                                      className={`px-2.5 py-1.5 font-bold rounded-lg text-xs transition cursor-pointer flex items-center gap-1 shadow-3xs border ${
+                                        isSubAcknowledged
+                                          ? 'bg-emerald-100 hover:bg-emerald-200 text-emerald-900 border-emerald-300 font-extrabold'
+                                          : 'bg-white hover:bg-stone-100 text-stone-700 border-stone-300'
+                                      }`}
+                                      title="Beri tanda voucher ini sah / bukan dobel (Set status potensi dobel menjadi 0)"
+                                    >
+                                      <Check size={12} className={isSubAcknowledged ? 'text-emerald-700' : 'text-stone-400'} />
+                                      <span>{isSubAcknowledged ? '✓ Ditandai Sah' : 'Tandai Sah'}</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setIsDuplicateModalOpen(false);
+                                        onSelect(sub);
+                                      }}
+                                      className="px-2.5 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-750 font-bold rounded-lg text-xs transition cursor-pointer flex items-center gap-1 shadow-3xs"
+                                      title="Lihat rincian & cetak voucher ini"
+                                    >
+                                      <Eye size={12} />
+                                      <span>Lihat</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setIsDuplicateModalOpen(false);
+                                        onEdit(sub);
+                                      }}
+                                      className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold rounded-lg text-xs transition cursor-pointer flex items-center gap-1 shadow-3xs"
+                                      title="Edit data voucher ini"
+                                    >
+                                      <Edit2 size={12} />
+                                      <span>Edit</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (window.confirm(`Hapus voucher ${sub.kode || 'ini'} milik ${sub.dibayarkanKepada} senilai Rp ${formatRupiah(cluster.nominal)}?`)) {
+                                          onDelete(sub.id);
+                                        }
+                                      }}
+                                      className="px-2 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold rounded-lg text-xs transition cursor-pointer flex items-center gap-1 shadow-3xs"
+                                      title="Hapus jika voucher ini tidak sengaja terinput dua kali"
+                                    >
+                                      <Trash2 size={12} />
+                                      <span>Hapus</span>
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </>
+                );
               })()}
             </div>
 
             {/* Modal Footer */}
             <div className="p-4 bg-stone-50 border-t border-stone-200 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
               <span className="text-stone-500 font-medium">
-                💡 Periksa voucher di atas. Jika merupakan tagihan rutin terpisah, Anda dapat membiarkannya. Jika tidak sengaja terinput 2 kali, silakan gunakan tombol <strong>Hapus</strong>.
+                💡 {activeDuplicateSubmissionIds.size > 0 
+                  ? `Menampilkan ${activeDuplicateSubmissionIds.size} voucher terdeteksi serupa.` 
+                  : `Seluruh ${duplicateSubmissionIds.size} voucher riwayat telah ditandai sah (0 dobel).`}
               </span>
-              <button
-                type="button"
-                onClick={() => setIsDuplicateModalOpen(false)}
-                className="w-full sm:w-auto px-5 py-2.5 bg-stone-900 hover:bg-stone-800 text-white font-bold rounded-xl transition cursor-pointer shadow-xs shrink-0"
-              >
-                Tutup Rekap
-              </button>
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                {activeDuplicateSubmissionIds.size > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleAcknowledgeAllHistory}
+                    className="w-full sm:w-auto px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl transition cursor-pointer shadow-xs flex items-center justify-center gap-1.5"
+                  >
+                    <Check size={14} />
+                    <span>✓ Transaksi Ini Seluruhnya Tidak Dobel (Set 0)</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setIsDuplicateModalOpen(false)}
+                  className="w-full sm:w-auto px-5 py-2.5 bg-stone-900 hover:bg-stone-800 text-white font-bold rounded-xl transition cursor-pointer shadow-xs shrink-0"
+                >
+                  Tutup Rekap
+                </button>
+              </div>
             </div>
           </div>
         </div>

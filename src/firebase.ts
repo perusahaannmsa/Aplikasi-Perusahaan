@@ -2680,7 +2680,36 @@ export const saveSppdRecordsToFirestore = async (records: any[]): Promise<void> 
   try {
     for (const rec of records) {
       if (rec.id) {
-        await setDoc(doc(firestoreDb, path, rec.id), cleanUndefined(rec));
+        // Sanitize bulky base64 data: Firebase stores the structured SPPD data & Drive link, while files are in Google Drive
+        const sanitized = { ...rec };
+        if (Array.isArray(sanitized.costItems)) {
+          sanitized.costItems = sanitized.costItems.map((ci: any) => {
+            const copy = { ...ci };
+            if (copy.attachment && typeof copy.attachment.url === 'string' && copy.attachment.url.startsWith('data:')) {
+              copy.attachment = {
+                name: copy.attachment.name,
+                pageCount: copy.attachment.pageCount,
+                sizeBytes: copy.attachment.sizeBytes,
+                uploadedAt: copy.attachment.uploadedAt,
+              };
+            }
+            return copy;
+          });
+        }
+        if (Array.isArray(sanitized.attachedFiles)) {
+          sanitized.attachedFiles = sanitized.attachedFiles.map((af: any) => {
+            if (typeof af.url === 'string' && af.url.startsWith('data:')) {
+              return {
+                name: af.name,
+                category: af.category,
+                sizeBytes: af.sizeBytes,
+                pageCount: af.pageCount,
+              };
+            }
+            return af;
+          });
+        }
+        await setDoc(doc(firestoreDb, path, rec.id), cleanUndefined(sanitized));
       }
     }
     console.log(`☁️ ${records.length} SPPD records synced to Firestore.`);

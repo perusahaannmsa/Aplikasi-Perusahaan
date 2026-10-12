@@ -338,6 +338,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
   // Modal konfirmasi peringatan double input saat simpan
   const [isDoubleInputConfirmModalOpen, setIsDoubleInputConfirmModalOpen] = useState(false);
   const [acknowledgedDoubleInputKeys, setAcknowledgedDoubleInputKeys] = useState<string[]>([]);
+  const [isMarkedLegitimateDraft, setIsMarkedLegitimateDraft] = useState(false);
   const [selectedDuplicateModalIndex, setSelectedDuplicateModalIndex] = useState(0);
   const [expandedDuplicateBannerId, setExpandedDuplicateBannerId] = useState<string | null>(null);
   const [kode, setKode] = useState('HO');
@@ -1323,7 +1324,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
     }
   };
 
-  // Deteksi Potensi Double Input Lintas Voucher di Database (Jenis, Nama, Isi & Nominal Sama)
+  // Deteksi Potensi Double Input Lintas Voucher di Database (Hanya dengan Transaksi Terakhir)
   const potentialDuplicateSubmissions = useMemo(() => {
     return findPotentialDuplicateSubmissions(
       {
@@ -1335,7 +1336,8 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         notes,
         id: initialSubmission?.id
       },
-      submissions
+      submissions,
+      { onlyCompareWithLastTransaction: true }
     );
   }, [dibayarkanKepada, calculatedGrandTotal, tanggal, jenisPengajuan, items, notes, initialSubmission, submissions]);
 
@@ -1345,13 +1347,25 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
     return `${normalizeText(dibayarkanKepada)}_${normalizeText(jenisPengajuan)}_${calculatedGrandTotal}_${matchIds}`;
   }, [dibayarkanKepada, jenisPengajuan, calculatedGrandTotal, potentialDuplicateSubmissions]);
 
-  const hasUnacknowledgedDuplicates = potentialDuplicateSubmissions.length > 0 && !acknowledgedDoubleInputKeys.includes(currentDoubleInputKey);
+  const hasUnacknowledgedDuplicates = !isMarkedLegitimateDraft && potentialDuplicateSubmissions.length > 0 && !acknowledgedDoubleInputKeys.includes(currentDoubleInputKey);
 
-  const handleConfirmDoubleInputSave = async () => {
-    setIsDoubleInputConfirmModalOpen(false);
+  const handleMarkAsLegitimateTransaction = () => {
+    setIsMarkedLegitimateDraft(true);
     if (currentDoubleInputKey) {
       setAcknowledgedDoubleInputKeys(prev => [...prev, currentDoubleInputKey]);
     }
+    try {
+      const matchIds = potentialDuplicateSubmissions.map(m => m.submission.id);
+      const stored = localStorage.getItem('acknowledged_double_submission_ids');
+      const existingIds: string[] = stored ? JSON.parse(stored) : [];
+      const merged = Array.from(new Set([...existingIds, ...matchIds]));
+      localStorage.setItem('acknowledged_double_submission_ids', JSON.stringify(merged));
+    } catch (e) {}
+  };
+
+  const handleConfirmDoubleInputSave = async () => {
+    setIsDoubleInputConfirmModalOpen(false);
+    handleMarkAsLegitimateTransaction();
     // Lanjutkan pengecekan hari libur atau langsung simpan
     if (holidayInfo.isHolidayOrWeekend && !acknowledgedHolidayDates.includes(tanggal)) {
       setIsHolidayConfirmModalOpen(true);
@@ -2081,6 +2095,16 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         } catch (e) {}
       }
 
+      // Jika transaksi ini telah ditandai sebagai transaksi sah, pastikan ID nya dicatat ke daftar aman
+      if (isMarkedLegitimateDraft || (currentDoubleInputKey && acknowledgedDoubleInputKeys.includes(currentDoubleInputKey))) {
+        try {
+          const stored = localStorage.getItem('acknowledged_double_submission_ids');
+          const existingIds: string[] = stored ? JSON.parse(stored) : [];
+          const updated = Array.from(new Set([...existingIds, payload.id]));
+          localStorage.setItem('acknowledged_double_submission_ids', JSON.stringify(updated));
+        } catch (e) {}
+      }
+
       setSaveProgress('Menyimpan data transaksi ke database Firestore...');
       await onSave(payload);
     } catch (err: any) {
@@ -2162,7 +2186,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         </div>
       </div>
 
-      <form onSubmit={handleSubmit} className="p-6 space-y-6">
+      <form onSubmit={handleSubmit} className="p-3.5 sm:p-6 space-y-4 sm:space-y-6 overflow-x-hidden">
         {validationError && (
           <div className="p-4 rounded-2xl border flex items-start justify-between gap-3 text-sm animate-fade-in bg-rose-50 border-rose-200 text-rose-800">
             <div className="flex items-start gap-2.5">
@@ -2518,38 +2542,52 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
           </div>
         </div>
 
-        {/* PROACTIVE WARNING BANNER: POTENSI DOUBLE INPUT LINTAS VOUCHER */}
-        {potentialDuplicateSubmissions.length > 0 && (
-          <div className="p-4 sm:p-5 bg-gradient-to-br from-amber-50/95 via-amber-50/70 to-orange-50/60 border-2 border-amber-400 rounded-2xl animate-fade-in shadow-xs my-4 font-sans">
-            <div className="flex items-start gap-3.5">
-              <div className="p-2.5 bg-amber-200 text-amber-900 rounded-xl shrink-0 border border-amber-300 shadow-3xs mt-0.5">
-                <AlertTriangle size={22} className="animate-pulse" />
+        {/* PROACTIVE WARNING BANNER: POTENSI DOUBLE INPUT LINTAS VOUCHER (HANYA TRANSAKSI TERAKHIR) */}
+        {potentialDuplicateSubmissions.length > 0 && hasUnacknowledgedDuplicates && (
+          <div className="p-3 sm:p-5 bg-gradient-to-br from-amber-50/95 via-amber-50/70 to-orange-50/60 border-2 border-amber-400 rounded-2xl animate-fade-in shadow-xs my-4 font-sans">
+            <div className="flex items-start gap-2.5 sm:gap-3.5">
+              <div className="p-2 sm:p-2.5 bg-amber-200 text-amber-900 rounded-xl shrink-0 border border-amber-300 shadow-3xs mt-0.5">
+                <AlertTriangle size={20} className="animate-pulse" />
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <h4 className="text-xs sm:text-sm font-black text-amber-950 uppercase tracking-wide flex items-center gap-1.5 flex-wrap">
-                    <span>⚠️ Peringatan: Voucher Serupa Sudah Ada di Database</span>
+                    <span>⚠️ Peringatan: Transaksi Sama dengan Transaksi Terakhir</span>
                     <span className="text-[10px] font-mono font-bold bg-amber-200 text-amber-900 px-2 py-0.5 rounded-full border border-amber-300">
                       {potentialDuplicateSubmissions.length} Data Terdeteksi
                     </span>
                   </h4>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedDuplicateModalIndex(0);
-                      setIsDoubleInputConfirmModalOpen(true);
-                    }}
-                    className="px-2.5 py-1 text-[11px] font-bold bg-amber-600 hover:bg-amber-700 text-white rounded-lg shadow-3xs transition cursor-pointer flex items-center gap-1"
-                    title="Bandingkan rincian voucher baru dengan voucher lama"
-                  >
-                    <Layers size={13} />
-                    <span>Bandingkan & Konfirmasi</span>
-                  </button>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {/* Tombol Tandai Sebagai Transaksi yang Sah (Agar tidak terhitung sama lagi dengan yang sebelum-sebelumnya) */}
+                    <button
+                      type="button"
+                      id="btn-mark-legitimate-submission"
+                      onClick={handleMarkAsLegitimateTransaction}
+                      className="px-3 py-1.5 text-xs font-black bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1.5"
+                      title="Tandai bahwa transaksi ini sah agar tidak terhitung sama lagi dengan yang sebelum-sebelumnya"
+                    >
+                      <Check size={14} className="text-white font-bold" />
+                      <span>✓ Tandai Sebagai Transaksi yang Sah</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedDuplicateModalIndex(0);
+                        setIsDoubleInputConfirmModalOpen(true);
+                      }}
+                      className="px-2.5 py-1.5 text-xs font-bold bg-white hover:bg-stone-100 text-stone-800 border border-stone-300 rounded-xl shadow-3xs transition cursor-pointer flex items-center gap-1"
+                      title="Bandingkan rincian voucher baru dengan voucher lama"
+                    >
+                      <Layers size={13} className="text-amber-600" />
+                      <span>Bandingkan</span>
+                    </button>
+                  </div>
                 </div>
 
                 <p className="text-xs text-amber-800 mt-1 leading-relaxed">
-                  Sistem mendeteksi Anda menginput voucher dengan <strong className="text-amber-950">jenis</strong>, <strong className="text-amber-950">nama</strong>, atau <strong className="text-amber-950">isi</strong> dan <strong className="text-amber-950">nominal</strong> yang sama dengan voucher yang pernah dibuat sebelumnya. Harap periksa rincian di bawah agar tidak terjadi double input:
+                  Sistem mendeteksi transaksi ini sama dengan <strong>transaksi yang terakhir diinput</strong> (nama penerima, isi, atau total nominal sama). Jika ini transaksi baru yang sah, klik <strong>✓ Tandai Sebagai Transaksi yang Sah</strong> agar tidak terhitung sama lagi.
                 </p>
 
                 <div className="mt-3 space-y-2.5">
@@ -2686,6 +2724,36 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                 </div>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* KARTU STATUS: TRANSAKSI TELAH DITANDAI SEBAGAI SAH (TIDAK TERHITUNG DOBEL LAGI) */}
+        {isMarkedLegitimateDraft && potentialDuplicateSubmissions.length > 0 && (
+          <div className="p-3.5 bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-50 border-2 border-emerald-400 rounded-2xl animate-fade-in shadow-xs my-4 flex items-center justify-between gap-3 text-xs text-emerald-950 font-bold">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 bg-emerald-200 text-emerald-900 rounded-xl shrink-0 shadow-3xs">
+                <Check size={18} className="font-black" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-emerald-900 bg-emerald-200 px-2 py-0.5 rounded-full border border-emerald-300">
+                    Terverifikasi
+                  </span>
+                  <span>✓ Transaksi ini telah ditandai sebagai Transaksi Sah</span>
+                </div>
+                <p className="text-[11px] font-medium text-emerald-800 mt-0.5 leading-relaxed">
+                  Data ini tidak akan dihitung sama atau menimbulkan peringatan dobel dengan transaksi sebelum-sebelumnya saat disimpan.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsMarkedLegitimateDraft(false)}
+              className="px-3 py-1.5 bg-white hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-semibold transition cursor-pointer shadow-3xs shrink-0"
+              title="Batalkan tanda verifikasi sah"
+            >
+              Batal Tanda
+            </button>
           </div>
         )}
 
@@ -4901,9 +4969,9 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                 type="button"
                 id="btn-confirm-double-voucher"
                 onClick={handleConfirmDoubleInputSave}
-                className="w-full sm:w-auto px-5 py-2.5 text-xs font-black text-amber-950 bg-amber-400 hover:bg-amber-500 rounded-xl shadow-xs transition cursor-pointer flex items-center justify-center gap-1.5"
+                className="w-full sm:w-auto px-5 py-2.5 text-xs font-black text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs transition cursor-pointer flex items-center justify-center gap-1.5"
               >
-                <span>⚠️ Ya, Bukan Dobel — Tetap Buat Voucher</span>
+                <span>✓ Tandai Sebagai Transaksi yang Sah &amp; Simpan</span>
               </button>
             </div>
           </div>

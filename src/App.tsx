@@ -2723,18 +2723,19 @@ export default function App() {
       <header className="app-global-header bg-white border-b border-stone-200 sticky top-0 z-[1000] shadow-xs print:hidden">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between min-h-18 py-2 md:py-0">
-            {/* Logo area */}
-            <div className="hidden sm:flex items-center gap-2 sm:gap-3 min-w-0">
-              <div className="flex items-center gap-2 sm:gap-3 cursor-pointer min-w-0" onClick={() => setView('list')}>
-                <div className="p-2 sm:p-2.5 bg-stone-100 rounded-xl text-stone-850 shrink-0">
-                  <Database size={18} className="text-gold-dynamic sm:w-5 sm:h-5" />
+            {/* Logo area - Responsive for mobile and desktop */}
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+              <div className="flex items-center gap-1.5 sm:gap-3 cursor-pointer min-w-0" onClick={() => setView('list')}>
+                <div className="p-1.5 sm:p-2.5 bg-stone-100 rounded-xl text-stone-850 shrink-0">
+                  <Database size={17} className="text-gold-dynamic sm:w-5 sm:h-5" />
                 </div>
                 <div className="space-y-0.5 min-w-0">
-                  <span className="font-mono text-[10px] sm:text-xs uppercase tracking-wider text-stone-400 font-bold block truncate max-w-[100px] sm:max-w-none">
-                    {userProfile?.companyDetails?.displayName || 'Internal HO System'}
+                  <span className="font-mono text-[9px] sm:text-xs uppercase tracking-wider text-stone-400 font-bold block truncate max-w-[90px] sm:max-w-none">
+                    {userProfile?.companyDetails?.code || userProfile?.companyDetails?.displayName || 'NMSA'}
                   </span>
-                  <h1 className="text-xs sm:text-sm font-black text-stone-900 tracking-tight flex items-center gap-1.5 font-sans truncate max-w-[120px] sm:max-w-none">
-                    {userProfile?.companyName ? `${userProfile.companyName} Portal` : 'Nusantara Mineral Payment Portal'}
+                  <h1 className="text-xs sm:text-sm font-black text-stone-900 tracking-tight flex items-center gap-1.5 font-sans truncate max-w-[110px] sm:max-w-[200px] md:max-w-none">
+                    <span className="sm:hidden">Portal Kas</span>
+                    <span className="hidden sm:inline">{userProfile?.companyName ? `${userProfile.companyName} Portal` : 'Nusantara Mineral Payment Portal'}</span>
                   </h1>
                 </div>
               </div>
@@ -2757,10 +2758,10 @@ export default function App() {
 
             </div>
 
-            {/* HEADER RIGHT ACTIONS: CLEAN, COMPACT & PROFESSIONAL */}
-            <div className="flex items-center gap-2 sm:gap-2.5">
-              {/* Real-time System Clock (WIB) */}
-              <LiveClock variant="badge" className="inline-flex min-w-0 max-w-[160px] sm:max-w-[220px]" />
+            {/* HEADER RIGHT ACTIONS: CLEAN, COMPACT & RESPONSIVE */}
+            <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
+              {/* Real-time System Clock (WIB) - Shown on tablet/desktop to save mobile width */}
+              <LiveClock variant="badge" className="hidden sm:inline-flex min-w-0 max-w-[160px] sm:max-w-[220px]" />
 
               {/* Compact Agenda / Notif Button with Red Badge */}
               <button

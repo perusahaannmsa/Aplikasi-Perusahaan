@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { SPPDRecord } from './SppdManager';
 import { NusantaraLogo } from './NusantaraLogo';
-import { Printer, ArrowLeft, Download, CheckCircle, FileText, MapPin, Calendar, User, Briefcase, Share2, Copy, Check } from 'lucide-react';
+import { Printer, ArrowLeft, Download, CheckCircle, FileText, MapPin, Calendar, User, Briefcase, Share2, Copy, Check, Cloud } from 'lucide-react';
 import { formatDateIndonesian } from '../utils';
 import { getSppdViewLink } from '../utils/appLinks';
+import { sppdGoogleDriveService } from '../utils/sppdDriveService';
+import { saveSppdRecordsToFirestore } from '../firebase';
 
 interface PrintSppdDocumentProps {
   sppd: SPPDRecord;
@@ -850,6 +852,44 @@ export const PrintSppdDocument: React.FC<PrintSppdDocumentProps> = ({
 }) => {
   const [includeVisum, setIncludeVisum] = useState<boolean>(true);
   const [isCopied, setIsCopied] = useState<boolean>(false);
+  const [isUploadingDrive, setIsUploadingDrive] = useState(false);
+  const [currentDriveUrl, setCurrentDriveUrl] = useState<string>(sppd.driveUrl || '');
+  const [driveMsg, setDriveMsg] = useState<string | null>(null);
+
+  const handleUploadToDrive = async () => {
+    setIsUploadingDrive(true);
+    setDriveMsg(null);
+    try {
+      const res = await sppdGoogleDriveService.uploadSppd(sppd);
+      if (res.success && res.url) {
+        setCurrentDriveUrl(res.url);
+        setDriveMsg('Berhasil tersimpan di Google Drive & data tersinkron ke Firebase!');
+        try {
+          const stored = localStorage.getItem('sppd_records_v1');
+          if (stored) {
+            const list: SPPDRecord[] = JSON.parse(stored);
+            const updated = list.map(r => r.id === sppd.id || r.noSppd === sppd.noSppd ? {
+              ...r,
+              driveUrl: res.url,
+              driveFileId: res.fileId,
+              driveFolderPath: res.folderPath,
+              driveFileName: res.fileName,
+              driveSyncedAt: new Date().toISOString(),
+            } : r);
+            localStorage.setItem('sppd_records_v1', JSON.stringify(updated));
+            saveSppdRecordsToFirestore(updated).catch(() => {});
+          }
+        } catch (e) {}
+      } else {
+        alert(res.error || 'Gagal mengunggah ke Google Drive');
+      }
+    } catch (err: any) {
+      alert('Gagal mengunggah ke Google Drive: ' + err.message);
+    } finally {
+      setIsUploadingDrive(false);
+      setTimeout(() => setDriveMsg(null), 4000);
+    }
+  };
 
   const handlePrint = () => {
     window.print();
@@ -937,6 +977,31 @@ export const PrintSppdDocument: React.FC<PrintSppdDocumentProps> = ({
             />
             <span>Sertakan Lembar Visum Lapangan (Hal 2)</span>
           </label>
+
+          {/* Google Drive Direct Link & Upload buttons */}
+          {currentDriveUrl ? (
+            <a
+              href={currentDriveUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 shadow-xs cursor-pointer"
+              title="Buka file PDF resmi SPPD di Google Drive"
+            >
+              <Cloud size={14} />
+              <span>Buka di Google Drive</span>
+            </a>
+          ) : null}
+
+          <button
+            type="button"
+            onClick={handleUploadToDrive}
+            disabled={isUploadingDrive}
+            className="px-3.5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold rounded-xl transition flex items-center gap-1.5 shadow-3xs cursor-pointer disabled:opacity-50"
+            title="Simpan atau perbarui file PDF SPPD ini di Google Drive dan sinkronkan datanya ke Firebase"
+          >
+            <Cloud size={14} className={isUploadingDrive ? "animate-spin text-amber-600" : "text-amber-600"} />
+            <span>{isUploadingDrive ? 'Mengunggah...' : currentDriveUrl ? 'Perbarui di Drive' : 'Unggah ke Google Drive'}</span>
+          </button>
 
           <button
             type="button"

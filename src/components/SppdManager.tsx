@@ -17,6 +17,7 @@ import {
   deleteSppdRecordFromFirestore,
   isFirebaseConfigured
 } from '../firebase';
+import { sppdGoogleDriveService } from '../utils/sppdDriveService';
 import { 
   FileText, 
   Plus, 
@@ -92,6 +93,11 @@ export interface SPPDRecord {
   sppdMengetahuiName?: string;
   status: 'Draft' | 'Disetujui' | 'Terbayar';
   createdAt: string;
+  driveUrl?: string;
+  driveFileId?: string;
+  driveFolderPath?: string;
+  driveFileName?: string;
+  driveSyncedAt?: string;
 }
 
 // Calculate guideline benchmark for individual cost item
@@ -301,6 +307,9 @@ export const SppdManager: React.FC<SppdManagerProps> = ({
   // Items
   const [costItems, setCostItems] = useState<SPPDCostItem[]>([]);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
+  const [syncingSppdId, setSyncingSppdId] = useState<string | null>(null);
+  const [isSyncingAllDrive, setIsSyncingAllDrive] = useState<boolean>(false);
+  const [isSavingRecord, setIsSavingRecord] = useState<boolean>(false);
 
   // Auto calculate duration in days
   const calculateDays = (startStr: string, endStr: string) => {
@@ -462,6 +471,16 @@ export const SppdManager: React.FC<SppdManagerProps> = ({
       createdAt: new Date().toISOString()
     };
 
+    // Preserve existing Drive info if already uploaded
+    const existingRec = records.find(r => r.id === (editingId || newRecord.id) || r.noSppd === newRecord.noSppd);
+    if (existingRec?.driveUrl) {
+      newRecord.driveUrl = existingRec.driveUrl;
+      newRecord.driveFileId = existingRec.driveFileId;
+      newRecord.driveFolderPath = existingRec.driveFolderPath;
+      newRecord.driveFileName = existingRec.driveFileName;
+      newRecord.driveSyncedAt = existingRec.driveSyncedAt;
+    }
+
     saveSppdNumberUsage(newRecord.noSppd, tanggalMulai);
 
     let updatedList: SPPDRecord[];
@@ -493,7 +512,133 @@ export const SppdManager: React.FC<SppdManagerProps> = ({
 
     setIsSaved(true);
     setTimeout(() => setSaveSuccessMsg(null), 3500);
+
+    // Auto-upload PDF to Google Drive and update Firestore with Drive Link
+    sppdGoogleDriveService.uploadSppd(newRecord).then(driveRes => {
+      if (driveRes.success && driveRes.url) {
+        const withDrive: SPPDRecord = {
+          ...newRecord,
+          driveUrl: driveRes.url,
+          driveFileId: driveRes.fileId,
+          driveFolderPath: driveRes.folderPath,
+          driveFileName: driveRes.fileName,
+          driveSyncedAt: new Date().toISOString(),
+        };
+        setRecords(prev => {
+          const reUpdated = prev.map(r => r.id === withDrive.id ? withDrive : r);
+          localStorage.setItem('sppd_records_v1', JSON.stringify(reUpdated));
+          saveSppdRecordsToFirestore(reUpdated).catch(() => {});
+          return reUpdated;
+        });
+        setSaveSuccessMsg(`☁️ File PDF SPPD ${newRecord.noSppd} tersimpan di Google Drive & tautan tersinkron ke Firebase!`);
+        setTimeout(() => setSaveSuccessMsg(null), 4500);
+      }
+    }).catch(err => {
+      console.warn('Drive auto-upload warning:', err);
+    });
+
     return newRecord;
+  };
+
+  // Dedicated Async Save: Saves metadata to Firestore and uploads PDF to Google Drive, syncing the link
+  const handleSaveSppdWithDrive = async () => {
+    setIsSavingRecord(true);
+    try {
+      const rec = handleSaveSppd();
+      setSaveSuccessMsg(`☁️ Mengunggah PDF SPPD ${rec.noSppd} ke Google Drive & menyinkronkan ke Firebase...`);
+      const driveRes = await sppdGoogleDriveService.uploadSppd(rec);
+      if (driveRes.success && driveRes.url) {
+        const withDrive: SPPDRecord = {
+          ...rec,
+          driveUrl: driveRes.url,
+          driveFileId: driveRes.fileId,
+          driveFolderPath: driveRes.folderPath,
+          driveFileName: driveRes.fileName,
+          driveSyncedAt: new Date().toISOString(),
+        };
+        const reUpdated = records.map(r => (r.id === withDrive.id || r.noSppd === withDrive.noSppd) ? withDrive : r);
+        if (!reUpdated.some(r => r.id === withDrive.id)) {
+          reUpdated.unshift(withDrive);
+        }
+        setRecords(reUpdated);
+        localStorage.setItem('sppd_records_v1', JSON.stringify(reUpdated));
+        await saveSppdRecordsToFirestore(reUpdated);
+        setSaveSuccessMsg(`✅ File PDF SPPD ${rec.noSppd} berhasil tersimpan di Google Drive & data tersinkron ke Firebase!`);
+      } else {
+        setSaveSuccessMsg(`⚠️ Data SPPD ${rec.noSppd} tersimpan ke Firebase (Google Drive: ${driveRes.error || 'Perlu login Google'})`);
+      }
+    } catch (e: any) {
+      console.warn('Drive sync error:', e);
+      setSaveSuccessMsg(`Data SPPD tersimpan di Firebase.`);
+    } finally {
+      setIsSavingRecord(false);
+      setTimeout(() => setSaveSuccessMsg(null), 4000);
+    }
+  };
+
+  // Upload single SPPD to Google Drive and sync data to Firebase
+  const handleSyncSingleToDrive = async (rec: SPPDRecord) => {
+    setSyncingSppdId(rec.id);
+    try {
+      const res = await sppdGoogleDriveService.uploadSppd(rec);
+      if (res.success && res.url) {
+        const withDrive: SPPDRecord = {
+          ...rec,
+          driveUrl: res.url,
+          driveFileId: res.fileId,
+          driveFolderPath: res.folderPath,
+          driveFileName: res.fileName,
+          driveSyncedAt: new Date().toISOString(),
+        };
+        const updated = records.map(r => r.id === withDrive.id ? withDrive : r);
+        setRecords(updated);
+        localStorage.setItem('sppd_records_v1', JSON.stringify(updated));
+        await saveSppdRecordsToFirestore(updated);
+        setSaveSuccessMsg(`✅ SPPD ${rec.noSppd} berhasil diunggah ke Google Drive & tautan tersinkron ke Firebase!`);
+      } else {
+        alert(res.error || 'Gagal mengunggah file SPPD ke Google Drive');
+      }
+    } catch (e: any) {
+      alert('Gagal mengunggah ke Google Drive: ' + e.message);
+    } finally {
+      setSyncingSppdId(null);
+      setTimeout(() => setSaveSuccessMsg(null), 3500);
+    }
+  };
+
+  // Batch sync all SPPDs to Google Drive & Firebase
+  const handleSyncAllToDrive = async () => {
+    if (records.length === 0) {
+      alert('Belum ada data SPPD untuk diunggah.');
+      return;
+    }
+    setIsSyncingAllDrive(true);
+    try {
+      const { results, totalUploaded } = await sppdGoogleDriveService.uploadAllSppd(records);
+      const updated = records.map((r, idx) => {
+        const res = results[idx];
+        if (res && res.success && res.url) {
+          return {
+            ...r,
+            driveUrl: res.url,
+            driveFileId: res.fileId,
+            driveFolderPath: res.folderPath,
+            driveFileName: res.fileName,
+            driveSyncedAt: new Date().toISOString(),
+          };
+        }
+        return r;
+      });
+      setRecords(updated);
+      localStorage.setItem('sppd_records_v1', JSON.stringify(updated));
+      await saveSppdRecordsToFirestore(updated);
+      setSaveSuccessMsg(`☁️ ${totalUploaded} file PDF SPPD berhasil tersimpan di Google Drive & data tersinkron ke Firebase!`);
+    } catch (e: any) {
+      alert('Gagal menyinkronkan seluruh SPPD: ' + e.message);
+    } finally {
+      setIsSyncingAllDrive(false);
+      setTimeout(() => setSaveSuccessMsg(null), 4000);
+    }
   };
 
   const handleDeleteRecord = (id: string, sppdNum: string) => {
@@ -627,6 +772,17 @@ export const SppdManager: React.FC<SppdManagerProps> = ({
 
         {/* TAB & SHARE BUTTONS */}
         <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+          <button
+            type="button"
+            onClick={handleSyncAllToDrive}
+            disabled={isSyncingAllDrive || records.length === 0}
+            className="px-3 py-1.5 bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-bold rounded-xl border border-stone-700 transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            title="Simpan file PDF seluruh SPPD ke Google Drive & tautkan datanya ke Firebase"
+          >
+            <Cloud size={14} className={isSyncingAllDrive ? 'animate-bounce text-amber-400' : 'text-amber-400'} />
+            <span>{isSyncingAllDrive ? 'Menyinkronkan...' : 'Sinkron Drive & Firebase'}</span>
+          </button>
+
           <button
             type="button"
             onClick={handleCopyPublicSppdLink}
@@ -1086,11 +1242,22 @@ export const SppdManager: React.FC<SppdManagerProps> = ({
               <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                 <button
                   type="button"
-                  onClick={handleSaveSppd}
-                  className="px-4 py-2.5 bg-stone-900 hover:bg-stone-800 text-white text-xs font-extrabold rounded-xl shadow-xs transition flex items-center justify-center gap-2 cursor-pointer"
+                  disabled={isSavingRecord}
+                  onClick={handleSaveSppdWithDrive}
+                  className="px-4 py-2.5 bg-stone-900 hover:bg-stone-800 text-white text-xs font-extrabold rounded-xl shadow-xs transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                  title="Simpan dokumen SPPD, buat PDF ke Google Drive, dan sinkronkan tautannya ke Firebase"
                 >
-                  <Save size={15} />
-                  <span>Simpan</span>
+                  {isSavingRecord ? (
+                    <>
+                      <Cloud size={15} className="animate-spin text-amber-300" />
+                      <span>Menyimpan ke Drive &amp; Firebase...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Save size={15} />
+                      <span>Simpan ke Drive &amp; Firebase</span>
+                    </>
+                  )}
                 </button>
 
                 <button
@@ -1126,13 +1293,30 @@ export const SppdManager: React.FC<SppdManagerProps> = ({
       {/* TAB 2: ARSIP & DAFTAR SPPD */}
       {activeTab === 'list' && (
         <div className="bg-white border border-stone-200 rounded-2xl p-4 sm:p-5 shadow-3xs space-y-3">
-          <div className="flex items-center justify-between border-b border-stone-150 pb-2">
-            <h3 className="text-xs font-extrabold uppercase text-stone-850 tracking-wider font-display">
-              Daftar Riwayat Surat Perintah Perjalanan Dinas (SPPD)
-            </h3>
-            <span className="text-[11px] font-mono font-bold text-stone-500 bg-stone-100 px-2 py-0.5 rounded-full border border-stone-200">
-              {records.length} Berkas
-            </span>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border-b border-stone-150 pb-2">
+            <div>
+              <h3 className="text-xs font-extrabold uppercase text-stone-850 tracking-wider font-display">
+                Daftar Riwayat Surat Perintah Perjalanan Dinas (SPPD)
+              </h3>
+              <p className="text-[11px] text-stone-500">
+                Semua berkas PDF SPPD otomatis tersimpan di Google Drive dan datanya tersinkron ke Firebase.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={isSyncingAllDrive || records.length === 0}
+                onClick={handleSyncAllToDrive}
+                className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-3xs transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                title="Unggah dan sinkronkan semua berkas PDF SPPD ke Google Drive & tautkan link ke Firebase"
+              >
+                <Cloud size={13} className={isSyncingAllDrive ? "animate-spin" : ""} />
+                <span>{isSyncingAllDrive ? 'Menyinkronkan...' : 'Sinkronkan Semua ke Drive'}</span>
+              </button>
+              <span className="text-[11px] font-mono font-bold text-stone-500 bg-stone-100 px-2.5 py-1 rounded-full border border-stone-200">
+                {records.length} Berkas
+              </span>
+            </div>
           </div>
 
           <div className="space-y-2.5 pt-1">
@@ -1244,6 +1428,31 @@ export const SppdManager: React.FC<SppdManagerProps> = ({
                         >
                           <Trash2 size={15} />
                         </button>
+
+                        {/* Google Drive PDF link / Sync button */}
+                        {rec.driveUrl ? (
+                          <a
+                            href={rec.driveUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-lg text-xs font-bold transition flex items-center gap-1 shadow-3xs cursor-pointer"
+                            title="Buka file PDF resmi SPPD di Google Drive"
+                          >
+                            <Cloud size={13} className="text-emerald-600" />
+                            <span>Buka di Drive</span>
+                          </a>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleSyncSingleToDrive(rec)}
+                            disabled={syncingSppdId === rec.id}
+                            className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-lg text-xs font-bold transition flex items-center gap-1 shadow-3xs cursor-pointer"
+                            title="Unggah file PDF SPPD ini ke Google Drive dan tautkan ke Firebase"
+                          >
+                            <Cloud size={13} className={syncingSppdId === rec.id ? "animate-spin text-amber-600" : "text-amber-600"} />
+                            <span>{syncingSppdId === rec.id ? 'Mengunggah...' : 'Unggah ke Drive'}</span>
+                          </button>
+                        )}
 
                         <button
                           type="button"
