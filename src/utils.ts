@@ -872,48 +872,10 @@ export async function generateF2PdfBytes(
   // 1a. Draw Official Logo on Top Left
   await drawCorporateHeader(pdfDoc, page, fontBold, fontRegular, margin, headerTopY, 230);
 
-  // 1b. Right Header: Voucher Code Box, Date & QR Code
-  const qrSize = 48;
-  const qrX = margin + contentWidth - qrSize;
-  const qrY = headerTopY - 42;
-
-  const origin = typeof window !== 'undefined' && window.location?.origin
-    ? window.location.origin
-    : 'https://ais-dev-plekddulaqivufl6olm5y6-493574025735.asia-southeast1.run.app';
-  const cleanSlug = (submission.jenisPengajuan || 'pengajuan')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '');
-  const shareUrl = `${origin}/shared-view?id=${encodeURIComponent(submission.id || '')}&kode=${encodeURIComponent(submission.kode || '')}&transaksi=${encodeURIComponent(cleanSlug)}&nominal=${grandTotal}`;
-  
-  const qrBytes = await getQrCodePngBytes(shareUrl, 150);
-  if (qrBytes) {
-    try {
-      const qrImg = await pdfDoc.embedPng(qrBytes);
-      page.drawRectangle({
-        x: qrX - 2,
-        y: qrY - 2,
-        width: qrSize + 4,
-        height: qrSize + 4,
-        borderColor: rgb(0, 0, 0),
-        borderWidth: 1.0,
-        color: rgb(1, 1, 1),
-      });
-      page.drawImage(qrImg, {
-        x: qrX,
-        y: qrY,
-        width: qrSize,
-        height: qrSize,
-      });
-    } catch (e) {
-      console.warn('QR code embed failed:', e);
-    }
-  }
-
-  // Voucher Code Box (Framed Box with mono font)
-  const codeBoxW = 135;
+  // 1b. Right Header: Voucher Code Box & Date (Barcode / QR removed for clean F2 appearance)
+  const codeBoxW = 140;
   const codeBoxH = 24;
-  const codeBoxX = qrX - codeBoxW - 10;
+  const codeBoxX = margin + contentWidth - codeBoxW;
   const codeBoxY = headerTopY - 20;
 
   page.drawRectangle({

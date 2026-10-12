@@ -2730,7 +2730,6 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
                   {/* Header Area */}
                   <div className={`flex justify-between items-start ${isUltraDenseF2 ? 'mb-2' : isDenseF2 ? 'mb-3' : isFewItemsF2 ? 'mb-6' : 'mb-5'}`}>
                     <NusantaraLogo size={isUltraDenseF2 ? 'sm' : 'md'} className="items-start text-left" companyName={userProfile?.companyName} logoUrl={effectiveLogoUrl} />
-                    <VoucherOnlineQr submission={submission} size={isUltraDenseF2 ? 46 : 52} />
                   </div>
 
                   {/* Document Title Block */}
@@ -3046,16 +3045,13 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
                   <div>
                     <div className="flex justify-between items-start mb-2">
                       <NusantaraLogo size="md" className="items-start text-left" companyName={userProfile?.companyName} logoUrl={effectiveLogoUrl} />
-                      <div className="flex items-start gap-2.5">
-                        <div className="flex flex-col items-end">
-                          <div className="border border-black px-3 py-1 font-bold text-xs text-black bg-stone-50 mb-1 font-mono">
-                            {submission.kode}
-                          </div>
-                          <div className="text-xs text-black font-semibold">
-                            Tanggal : <span className="font-normal">{formatDateIndonesian(submission.tanggal)}</span>
-                          </div>
+                      <div className="flex flex-col items-end">
+                        <div className="border border-black px-3 py-1 font-bold text-xs text-black bg-stone-50 mb-1 font-mono">
+                          {submission.kode}
                         </div>
-                        <VoucherOnlineQr submission={submission} size={46} />
+                        <div className="text-xs text-black font-semibold">
+                          Tanggal : <span className="font-normal">{formatDateIndonesian(submission.tanggal)}</span>
+                        </div>
                       </div>
                     </div>
 
