@@ -13,7 +13,7 @@ import {
 } from '../firebase';
 import { DriveAccountsManager } from './DriveAccountsManager';
 import { SppdIntegration, SppdRecord } from './SppdIntegration';
-import { Trash2, Plus, ArrowLeft, Save, AlertCircle, Sparkles, Cloud, Loader2, FileText, Coins, FileUp, ExternalLink, GitBranch, X, Calculator, Percent, Tag, Receipt, CalendarX, CalendarCheck, AlertTriangle, Calendar, CheckSquare, Clock, FolderKanban, Building2, CheckCircle2, ChevronDown, ChevronUp, Eye, Info, Layers } from 'lucide-react';
+import { Trash2, Plus, ArrowLeft, Save, AlertCircle, Sparkles, Cloud, Loader2, FileText, Coins, FileUp, ExternalLink, GitBranch, X, Calculator, Percent, Tag, Receipt, CalendarX, CalendarCheck, AlertTriangle, Calendar, CheckSquare, Clock, FolderKanban, Building2, CheckCircle2, ChevronDown, ChevronUp, Eye, Info, Layers, Check } from 'lucide-react';
 import { generateF1PdfBytes, generateF2PdfBytes, formatDateIndonesian, convertImageToPdf, formatRupiah, analyzeVolumeInput, checkIsHolidayOrWeekend, getNextWorkday, getPreviousWorkday, formatDateWithDayIndonesian, getDefaultTransactionDate, HolidayCheckResult, calculateTaxDueDate } from '../utils';
 import { areNamesSimilar, toTitleCase } from '../utils/nameConsolidation';
 import { 

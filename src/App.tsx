@@ -1036,6 +1036,7 @@ export default function App() {
   const [isFirebaseMigrationOpen, setIsFirebaseMigrationOpen] = useState(false);
   const [isGoogleDriveSettingsOpen, setIsGoogleDriveSettingsOpen] = useState(false);
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
+  const [isExportImportModalOpen, setIsExportImportModalOpen] = useState(false);
   const [masterDriveEmail, setMasterDriveEmailState] = useState<string>(() => getMasterDriveEmail());
 
   // Multi-Company switching handler with strictly segregated Firestore & local storage
@@ -2613,6 +2614,23 @@ export default function App() {
                             </span>
                           </button>
 
+                          {/* Ekspor / Impor Data Backup */}
+                          <button
+                            onClick={() => {
+                              setIsUserMenuOpen(false);
+                              setIsExportImportModalOpen(true);
+                            }}
+                            className="w-full bg-stone-100 hover:bg-stone-200 text-stone-850 border border-stone-250 font-bold px-3 py-2 rounded-xl text-xs transition cursor-pointer flex items-center justify-between font-sans shadow-3xs"
+                          >
+                            <div className="flex items-center gap-2 truncate">
+                              <FileSpreadsheet size={15} className="text-amber-600 shrink-0" />
+                              <span className="truncate">Ekspor / Impor Data (Backup)</span>
+                            </div>
+                            <span className="text-[9px] font-mono bg-amber-100 text-amber-900 border border-amber-300 px-1.5 py-0.5 rounded font-bold shrink-0">
+                              JSON / ZIP
+                            </span>
+                          </button>
+
                           <button
                             onClick={() => {
                               setIsUserMenuOpen(false);
@@ -3190,6 +3208,23 @@ export default function App() {
                           </span>
                         </button>
 
+                        {/* EKSPOR / IMPOR DATA BACKUP */}
+                        <button
+                          onClick={() => {
+                            setIsUserMenuOpen(false);
+                            setIsExportImportModalOpen(true);
+                          }}
+                          className="w-full bg-stone-100 hover:bg-stone-200 text-stone-850 border border-stone-250 font-bold px-3 py-2 rounded-xl text-xs transition cursor-pointer flex items-center justify-between font-sans shadow-3xs"
+                        >
+                          <div className="flex items-center gap-2 truncate">
+                            <FileSpreadsheet size={15} className="text-amber-600 shrink-0" />
+                            <span className="truncate">Ekspor / Impor Data (Backup)</span>
+                          </div>
+                          <span className="text-[9px] font-mono bg-amber-100 text-amber-900 border border-amber-300 px-1.5 py-0.5 rounded font-bold shrink-0">
+                            JSON / ZIP
+                          </span>
+                        </button>
+
                         <button
                           onClick={() => {
                             setIsUserMenuOpen(false);
@@ -3362,7 +3397,6 @@ export default function App() {
             </div>
 
             <DriveSyncMass submissions={submissions} onUpdateSubmissions={saveSubmissionsToStorage} />
-            <JsonBackup submissions={submissions} onImport={handleImportJson} />
           </div>
         </div>
 
@@ -3747,6 +3781,15 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Ekspor / Impor Data Backup Modal */}
+      <JsonBackup
+        isOpen={isExportImportModalOpen}
+        onClose={() => setIsExportImportModalOpen(false)}
+        submissions={submissions}
+        onImport={handleImportJson}
+        isModal={true}
+      />
 
     </div>
   );

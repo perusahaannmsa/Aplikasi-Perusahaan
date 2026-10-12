@@ -1297,17 +1297,6 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
             {/* Action Button Container */}
             <div className="grid grid-cols-1 sm:flex sm:flex-row items-stretch sm:items-center gap-2 shrink-0 w-full xl:w-auto">
 
-              {onOpenSppdManager && (
-                <button
-                  onClick={onOpenSppdManager}
-                  id="btn-open-sppd-manager"
-                  className="flex items-center justify-center gap-1.5 px-3.5 py-2.5 border border-stone-250 bg-stone-50 hover:bg-stone-100 text-stone-750 font-bold rounded-xl transition shadow-3xs cursor-pointer text-xs"
-                  title="Buka Formulir SPPD & Hitung Biaya Perjalanan Dinas"
-                >
-                  <FileText size={14} className="text-stone-600" />
-                  <span>Kelola SPPD Dinas</span>
-                </button>
-              )}
 
               <button
                 onClick={onOpenBuktiTransfer}
@@ -1488,26 +1477,6 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 </div>
               </div>
 
-              {/* Active Filter Indicators */}
-              {(yearFilter !== 'All' || monthFilter !== 'All' || dateFilter) && (
-                <div className="self-end pb-1 pl-1">
-                  <button
-                    onClick={() => {
-                      setYearFilter('All');
-                      setMonthFilter('All');
-                      setDateFilter('');
-                      try {
-                        sessionStorage.setItem('sublist_yearFilter', 'All');
-                        sessionStorage.setItem('sublist_monthFilter', 'All');
-                        sessionStorage.setItem('sublist_hasCustomPeriodFilter', 'true');
-                      } catch (err) {}
-                    }}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-850 border border-amber-200 text-[10px] font-bold font-mono rounded-lg transition"
-                  >
-                    Tampilkan Semua Periode ×
-                  </button>
-                </div>
-              )}
             </div>
 
             {/* Print and Export Buttons */}

@@ -1,15 +1,24 @@
 import React, { useState } from 'react';
 import { Submission } from '../types';
-import { Download, Upload, AlertCircle, CheckCircle2, ChevronRight, ChevronDown, FileArchive } from 'lucide-react';
+import { Download, Upload, AlertCircle, CheckCircle2, ChevronRight, ChevronDown, FileArchive, X } from 'lucide-react';
 import JSZip from 'jszip';
 
 interface JsonBackupProps {
   submissions: Submission[];
   onImport: (importedData: Submission[]) => void;
+  isOpen?: boolean;
+  onClose?: () => void;
+  isModal?: boolean;
 }
 
-export const JsonBackup: React.FC<JsonBackupProps> = ({ submissions, onImport }) => {
-  const [isOpen, setIsOpen] = useState(false);
+export const JsonBackup: React.FC<JsonBackupProps> = ({ 
+  submissions, 
+  onImport,
+  isOpen: modalIsOpen,
+  onClose,
+  isModal = false
+}) => {
+  const [isAccordionOpen, setIsAccordionOpen] = useState(false);
   const [pasteData, setPasteData] = useState('');
   const [errorLog, setErrorLog] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
@@ -175,12 +184,143 @@ export const JsonBackup: React.FC<JsonBackupProps> = ({ submissions, onImport })
     }
   };
 
+  const contentBody = (
+    <div className="space-y-4 font-sans">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {/* Export JSON */}
+        <button
+          onClick={handleExportJson}
+          className="flex items-center justify-center gap-2 border border-stone-300 hover:bg-stone-50 text-stone-700 font-semibold py-2.5 px-4 rounded-xl text-sm transition cursor-pointer"
+        >
+          <Download size={16} className="text-amber-600" />
+          Ekspor ke file JSON (.json)
+        </button>
+
+        {/* Export ZIP */}
+        <button
+          onClick={handleExportZip}
+          className="flex items-center justify-center gap-2 border border-stone-300 hover:bg-stone-50 text-stone-700 font-semibold py-2.5 px-4 rounded-xl text-sm transition cursor-pointer"
+        >
+          <FileArchive size={16} className="text-cyan-600" />
+          Ekspor ke berkas ZIP (.zip)
+        </button>
+
+        {/* Upload Selector */}
+        <label className="flex items-center justify-center gap-2 border border-stone-300 hover:bg-stone-50 text-stone-700 font-semibold py-2.5 px-4 rounded-xl text-sm transition cursor-pointer text-center">
+          <Upload size={16} className="text-stone-500" />
+          Pulihkan (.json / .zip)
+          <input
+            type="file"
+            accept=".json,.zip"
+            onChange={handleFileSelect}
+            className="hidden"
+          />
+        </label>
+      </div>
+
+      {/* Paste Interface */}
+      <div className="space-y-2">
+        <label className="block text-xs font-semibold text-stone-500 uppercase tracking-wider">
+          Atau Tempel (Paste) Kode JSON Data Riwayat
+        </label>
+        <textarea
+          rows={4}
+          placeholder='Contoh: [{"id":"sub-001","lokasi":"Lt. 1","tanggal":"2026-06-03","jenisPengajuan":"Biaya Gaji","kode":"HO",...}]'
+          className="w-full p-3 font-mono text-xs bg-stone-50 border border-stone-250 rounded-xl focus:outline-none focus:ring-1 focus:ring-stone-400 placeholder:text-stone-300 text-stone-800"
+          value={pasteData}
+          onChange={(e) => setPasteData(e.target.value)}
+        />
+        <div className="flex justify-end">
+          <button
+            onClick={() => processImport(pasteData)}
+            className="bg-stone-900 hover:bg-stone-850 text-white font-semibold text-xs px-4 py-2 rounded-lg transition cursor-pointer"
+          >
+            Proses & Impor Kode Tempel
+          </button>
+        </div>
+      </div>
+
+      {/* Feedback logs */}
+      {errorLog && (
+        <div className="p-3 bg-rose-50 border border-rose-100 text-rose-700 text-xs rounded-xl flex items-start gap-2">
+          <AlertCircle size={15} className="shrink-0 mt-0.5" />
+          <span>{errorLog}</span>
+        </div>
+      )}
+
+      {successMsg && (
+        <div className="p-3 bg-emerald-50 border border-emerald-100 text-emerald-800 text-xs rounded-xl flex items-start gap-2">
+          <CheckCircle2 size={15} className="shrink-0 mt-0.5" />
+          <span>{successMsg}</span>
+        </div>
+      )}
+    </div>
+  );
+
+  if (isModal) {
+    if (!modalIsOpen) return null;
+    return (
+      <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-4 bg-stone-900/65 backdrop-blur-xs animate-fade-in print:hidden">
+        <div 
+          className="relative bg-white rounded-3xl shadow-2xl border border-stone-200 w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh] animate-scale-up"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Header */}
+          <div className="p-5 border-b border-stone-200 bg-stone-50/80 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-amber-500/10 border border-amber-300 flex items-center justify-center text-amber-700 shadow-3xs shrink-0">
+                <FileArchive size={20} />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-stone-900 font-display">
+                  Ekspor / Impor Backup Cadangan & Pemulihan
+                </h3>
+                <p className="text-xs text-stone-500 font-sans mt-0.5">
+                  Unduh seluruh riwayat voucher dalam format JSON / ZIP atau pulihkan cadangan.
+                </p>
+              </div>
+            </div>
+            {onClose && (
+              <button
+                onClick={onClose}
+                className="w-8 h-8 rounded-full bg-stone-200/60 hover:bg-stone-200 text-stone-600 flex items-center justify-center transition cursor-pointer shrink-0"
+                title="Tutup dialog"
+              >
+                <X size={16} />
+              </button>
+            )}
+          </div>
+
+          {/* Modal Body */}
+          <div className="p-5 overflow-y-auto">
+            {contentBody}
+          </div>
+
+          {/* Modal Footer */}
+          <div className="p-4 border-t border-stone-200 bg-stone-50 flex items-center justify-between">
+            <span className="text-xs text-stone-500 font-mono">
+              Total {submissions.length} transaksi voucher siap diekspor / dipulihkan
+            </span>
+            {onClose && (
+              <button
+                onClick={onClose}
+                className="px-4 py-2 bg-stone-900 hover:bg-stone-800 text-white font-bold rounded-xl text-xs transition cursor-pointer"
+              >
+                Tutup
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="bg-stone-50 border border-stone-250 rounded-2xl overflow-hidden shadow-xs print:hidden">
       {/* Accordion Trigger */}
       <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="w-full px-5 py-4 flex items-center justify-between text-left hover:bg-stone-100/50 transition focus:outline-none"
+        onClick={() => setIsAccordionOpen(!isAccordionOpen)}
+        className="w-full px-5 py-4 flex items-center justify-between text-left hover:bg-stone-100/50 transition focus:outline-none cursor-pointer"
       >
         <div className="space-y-0.5">
           <h4 className="text-sm font-bold text-stone-800 flex items-center gap-1.5">
@@ -191,81 +331,14 @@ export const JsonBackup: React.FC<JsonBackupProps> = ({ submissions, onImport })
           </p>
         </div>
         <div className="text-stone-500">
-          {isOpen ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+          {isAccordionOpen ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
         </div>
       </button>
 
       {/* Accordion Content */}
-      {isOpen && (
-        <div className="px-5 pb-5 pt-2 border-t border-stone-200 bg-white space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {/* Export JSON */}
-            <button
-              onClick={handleExportJson}
-              className="flex items-center justify-center gap-2 border border-stone-300 hover:bg-stone-50 text-stone-700 font-semibold py-2.5 px-4 rounded-xl text-sm transition"
-            >
-              <Download size={16} className="text-amber-600" />
-              Ekspor ke file JSON (.json)
-            </button>
-
-            {/* Export ZIP */}
-            <button
-              onClick={handleExportZip}
-              className="flex items-center justify-center gap-2 border border-stone-300 hover:bg-stone-50 text-stone-700 font-semibold py-2.5 px-4 rounded-xl text-sm transition"
-            >
-              <FileArchive size={16} className="text-cyan-600" />
-              Ekspor ke berkas ZIP (.zip)
-            </button>
-
-            {/* Upload Selector */}
-            <label className="flex items-center justify-center gap-2 border border-stone-300 hover:bg-stone-50 text-stone-700 font-semibold py-2.5 px-4 rounded-xl text-sm transition cursor-pointer text-center">
-              <Upload size={16} className="text-stone-500" />
-              Pulihkan (.json / .zip)
-              <input
-                type="file"
-                accept=".json,.zip"
-                onChange={handleFileSelect}
-                className="hidden"
-              />
-            </label>
-          </div>
-
-          {/* Paste Interface */}
-          <div className="space-y-2">
-            <label className="block text-xs font-semibold text-stone-500 uppercase tracking-wider">
-              Atau Tempel (Paste) Kode JSON Data Riwayat
-            </label>
-            <textarea
-              rows={4}
-              placeholder='Contoh: [{"id":"sub-001","lokasi":"Lt. 1","tanggal":"2026-06-03","jenisPengajuan":"Biaya Gaji","kode":"HO",...}]'
-              className="w-full p-3 font-mono text-xs bg-stone-50 border border-stone-250 rounded-xl focus:outline-none focus:ring-1 focus:ring-stone-400 placeholder:text-stone-300 text-stone-800"
-              value={pasteData}
-              onChange={(e) => setPasteData(e.target.value)}
-            />
-            <div className="flex justify-end">
-              <button
-                onClick={() => processImport(pasteData)}
-                className="bg-stone-900 hover:bg-stone-850 text-white font-semibold text-xs px-4 py-2 rounded-lg transition"
-              >
-                Proses & Impor Kode Tempel
-              </button>
-            </div>
-          </div>
-
-          {/* Feedback logs */}
-          {errorLog && (
-            <div className="p-3 bg-rose-50 border border-rose-100 text-rose-700 text-xs rounded-xl flex items-start gap-2">
-              <AlertCircle size={15} className="shrink-0 mt-0.5" />
-              <span>{errorLog}</span>
-            </div>
-          )}
-
-          {successMsg && (
-            <div className="p-3 bg-emerald-50 border border-emerald-100 text-emerald-800 text-xs rounded-xl flex items-start gap-2">
-              <CheckCircle2 size={15} className="shrink-0 mt-0.5" />
-              <span>{successMsg}</span>
-            </div>
-          )}
+      {isAccordionOpen && (
+        <div className="px-5 pb-5 pt-2 border-t border-stone-200 bg-white">
+          {contentBody}
         </div>
       )}
     </div>
