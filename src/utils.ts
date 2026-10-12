@@ -1,5 +1,5 @@
-// Utility functions for formatting and calculations
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import QRCode from 'qrcode';
 import { areNamesSimilar } from './utils/nameConsolidation';
 export { areNamesSimilar, toTitleCase, findDuplicateNameClusters, applyNameConsolidation } from './utils/nameConsolidation';
 export { 
@@ -107,6 +107,162 @@ export function cleanSingleLine(text: string | null | undefined): string {
   return sanitizeString(flattened);
 }
 
+let cachedCorporateLogoBytes: Uint8Array | null = null;
+
+export async function getCorporateLogoPngBytes(): Promise<Uint8Array | null> {
+  if (cachedCorporateLogoBytes) return cachedCorporateLogoBytes;
+  try {
+    if (typeof window !== 'undefined' && typeof window.fetch === 'function') {
+      const res = await window.fetch('/kop-surat-nmsa-full.png');
+      if (res.ok) {
+        const arr = await res.arrayBuffer();
+        cachedCorporateLogoBytes = new Uint8Array(arr);
+        return cachedCorporateLogoBytes;
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to fetch corporate logo in browser:', err);
+  }
+
+  // Node.js SSR / Background task fallback
+  if (typeof process !== 'undefined' && process.cwd) {
+    try {
+      const fs = await import('fs');
+      const path = await import('path');
+      const fullPath = path.join(process.cwd(), 'public', 'kop-surat-nmsa-full.png');
+      if (fs.existsSync(fullPath)) {
+        cachedCorporateLogoBytes = new Uint8Array(fs.readFileSync(fullPath));
+        return cachedCorporateLogoBytes;
+      }
+    } catch {}
+  }
+  return null;
+}
+
+export async function getQrCodePngBytes(url: string, size = 160): Promise<Uint8Array | null> {
+  try {
+    const dataUrl = await QRCode.toDataURL(url, {
+      width: size,
+      margin: 1,
+      errorCorrectionLevel: 'M',
+      color: { dark: '#000000', light: '#ffffff' },
+    });
+    const base64 = dataUrl.replace(/^data:image\/png;base64,/, '');
+    if (typeof Buffer !== 'undefined') {
+      return new Uint8Array(Buffer.from(base64, 'base64'));
+    } else {
+      const binaryStr = atob(base64);
+      const bytes = new Uint8Array(binaryStr.length);
+      for (let i = 0; i < binaryStr.length; i++) {
+        bytes[i] = binaryStr.charCodeAt(i);
+      }
+      return bytes;
+    }
+  } catch (err) {
+    console.warn('QR Code generation failed for PDF:', err);
+    return null;
+  }
+}
+
+export function formatDisplayItemTitle(itemTitle: string): string {
+  if (!itemTitle) return '-';
+  const lower = itemTitle.toLowerCase();
+  
+  if (lower.includes('rumah - bandara') || lower.includes('jkt - bandara') || (lower.includes('transport') && (lower.includes('bandara') || lower.includes('stasiun')) && !lower.includes('hotel'))) {
+    return 'Transport Rumah - Bandara PP';
+  }
+  if ((lower.includes('hotel') && lower.includes('bandara')) || lower.includes('taksi') || lower.includes('taxi') || lower.includes('perjalanan:') || lower.includes('antar jemput')) {
+    return 'Transport Bandara - Hotel PP';
+  }
+  if (lower.includes('uang makan') || lower.includes('makan')) {
+    const daysMatch = itemTitle.match(/(\d+\s*Hari)/i);
+    return daysMatch ? `Uang Makan (${daysMatch[1]})` : 'Uang Makan / Hari';
+  }
+  if (lower.includes('uang saku') || lower.includes('saku')) {
+    const daysMatch = itemTitle.match(/(\d+\s*Hari)/i);
+    return daysMatch ? `Uang Saku (${daysMatch[1]})` : 'Uang Saku';
+  }
+  if (lower.includes('tiket pesawat') || lower.includes('pesawat')) {
+    return 'Tiket Pesawat PP';
+  }
+  if (lower.includes('kereta') || lower.includes('kai')) {
+    return 'Tiket Kereta Api';
+  }
+  if (lower.includes('penginapan') || lower.includes('hotel')) {
+    return 'Penginapan / Hotel';
+  }
+  return itemTitle;
+}
+
+async function drawCorporateHeader(
+  pdfDoc: PDFDocument,
+  page: any,
+  fontBold: any,
+  fontRegular: any,
+  x: number,
+  y: number,
+  maxW: number = 240
+): Promise<void> {
+  const logoBytes = await getCorporateLogoPngBytes();
+  if (logoBytes) {
+    try {
+      const logoImg = await pdfDoc.embedPng(logoBytes);
+      const aspect = logoImg.width / logoImg.height; // ~ 1002 / 216 = 4.64
+      const targetW = Math.min(maxW, 230);
+      const targetH = targetW / aspect;
+      page.drawImage(logoImg, {
+        x,
+        y: y - targetH + 12,
+        width: targetW,
+        height: targetH,
+      });
+      return;
+    } catch (e) {
+      console.warn('Embedding logo PNG failed, drawing vector logo:', e);
+    }
+  }
+
+  // Graceful Corporate Vector Emblem & Brand Header
+  page.drawRectangle({
+    x,
+    y: y - 36,
+    width: 36,
+    height: 36,
+    borderColor: rgb(180 / 255, 83 / 255, 9 / 255),
+    borderWidth: 1.5,
+    color: rgb(254 / 255, 243 / 255, 199 / 255),
+  });
+  page.drawText('N', {
+    x: x + 11,
+    y: y - 28,
+    size: 22,
+    font: fontBold,
+    color: rgb(180 / 255, 83 / 255, 9 / 255),
+  });
+
+  page.drawText('PT. NUSANTARA MINERAL SUKSES ABADI', {
+    x: x + 44,
+    y: y - 14,
+    size: 11.5,
+    font: fontBold,
+    color: rgb(15 / 255, 23 / 255, 42 / 255),
+  });
+  page.drawText('MINING & GENERAL CONTRACTOR - BATUBARA & MINERAL', {
+    x: x + 44,
+    y: y - 27,
+    size: 7.2,
+    font: fontBold,
+    color: rgb(71 / 255, 85 / 255, 105 / 255),
+  });
+  page.drawText('Head Office: Gedung Wisma Menara NMSA, Jakarta', {
+    x: x + 44,
+    y: y - 37,
+    size: 6.8,
+    font: fontRegular,
+    color: rgb(100 / 255, 116 / 255, 139 / 255),
+  });
+}
+
 export async function generateF1PdfBytes(
   submission: any,
   grandTotal: number,
@@ -117,152 +273,445 @@ export async function generateF1PdfBytes(
   
   const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const fontOblique = await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
   const fontMono = await pdfDoc.embedFont(StandardFonts.Courier);
-  
-  // Draw Logo text
-  page.drawText('PT. NUSANTARA MINERAL SUKSES ABADI', { x: 40, y: 795, size: 14, font: fontBold });
-  page.drawText('VOUCHER SYSTEM PLATFORM', { x: 40, y: 780, size: 8, font: fontRegular });
-  
-  // Draw Code and Date Box top right
-  page.drawRectangle({
-    x: 370,
-    y: 770,
-    width: 185,
-    height: 35,
-    borderColor: rgb(0,0,0),
-    borderWidth: 1.5,
-    color: rgb(0.95, 0.95, 0.95)
-  });
-  page.drawText(cleanSingleLine(submission.kode), { x: 380, y: 782, size: 10, font: fontMono });
-  page.drawText(`Tanggal : ${cleanSingleLine(formatDateIndonesian(submission.tanggal))}`, { x: 370, y: 755, size: 9, font: fontRegular });
+  const fontMonoBold = await pdfDoc.embedFont(StandardFonts.CourierBold);
 
-  // Draw title in box
-  page.drawRectangle({
-    x: 40,
-    y: 700,
-    width: 515,
-    height: 35,
-    color: rgb(1, 1, 1),
-    borderColor: rgb(0,0,0),
-    borderWidth: 1.5,
-  });
-  page.drawText('BUKTI PENGELUARAN KAS / BANK', { x: 175, y: 712, size: 12, font: fontBold });
+  const pageWidth = 595.27;
+  const margin = 40;
+  const contentWidth = pageWidth - margin * 2; // 515.27 pt
 
-  // Draw metadata fields
-  const yStart = 675;
-  page.drawText('Dibayarkan Kepada  :   ' + cleanSingleLine(submission.dibayarkanKepada), { x: 45, y: yStart, size: 10, font: fontBold });
-  
-  page.drawText('Jenis Pengajuan       :   ' + cleanSingleLine(submission.jenisPengajuan), { x: 45, y: yStart - 18, size: 10, font: fontRegular });
-  page.drawText('Kode                       :   ' + cleanSingleLine(submission.kode), { x: 45, y: yStart - 36, size: 10, font: fontMono });
-  
-  // Dibayarkan dengan
-  page.drawText('Dibayarkan dengan   : ', { x: 45, y: yStart - 54, size: 10, font: fontRegular });
-  
-  // Draw Checkboxes
-  page.drawRectangle({ x: 165, y: yStart - 56, width: 25, height: 12, borderColor: rgb(0,0,0), borderWidth: 1 });
-  page.drawText(submission.dibayarkanDengan === 'Tunai' ? 'X' : '', { x: 174, y: yStart - 53, size: 9, font: fontBold });
-  page.drawText('Tunai', { x: 195, y: yStart - 54, size: 9, font: fontRegular });
-  
-  page.drawRectangle({ x: 235, y: yStart - 56, width: 25, height: 12, borderColor: rgb(0,0,0), borderWidth: 1 });
-  page.drawText(submission.dibayarkanDengan === 'Cek/Transfer' ? 'X' : '', { x: 244, y: yStart - 53, size: 9, font: fontBold });
-  page.drawText('Cek / Transfer', { x: 265, y: yStart - 54, size: 9, font: fontRegular });
+  // ================= 1. HEADER BLOCK (LOGO + CODE + TANGGAL + QR CODE) =================
+  const headerTopY = 805;
 
-  // Draw table
-  page.drawRectangle({
-    x: 40,
-    y: 530,
-    width: 515,
-    height: 25,
-    borderColor: rgb(0,0,0),
-    borderWidth: 1.5,
-    color: rgb(1,1,1)
-  });
-  page.drawText('JENIS PENGAJUAN', { x: 50, y: 539, size: 9, font: fontBold });
-  page.drawText('JUMLAH', { x: 490, y: 539, size: 9, font: fontBold });
+  // 1a. Draw Official Logo on Top Left
+  await drawCorporateHeader(pdfDoc, page, fontBold, fontRegular, margin, headerTopY, 230);
 
-  let curY = 530;
-  const items = submission.items || [];
+  // 1b. Right Header: Voucher Code Box, Date & QR Code
+  const qrSize = 48;
+  const qrX = margin + contentWidth - qrSize;
+  const qrY = headerTopY - 42;
+
+  // Generate & Embed Verification QR Code
+  const origin = typeof window !== 'undefined' && window.location?.origin
+    ? window.location.origin
+    : 'https://ais-dev-plekddulaqivufl6olm5y6-493574025735.asia-southeast1.run.app';
+  const cleanSlug = (submission.jenisPengajuan || 'transaksi')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
+  const shareUrl = `${origin}/shared-view?id=${encodeURIComponent(submission.id || '')}&kode=${encodeURIComponent(submission.kode || '')}&transaksi=${encodeURIComponent(cleanSlug)}&nominal=${grandTotal}`;
   
-  // Calculate total required height and scaling factor to fit within 290pt
-  const rawItems = items.map(item => {
-    const lines = wrapText(item.item || '', 340, fontRegular, 9);
-    const minH = items.length <= 2 ? 50 : (items.length <= 4 ? 35 : 24);
-    const h = Math.max(minH, lines.length * 14 + 14);
-    return { lines, rawH: h };
-  });
-  const totalItemsHeight = rawItems.reduce((acc, r) => acc + r.rawH, 0);
-  const maxTableHeight = 290;
-  const scale = totalItemsHeight > maxTableHeight ? Math.max(0.48, maxTableHeight / totalItemsHeight) : 1;
-  const itemFontSize = Math.max(6.5, 9 * scale);
-  const lineSpacing = Math.max(8, 12 * scale);
-
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i];
-    const { lines, rawH } = rawItems[i];
-    const rowHeight = Math.max(14, rawH * scale);
-    
-    page.drawRectangle({
-      x: 40,
-      y: curY - rowHeight,
-      width: 515,
-      height: rowHeight,
-      borderColor: rgb(0,0,0),
-      borderWidth: 1,
-    });
-    // col check line
-    page.drawLine({ start: { x: 390, y: curY }, end: { x: 390, y: curY - rowHeight }, thickness: 1 });
-
-    const textOffsetY = scale < 0.75 ? 10 : (items.length <= 2 ? 20 : 14);
-    for (let l = 0; l < lines.length; l++) {
-      page.drawText(lines[l], { x: 48, y: curY - textOffsetY - (l * lineSpacing), size: itemFontSize, font: fontBold });
+  const qrBytes = await getQrCodePngBytes(shareUrl, 150);
+  if (qrBytes) {
+    try {
+      const qrImg = await pdfDoc.embedPng(qrBytes);
+      page.drawRectangle({
+        x: qrX - 2,
+        y: qrY - 2,
+        width: qrSize + 4,
+        height: qrSize + 4,
+        borderColor: rgb(0, 0, 0),
+        borderWidth: 1.0,
+        color: rgb(1, 1, 1),
+      });
+      page.drawImage(qrImg, {
+        x: qrX,
+        y: qrY,
+        width: qrSize,
+        height: qrSize,
+      });
+    } catch (e) {
+      console.warn('QR code embed failed:', e);
     }
-    
-    page.drawText('Rp ' + formatRupiah(item.total), { x: 400, y: curY - textOffsetY, size: Math.max(7, 10 * scale), font: fontBold });
-    curY -= rowHeight;
   }
 
-  // Draw total row
-  page.drawRectangle({
-    x: 40,
-    y: curY - 25,
-    width: 515,
-    height: 25,
-    borderColor: rgb(0,0,0),
-    borderWidth: 1.5,
-    color: rgb(0.98,0.98,0.98)
-  });
-  page.drawLine({ start: { x: 390, y: curY }, end: { x: 390, y: curY - 25 }, thickness: 1.5 });
-  page.drawText('Total', { x: 50, y: curY - 17, size: 10, font: fontBold });
-  page.drawText('Rp ' + formatRupiah(grandTotal), { x: 400, y: curY - 17, size: 10, font: fontBold });
-  
-  // Explicitly ensure outer vertical boundaries (especially right closure line) are solid
-  page.drawLine({ start: { x: 555, y: 555 }, end: { x: 555, y: curY - 25 }, thickness: 1.5 });
-  page.drawLine({ start: { x: 40, y: 555 }, end: { x: 40, y: curY - 25 }, thickness: 1.5 });
+  // Voucher Code Box (Framed Box with mono font)
+  const codeBoxW = 135;
+  const codeBoxH = 24;
+  const codeBoxX = qrX - codeBoxW - 10;
+  const codeBoxY = headerTopY - 20;
 
-  curY -= 25;
-
-  // Draw Terbilang
   page.drawRectangle({
-    x: 40,
-    y: curY - 45,
-    width: 515,
-    height: 35,
-    borderColor: rgb(0,0,0),
-    borderWidth: 1,
-    color: rgb(0.98,0.98,0.98)
+    x: codeBoxX,
+    y: codeBoxY,
+    width: codeBoxW,
+    height: codeBoxH,
+    borderColor: rgb(0, 0, 0),
+    borderWidth: 1.2,
+    color: rgb(248 / 255, 250 / 255, 252 / 255),
   });
-  page.drawText('Terbilang :', { x: 48, y: curY - 25, size: 9, font: fontBold });
-  const wrappedTerbilang = wrapText('"' + numberToTerbilang(grandTotal) + '"', 420, fontRegular, 9);
-  for (let l = 0; l < Math.min(wrappedTerbilang.length, 2); l++) {
-    page.drawText(wrappedTerbilang[l], { x: 110, y: curY - 15 - (l * 11), size: 9, font: fontRegular });
+
+  const kodeText = cleanSingleLine(submission.kode || '-');
+  const kodeW = fontMonoBold.widthOfTextAtSize(kodeText, 10);
+  page.drawText(kodeText, {
+    x: codeBoxX + (codeBoxW - kodeW) / 2,
+    y: codeBoxY + 7,
+    size: 10,
+    font: fontMonoBold,
+    color: rgb(0, 0, 0),
+  });
+
+  // Date under Code Box
+  const tglText = `Tanggal : ${cleanSingleLine(formatDateIndonesian(submission.tanggal))}`;
+  const tglW = fontRegular.widthOfTextAtSize(tglText, 8.5);
+  page.drawText(tglText, {
+    x: codeBoxX + codeBoxW - tglW,
+    y: codeBoxY - 14,
+    size: 8.5,
+    font: fontRegular,
+    color: rgb(0, 0, 0),
+  });
+
+  // ================= 2. DOCUMENT TITLE BLOCK =================
+  const titleBoxY = 726;
+  const titleBoxH = 26;
+
+  page.drawRectangle({
+    x: margin,
+    y: titleBoxY,
+    width: contentWidth,
+    height: titleBoxH,
+    borderColor: rgb(0, 0, 0),
+    borderWidth: 2.0,
+    color: rgb(1, 1, 1),
+  });
+
+  const titleText = 'BUKTI PENGELUARAN KAS / BANK';
+  const titleW = fontBold.widthOfTextAtSize(titleText, 11);
+  page.drawText(titleText, {
+    x: margin + (contentWidth - titleW) / 2,
+    y: titleBoxY + 8,
+    size: 11,
+    font: fontBold,
+    color: rgb(0, 0, 0),
+  });
+
+  // ================= 3. METADATA FIELDS AREA =================
+  let metaY = 705;
+  const labelX = margin + 6;
+  const colonX = margin + 145;
+  const valX = margin + 158;
+  const metaLineH = 16.5;
+
+  // Dibayarkan Kepada
+  page.drawText('Dibayarkan Kepada', { x: labelX, y: metaY, size: 9.5, font: fontBold });
+  page.drawText(':', { x: colonX, y: metaY, size: 9.5, font: fontBold });
+  page.drawText(cleanSingleLine(submission.dibayarkanKepada || '-'), { x: valX, y: metaY, size: 9.5, font: fontBold });
+  metaY -= metaLineH;
+
+  // Pemegang Petty Cash (if applicable)
+  if (submission.isPettyCash && submission.pettyCashCustodian) {
+    page.drawText('Pemegang Petty Cash', { x: labelX, y: metaY, size: 9.0, font: fontBold });
+    page.drawText(':', { x: colonX, y: metaY, size: 9.0, font: fontBold });
+    page.drawText(cleanSingleLine(submission.pettyCashCustodian), {
+      x: valX,
+      y: metaY,
+      size: 9.0,
+      font: fontBold,
+      color: rgb(109 / 255, 40 / 255, 217 / 255),
+    });
+    metaY -= metaLineH;
   }
-  curY -= 45;
 
-  // Signatures Row (4 Signers for F1: Diajukan, Diverifikasi, Diverifikasi, Disetujui)
-  const blockW = 515 / 4;
-  // Generous signing height for normal vouchers
-  const sigGap = scale < 0.75 ? 65 : (items.length <= 3 ? 90 : 80);
-  const sigY = curY - sigGap;
+  // Jenis Pengajuan
+  page.drawText('Jenis Pengajuan', { x: labelX, y: metaY, size: 9.0, font: fontBold });
+  page.drawText(':', { x: colonX, y: metaY, size: 9.0, font: fontBold });
+  page.drawText(cleanSingleLine(submission.jenisPengajuan || '-'), { x: valX, y: metaY, size: 9.0, font: fontRegular });
+  metaY -= metaLineH;
+
+  // Kode
+  page.drawText('Kode', { x: labelX, y: metaY, size: 9.0, font: fontBold });
+  page.drawText(':', { x: colonX, y: metaY, size: 9.0, font: fontBold });
+  page.drawText(cleanSingleLine(submission.kode || '-'), { x: valX, y: metaY, size: 9.0, font: fontMonoBold });
+  metaY -= metaLineH;
+
+  // Dibayarkan dengan
+  page.drawText('Dibayarkan dengan', { x: labelX, y: metaY, size: 9.0, font: fontBold });
+  page.drawText(':', { x: colonX, y: metaY, size: 9.0, font: fontBold });
+
+  // Checkbox Tunai
+  page.drawRectangle({
+    x: valX,
+    y: metaY - 2,
+    width: 22,
+    height: 12,
+    borderColor: rgb(0, 0, 0),
+    borderWidth: 1.0,
+    color: rgb(248 / 255, 250 / 255, 252 / 255),
+  });
+  if (submission.dibayarkanDengan === 'Tunai') {
+    page.drawText('X', { x: valX + 7, y: metaY + 1, size: 8.5, font: fontBold });
+  }
+  page.drawText('Tunai', { x: valX + 28, y: metaY + 1, size: 9.0, font: fontRegular });
+
+  // Checkbox Cek / Transfer
+  const cekBoxX = valX + 85;
+  page.drawRectangle({
+    x: cekBoxX,
+    y: metaY - 2,
+    width: 22,
+    height: 12,
+    borderColor: rgb(0, 0, 0),
+    borderWidth: 1.0,
+    color: rgb(248 / 255, 250 / 255, 252 / 255),
+  });
+  if (submission.dibayarkanDengan === 'Cek/Transfer') {
+    page.drawText('X', { x: cekBoxX + 7, y: metaY + 1, size: 8.5, font: fontBold });
+  }
+  page.drawText('Cek / Transfer', { x: cekBoxX + 28, y: metaY + 1, size: 9.0, font: fontRegular });
+
+  metaY -= 14;
+
+  // ================= 4. TABLE VOUCHER (JENIS PENGAJUAN / JUMLAH) =================
+  const colDividerX = margin + 355; // Left col: 355pt, Right col: 160.27pt
+  const tableHeaderH = 24;
+  const tableTopY = metaY;
+
+  // Table Header Box with stone-100 shading (#F5F5F4)
+  page.drawRectangle({
+    x: margin,
+    y: tableTopY - tableHeaderH,
+    width: contentWidth,
+    height: tableHeaderH,
+    color: rgb(245 / 255, 245 / 255, 244 / 255),
+    borderColor: rgb(0, 0, 0),
+    borderWidth: 2.0,
+  });
+
+  page.drawText('JENIS PENGAJUAN', {
+    x: margin + 14,
+    y: tableTopY - 16,
+    size: 8.5,
+    font: fontBold,
+    color: rgb(0, 0, 0),
+  });
+
+  const jmlHeaderTxt = 'JUMLAH';
+  const jmlHeaderW = fontBold.widthOfTextAtSize(jmlHeaderTxt, 8.5);
+  page.drawText(jmlHeaderTxt, {
+    x: margin + contentWidth - jmlHeaderW - 16,
+    y: tableTopY - 16,
+    size: 8.5,
+    font: fontBold,
+    color: rgb(0, 0, 0),
+  });
+
+  // Vertical divider in header
+  page.drawLine({
+    start: { x: colDividerX, y: tableTopY },
+    end: { x: colDividerX, y: tableTopY - tableHeaderH },
+    thickness: 1.5,
+    color: rgb(0, 0, 0),
+  });
+
+  // Calculate row wrapping & heights
+  let curTableY = tableTopY - tableHeaderH;
+  const items = submission.items || [];
+  const maxTableContentHeight = 270;
+
+  const rawRows = items.map((it: any) => {
+    const wrapped = wrapText(cleanSingleLine(it.item || '-'), 330, fontBold, 8.5);
+    const minH = items.length <= 2 ? 38 : items.length <= 4 ? 28 : 20;
+    const h = Math.max(minH, wrapped.length * 12 + 10);
+    return { wrapped, rawH: h, it };
+  });
+
+  const totalRawH = rawRows.reduce((sum: number, r: any) => sum + r.rawH, 0);
+  const scale = totalRawH > maxTableContentHeight
+    ? Math.max(0.55, maxTableContentHeight / totalRawH)
+    : 1.0;
+  const fontSize = Math.max(7.0, 8.5 * scale);
+  const lineSpacing = Math.max(8.5, 12 * scale);
+
+  for (let i = 0; i < rawRows.length; i++) {
+    const { wrapped, rawH, it } = rawRows[i];
+    const rowH = Math.max(16, rawH * scale);
+
+    // Row background (white)
+    page.drawRectangle({
+      x: margin,
+      y: curTableY - rowH,
+      width: contentWidth,
+      height: rowH,
+      color: rgb(1, 1, 1),
+    });
+
+    // Horizontal bottom line of row
+    page.drawLine({
+      start: { x: margin, y: curTableY - rowH },
+      end: { x: margin + contentWidth, y: curTableY - rowH },
+      thickness: 1.0,
+      color: rgb(0, 0, 0),
+    });
+
+    // Vertical column divider
+    page.drawLine({
+      start: { x: colDividerX, y: curTableY },
+      end: { x: colDividerX, y: curTableY - rowH },
+      thickness: 1.0,
+      color: rgb(0, 0, 0),
+    });
+
+    // Left cell text (Item description)
+    const textOffsetY = scale < 0.75 ? 10 : items.length <= 2 ? 18 : 13;
+    for (let l = 0; l < wrapped.length; l++) {
+      page.drawText(wrapped[l], {
+        x: margin + 14,
+        y: curTableY - textOffsetY - l * lineSpacing,
+        size: fontSize,
+        font: fontBold,
+        color: rgb(0, 0, 0),
+      });
+    }
+
+    // Right cell text: "Rp" on left, Amount formatted on right
+    page.drawText('Rp', {
+      x: colDividerX + 12,
+      y: curTableY - textOffsetY,
+      size: fontSize,
+      font: fontMonoBold,
+      color: rgb(0, 0, 0),
+    });
+
+    const valTxt = formatRupiah(it.total || 0);
+    const valW = fontMonoBold.widthOfTextAtSize(valTxt, fontSize);
+    page.drawText(valTxt, {
+      x: margin + contentWidth - valW - 14,
+      y: curTableY - textOffsetY,
+      size: fontSize,
+      font: fontMonoBold,
+      color: rgb(0, 0, 0),
+    });
+
+    curTableY -= rowH;
+  }
+
+  // Total Row
+  const totalRowH = 24;
+  page.drawRectangle({
+    x: margin,
+    y: curTableY - totalRowH,
+    width: colDividerX - margin,
+    height: totalRowH,
+    color: rgb(245 / 255, 245 / 255, 244 / 255),
+  });
+
+  page.drawRectangle({
+    x: colDividerX,
+    y: curTableY - totalRowH,
+    width: margin + contentWidth - colDividerX,
+    height: totalRowH,
+    color: rgb(250 / 255, 250 / 255, 250 / 255),
+  });
+
+  // Top line of total
+  page.drawLine({
+    start: { x: margin, y: curTableY },
+    end: { x: margin + contentWidth, y: curTableY },
+    thickness: 2.0,
+    color: rgb(0, 0, 0),
+  });
+
+  // Bottom line of total
+  page.drawLine({
+    start: { x: margin, y: curTableY - totalRowH },
+    end: { x: margin + contentWidth, y: curTableY - totalRowH },
+    thickness: 2.0,
+    color: rgb(0, 0, 0),
+  });
+
+  // Vertical divider in total
+  page.drawLine({
+    start: { x: colDividerX, y: curTableY },
+    end: { x: colDividerX, y: curTableY - totalRowH },
+    thickness: 2.0,
+    color: rgb(0, 0, 0),
+  });
+
+  // TOTAL label centered in left cell
+  const totalLabel = 'TOTAL';
+  const totalLabelW = fontBold.widthOfTextAtSize(totalLabel, 9.0);
+  page.drawText(totalLabel, {
+    x: margin + (colDividerX - margin - totalLabelW) / 2,
+    y: curTableY - 16,
+    size: 9.0,
+    font: fontBold,
+    color: rgb(0, 0, 0),
+  });
+
+  // Total amount in right cell
+  page.drawText('Rp', {
+    x: colDividerX + 12,
+    y: curTableY - 16,
+    size: 9.5,
+    font: fontMonoBold,
+    color: rgb(0, 0, 0),
+  });
+
+  const grandTotalTxt = formatRupiah(grandTotal);
+  const grandTotalW = fontMonoBold.widthOfTextAtSize(grandTotalTxt, 9.5);
+  page.drawText(grandTotalTxt, {
+    x: margin + contentWidth - grandTotalW - 14,
+    y: curTableY - 16,
+    size: 9.5,
+    font: fontMonoBold,
+    color: rgb(0, 0, 0),
+  });
+
+  // Crisp Solid Outer Border Rectangle for Entire Table (0 pixel gaps guaranteed)
+  const fullTableH = tableTopY - (curTableY - totalRowH);
+  page.drawRectangle({
+    x: margin,
+    y: curTableY - totalRowH,
+    width: contentWidth,
+    height: fullTableH,
+    borderColor: rgb(0, 0, 0),
+    borderWidth: 2.0,
+  });
+
+  curTableY -= totalRowH;
+
+  // ================= 5. TERBILANG BOX =================
+  const terbilangY = curTableY - 8;
+  const rawTerbilang = `"${numberToTerbilang(grandTotal)}"`;
+  const wrappedTerbilang = wrapText(rawTerbilang, 415, fontOblique, 8.5);
+  const terbilangH = Math.max(26, wrappedTerbilang.length * 12 + 12);
+
+  page.drawRectangle({
+    x: margin,
+    y: terbilangY - terbilangH,
+    width: contentWidth,
+    height: terbilangH,
+    borderColor: rgb(0, 0, 0),
+    borderWidth: 1.0,
+    color: rgb(250 / 255, 250 / 255, 249 / 255),
+  });
+
+  page.drawText('Terbilang :', {
+    x: margin + 10,
+    y: terbilangY - 16,
+    size: 8.5,
+    font: fontBold,
+    color: rgb(0, 0, 0),
+  });
+
+  for (let t = 0; t < Math.min(wrappedTerbilang.length, 2); t++) {
+    page.drawText(wrappedTerbilang[t], {
+      x: margin + 75,
+      y: terbilangY - 16 - t * 11,
+      size: 8.5,
+      font: fontOblique,
+      color: rgb(0, 0, 0),
+    });
+  }
+
+  curTableY = terbilangY - terbilangH - 12;
+
+  // ================= 6. SIGNATURES BLOCK (4 SIGNERS: DIAJUKAN, DIVERIFIKASI, DIVERIFIKASI, DISETUJUI) =================
+  const blockW = contentWidth / 4;
+  const sigBoxH = 65;
+  const sigTopY = curTableY;
 
   let signers = customSigners;
   if (!signers && typeof window !== 'undefined' && window.localStorage) {
@@ -270,15 +719,12 @@ export async function generateF1PdfBytes(
       const saved = localStorage.getItem('nmsa_custom_f1_signers_config');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length === 4) {
-          signers = parsed;
-        }
+        if (Array.isArray(parsed) && parsed.length === 4) signers = parsed;
       }
     } catch (_) {}
   }
 
   if (!signers || signers.length !== 4) {
-    // Signer 1: Diajukan (Andi Dhiya Salsabila)
     const applicantName = cleanSingleLine(
       (submission.diajukanOleh && submission.diajukanOleh !== 'Sri Ekowati')
         ? submission.diajukanOleh
@@ -286,11 +732,9 @@ export async function generateF1PdfBytes(
     );
     const applicantRole = cleanSingleLine(submission.diajukanJabatan || 'Staff Keuangan');
 
-    // Signer 2: Diverifikasi (Sri Ekowati)
     const verifier1Name = 'Sri Ekowati';
     const verifier1Role = 'Manager Keuangan';
 
-    // Signer 3: Diverifikasi (Andi Muhammad Rifki)
     const verifierRaw = submission.diverifikasiOleh;
     const isVerifierNursyam = verifierRaw?.toLowerCase().includes('nursyam') || submission.disetujuiOleh2?.toLowerCase().includes('nursyam');
     const verifier2Name = cleanSingleLine(
@@ -308,7 +752,6 @@ export async function generateF1PdfBytes(
           : 'Direktur')
     );
 
-    // Signer 4: Disetujui (Harijon)
     const rawApprover2 = submission.disetujuiOleh2;
     const isNursyam = rawApprover2 && rawApprover2.toLowerCase().includes('nursyam');
     const approverName = cleanSingleLine(isNursyam || !rawApprover2 ? 'Harijon' : rawApprover2);
@@ -328,238 +771,486 @@ export async function generateF1PdfBytes(
     }));
   }
 
-  // Dynamically maximize font size so all 4 names are as large as possible without clipping
-  const maxAllowedWidth = blockW - 10;
-  let signerFontSize = 10.0;
-  for (let testSize = 10.5; testSize >= 7.5; testSize -= 0.25) {
-    const allFit = signers.every(s => fontBold.widthOfTextAtSize(s.name, testSize) <= maxAllowedWidth);
-    if (allFit) {
-      signerFontSize = testSize;
-      break;
-    }
-  }
-
-  let signerRoleSize = 8.0;
-  for (let testRoleSize = 8.5; testRoleSize >= 6.5; testRoleSize -= 0.25) {
-    const allFit = signers.every(s => fontRegular.widthOfTextAtSize(s.role, testRoleSize) <= maxAllowedWidth);
-    if (allFit) {
-      signerRoleSize = testRoleSize;
-      break;
-    }
-  }
-
   signers.forEach((s, idx) => {
-    const colX = 40 + idx * blockW;
-    // Title Header
-    const titleW = fontBold.widthOfTextAtSize(s.title, 9.0);
+    const colX = margin + idx * blockW;
+
+    const titleW = fontBold.widthOfTextAtSize(s.title, 8.5);
     page.drawText(s.title, {
       x: colX + (blockW - titleW) / 2,
-      y: curY - 20,
-      size: 9.0,
+      y: sigTopY,
+      size: 8.5,
       font: fontBold,
+      color: rgb(0, 0, 0),
     });
 
-    // Signer Name (Bold, maximized font size without clipping)
-    const nameW = fontBold.widthOfTextAtSize(s.name, signerFontSize);
+    const sigLineY = sigTopY - sigBoxH;
+
+    const nameFontSize = 9.0;
+    const nameW = fontBold.widthOfTextAtSize(s.name, nameFontSize);
     page.drawText(s.name, {
       x: colX + (blockW - nameW) / 2,
-      y: sigY,
-      size: signerFontSize,
+      y: sigLineY + 3,
+      size: nameFontSize,
       font: fontBold,
+      color: rgb(0, 0, 0),
     });
 
-    // Underline Bar
     page.drawLine({
-      start: { x: colX + 8, y: sigY - 2 },
-      end: { x: colX + blockW - 8, y: sigY - 2 },
-      thickness: 1,
+      start: { x: colX + 12, y: sigLineY },
+      end: { x: colX + blockW - 12, y: sigLineY },
+      thickness: 1.0,
+      color: rgb(0, 0, 0),
     });
 
-    // Signer Role
-    const roleW = fontRegular.widthOfTextAtSize(s.role, signerRoleSize);
+    const roleW = fontRegular.widthOfTextAtSize(s.role, 7.5);
     page.drawText(s.role, {
       x: colX + (blockW - roleW) / 2,
-      y: sigY - 14,
-      size: signerRoleSize,
+      y: sigLineY - 11,
+      size: 7.5,
       font: fontRegular,
+      color: rgb(0, 0, 0),
     });
   });
 
-  // Notes block
-  const noteY = sigY - (scale < 0.75 ? 40 : 50);
-  const noteBoxH = scale < 0.75 ? 35 : (items.length <= 3 ? 50 : 42);
-  page.drawText('NOTE :', { x: 40, y: noteY, size: 9, font: fontBold });
-  page.drawRectangle({
-    x: 40,
-    y: noteY - noteBoxH,
-    width: 515,
-    height: noteBoxH,
-    borderColor: rgb(0, 0, 0),
-    borderWidth: 1,
-    color: rgb(0.98, 0.98, 0.98),
-  });
-  if (submission.notes) {
-    page.drawText(cleanSingleLine(submission.notes), { x: 45, y: noteY - 28, size: 8, font: fontRegular });
+  // ================= 7. NOTES BLOCK =================
+  if (submission.notes && submission.notes.trim() !== '') {
+    const noteTopY = sigTopY - sigBoxH - 24;
+    page.drawText('NOTE :', {
+      x: margin,
+      y: noteTopY,
+      size: 8.0,
+      font: fontBold,
+      color: rgb(0, 0, 0),
+    });
+
+    const noteBoxY = noteTopY - 26;
+    page.drawRectangle({
+      x: margin,
+      y: noteBoxY,
+      width: contentWidth,
+      height: 22,
+      borderColor: rgb(0, 0, 0),
+      borderWidth: 1.0,
+      color: rgb(250 / 255, 250 / 255, 249 / 255),
+    });
+
+    page.drawText(cleanSingleLine(submission.notes), {
+      x: margin + 8,
+      y: noteBoxY + 6,
+      size: 7.5,
+      font: fontRegular,
+      color: rgb(40 / 255, 40 / 255, 40 / 255),
+    });
   }
 
   return await pdfDoc.save();
 }
 
+
 export async function generateF2PdfBytes(
   submission: any,
   grandTotal: number,
   customSigners?: Array<{ title: string; name: string; role: string }>,
-  showApproved: boolean = false
+  showApproved: boolean = true
 ): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.create();
   const page = pdfDoc.addPage([595.27, 841.89]);
   
   const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const fontOblique = await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
   const fontMono = await pdfDoc.embedFont(StandardFonts.Courier);
-  
-  // Draw Logo text
-  page.drawText('PT. NUSANTARA MINERAL SUKSES ABADI', { x: 40, y: 795, size: 14, font: fontBold });
-  page.drawText('VOUCHER SYSTEM PLATFORM', { x: 40, y: 780, size: 8, font: fontRegular });
-  
-  // Draw title in box
-  page.drawRectangle({
-    x: 40,
-    y: 720,
-    width: 515,
-    height: 35,
-    color: rgb(0.85, 0.85, 0.85),
-    borderColor: rgb(0, 0, 0),
-    borderWidth: 1.5,
-  });
-  page.drawText('FORMULIR PENGAJUAN DANA', { x: 190, y: 732, size: 12, font: fontBold });
+  const fontMonoBold = await pdfDoc.embedFont(StandardFonts.CourierBold);
 
-  // Draw metadata box
-  page.drawRectangle({
-    x: 40,
-    y: 620,
-    width: 515,
-    height: 80,
-    borderColor: rgb(0, 0, 0),
-    borderWidth: 1.5,
-  });
-  
-  const txtLokasi = `Lokasi                      :  ${cleanSingleLine(submission.lokasi)}`;
-  const txtTanggal = `Tanggal                    :  ${cleanSingleLine(formatDateIndonesian(submission.tanggal))}`;
-  const txtJenis = `Jenis Pengajuan       :  ${cleanSingleLine(submission.jenisPengajuan)}`;
-  const txtKode = `Kode                       :  ${cleanSingleLine(submission.kode)}`;
-  
-  page.drawText(txtLokasi, { x: 55, y: 680, size: 10, font: fontRegular });
-  page.drawText(txtTanggal, { x: 55, y: 663, size: 10, font: fontRegular });
-  page.drawText(txtJenis, { x: 55, y: 646, size: 10, font: fontRegular });
-  page.drawText(txtKode, { x: 55, y: 629, size: 10, font: fontMono });
+  const pageWidth = 595.27;
+  const margin = 40;
+  const contentWidth = pageWidth - margin * 2; // 515.27 pt
 
-  // Draw Table header
-  page.drawRectangle({
-    x: 40,
-    y: 575,
-    width: 515,
-    height: 25,
-    color: rgb(0.9, 0.9, 0.9),
-    borderColor: rgb(0,0,0),
-    borderWidth: 1,
-  });
+  // ================= 1. HEADER BLOCK (LOGO + CODE + TANGGAL + QR CODE) =================
+  const headerTopY = 805;
+
+  // 1a. Draw Official Logo on Top Left
+  await drawCorporateHeader(pdfDoc, page, fontBold, fontRegular, margin, headerTopY, 230);
+
+  // 1b. Right Header: Voucher Code Box, Date & QR Code
+  const qrSize = 48;
+  const qrX = margin + contentWidth - qrSize;
+  const qrY = headerTopY - 42;
+
+  const origin = typeof window !== 'undefined' && window.location?.origin
+    ? window.location.origin
+    : 'https://ais-dev-plekddulaqivufl6olm5y6-493574025735.asia-southeast1.run.app';
+  const cleanSlug = (submission.jenisPengajuan || 'pengajuan')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
+  const shareUrl = `${origin}/shared-view?id=${encodeURIComponent(submission.id || '')}&kode=${encodeURIComponent(submission.kode || '')}&transaksi=${encodeURIComponent(cleanSlug)}&nominal=${grandTotal}`;
   
-  page.drawText('NO', { x: 45, y: 583, size: 8, font: fontBold });
-  page.drawText('ITEM DETIL (INVOICE / DESKRIPSI)', { x: 75, y: 583, size: 8, font: fontBold });
-  page.drawText('VOL', { x: 325, y: 583, size: 8, font: fontBold });
-  page.drawText('TOTAL (RP)', { x: 400, y: 583, size: 8, font: fontBold });
-  page.drawText('KETERANGAN', { x: 475, y: 583, size: 8, font: fontBold });
-
-  let curY = 575;
-  const items = submission.items || [];
-  
-  // Calculate total required height and scaling factor to fit within 350pt
-  const rawF2Items = items.map(item => {
-    const descWrapped = wrapText(item.item || '', 240, fontRegular, 8);
-    const ketWrapped = wrapText(item.keterangan || '-', 70, fontRegular, 8);
-    const minH = items.length <= 3 ? 32 : 20;
-    const rawH = Math.max(minH, Math.max(descWrapped.length, ketWrapped.length, 1) * 12 + 10);
-    return { descWrapped, ketWrapped, rawH };
-  });
-  const totalF2Height = rawF2Items.reduce((acc, r) => acc + r.rawH, 0);
-  const maxF2Height = 350;
-  const scaleF2 = totalF2Height > maxF2Height ? Math.max(0.48, maxF2Height / totalF2Height) : 1;
-  const f2FontSize = Math.max(6, 8 * scaleF2);
-  const f2LineSpacing = Math.max(7.5, 11 * scaleF2);
-
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i];
-    const { descWrapped, ketWrapped, rawH } = rawF2Items[i];
-    const rowHeight = Math.max(14, rawH * scaleF2);
-    
-    // Draw row rectangle
-    page.drawRectangle({
-      x: 40,
-      y: curY - rowHeight,
-      width: 515,
-      height: rowHeight,
-      borderColor: rgb(0,0,0),
-      borderWidth: 1,
-    });
-    
-    // Draw columns vertical separation borders
-    page.drawLine({ start: { x: 65, y: curY }, end: { x: 65, y: curY - rowHeight }, thickness: 1 });
-    page.drawLine({ start: { x: 320, y: curY }, end: { x: 320, y: curY - rowHeight }, thickness: 1 });
-    page.drawLine({ start: { x: 390, y: curY }, end: { x: 390, y: curY - rowHeight }, thickness: 1 });
-    page.drawLine({ start: { x: 470, y: curY }, end: { x: 470, y: curY - rowHeight }, thickness: 1 });
-
-    const textOffsetY = scaleF2 < 0.75 ? 10 : (items.length <= 3 ? 18 : 14);
-    // Fill row texts
-    page.drawText(String(i + 1), { x: 48, y: curY - textOffsetY, size: f2FontSize, font: fontMono });
-    
-    for (let dLine = 0; dLine < descWrapped.length; dLine++) {
-      page.drawText(descWrapped[dLine], { x: 75, y: curY - textOffsetY - (dLine * f2LineSpacing), size: f2FontSize, font: fontBold });
+  const qrBytes = await getQrCodePngBytes(shareUrl, 150);
+  if (qrBytes) {
+    try {
+      const qrImg = await pdfDoc.embedPng(qrBytes);
+      page.drawRectangle({
+        x: qrX - 2,
+        y: qrY - 2,
+        width: qrSize + 4,
+        height: qrSize + 4,
+        borderColor: rgb(0, 0, 0),
+        borderWidth: 1.0,
+        color: rgb(1, 1, 1),
+      });
+      page.drawImage(qrImg, {
+        x: qrX,
+        y: qrY,
+        width: qrSize,
+        height: qrSize,
+      });
+    } catch (e) {
+      console.warn('QR code embed failed:', e);
     }
-    
-    page.drawText(cleanSingleLine(item.jumlahVolume || '-'), { x: 325, y: curY - textOffsetY, size: f2FontSize, font: fontRegular });
-    page.drawText(formatRupiah(item.total), { x: 395, y: curY - textOffsetY, size: f2FontSize, font: fontBold });
-    
-    for (let kLine = 0; kLine < ketWrapped.length; kLine++) {
-      page.drawText(ketWrapped[kLine], { x: 475, y: curY - textOffsetY - (kLine * f2LineSpacing), size: Math.max(5.5, f2FontSize * 0.95), font: fontRegular });
-    }
-    
-    curY -= rowHeight;
   }
-  
-  // Total Row
+
+  // Voucher Code Box (Framed Box with mono font)
+  const codeBoxW = 135;
+  const codeBoxH = 24;
+  const codeBoxX = qrX - codeBoxW - 10;
+  const codeBoxY = headerTopY - 20;
+
   page.drawRectangle({
-    x: 40,
-    y: curY - 25,
-    width: 515,
-    height: 25,
-    color: rgb(0.95, 0.95, 0.95),
-    borderColor: rgb(0,0,0),
-    borderWidth: 1.5,
+    x: codeBoxX,
+    y: codeBoxY,
+    width: codeBoxW,
+    height: codeBoxH,
+    borderColor: rgb(0, 0, 0),
+    borderWidth: 1.2,
+    color: rgb(248 / 255, 250 / 255, 252 / 255),
   });
-  page.drawLine({ start: { x: 390, y: curY }, end: { x: 390, y: curY - 25 }, thickness: 1.5 });
-  page.drawText('TOTAL PENYERAHAN', { x: 150, y: curY - 17, size: 9, font: fontBold });
-  page.drawText(formatRupiah(grandTotal), { x: 395, y: curY - 17, size: 9, font: fontBold });
-  
-  // Explicitly ensure outer vertical boundaries (especially right closure line) are solid
-  page.drawLine({ start: { x: 555, y: 600 }, end: { x: 555, y: curY - 25 }, thickness: 1.5 });
-  page.drawLine({ start: { x: 40, y: 600 }, end: { x: 40, y: curY - 25 }, thickness: 1.5 });
 
-  curY -= 25;
-  
-  // Signatures
-  const f2SigGap = scaleF2 < 0.75 ? 65 : (items.length <= 4 ? 90 : 80);
-  const sigY = curY - f2SigGap;
+  const kodeText = cleanSingleLine(submission.kode || '-');
+  const kodeW = fontMonoBold.widthOfTextAtSize(kodeText, 10);
+  page.drawText(kodeText, {
+    x: codeBoxX + (codeBoxW - kodeW) / 2,
+    y: codeBoxY + 7,
+    size: 10,
+    font: fontMonoBold,
+    color: rgb(0, 0, 0),
+  });
 
+  // Date under Code Box
+  const tglText = `Tanggal : ${cleanSingleLine(formatDateIndonesian(submission.tanggal))}`;
+  const tglW = fontRegular.widthOfTextAtSize(tglText, 8.5);
+  page.drawText(tglText, {
+    x: codeBoxX + codeBoxW - tglW,
+    y: codeBoxY - 14,
+    size: 8.5,
+    font: fontRegular,
+    color: rgb(0, 0, 0),
+  });
+
+  // ================= 2. DOCUMENT TITLE BLOCK =================
+  const titleBoxY = 726;
+  const titleBoxH = 26;
+
+  page.drawRectangle({
+    x: margin,
+    y: titleBoxY,
+    width: contentWidth,
+    height: titleBoxH,
+    borderColor: rgb(0, 0, 0),
+    borderWidth: 2.0,
+    color: rgb(217 / 255, 217 / 255, 217 / 255), // #D9D9D9 matching App UI
+  });
+
+  const titleText = 'FORMULIR PENGAJUAN DANA';
+  const titleW = fontBold.widthOfTextAtSize(titleText, 11);
+  page.drawText(titleText, {
+    x: margin + (contentWidth - titleW) / 2,
+    y: titleBoxY + 8,
+    size: 11,
+    font: fontBold,
+    color: rgb(0, 0, 0),
+  });
+
+  // ================= 3. METADATA FIELDS BOX =================
+  const metaBoxY = 648;
+  const metaBoxH = 68;
+  page.drawRectangle({
+    x: margin,
+    y: metaBoxY,
+    width: contentWidth,
+    height: metaBoxH,
+    borderColor: rgb(0, 0, 0),
+    borderWidth: 1.2,
+    color: rgb(1, 1, 1),
+  });
+
+  let metaY = metaBoxY + metaBoxH - 16;
+  const metaLabelX = margin + 14;
+  const metaColonX = margin + 140;
+  const metaValX = margin + 152;
+  const metaLineH = 14.5;
+
+  // Lokasi
+  page.drawText('Lokasi', { x: metaLabelX, y: metaY, size: 9.0, font: fontBold });
+  page.drawText(':', { x: metaColonX, y: metaY, size: 9.0, font: fontBold });
+  page.drawText(cleanSingleLine(submission.lokasi || 'Jakarta'), { x: metaValX, y: metaY, size: 9.0, font: fontRegular });
+  metaY -= metaLineH;
+
+  // Tanggal
+  page.drawText('Tanggal', { x: metaLabelX, y: metaY, size: 9.0, font: fontBold });
+  page.drawText(':', { x: metaColonX, y: metaY, size: 9.0, font: fontBold });
+  page.drawText(cleanSingleLine(formatDateIndonesian(submission.tanggal)), { x: metaValX, y: metaY, size: 9.0, font: fontRegular });
+  metaY -= metaLineH;
+
+  // Jenis Pengajuan
+  page.drawText('Jenis Pengajuan', { x: metaLabelX, y: metaY, size: 9.0, font: fontBold });
+  page.drawText(':', { x: metaColonX, y: metaY, size: 9.0, font: fontBold });
+  page.drawText(cleanSingleLine(submission.jenisPengajuan || '-'), { x: metaValX, y: metaY, size: 9.0, font: fontRegular });
+  metaY -= metaLineH;
+
+  // Kode
+  page.drawText('Kode', { x: metaLabelX, y: metaY, size: 9.0, font: fontBold });
+  page.drawText(':', { x: metaColonX, y: metaY, size: 9.0, font: fontBold });
+  page.drawText(cleanSingleLine(submission.kode || '-'), { x: metaValX, y: metaY, size: 9.0, font: fontMonoBold });
+
+  // ================= 4. TABLE ITEMS (5 COLUMNS) =================
+  // Column widths matching PrintDocument.tsx proportions (5%, 41%, 8%, 24%, 22%):
+  const colWNo = 26;
+  const colWDesc = 211;
+  const colWVol = 41;
+  const colWTotal = 124;
+  const colWKet = contentWidth - (colWNo + colWDesc + colWVol + colWTotal); // 113.27pt
+
+  const colX0 = margin;
+  const colX1 = colX0 + colWNo;
+  const colX2 = colX1 + colWDesc;
+  const colX3 = colX2 + colWVol;
+  const colX4 = colX3 + colWTotal;
+
+  const tableTopY = metaBoxY - 12;
+  const tableHeaderH = 24;
+
+  // Table header background (shaded #D9D9D9/30 -> rgb(238, 238, 238))
+  page.drawRectangle({
+    x: margin,
+    y: tableTopY - tableHeaderH,
+    width: contentWidth,
+    height: tableHeaderH,
+    color: rgb(238 / 255, 238 / 255, 238 / 255),
+    borderColor: rgb(0, 0, 0),
+    borderWidth: 2.0,
+  });
+
+  // Vertical dividers in header
+  page.drawLine({ start: { x: colX1, y: tableTopY }, end: { x: colX1, y: tableTopY - tableHeaderH }, thickness: 1.2, color: rgb(0, 0, 0) });
+  page.drawLine({ start: { x: colX2, y: tableTopY }, end: { x: colX2, y: tableTopY - tableHeaderH }, thickness: 1.2, color: rgb(0, 0, 0) });
+  page.drawLine({ start: { x: colX3, y: tableTopY }, end: { x: colX3, y: tableTopY - tableHeaderH }, thickness: 1.2, color: rgb(0, 0, 0) });
+  page.drawLine({ start: { x: colX4, y: tableTopY }, end: { x: colX4, y: tableTopY - tableHeaderH }, thickness: 1.2, color: rgb(0, 0, 0) });
+
+  // Header Titles
+  const noHdrTxt = 'NO';
+  const noHdrW = fontBold.widthOfTextAtSize(noHdrTxt, 8.5);
+  page.drawText(noHdrTxt, { x: colX0 + (colWNo - noHdrW) / 2, y: tableTopY - 16, size: 8.5, font: fontBold });
+
+  page.drawText('ITEM DETIL (INVOICE / DESKRIPSI)', { x: colX1 + 8, y: tableTopY - 16, size: 8.0, font: fontBold });
+
+  const volHdrTxt = 'VOL';
+  const volHdrW = fontBold.widthOfTextAtSize(volHdrTxt, 8.5);
+  page.drawText(volHdrTxt, { x: colX2 + (colWVol - volHdrW) / 2, y: tableTopY - 16, size: 8.5, font: fontBold });
+
+  const totHdrTxt = 'TOTAL (RP)';
+  const totHdrW = fontBold.widthOfTextAtSize(totHdrTxt, 8.0);
+  page.drawText(totHdrTxt, { x: colX3 + (colWTotal - totHdrW) / 2, y: tableTopY - 16, size: 8.0, font: fontBold });
+
+  page.drawText('KETERANGAN', { x: colX4 + 8, y: tableTopY - 16, size: 8.0, font: fontBold });
+
+  // Rows Calculation & Dynamic Scaling
+  let curTableY = tableTopY - tableHeaderH;
+  const items = submission.items || [];
+  const maxTableContentHeight = 270;
+
+  const rawRows = items.map((it: any) => {
+    const displayTitle = formatDisplayItemTitle(cleanSingleLine(it.item || '-'));
+    const descWrapped = wrapText(displayTitle, colWDesc - 16, fontBold, 8.0);
+    const ketWrapped = wrapText(cleanSingleLine(it.keterangan || '-'), colWKet - 16, fontRegular, 7.5);
+    const linesNeeded = Math.max(descWrapped.length, ketWrapped.length, 1);
+    const minH = items.length <= 3 ? 34 : items.length <= 6 ? 24 : 18;
+    const rawH = Math.max(minH, linesNeeded * 11 + 10);
+    return { descWrapped, ketWrapped, rawH, it };
+  });
+
+  const totalRawH = rawRows.reduce((sum: number, r: any) => sum + r.rawH, 0);
+  const scale = totalRawH > maxTableContentHeight
+    ? Math.max(0.52, maxTableContentHeight / totalRawH)
+    : 1.0;
+  const fontSize = Math.max(6.5, 8.0 * scale);
+  const lineSpacing = Math.max(7.8, 11 * scale);
+
+  for (let i = 0; i < rawRows.length; i++) {
+    const { descWrapped, ketWrapped, rawH, it } = rawRows[i];
+    const rowH = Math.max(16, rawH * scale);
+
+    // Row Background (white)
+    page.drawRectangle({
+      x: margin,
+      y: curTableY - rowH,
+      width: contentWidth,
+      height: rowH,
+      color: rgb(1, 1, 1),
+    });
+
+    // Horizontal Row Border
+    page.drawLine({
+      start: { x: margin, y: curTableY - rowH },
+      end: { x: margin + contentWidth, y: curTableY - rowH },
+      thickness: 1.0,
+      color: rgb(0, 0, 0),
+    });
+
+    // Vertical Column Dividers
+    page.drawLine({ start: { x: colX1, y: curTableY }, end: { x: colX1, y: curTableY - rowH }, thickness: 1.0, color: rgb(0, 0, 0) });
+    page.drawLine({ start: { x: colX2, y: curTableY }, end: { x: colX2, y: curTableY - rowH }, thickness: 1.0, color: rgb(0, 0, 0) });
+    page.drawLine({ start: { x: colX3, y: curTableY }, end: { x: colX3, y: curTableY - rowH }, thickness: 1.0, color: rgb(0, 0, 0) });
+    page.drawLine({ start: { x: colX4, y: curTableY }, end: { x: colX4, y: curTableY - rowH }, thickness: 1.0, color: rgb(0, 0, 0) });
+
+    const textOffsetY = scale < 0.75 ? 10 : (items.length <= 3 ? 17 : 13);
+
+    // Col 1: NO
+    const noTxt = String(i + 1);
+    const noW = fontMono.widthOfTextAtSize(noTxt, fontSize);
+    page.drawText(noTxt, {
+      x: colX0 + (colWNo - noW) / 2,
+      y: curTableY - textOffsetY,
+      size: fontSize,
+      font: fontMono,
+      color: rgb(0, 0, 0),
+    });
+
+    // Col 2: Item Description
+    for (let l = 0; l < descWrapped.length; l++) {
+      page.drawText(descWrapped[l], {
+        x: colX1 + 8,
+        y: curTableY - textOffsetY - l * lineSpacing,
+        size: fontSize,
+        font: fontBold,
+        color: rgb(0, 0, 0),
+      });
+    }
+
+    // Col 3: Volume
+    const volTxt = cleanSingleLine(it.jumlahVolume || '-');
+    const volW = fontRegular.widthOfTextAtSize(volTxt, fontSize);
+    page.drawText(volTxt, {
+      x: colX2 + (colWVol - volW) / 2,
+      y: curTableY - textOffsetY,
+      size: fontSize,
+      font: fontRegular,
+      color: rgb(0, 0, 0),
+    });
+
+    // Col 4: Total (Rp)
+    const valTxt = formatRupiah(it.total || 0);
+    const valW = fontMonoBold.widthOfTextAtSize(valTxt, fontSize);
+    page.drawText(valTxt, {
+      x: colX4 - valW - 8,
+      y: curTableY - textOffsetY,
+      size: fontSize,
+      font: fontMonoBold,
+      color: rgb(0, 0, 0),
+    });
+
+    // Col 5: Keterangan
+    for (let k = 0; k < ketWrapped.length; k++) {
+      page.drawText(ketWrapped[k], {
+        x: colX4 + 8,
+        y: curTableY - textOffsetY - k * lineSpacing,
+        size: Math.max(5.8, fontSize * 0.92),
+        font: fontOblique,
+        color: rgb(75 / 255, 85 / 255, 99 / 255),
+      });
+    }
+
+    curTableY -= rowH;
+  }
+
+  // Total Row
+  const totalRowH = 24;
+  // Cols 1-3 background
+  page.drawRectangle({
+    x: margin,
+    y: curTableY - totalRowH,
+    width: colX3 - margin,
+    height: totalRowH,
+    color: rgb(245 / 255, 245 / 255, 244 / 255),
+  });
+  // Col 4 background (total highlight)
+  page.drawRectangle({
+    x: colX3,
+    y: curTableY - totalRowH,
+    width: colWTotal,
+    height: totalRowH,
+    color: rgb(254 / 255, 243 / 255, 199 / 255), // warm amber-50 tint
+  });
+  // Col 5 background
+  page.drawRectangle({
+    x: colX4,
+    y: curTableY - totalRowH,
+    width: colWKet,
+    height: totalRowH,
+    color: rgb(245 / 255, 245 / 255, 244 / 255),
+  });
+
+  // Top & bottom line of Total Row
+  page.drawLine({ start: { x: margin, y: curTableY }, end: { x: margin + contentWidth, y: curTableY }, thickness: 2.0, color: rgb(0, 0, 0) });
+  page.drawLine({ start: { x: margin, y: curTableY - totalRowH }, end: { x: margin + contentWidth, y: curTableY - totalRowH }, thickness: 2.0, color: rgb(0, 0, 0) });
+
+  // Dividers in Total Row
+  page.drawLine({ start: { x: colX3, y: curTableY }, end: { x: colX3, y: curTableY - totalRowH }, thickness: 1.5, color: rgb(0, 0, 0) });
+  page.drawLine({ start: { x: colX4, y: curTableY }, end: { x: colX4, y: curTableY - totalRowH }, thickness: 1.5, color: rgb(0, 0, 0) });
+
+  // Total Label
+  const totLabel = 'TOTAL PENYERAHAN';
+  const totLabelW = fontBold.widthOfTextAtSize(totLabel, 8.5);
+  page.drawText(totLabel, {
+    x: margin + (colX3 - margin - totLabelW) / 2,
+    y: curTableY - 16,
+    size: 8.5,
+    font: fontBold,
+    color: rgb(0, 0, 0),
+  });
+
+  // Total Amount
+  const grandTotTxt = formatRupiah(grandTotal);
+  const grandTotW = fontMonoBold.widthOfTextAtSize(grandTotTxt, 9.5);
+  page.drawText(grandTotTxt, {
+    x: colX4 - grandTotW - 8,
+    y: curTableY - 16,
+    size: 9.5,
+    font: fontMonoBold,
+    color: rgb(0, 0, 0),
+  });
+
+  // Full Crisp Outer Border Rectangle
+  const fullTableH = tableTopY - (curTableY - totalRowH);
+  page.drawRectangle({
+    x: margin,
+    y: curTableY - totalRowH,
+    width: contentWidth,
+    height: fullTableH,
+    borderColor: rgb(0, 0, 0),
+    borderWidth: 2.0,
+  });
+
+  curTableY -= totalRowH;
+
+  // ================= 5. SIGNATURES BLOCK (TABLE STYLE MATCHING F2SignaturesBlock) =================
   let f2Signers = customSigners;
   if (!f2Signers && typeof window !== 'undefined' && window.localStorage) {
     try {
       const saved = localStorage.getItem('nmsa_custom_f2_signers_config');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length >= 1) {
-          f2Signers = parsed;
-        }
+        if (Array.isArray(parsed) && parsed.length >= 1) f2Signers = parsed;
       }
     } catch (_) {}
   }
@@ -572,47 +1263,221 @@ export async function generateF2PdfBytes(
   const s2Name = cleanSingleLine(f2Signers?.[1]?.name || submission.diajukanOleh || 'Sri Ekowati');
   const s2Role = cleanSingleLine(f2Signers?.[1]?.role || submission.diajukanJabatan || 'Manager Keuangan');
 
-  if (!showApproved) {
-    // 1 signer centered
-    const centerBoxW = 160;
-    const centerX = 40 + (515 - centerBoxW) / 2;
-    const titleW = fontRegular.widthOfTextAtSize(s1Title, 10);
-    page.drawText(s1Title, { x: centerX + (centerBoxW - titleW) / 2, y: curY - 25, size: 10, font: fontRegular });
-    const nameW = fontBold.widthOfTextAtSize(s1Name, 10);
-    page.drawText(s1Name, { x: centerX + (centerBoxW - nameW) / 2, y: sigY, size: 10, font: fontBold });
-    page.drawLine({ start: { x: centerX, y: sigY - 2 }, end: { x: centerX + centerBoxW, y: sigY - 2 }, thickness: 1 });
-    const roleW = fontRegular.widthOfTextAtSize(s1Role, 8);
-    page.drawText(s1Role, { x: centerX + (centerBoxW - roleW) / 2, y: sigY - 14, size: 8, font: fontRegular });
+  const sigTopY = curTableY - (scale < 0.75 ? 12 : 18);
+  const sigTableW = Math.min(380, contentWidth - 40);
+  const sigTableX = margin + (contentWidth - sigTableW) / 2;
+  const sigHdrH = 20;
+  const sigSpaceH = 46;
+  const sigFooterH = 34;
+  const sigTotalH = sigHdrH + sigSpaceH + sigFooterH;
+
+  const isDualSigners = showApproved && submission.f2ApprovedBy !== 'none';
+
+  if (!isDualSigners) {
+    // 1 Signer Centered Box
+    const singleW = 200;
+    const singleX = margin + (contentWidth - singleW) / 2;
+
+    // Outer table border
+    page.drawRectangle({
+      x: singleX,
+      y: sigTopY - sigTotalH,
+      width: singleW,
+      height: sigTotalH,
+      borderColor: rgb(0, 0, 0),
+      borderWidth: 1.5,
+      color: rgb(1, 1, 1),
+    });
+
+    // Header divider
+    page.drawLine({
+      start: { x: singleX, y: sigTopY - sigHdrH },
+      end: { x: singleX + singleW, y: sigTopY - sigHdrH },
+      thickness: 1.2,
+      color: rgb(0, 0, 0),
+    });
+
+    // Space divider
+    page.drawLine({
+      start: { x: singleX, y: sigTopY - sigHdrH - sigSpaceH },
+      end: { x: singleX + singleW, y: sigTopY - sigHdrH - sigSpaceH },
+      thickness: 1.0,
+      color: rgb(0, 0, 0),
+    });
+
+    // Title
+    const titleW = fontBold.widthOfTextAtSize(s1Title, 8.5);
+    page.drawText(s1Title, {
+      x: singleX + (singleW - titleW) / 2,
+      y: sigTopY - 14,
+      size: 8.5,
+      font: fontBold,
+    });
+
+    // Name
+    const nameW = fontBold.widthOfTextAtSize(s1Name, 9.0);
+    page.drawText(s1Name, {
+      x: singleX + (singleW - nameW) / 2,
+      y: sigTopY - sigHdrH - sigSpaceH - 12,
+      size: 9.0,
+      font: fontBold,
+    });
+
+    // Thin underline
+    page.drawLine({
+      start: { x: singleX + 25, y: sigTopY - sigHdrH - sigSpaceH - 15 },
+      end: { x: singleX + singleW - 25, y: sigTopY - sigHdrH - sigSpaceH - 15 },
+      thickness: 0.8,
+      color: rgb(0, 0, 0),
+    });
+
+    // Role
+    const roleW = fontRegular.widthOfTextAtSize(s1Role, 7.5);
+    page.drawText(s1Role, {
+      x: singleX + (singleW - roleW) / 2,
+      y: sigTopY - sigHdrH - sigSpaceH - 25,
+      size: 7.5,
+      font: fontRegular,
+    });
+
+    curTableY = sigTopY - sigTotalH - 12;
   } else {
-    // 2 signers: Dibuat Oleh (left) and Diajukan (right)
-    page.drawText(s1Title, { x: 90, y: curY - 25, size: 10, font: fontRegular });
-    page.drawText(s1Name, { x: 70, y: sigY, size: 10, font: fontBold });
-    page.drawLine({ start: { x: 60, y: sigY - 2 }, end: { x: 200, y: sigY - 2 }, thickness: 1 });
-    page.drawText(s1Role, { x: 90, y: sigY - 14, size: 8, font: fontRegular });
-    
-    page.drawText(s2Title, { x: 410, y: curY - 25, size: 10, font: fontRegular });
-    page.drawText(s2Name, { x: 375, y: sigY, size: 10, font: fontBold });
-    page.drawLine({ start: { x: 370, y: sigY - 2 }, end: { x: 500, y: sigY - 2 }, thickness: 1 });
-    page.drawText(s2Role, { x: 405, y: sigY - 14, size: 8, font: fontRegular });
+    // 2 Signers Table (Dibuat Oleh & Diajukan)
+    const colHalfW = sigTableW / 2;
+
+    // Outer table border
+    page.drawRectangle({
+      x: sigTableX,
+      y: sigTopY - sigTotalH,
+      width: sigTableW,
+      height: sigTotalH,
+      borderColor: rgb(0, 0, 0),
+      borderWidth: 1.5,
+      color: rgb(1, 1, 1),
+    });
+
+    // Vertical center divider
+    page.drawLine({
+      start: { x: sigTableX + colHalfW, y: sigTopY },
+      end: { x: sigTableX + colHalfW, y: sigTopY - sigTotalH },
+      thickness: 1.2,
+      color: rgb(0, 0, 0),
+    });
+
+    // Header horizontal line
+    page.drawLine({
+      start: { x: sigTableX, y: sigTopY - sigHdrH },
+      end: { x: sigTableX + sigTableW, y: sigTopY - sigHdrH },
+      thickness: 1.2,
+      color: rgb(0, 0, 0),
+    });
+
+    // Space horizontal line
+    page.drawLine({
+      start: { x: sigTableX, y: sigTopY - sigHdrH - sigSpaceH },
+      end: { x: sigTableX + sigTableW, y: sigTopY - sigHdrH - sigSpaceH },
+      thickness: 1.0,
+      color: rgb(0, 0, 0),
+    });
+
+    // --- Signer 1 (Left Col) ---
+    const t1W = fontBold.widthOfTextAtSize(s1Title, 8.5);
+    page.drawText(s1Title, {
+      x: sigTableX + (colHalfW - t1W) / 2,
+      y: sigTopY - 14,
+      size: 8.5,
+      font: fontBold,
+    });
+
+    const n1W = fontBold.widthOfTextAtSize(s1Name, 9.0);
+    page.drawText(s1Name, {
+      x: sigTableX + (colHalfW - n1W) / 2,
+      y: sigTopY - sigHdrH - sigSpaceH - 12,
+      size: 9.0,
+      font: fontBold,
+    });
+
+    page.drawLine({
+      start: { x: sigTableX + 25, y: sigTopY - sigHdrH - sigSpaceH - 15 },
+      end: { x: sigTableX + colHalfW - 25, y: sigTopY - sigHdrH - sigSpaceH - 15 },
+      thickness: 0.8,
+      color: rgb(0, 0, 0),
+    });
+
+    const r1W = fontRegular.widthOfTextAtSize(s1Role, 7.5);
+    page.drawText(s1Role, {
+      x: sigTableX + (colHalfW - r1W) / 2,
+      y: sigTopY - sigHdrH - sigSpaceH - 25,
+      size: 7.5,
+      font: fontRegular,
+    });
+
+    // --- Signer 2 (Right Col) ---
+    const t2W = fontBold.widthOfTextAtSize(s2Title, 8.5);
+    page.drawText(s2Title, {
+      x: sigTableX + colHalfW + (colHalfW - t2W) / 2,
+      y: sigTopY - 14,
+      size: 8.5,
+      font: fontBold,
+    });
+
+    const n2W = fontBold.widthOfTextAtSize(s2Name, 9.0);
+    page.drawText(s2Name, {
+      x: sigTableX + colHalfW + (colHalfW - n2W) / 2,
+      y: sigTopY - sigHdrH - sigSpaceH - 12,
+      size: 9.0,
+      font: fontBold,
+    });
+
+    page.drawLine({
+      start: { x: sigTableX + colHalfW + 25, y: sigTopY - sigHdrH - sigSpaceH - 15 },
+      end: { x: sigTableX + sigTableW - 25, y: sigTopY - sigHdrH - sigSpaceH - 15 },
+      thickness: 0.8,
+      color: rgb(0, 0, 0),
+    });
+
+    const r2W = fontRegular.widthOfTextAtSize(s2Role, 7.5);
+    page.drawText(s2Role, {
+      x: sigTableX + colHalfW + (colHalfW - r2W) / 2,
+      y: sigTopY - sigHdrH - sigSpaceH - 25,
+      size: 7.5,
+      font: fontRegular,
+    });
+
+    curTableY = sigTopY - sigTotalH - 12;
   }
-  
-  // Notes block
-  const f2NoteY = sigY - (scaleF2 < 0.75 ? 40 : 50);
-  const f2NoteH = scaleF2 < 0.75 ? 35 : (items.length <= 4 ? 50 : 42);
-  page.drawText('NOTE :', { x: 40, y: f2NoteY, size: 9, font: fontBold });
-  page.drawRectangle({
-    x: 40,
-    y: f2NoteY - f2NoteH,
-    width: 515,
-    height: f2NoteH,
-    borderColor: rgb(0,0,0),
-    borderWidth: 1,
-  });
-  const wrappedNotes = wrapText(submission.notes || 'Tidak ada catatan tambahan.', 550, fontRegular, 8);
-  for (let nLine = 0; nLine < Math.min(wrappedNotes.length, 3); nLine++) {
-    page.drawText(wrappedNotes[nLine], { x: 45, y: curY - 14 - (nLine * 11), size: 8, font: fontRegular });
+
+  // ================= 6. NOTES BLOCK =================
+  if (submission.notes && submission.notes.trim() !== '') {
+    const noteTopY = curTableY;
+    page.drawText('NOTE :', {
+      x: margin,
+      y: noteTopY,
+      size: 8.0,
+      font: fontBold,
+      color: rgb(0, 0, 0),
+    });
+
+    const noteBoxY = noteTopY - 26;
+    page.drawRectangle({
+      x: margin,
+      y: noteBoxY,
+      width: contentWidth,
+      height: 22,
+      borderColor: rgb(0, 0, 0),
+      borderWidth: 1.0,
+      color: rgb(250 / 255, 250 / 255, 249 / 255),
+    });
+
+    page.drawText(cleanSingleLine(submission.notes), {
+      x: margin + 8,
+      y: noteBoxY + 6,
+      size: 7.5,
+      font: fontRegular,
+      color: rgb(40 / 255, 40 / 255, 40 / 255),
+    });
   }
-  
+
   return await pdfDoc.save();
 }
 

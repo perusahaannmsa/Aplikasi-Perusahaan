@@ -346,13 +346,15 @@ export async function generateMemoPdfBlobFromElement(element: HTMLElement): Prom
         cleanStyle.textContent = `
           * { box-sizing: border-box !important; }
           body, html { margin: 0; padding: 0; background: #ffffff !important; color: #000000 !important; font-family: Calibri, 'Segoe UI', Arial, sans-serif !important; }
-          table { border-collapse: collapse !important; width: 100% !important; }
+          table { border-collapse: collapse !important; border-spacing: 0 !important; width: 100% !important; }
           .bg-white { background-color: #ffffff !important; }
           .text-black { color: #000000 !important; }
           .border-black { border-color: #000000 !important; }
           .border { border-width: 1px !important; border-style: solid !important; }
-          .border-b { border-bottom-width: 1px !important; border-bottom-style: solid !important; }
-          .border-r { border-right-width: 1px !important; border-right-style: solid !important; }
+          .border-\\[1\\.5px\\] { border-width: 1.5px !important; border-style: solid !important; border-color: #000000 !important; }
+          .border-\\[2px\\] { border-width: 2px !important; border-style: solid !important; border-color: #000000 !important; }
+          .border-b { border-bottom-width: 1px !important; border-bottom-style: solid !important; border-bottom-color: #000000 !important; }
+          .border-r { border-right-width: 1px !important; border-right-style: solid !important; border-right-color: #000000 !important; }
           .flex { display: flex !important; }
           .flex-col { flex-direction: column !important; }
           .justify-between { justify-content: space-between !important; }
@@ -362,11 +364,18 @@ export async function generateMemoPdfBlobFromElement(element: HTMLElement): Prom
           .grid { display: grid !important; }
           .grid-cols-12 { grid-template-columns: repeat(12, minmax(0, 1fr)) !important; }
           .col-span-4 { grid-column: span 4 / span 4 !important; }
+          .col-span-8 { grid-column: span 8 / span 8 !important; }
+          .grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+          .gap-4 { gap: 1rem !important; }
+          .gap-8 { gap: 2rem !important; }
+          .h-20 { height: 5rem !important; }
+          .h-24 { height: 6rem !important; }
           .w-full { width: 100% !important; }
           .text-center { text-align: center !important; }
-          .text-justify { text-align: justify !important; }
+          .text-justify { text-align: justify !important; text-justify: inter-word !important; }
           .font-bold { font-weight: bold !important; }
           .font-semibold { font-weight: 600 !important; }
+          .font-normal { font-weight: normal !important; }
           .uppercase { text-transform: uppercase !important; }
           .underline { text-decoration: underline !important; }
           .underline-offset-4 { text-underline-offset: 4px !important; }
@@ -381,13 +390,16 @@ export async function generateMemoPdfBlobFromElement(element: HTMLElement): Prom
           .mb-4 { margin-bottom: 1rem !important; }
           .mt-14 { margin-top: 3.5rem !important; }
           .ml-10 { margin-left: 2.5rem !important; }
+          .sm\\:ml-20 { margin-left: 5rem !important; }
           .space-y-1\\.5 > * + * { margin-top: 0.375rem !important; }
           .w-36 { width: 9rem !important; }
           .w-6 { width: 1.5rem !important; }
           .leading-\\[1\\.15\\] { line-height: 1.15 !important; }
+          .text-\\[10\\.5pt\\] { font-size: 10.5pt !important; }
           .text-\\[11pt\\] { font-size: 11pt !important; }
           .text-\\[13pt\\] { font-size: 13pt !important; }
           .tracking-wider { letter-spacing: 0.05em !important; }
+          .tracking-wide { letter-spacing: 0.025em !important; }
           img { max-width: 100% !important; height: auto !important; display: block !important; }
         `;
         clonedDoc.head.appendChild(cleanStyle);
@@ -469,26 +481,6 @@ function generateDirectVectorMemoPdfBlob(element: HTMLElement): Blob {
   const margin = 20;
   const contentWidth = pageWidth - margin * 2;
   let yPos = 20;
-
-  // Kop Surat fallback text header
-  pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(14);
-  pdf.setTextColor(0, 0, 0);
-  pdf.text('PT. NUSANTARA MINERAL SUKSES ABADI', pageWidth / 2, yPos, { align: 'center' });
-  yPos += 7;
-
-  pdf.setFont('helvetica', 'normal');
-  pdf.setFontSize(9);
-  pdf.text('Mining & General Contractor - Batubara & Mineral', pageWidth / 2, yPos, { align: 'center' });
-  yPos += 5;
-
-  pdf.setLineWidth(0.8);
-  pdf.setDrawColor(0, 0, 0);
-  pdf.line(margin, yPos, pageWidth - margin, yPos);
-  yPos += 1.2;
-  pdf.setLineWidth(0.3);
-  pdf.line(margin, yPos, pageWidth - margin, yPos);
-  yPos += 10;
 
   // Extract text content from the element
   const titleElem = element.querySelector('h2');
@@ -573,7 +565,7 @@ export async function generateInternalMemoPdfBlob(
     }
   }
 
-  // Direct High-Fidelity Vector PDF Generation using jsPDF
+  // Direct High-Fidelity Vector PDF Generation using jsPDF matching InternalMemoDocument.tsx
   const { jsPDF } = await import('jspdf');
   const pdf = new jsPDF({
     orientation: 'portrait',
@@ -584,107 +576,122 @@ export async function generateInternalMemoPdfBlob(
   const pageWidth = pdf.internal.pageSize.getWidth(); // 210mm
   const pageHeight = pdf.internal.pageSize.getHeight(); // 297mm
   const margin = 20;
-  const contentWidth = pageWidth - margin * 2;
-  let yPos = 16;
+  const contentWidth = pageWidth - margin * 2; // 170mm
+  let yPos = 14;
 
-  // 1. Try drawing official Kop Surat banner image
-  let drewImageHeader = false;
-  try {
-    const imgDataUrl = await getKopSuratImageDataUrl();
-    if (imgDataUrl) {
-      // Banner dimensions: width 170mm, aspect ratio approx 170 x 28 mm
-      const imgWidth = contentWidth;
-      const imgHeight = 28;
-      pdf.addImage(imgDataUrl, 'PNG', margin, yPos, imgWidth, imgHeight);
-      yPos += imgHeight + 6;
-      drewImageHeader = true;
+  const isKopSuratEnabled = memo.showKopSurat !== false;
+
+  if (isKopSuratEnabled) {
+    // 1. Draw official Kop Surat banner image with exact aspect ratio (1002 x 216 -> 4.6389)
+    let drewImageHeader = false;
+    try {
+      const imgDataUrl = await getKopSuratImageDataUrl();
+      if (imgDataUrl) {
+        const imgWidth = contentWidth; // 170mm
+        const imgHeight = Math.round((contentWidth / 4.6389) * 10) / 10; // ~ 36.6mm
+        pdf.addImage(imgDataUrl, 'PNG', margin, yPos, imgWidth, imgHeight);
+        yPos += imgHeight + 6;
+        drewImageHeader = true;
+      }
+    } catch (imgErr) {
+      console.warn('Could not render kop surat image, using vector typography header:', imgErr);
     }
-  } catch (imgErr) {
-    console.warn('Could not render kop surat image, using vector typography header:', imgErr);
+
+    if (!drewImageHeader) {
+      // Official typography letterhead fallback
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(14.5);
+      pdf.setTextColor(0, 0, 0);
+      pdf.text('PT. NUSANTARA MINERAL SUKSES ABADI', pageWidth / 2, yPos + 6, { align: 'center' });
+      yPos += 12;
+
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(8.5);
+      pdf.text('MINING & GENERAL CONTRACTOR - BATUBARA & MINERAL', pageWidth / 2, yPos, { align: 'center' });
+      yPos += 5;
+
+      // Double rule line
+      pdf.setLineWidth(0.8);
+      pdf.setDrawColor(0, 0, 0);
+      pdf.line(margin, yPos, pageWidth - margin, yPos);
+      yPos += 1.2;
+      pdf.setLineWidth(0.3);
+      pdf.line(margin, yPos, pageWidth - margin, yPos);
+      yPos += 7;
+    }
+  } else {
+    // Mode Tanpa Kop Surat: Sisakan ruang atas ~30mm untuk dicetak pada kertas berkop fisik
+    yPos = 38;
   }
 
-  if (!drewImageHeader) {
-    // Official typography letterhead fallback
-    pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(15);
-    pdf.setTextColor(0, 0, 0);
-    pdf.text('PT. NUSANTARA MINERAL SUKSES ABADI', pageWidth / 2, yPos, { align: 'center' });
-    yPos += 6;
-
-    pdf.setFont('helvetica', 'normal');
-    pdf.setFontSize(9);
-    pdf.text('Mining & General Contractor - Batubara & Mineral', pageWidth / 2, yPos, { align: 'center' });
-    yPos += 5;
-
-    // Double rule line
-    pdf.setLineWidth(0.8);
-    pdf.setDrawColor(0, 0, 0);
-    pdf.line(margin, yPos, pageWidth - margin, yPos);
-    yPos += 1.2;
-    pdf.setLineWidth(0.3);
-    pdf.line(margin, yPos, pageWidth - margin, yPos);
-    yPos += 8;
-  }
-
-  // 2. Title & Nomor Memo
+  // 2. Title & Nomor Memo (Spasi Renggang Sesuai Word)
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(13);
+  pdf.setTextColor(0, 0, 0);
   pdf.text('INTERNAL MEMO', pageWidth / 2, yPos, { align: 'center' });
   const titleWidth = pdf.getTextWidth('INTERNAL MEMO');
   pdf.setLineWidth(0.4);
   pdf.line(pageWidth / 2 - titleWidth / 2, yPos + 1.2, pageWidth / 2 + titleWidth / 2, yPos + 1.2);
   yPos += 6.5;
 
+  pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(11);
   pdf.text(`No. : ${memo.nomorMemo || 'IM-NMSA'}`, pageWidth / 2, yPos, { align: 'center' });
-  yPos += 9;
+  yPos += 8;
 
-  // 3. Official recipient & subject table with border
+  // 3. Official recipient & subject table with border (100% Full Width, 1.5px black border)
   const tableData = [
-    { label: 'Hari/taggal', val: memo.hariTanggalDisplay || formatHariTanggalMemo(memo.tanggal) },
-    { label: 'Dari', val: memo.dari || 'H. A. Nursyam Halid – Direktur Utama' },
-    { label: 'Kepada', val: memo.kepada || 'Harijon – Direktur Keuangan' },
-    { label: 'Perihal', val: memo.perihal || 'Pembayaran Operasional' },
+    { label: 'Hari/taggal', val: memo.hariTanggalDisplay || formatHariTanggalMemo(memo.tanggal), isBold: false },
+    { label: 'Dari', val: memo.dari || 'Andi Muhammad Rifki', isBold: false },
+    { label: 'Kepada', val: memo.kepada || 'Harijon', isBold: false },
+    { label: 'Perihal', val: memo.perihal || 'Pembayaran Operasional', isBold: true },
   ];
 
-  const col1W = 32;
+  const col1W = 34;
   const col2W = 6;
-  const col3W = contentWidth - col1W - col2W;
-  const rowHeight = 7.5;
+  const col3W = contentWidth - col1W - col2W; // 130mm
+  const rowHeight = 7.2;
+  const totalTableH = tableData.length * rowHeight;
 
-  pdf.setLineWidth(0.4);
+  pdf.setLineWidth(0.4); // 1.5px border
   pdf.setDrawColor(0, 0, 0);
+
+  // Outer table rectangle
+  pdf.rect(margin, yPos, contentWidth, totalTableH);
+
+  // Vertical dividers
+  pdf.line(margin + col1W, yPos, margin + col1W, yPos + totalTableH);
+  pdf.line(margin + col1W + col2W, yPos, margin + col1W + col2W, yPos + totalTableH);
 
   tableData.forEach((row, idx) => {
     const rowY = yPos + idx * rowHeight;
-    // Row border box
-    pdf.rect(margin, rowY, contentWidth, rowHeight);
-    // Vertical dividers
-    pdf.line(margin + col1W, rowY, margin + col1W, rowY + rowHeight);
-    pdf.line(margin + col1W + col2W, rowY, margin + col1W + col2W, rowY + rowHeight);
+    if (idx > 0) {
+      // Horizontal row separator
+      pdf.line(margin, rowY, margin + contentWidth, rowY);
+    }
 
-    // Text label
+    // Label
     pdf.setFont('helvetica', 'bold');
     pdf.setFontSize(10.5);
-    pdf.text(row.label, margin + 2.5, rowY + 5.2);
+    pdf.text(row.label, margin + 3, rowY + 5.0);
 
     // Colon
-    pdf.text(':', margin + col1W + col2W / 2, rowY + 5.2, { align: 'center' });
+    pdf.text(':', margin + col1W + col2W / 2, rowY + 5.0, { align: 'center' });
 
     // Value
-    pdf.setFont('helvetica', 'normal');
-    pdf.text(row.val, margin + col1W + col2W + 2.5, rowY + 5.2);
+    pdf.setFont('helvetica', row.isBold ? 'bold' : 'normal');
+    pdf.text(row.val, margin + col1W + col2W + 3, rowY + 5.0);
   });
 
-  yPos += tableData.length * rowHeight + 8;
+  yPos += totalTableH + 8;
 
-  // 4. Salutation
+  // 4. Salutation (Dengan Hormat)
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(11);
-  pdf.text((memo as any).salamPembuka || 'Dengan Hormat,', margin, yPos);
+  pdf.text((memo as any).salamPembuka || 'Dengan Hormat', margin, yPos);
   yPos += 6.5;
 
-  // 5. Body Text (Clean up HTML tags to formatted paragraphs)
+  // 5. Body Text (Clean up HTML tags to formatted paragraphs, Justified, 1.15 line spacing)
   const rawBody = memo.isiSurat || '';
   const cleanBody = rawBody
     .replace(/<\/p>/gi, '\n\n')
@@ -707,25 +714,48 @@ export async function generateInternalMemoPdfBlob(
     yPos += splitLines.length * 5.2 + 3;
   });
 
-  yPos += 3;
+  yPos += 2;
 
-  // 6. Bank Details Box (if specified)
-  if (memo.bankName || memo.accountNumber) {
+  // 6. Bank Details Box (Indented, matching Word & App layout)
+  if (memo.includeBankDetails !== false && (memo.bankName || memo.accountNumber)) {
+    const bankIndent = margin + 16;
+    const bCol1 = 32;
+    const bCol2 = 6;
+
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(11);
+
+    // Row 1: Nama Bank
+    pdf.text('Nama Bank', bankIndent, yPos);
     pdf.setFont('helvetica', 'bold');
-    pdf.text(`Bank : ${memo.bankName || '-'}`, margin + 6, yPos);
+    pdf.text(':', bankIndent + bCol1, yPos);
+    pdf.text(memo.bankName || '-', bankIndent + bCol1 + bCol2, yPos);
     yPos += 5.5;
-    pdf.text(`No. Rekening : ${memo.accountNumber || '-'}`, margin + 6, yPos);
+
+    // Row 2: No Rekeing
+    pdf.setFont('helvetica', 'normal');
+    pdf.text('No Rekeing', bankIndent, yPos);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text(':', bankIndent + bCol1, yPos);
+    pdf.text(memo.accountNumber || '-', bankIndent + bCol1 + bCol2, yPos);
     yPos += 5.5;
-    pdf.text(`Atas Nama : ${memo.accountHolder || '-'}`, margin + 6, yPos);
-    yPos += 8;
+
+    // Row 3: Nama Rekening
+    pdf.setFont('helvetica', 'normal');
+    pdf.text('Nama Rekening', bankIndent, yPos);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text(':', bankIndent + bCol1, yPos);
+    pdf.text(memo.accountHolder || '-', bankIndent + bCol1 + bCol2, yPos);
+    yPos += 7.5;
   }
 
-  // 7. Closing note
+  // 7. Closing paragraph
   pdf.setFont('helvetica', 'normal');
-  pdf.text('Demikian disampaikan, atas kerjasamanya diucapkan terima kasih.', margin, yPos);
+  pdf.setFontSize(11);
+  pdf.text(memo.penutup || 'Demikian disampaikan, atas kerjasamanya diucapkan terima kasih.', margin, yPos);
   yPos += 14;
 
-  // 8. Signers Section (1, 2, or 3 signers)
+  // 8. Signatures Section (Matching InternalMemoDocument.tsx 3 signers or 2 signers)
   const isThreeSigners =
     memo.signerCount === 3 ||
     memo.useThirdSigner === true ||
@@ -742,54 +772,75 @@ export async function generateInternalMemoPdfBlob(
   const signer3Jabatan = memo.penandatanganJabatan3 || 'Direktur Utama ANH';
 
   // Ensure signatures stay on page
-  if (yPos > pageHeight - 45) {
-    yPos = pageHeight - 45;
+  if (yPos > pageHeight - 48) {
+    yPos = pageHeight - 48;
   }
 
   if (isThreeSigners) {
-    const colW = contentWidth / 3;
-    const col1X = margin + colW / 2;
-    const col2X = margin + colW + colW / 2;
-    const col3X = margin + colW * 2 + colW / 2;
+    // 3 Signers: Col 1 (Hormat Saya) on left (w: 52mm), Col 2 (Mengetahui dan Menyetujui) on right (w: 112mm)
+    const leftColCenterX = margin + 26;
+    const rightHeaderCenterX = margin + 52 + 56;
+    const subCol1CenterX = margin + 52 + 28;
+    const subCol2CenterX = margin + 52 + 56 + 28;
 
+    // Left Title
     pdf.setFont('helvetica', 'normal');
-    pdf.setFontSize(10.5);
-    pdf.text(memo.salamPenutup || 'Hormat Saya,', col1X, yPos, { align: 'center' });
-    pdf.text(memo.salamPenutup2 || 'Menyetujui,', col2X, yPos, { align: 'center' });
-    pdf.text(memo.salamPenutup3 || 'Menyetujui,', col3X, yPos, { align: 'center' });
+    pdf.setFontSize(11);
+    pdf.text(memo.salamPenutup || 'Hormat Saya', leftColCenterX, yPos, { align: 'center' });
 
-    yPos += 24;
+    // Right Header Title (Shared over signers 2 & 3)
+    pdf.text(memo.approvalHeaderTitle || 'Mengetahui dan Menyetujui', rightHeaderCenterX, yPos, { align: 'center' });
 
+    yPos += 22; // Signature space
+
+    // Signer 1 (Left)
     pdf.setFont('helvetica', 'bold');
-    pdf.text(signer1Nama, col1X, yPos, { align: 'center' });
-    pdf.text(signer2Nama, col2X, yPos, { align: 'center' });
-    pdf.text(signer3Nama, col3X, yPos, { align: 'center' });
+    pdf.text(signer1Nama, leftColCenterX, yPos, { align: 'center' });
+    const s1W = pdf.getTextWidth(signer1Nama);
+    pdf.setLineWidth(0.3);
+    pdf.line(leftColCenterX - s1W / 2, yPos + 0.8, leftColCenterX + s1W / 2, yPos + 0.8);
+
+    // Signer 2 (Subcol 1)
+    pdf.text(signer2Nama, subCol1CenterX, yPos, { align: 'center' });
+    const s2W = pdf.getTextWidth(signer2Nama);
+    pdf.line(subCol1CenterX - s2W / 2, yPos + 0.8, subCol1CenterX + s2W / 2, yPos + 0.8);
+
+    // Signer 3 (Subcol 2)
+    pdf.text(signer3Nama, subCol2CenterX, yPos, { align: 'center' });
+    const s3W = pdf.getTextWidth(signer3Nama);
+    pdf.line(subCol2CenterX - s3W / 2, yPos + 0.8, subCol2CenterX + s3W / 2, yPos + 0.8);
 
     yPos += 4.5;
     pdf.setFont('helvetica', 'normal');
-    pdf.setFontSize(9);
-    pdf.text(signer1Jabatan, col1X, yPos, { align: 'center' });
-    pdf.text(signer2Jabatan, col2X, yPos, { align: 'center' });
-    pdf.text(signer3Jabatan, col3X, yPos, { align: 'center' });
+    pdf.setFontSize(10);
+    pdf.text(signer1Jabatan, leftColCenterX, yPos, { align: 'center' });
+    pdf.text(signer2Jabatan, subCol1CenterX, yPos, { align: 'center' });
+    pdf.text(signer3Jabatan, subCol2CenterX, yPos, { align: 'center' });
   } else {
     // 2 Signers: Left and Right
     const leftX = margin + 30;
     const rightX = pageWidth - margin - 30;
 
     pdf.setFont('helvetica', 'normal');
-    pdf.setFontSize(10.5);
-    pdf.text(memo.salamPenutup || 'Hormat Saya,', leftX, yPos, { align: 'center' });
+    pdf.setFontSize(11);
+    pdf.text(memo.salamPenutup || 'Hormat Saya', leftX, yPos, { align: 'center' });
     pdf.text(memo.salamPenutup2 || 'Menyetujui,', rightX, yPos, { align: 'center' });
 
-    yPos += 24;
+    yPos += 22;
 
     pdf.setFont('helvetica', 'bold');
     pdf.text(signer1Nama, leftX, yPos, { align: 'center' });
+    const s1W = pdf.getTextWidth(signer1Nama);
+    pdf.setLineWidth(0.3);
+    pdf.line(leftX - s1W / 2, yPos + 0.8, leftX + s1W / 2, yPos + 0.8);
+
     pdf.text(signer2Nama, rightX, yPos, { align: 'center' });
+    const s2W = pdf.getTextWidth(signer2Nama);
+    pdf.line(rightX - s2W / 2, yPos + 0.8, rightX + s2W / 2, yPos + 0.8);
 
     yPos += 4.5;
     pdf.setFont('helvetica', 'normal');
-    pdf.setFontSize(9);
+    pdf.setFontSize(10);
     pdf.text(signer1Jabatan, leftX, yPos, { align: 'center' });
     pdf.text(signer2Jabatan, rightX, yPos, { align: 'center' });
   }
