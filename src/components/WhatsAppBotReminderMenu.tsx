@@ -13,9 +13,16 @@ import {
   ExternalLink,
   Bot,
   Zap,
-  Info
+  Info,
+  CalendarX,
+  CalendarCheck,
+  UserCheck,
+  Copy,
+  Sparkles,
+  Check
 } from "lucide-react";
 import { saveAbsenDataToFirestore } from "../firebase";
+import { getDynamicReminderMessage } from "../utils/reminderMessageGenerator";
 
 interface Worker {
   id: string;
@@ -42,6 +49,8 @@ export const WhatsAppBotReminderMenu: React.FC<WhatsAppBotReminderMenuProps> = (
 }) => {
   const [autoReminderHour, setAutoReminderHour] = useState<string>("09:00");
   const [autoReminderEnabled, setAutoReminderEnabled] = useState<boolean>(true);
+  const [skipHolidays, setSkipHolidays] = useState<boolean>(true);
+  const [skipWeekends, setSkipWeekends] = useState<boolean>(true);
   const [requireFridaySignature, setRequireFridaySignature] = useState<boolean>(true);
   const [activeDays, setActiveDays] = useState<string[]>(["Senin", "Selasa", "Rabu", "Kamis", "Jumat"]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -49,6 +58,13 @@ export const WhatsAppBotReminderMenu: React.FC<WhatsAppBotReminderMenuProps> = (
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string>("");
   const [isTriggering, setIsTriggering] = useState<boolean>(false);
   const [triggerResult, setTriggerResult] = useState<{ success: boolean; message: string } | null>(null);
+  
+  // Interactive preview state for rotating greeting messages
+  const [previewWorkerId, setPreviewWorkerId] = useState<string>("");
+  const [previewDayShift, setPreviewDayShift] = useState<number>(0); // 0 = Hari ini, 1 = Besok (+1), 2 = Lusa (+2), 5 = Simulasi Jumat
+  const [previewCopied, setPreviewCopied] = useState<boolean>(false);
+  const [todayHolidayInfo, setTodayHolidayInfo] = useState<{ isHoliday: boolean; reason: string | null } | null>(null);
+
   const [serverStatus, setServerStatus] = useState<{
     serverTimeWIB: string;
     lastCronPing: string;
@@ -71,7 +87,7 @@ export const WhatsAppBotReminderMenu: React.FC<WhatsAppBotReminderMenuProps> = (
 
   const [fridayVerifications, setFridayVerifications] = useState<Record<string, any>>({});
   const [selectedVerification, setSelectedVerification] = useState<any | null>(null);
-  const [previewTab, setPreviewTab] = useState<"regular" | "friday">("friday");
+  const [previewTab, setPreviewTab] = useState<"rotating" | "friday">("rotating");
 
   const todayDateStr = new Date().toISOString().split("T")[0];
   const isFridayToday = new Date().toLocaleDateString("en-US", { timeZone: "Asia/Jakarta", weekday: "long" }) === "Friday";
@@ -85,6 +101,8 @@ export const WhatsAppBotReminderMenu: React.FC<WhatsAppBotReminderMenuProps> = (
         const data = await res.json();
         if (data.autoReminderHour) setAutoReminderHour(data.autoReminderHour);
         if (data.autoReminderEnabled !== undefined) setAutoReminderEnabled(data.autoReminderEnabled);
+        if (data.skipHolidays !== undefined) setSkipHolidays(data.skipHolidays);
+        if (data.skipWeekends !== undefined) setSkipWeekends(data.skipWeekends);
         if (data.requireFridaySignature !== undefined) setRequireFridaySignature(data.requireFridaySignature);
         if (data.reminderActiveDays) setActiveDays(data.reminderActiveDays);
         setServerStatus({
@@ -97,6 +115,13 @@ export const WhatsAppBotReminderMenu: React.FC<WhatsAppBotReminderMenuProps> = (
           totalActiveWorkers: data.totalActiveWorkers || 0,
           pendingAttendanceCount: data.pendingAttendanceCount || 0
         });
+      }
+
+      // Check current holiday info
+      const holRes = await fetch("/api/check-holiday");
+      if (holRes.ok) {
+        const holData = await holRes.json();
+        setTodayHolidayInfo({ isHoliday: !!holData.isHoliday, reason: holData.reason || null });
       }
 
       // Fetch Friday verifications
@@ -131,6 +156,8 @@ export const WhatsAppBotReminderMenu: React.FC<WhatsAppBotReminderMenuProps> = (
         body: JSON.stringify({
           autoReminderHour,
           autoReminderEnabled,
+          skipHolidays,
+          skipWeekends,
           reminderActiveDays: activeDays,
           requireFridaySignature
         })
@@ -139,6 +166,8 @@ export const WhatsAppBotReminderMenu: React.FC<WhatsAppBotReminderMenuProps> = (
       // Save to localStorage as backup
       localStorage.setItem("wa_auto_reminder_hour", autoReminderHour);
       localStorage.setItem("wa_auto_reminder_enabled", autoReminderEnabled ? "true" : "false");
+      localStorage.setItem("wa_skip_holidays", skipHolidays ? "true" : "false");
+      localStorage.setItem("wa_skip_weekends", skipWeekends ? "true" : "false");
       localStorage.setItem("wa_friday_signature_required", requireFridaySignature ? "true" : "false");
 
       // Save to Firestore
@@ -146,13 +175,15 @@ export const WhatsAppBotReminderMenu: React.FC<WhatsAppBotReminderMenuProps> = (
         id: "bot_reminder_settings",
         autoReminderHour,
         autoReminderEnabled,
+        skipHolidays,
+        skipWeekends,
         reminderActiveDays: activeDays,
         requireFridaySignature,
         updatedAt: new Date().toISOString()
       }).catch(e => console.warn("Firestore save fallback error:", e));
 
       if (res.ok) {
-        setSaveSuccessMsg("Jadwal pengiriman pesan bot WhatsApp & aturan TTD digital Jumat berhasil disimpan ke server!");
+        setSaveSuccessMsg("Pengaturan waktu kirim, lewati tanggal merah/akhir pekan, dan aturan TTD Jumat berhasil disimpan ke server!");
         setTimeout(() => setSaveSuccessMsg(""), 5000);
         fetchSettings();
       } else {
@@ -367,6 +398,97 @@ export const WhatsAppBotReminderMenu: React.FC<WhatsAppBotReminderMenuProps> = (
               </p>
             </div>
 
+            {/* PENGATURAN LEWATI TANGGAL MERAH (LIBUR NASIONAL) */}
+            <div className="p-4 rounded-2xl bg-amber-50/70 border border-amber-200 space-y-3">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
+                    <CalendarX className="w-4 h-4" />
+                  </div>
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-xs font-bold text-amber-950">
+                        Lewati Tanggal Merah (Hari Libur Nasional Indonesia)
+                      </h3>
+                      <span className={`px-2 py-0.5 rounded-md text-[9px] font-bold uppercase font-mono ${
+                        skipHolidays ? "bg-amber-200/80 text-amber-900" : "bg-slate-200 text-slate-600"
+                      }`}>
+                        {skipHolidays ? "OTOMATIS DILEWATI" : "NONAKTIF"}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-amber-900/80 leading-relaxed">
+                      Server otomatis memeriksa kalender hari libur nasional resmi Republik Indonesia. Bila aktif, bot WhatsApp istirahat dan tidak akan mengirimkan pengingat absensi pada tanggal merah atau hari cuti bersama nasional.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSkipHolidays(!skipHolidays)}
+                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    skipHolidays ? "bg-amber-600" : "bg-slate-300"
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                      skipHolidays ? "translate-x-5" : "translate-x-0"
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {todayHolidayInfo && (
+                <div className={`text-[10px] p-2.5 rounded-xl border flex items-center gap-2 font-medium ${
+                  todayHolidayInfo.isHoliday 
+                    ? "bg-rose-50 border-rose-200 text-rose-800" 
+                    : "bg-white/80 border-amber-200/70 text-amber-900"
+                }`}>
+                  <Info className="w-3.5 h-3.5 shrink-0 text-amber-700" />
+                  <span>
+                    Status Kalender Hari Ini ({todayDateStr}): <strong>{todayHolidayInfo.isHoliday ? `🔴 Libur: ${todayHolidayInfo.reason}` : "🟢 Hari Kerja Normal (Bukan Tanggal Merah)"}</strong>
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* PENGATURAN LEWATI AKHIR PEKAN (SABTU & MINGGU) */}
+            <div className="p-4 rounded-2xl bg-sky-50/70 border border-sky-200 space-y-3">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-sky-600 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
+                    <CalendarCheck className="w-4 h-4" />
+                  </div>
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-xs font-bold text-sky-950">
+                        Lewati Akhir Pekan (Hari Sabtu & Hari Minggu)
+                      </h3>
+                      <span className={`px-2 py-0.5 rounded-md text-[9px] font-bold uppercase font-mono ${
+                        skipWeekends ? "bg-sky-200/80 text-sky-900" : "bg-slate-200 text-slate-600"
+                      }`}>
+                        {skipWeekends ? "OTOMATIS DILEWATI" : "NONAKTIF"}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-sky-900/80 leading-relaxed">
+                      Bot WhatsApp secara otomatis tidak mengirimkan pengingat absensi pada hari Sabtu dan Minggu agar tidak mengganggu waktu istirahat karyawan di luar hari kerja reguler.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSkipWeekends(!skipWeekends)}
+                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    skipWeekends ? "bg-sky-600" : "bg-slate-300"
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                      skipWeekends ? "translate-x-5" : "translate-x-0"
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
+
             {/* ACTIVE DAYS CONFIG */}
             <div className="space-y-3">
               <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
@@ -542,76 +664,198 @@ export const WhatsAppBotReminderMenu: React.FC<WhatsAppBotReminderMenuProps> = (
       </div>
 
       {/* MESSAGE PREVIEW SECTION */}
-      <div className="bg-white rounded-3xl p-6 sm:p-7 border border-slate-200 shadow-sm space-y-4">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+      <div className="bg-white rounded-3xl p-6 sm:p-7 border border-slate-200 shadow-sm space-y-5">
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-slate-100 pb-4">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-2xl bg-indigo-100 text-indigo-700 flex items-center justify-center">
-              <FileCheck className="w-4 h-4" />
+            <div className="w-10 h-10 rounded-2xl bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
+              <Sparkles className="w-5 h-5 text-indigo-600" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-slate-900">Preview Pesan WhatsApp ke Karyawan</h2>
-              <p className="text-xs text-slate-500">Pratinjau format pesan yang akan diterima di HP karyawan</p>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-bold text-slate-900">
+                  Simulasi Ajakan Bot yang Berganti Setiap Hari & Karyawan
+                </h2>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 font-mono">
+                  34 Format Unik
+                </span>
+              </div>
+              <p className="text-xs text-slate-500">
+                Setiap karyawan dan setiap hari menerima pesan yang berbeda, variatif, dan menyemangati
+              </p>
             </div>
           </div>
 
-          <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold">
-            <button
-              onClick={() => setPreviewTab("friday")}
-              className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
-                previewTab === "friday" ? "bg-white text-teal-900 font-bold shadow-xs" : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              🕌 Format Khusus Hari Jumat (Dengan TTD Digital)
-            </button>
-            <button
-              onClick={() => setPreviewTab("regular")}
-              className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
-                previewTab === "regular" ? "bg-white text-slate-900 font-bold shadow-xs" : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              💼 Format Hari Biasa (Senin - Kamis)
-            </button>
-          </div>
-        </div>
-
-        {/* MOCK WHATSAPP BUBBLE */}
-        <div className="max-w-xl mx-auto bg-slate-100 p-4 sm:p-6 rounded-3xl border border-slate-200 shadow-inner">
-          <div className="bg-[#dcf8c6] text-slate-900 p-4 rounded-2xl rounded-tr-none shadow-sm space-y-3 text-xs leading-relaxed font-sans border border-[#c6e6af] relative">
-            <div className="text-[10px] text-emerald-800 font-mono font-bold flex items-center justify-between border-b border-emerald-600/20 pb-1.5">
-              <span>🤖 Bot WhatsApp Absensi PT NMSA</span>
-              <span>{autoReminderHour} WIB</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => { setPreviewTab("rotating"); setPreviewDayShift(0); }}
+                className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
+                  previewTab === "rotating" ? "bg-white text-indigo-950 font-bold shadow-xs" : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                ✨ Format Berganti Harian
+              </button>
+              <button
+                type="button"
+                onClick={() => { setPreviewTab("friday"); setPreviewDayShift(0); }}
+                className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
+                  previewTab === "friday" ? "bg-white text-teal-900 font-bold shadow-xs" : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                🕌 Jumat Berkah & TTD Digital
+              </button>
             </div>
-
-            {previewTab === "friday" ? (
-              <div className="space-y-2 whitespace-pre-line text-slate-800">
-                <p>🕌 <strong>Jumat Berkah — Absensi & Tanda Tangan Digital Karyawan NMSA</strong> 🌸🤲</p>
-                <p>Alhamdulillah, kita telah tiba di penghujung pekan kerja, <strong>Budi Santoso</strong>!</p>
-                <p>
-                  Khusus hari Jumat ini, link absensi resmi telah <strong>dilengkapi Tanda Tangan Digital dari HP Anda</strong> yang langsung terverifikasi secara otomatis ke server aplikasi PT NMSA untuk pengesahan rekap uang makan mingguan:
-                </p>
-                <p className="bg-white/90 p-2.5 rounded-xl border border-emerald-400 font-mono text-[11px] text-emerald-900 font-bold break-all">
-                  👉 https://pt-nmsa-app.com/?view=absen&workerId=W01&quick=true&friday=true
-                </p>
-                <p className="text-[11px] text-emerald-950 font-medium italic">
-                  (Buka link di area kantor Wisma NH, goreskan paraf/tanda tangan di layar HP, dan dapatkan sertifikat verifikasi digital server).
-                </p>
-                <p>Selamat menuntaskan tugas pekan ini dengan penuh berkah & semangat! 🌿💼</p>
-              </div>
-            ) : (
-              <div className="space-y-2 whitespace-pre-line text-slate-800">
-                <p>⚡ <strong>Pengingat Absensi Masuk Harian PT NMSA</strong> ☕🌤️</p>
-                <p>Selamat pagi rekan andalan, <strong>Budi Santoso</strong>!</p>
-                <p>Yuk luangkan 5 detik untuk check-in kehadiranmu hari ini:</p>
-                <p className="bg-white/90 p-2.5 rounded-xl border border-emerald-400 font-mono text-[11px] text-emerald-900 font-bold break-all">
-                  👉 https://pt-nmsa-app.com/?view=absen&workerId=W01&quick=true
-                </p>
-                <p className="text-[11px] text-emerald-950">
-                  (Buka tautan ini saat sudah tiba di kantor Wisma NH Pasar Minggu). Hak uang makanmu langsung tercatat otomatis! 🚀
-                </p>
-              </div>
-            )}
           </div>
         </div>
+
+        {/* CONTROLS: PILIH KARYAWAN & SIMULASI HARI */}
+        {(() => {
+          const activeWorkers = workers.filter(w => w.isActive);
+          const currentWorker = activeWorkers.find(w => w.id === previewWorkerId) || activeWorkers[0] || { id: "W01", name: "Suryo Pranoto", role: "Staf" };
+          
+          // Compute simulated date string
+          const simulatedDate = new Date();
+          if (previewTab === "friday") {
+            const currentDay = simulatedDate.getDay();
+            const daysUntilFriday = (5 - currentDay + 7) % 7;
+            simulatedDate.setDate(simulatedDate.getDate() + daysUntilFriday);
+          } else {
+            simulatedDate.setDate(simulatedDate.getDate() + previewDayShift);
+          }
+          const ymdSim = simulatedDate.toISOString().split("T")[0];
+          const indoDayName = new Intl.DateTimeFormat("id-ID", { weekday: "long" }).format(simulatedDate);
+          const fullIndoDate = new Intl.DateTimeFormat("id-ID", { day: "numeric", month: "long", year: "numeric" }).format(simulatedDate);
+
+          const hostUrl = typeof window !== "undefined" ? window.location.origin : "https://aplikasi-perusahaan-nmsa.vercel.app";
+          const quickParam = previewTab === "friday" ? "&quick=true&friday=true" : "&quick=true";
+          const simulatedUrl = `${hostUrl}/?view=absen&workerId=${encodeURIComponent(currentWorker.id)}&id=${encodeURIComponent(currentWorker.id)}${quickParam}`;
+          
+          const simulatedMessage = getDynamicReminderMessage(
+            currentWorker.name, 
+            currentWorker.id, 
+            simulatedUrl, 
+            ymdSim, 
+            9
+          );
+
+          const handleCopyMessage = () => {
+            navigator.clipboard.writeText(simulatedMessage);
+            setPreviewCopied(true);
+            setTimeout(() => setPreviewCopied(false), 2500);
+          };
+
+          return (
+            <div className="space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50 p-3.5 rounded-2xl border border-slate-200">
+                {/* PILIH KARYAWAN */}
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-slate-600 whitespace-nowrap">Pilih Karyawan:</span>
+                  <div className="flex flex-wrap gap-1.5 max-w-md">
+                    {activeWorkers.slice(0, 6).map((w) => (
+                      <button
+                        key={w.id}
+                        type="button"
+                        onClick={() => setPreviewWorkerId(w.id)}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-medium transition cursor-pointer ${
+                          currentWorker.id === w.id
+                            ? "bg-indigo-600 text-white font-bold shadow-xs"
+                            : "bg-white text-slate-700 hover:bg-slate-100 border border-slate-200"
+                        }`}
+                      >
+                        {w.name}
+                      </button>
+                    ))}
+                    {activeWorkers.length > 6 && (
+                      <select
+                        value={currentWorker.id}
+                        onChange={(e) => setPreviewWorkerId(e.target.value)}
+                        className="bg-white border border-slate-200 text-slate-700 text-xs rounded-lg px-2 py-1 outline-none font-medium"
+                      >
+                        {activeWorkers.map((w) => (
+                          <option key={w.id} value={w.id}>{w.name}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                </div>
+
+                {/* SIMULASI HARI */}
+                {previewTab === "rotating" && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-600 whitespace-nowrap">Simulasi Waktu:</span>
+                    <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200 text-xs">
+                      {[
+                        { label: "Hari Ini", shift: 0 },
+                        { label: "+1 Hari", shift: 1 },
+                        { label: "+2 Hari", shift: 2 },
+                        { label: "+3 Hari", shift: 3 },
+                        { label: "+7 Hari", shift: 7 },
+                      ].map((s) => (
+                        <button
+                          key={s.shift}
+                          type="button"
+                          onClick={() => setPreviewDayShift(s.shift)}
+                          className={`px-2 py-1 rounded-lg transition cursor-pointer text-[11px] ${
+                            previewDayShift === s.shift
+                              ? "bg-indigo-100 text-indigo-900 font-bold"
+                              : "text-slate-600 hover:text-slate-900"
+                          }`}
+                        >
+                          {s.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* MOCK WHATSAPP BUBBLE */}
+              <div className="max-w-2xl mx-auto bg-slate-100 p-4 sm:p-6 rounded-3xl border border-slate-200 shadow-inner space-y-3">
+                <div className="flex items-center justify-between text-xs text-slate-500 font-mono">
+                  <span>📅 Simulasi: <strong>{indoDayName}, {fullIndoDate}</strong></span>
+                  <span>👤 Penerima: <strong>{currentWorker.name}</strong></span>
+                </div>
+
+                <div className="bg-[#dcf8c6] text-slate-900 p-4 rounded-2xl rounded-tr-none shadow-sm space-y-3 text-xs leading-relaxed font-sans border border-[#c6e6af] relative">
+                  <div className="text-[10px] text-emerald-800 font-mono font-bold flex items-center justify-between border-b border-emerald-600/20 pb-1.5">
+                    <span>🤖 Bot WhatsApp PT NMSA</span>
+                    <span>{autoReminderHour} WIB</span>
+                  </div>
+
+                  <div className="space-y-2 whitespace-pre-line text-slate-800 font-sans leading-relaxed">
+                    {simulatedMessage}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-[11px] text-slate-500 italic">
+                    * Buka karyawan lain atau ubah hari untuk melihat rotasi pesan secara instan.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleCopyMessage}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold border border-slate-200 shadow-xs transition cursor-pointer"
+                  >
+                    {previewCopied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 text-slate-500" />}
+                    <span>{previewCopied ? "Tersalin!" : "Salin Format"}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* INFORMATION FOOTER */}
+              <div className="bg-indigo-50/70 border border-indigo-200 text-indigo-950 p-4 rounded-2xl flex items-start gap-3">
+                <Sparkles className="w-5 h-5 text-indigo-600 shrink-0 mt-0.5" />
+                <div className="text-xs leading-relaxed space-y-1">
+                  <p className="font-bold">Keunggulan Sistem Ajakan Bot PT NMSA:</p>
+                  <p className="text-indigo-900/90">
+                    Sistem menggunakan algoritma seed hashing yang memastikan <strong>setiap karyawan menerima kata-kata dan format yang berbeda di hari yang sama</strong>, dan <strong>setiap hari karyawan yang sama mendapatkan sapaan yang berbeda</strong> (kopi pagi, checklist 3 langkah, doa berkah, motivasi pejuang, pantun ceria, apresiasi tim, dan format khusus Jumat).
+                  </p>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {/* FRIDAY DIGITAL SIGNATURE AUDIT LOG TABLE */}

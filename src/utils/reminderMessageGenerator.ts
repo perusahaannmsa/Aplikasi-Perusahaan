@@ -3,8 +3,8 @@
  * Generates energetic, friendly, and diverse reminder messages so that:
  * 1. Every worker receives a DIFFERENT message format on the same day.
  * 2. Every worker receives a DIFFERENT message on consecutive days.
- * 3. Incorporates day-of-week context (Senin spirit, Rabu sprint, Jumat berkah).
- * 4. Incorporates time-of-day awareness (pagi cerah, menjelang siang, rehat siang).
+ * 3. Incorporates day-of-week context (Senin booster, Rabu sprint, Jumat berkah & TTD digital).
+ * 4. Incorporates time-of-day awareness (pagi segar, menjelang siang, rehat siang).
  */
 
 export interface ReminderOptions {
@@ -35,8 +35,27 @@ function getJakartaHour(): number {
   }
 }
 
-// 24 Completely Distinct, Warm & Energetic Formats
-const TEMPLATE_GENERATORS = [
+function getDayOrdinal(dateStr?: string): number {
+  try {
+    if (!dateStr) {
+      const now = new Date();
+      const start = new Date(now.getFullYear(), 0, 0);
+      const diff = now.getTime() - start.getTime();
+      return Math.floor(diff / (1000 * 60 * 60 * 24));
+    }
+    const [y, m, d] = dateStr.split("-").map(Number);
+    const dt = new Date(y, m - 1, d);
+    const start = new Date(y, 0, 0);
+    return Math.floor((dt.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+  } catch {
+    return 1;
+  }
+}
+
+// ==========================================
+// 1. GENERAL / MORNING TEMPLATES (22 Variasi)
+// ==========================================
+const GENERAL_TEMPLATES = [
   // 0. Gaya Kopi Pagi & Santai Akrab
   (name: string, url: string) => 
 `Selamat pagi *${name}*! ☕🌤️
@@ -64,7 +83,7 @@ Hak uang makanmu langsung terkunci otomatis di sistem keuangan. Mari melangkah d
   // 2. Gaya Doa Berkah & Niat Tulus
   (name: string, url: string) => 
 `✨ *Bismillah, Semangat Pagi ${name}!* 🤲🌿
-Awali setiap ikhtiar hari ini dengan niat yang tulus dan hati yang lapang. Semoga Allah melancarkan pekerjaanmu, meluaskan rezeki yang halal lagi berkah, dan melindungi keselamatanmu saat bertugas.
+Awali setiap ikhtiar hari ini dengan niat yang tulus dan hati yang lapang. Semoga Tuhan Yang Maha Esa melancarkan pekerjaanmu, meluaskan rezeki yang berkah, dan melindungi keselamatanmu saat bertugas.
 
 Yuk amankan presensi harianmu melalui tautan resmi ini:
 👉 ${url}
@@ -101,38 +120,7 @@ Yuk pastikan presensi mandirimu hari ini sudah terkonfirmasi melalui tautan beri
 
 Sistem GPS otomatis memverifikasi kehadiranmu di Wisma NH Pasar Minggu. Mari terus maju dan sukses bersama! 🏢✨`,
 
-  // 6. Gaya Hari Senin (Senin Semangat / Monday Boost)
-  (name: string, url: string) => 
-`🚀 *Senin Semangat, Waktunya Mengawali Pekan dengan Gemilang!*
-Selamat pagi rekan tangguh, *${name}*! 🌅
-Lembaran pekan baru telah dibuka. Bawa energi positif, fokus tajam, dan semangat segar untuk mencapai target baru!
-
-Awali hari pertama pekan ini dengan presensi tepat waktu:
-👉 ${url}
-
-Pastikan kamu sudah berada di area kantor Wisma NH Pasar Minggu ya. Semoga pekan ini membawa banyak keberhasilan untukmu! 💼🔥`,
-
-  // 7. Gaya Hari Jumat (Jumat Berkah & Sukacita)
-  (name: string, url: string) => 
-`🕌 *Jumat Berkah Penuh Kebaikan, ${name}!* 🌸🤲
-Alhamdulillah, kita sampai di penghujung hari kerja pekan ini. Semoga setiap lelah dan peluh perjuanganmu menjadi berkah berlipat ganda bagi keluarga.
-
-Yuk selesaikan presensi penutup pekanmu di tautan berikut:
-👉 ${url}
-
-Cukup satu klik di area kantor Wisma NH, hak uang makan langsung terdata lengkap. Selamat menuntaskan tugas dengan senyuman dan salam berkah! 🌿❤️`,
-
-  // 8. Gaya Hari Rabu (Rabu Produktif / Midweek Sprint)
-  (name: string, url: string) => 
-`🌤️ *Selamat Hari Rabu, ${name}! Semangat Tengah Pekan!* ⚡🏃
-Sudah separuh jalan di pekan ini, ritme kerja makin mantap dan target makin dekat untuk diraih! Jaga stamina dan tetap terhidrasi ya.
-
-Sebelum lanjut menuntaskan agenda penting, yuk amankan absen harianmu:
-👉 ${url}
-
-Tautan aktif dan langsung tervalidasi di area Wisma NH Pasar Minggu. Mari jaga konsistensi dan performa terbaikmu! 🎯💪`,
-
-  // 9. Gaya Tanya-Jawab / Edukasi Manfaat
+  // 6. Gaya Edukasi Manfaat Otomatis
   (name: string, url: string) => 
 `Halo *${name}*! Tahukah kamu? 🤔💡
 Dengan sekali klik link presensi mandiri, kehadiranmu langsung masuk ke rekapitulasi uang makan otomatis tanpa perlu pencatatan manual.
@@ -142,7 +130,7 @@ Yuk langsung tap linknya sekarang:
 
 Otomatis tervalidasi saat kamu sudah di area kantor Wisma NH Pasar Minggu. Praktis, cepat, dan aman. Selamat bertugas rekan andalan! ☕📱`,
 
-  // 10. Gaya Elegan & Profesional Korporat
+  // 7. Gaya Elegan & Profesional Korporat
   (name: string, url: string) => 
 `🏛️ *Pemberitahuan Presensi Harian — PT NMSA*
 Yth. Rekan *${name}*,
@@ -154,7 +142,7 @@ Presensi mandiri secara otomatis mendeteksi koordinat GPS aktif di lingkungan ka
 
 Terima kasih atas komitmen, integritas, dan dedikasi tinggi Anda bagi perusahaan. Selamat bertugas! 🏢👔`,
 
-  // 11. Gaya Keselamatan & Kesehatan Kerja
+  // 8. Gaya Keselamatan & Kesehatan Kerja
   (name: string, url: string) => 
 `🛡️ *Utamakan Keselamatan & Kesehatan Kerja, ${name}!* 🦺🩺
 Keluarga tercinta menanti kepulanganmu di rumah dengan bangga. Selalu utamakan keselamatan dan jaga stamina dalam setiap tugas.
@@ -164,7 +152,7 @@ Sambil bersiap, yuk konfirmasi kehadiranmu hari ini:
 
 Sistem GPS mendeteksi area kantor Wisma NH Pasar Minggu. Semoga hari ini berjalan aman, lancar, dan penuh keberuntungan! 👨‍👩‍👧‍👦🍀`,
 
-  // 12. Gaya Ceria & Penuh Senyuman
+  // 9. Gaya Ceria & Penuh Senyuman
   (name: string, url: string) => 
 `🌸 *Hari yang Indah untuk Rekan Tersenyum, ${name}!* 🌈😄
 Tersenyumlah, karena hari ini penuh dengan peluang dan kebaikan baru yang menanti untuk diwujudkan!
@@ -174,7 +162,7 @@ Satu sentuhan kecil untuk mengawali jam kerja yang tertib dan menyenangkan:
 
 Buka saat di kantor Wisma NH ya, uang makan harianmu langsung terekam otomatis. Semoga hari ini penuh kejutan manis dan berkah! 💖✨`,
 
-  // 13. Gaya Api Semangat Pejuang Tangguh
+  // 10. Gaya Api Semangat Pejuang Tangguh
   (name: string, url: string) => 
 `🔥 *Semangat Membara untuk Pejuang Tangguh, ${name}!* 🏗️⚡
 Tak ada tantangan yang terlalu besar jika dihadapi dengan tekad kuat dan kerja sama solid. Kamu adalah rekan kerja yang luar biasa!
@@ -184,7 +172,7 @@ Tunjukkan kedisiplinanmu pagi ini dengan sekali sentuh:
 
 Verifikasi lokasi otomatis mendeteksi kantor Wisma NH Pasar Minggu. Mari buat hari ini sangat produktif dan memuaskan! 🚀💎`,
 
-  // 14. Gaya Pantun & Rima Ringan
+  // 11. Gaya Pantun & Rima Ringan
   (name: string, url: string) => 
 `Burung gelatik terbang ke awan,
 Pagi cerah penuh harapan! 🐦🌤️
@@ -194,29 +182,7 @@ Halo rekan andalan kita *${name}*, yuk jangan sampai kelupaan absen harian:
 
 Cukup klik dari kantor Wisma NH Pasar Minggu, hak uang makan langsung aman terjaga. Selamat bekerja dengan riang gembira! 😄🤝`,
 
-  // 15. Gaya Kontekstual Menjelang Siang (Jam 10-12 Siang)
-  (name: string, url: string) => 
-`🌤️ *Selamat Menjelang Siang, ${name}!* ☕
-Semoga seluruh agenda dan aktivitas pagi ini berjalan lancar tanpa kendala. Tetap terhidrasi dan jaga fokus ya!
-
-Sistem mencatat presensi kehadiranmu hari ini belum terkonfirmasi nih. Yuk segera klik link ini:
-👉 ${url}
-
-Supaya hak tunjangan uang makan harianmu tetap aman tercatat rapi sebelum rekapitulasi harian ditutup (area kantor Wisma NH).
-Selamat melanjutkan tugas dan tetap bersemangat rekan tangguh! 🛡️✨`,
-
-  // 16. Gaya Kontekstual Rehat Siang (Jam 12-14 Siang)
-  (name: string, url: string) => 
-`🍱 *Waktunya Rehat Siang, Rekan ${name}!* ☀️🥗
-Waktunya sejenak meregangkan otot dan menikmati istirahat makan siang agar stamina kembali prima!
-
-Sambil santai, yuk pastikan presensi uang makan harianmu sudah beres hari ini melalui tautan berikut:
-👉 ${url}
-
-Sangat cepat dan praktis, langsung terverifikasi oleh GPS kantor Wisma NH Pasar Minggu.
-Selamat menikmati rehat siang dan salam kompak selalu! 🌟🤝`,
-
-  // 17. Gaya Disiplin & Fokus Waktu
+  // 12. Gaya Disiplin & Fokus Waktu
   (name: string, url: string) => 
 `⏰ *Presensi Tepat Waktu, Disiplin Maju!*
 Selamat pagi rekan *${name}*! 🎯
@@ -227,7 +193,7 @@ Orang sukses selalu menghargai waktu dan hal-hal mendasar. Mari awali jam kerja 
 Langsung diverifikasi via GPS Wisma NH Pasar Minggu.
 Semoga target-target kerjamu hari ini tercapai melampaui ekspektasi! 📈🏆`,
 
-  // 18. Gaya Sapaan Hangat Sahabat
+  // 13. Gaya Sapaan Hangat Sahabat
   (name: string, url: string) => 
 `Pagi sahabatku, *${name}*! 🌻
 Semoga pagi ini kamu dalam kondisi prima dan siap mengukir karya terbaik! Senyuman dan energi positifmu selalu menular ke seluruh tim.
@@ -238,7 +204,7 @@ Sebelum mulai fokus dengan rentetan pekerjaan, yuk amankan kehadiranmu dulu:
 Satu tap saat tiba di Wisma NH, beres seketika!
 Jaga kesehatan, utamakan keselamatan kerja, dan nikmati hari ini! ☕✨`,
 
-  // 19. Gaya Apresiasi Profesional & Kemajuan Karir
+  // 14. Gaya Apresiasi Profesional & Kemajuan Karir
   (name: string, url: string) => 
 `🌟 *Langkah Nyata Menuju Sukses, ${name}!* 💼
 Setiap hari adalah investasi terbaik untuk masa depan karirmu. Tunjukkan komitmenmu dengan presensi harian yang konsisten:
@@ -248,7 +214,7 @@ Setiap hari adalah investasi terbaik untuk masa depan karirmu. Tunjukkan komitme
 Terverifikasi di area kantor Wisma NH Pasar Minggu.
 Terima kasih atas integritas dan dedikasimu bersama PT NMSA. Sukses selalu menyertaimu! 🏛️💎`,
 
-  // 20. Gaya Ketenangan & Ketelitian Kerja
+  // 15. Gaya Ketenangan & Ketelitian Kerja
   (name: string, url: string) => 
 `🌿 *Tenang, Fokus, & Tuntaskan Hari Ini, ${name}!* 🍃✨
 Tarik napas dalam, atur prioritas dengan bijak, dan selesaikan satu per satu tugas kerjamu dengan hasil memuaskan.
@@ -259,7 +225,7 @@ Langkah pertamamu pagi ini:
 Konfirmasi kehadiran fisik di Wisma NH Pasar Minggu untuk mencatat uang makan harianmu.
 Semoga harimu tenang, produktif, dan penuh berkah! ☕`,
 
-  // 21. Gaya Harmoni & Kolaborasi Tim
+  // 16. Gaya Harmoni & Kolaborasi Tim
   (name: string, url: string) => 
 `🤝 *Bersama Kita Kuat, Hebat, dan Maju!*
 Halo rekan andalan, *${name}*! 🏢🌟
@@ -271,7 +237,7 @@ Yuk konfirmasi kehadiranmu hari ini:
 Cukup buka tautan saat berada di kantor Wisma NH.
 Selamat bertugas, jaga kekompakan, dan mari torehkan hasil terbaik bersama! 🚀❤️`,
 
-  // 22. Gaya 5 Detik Super Kilat
+  // 17. Gaya 5 Detik Super Kilat
   (name: string, url: string) => 
 `⚡ *Sapaan Cepat untuk ${name}!* 📱
 Hanya butuh 5 detik untuk mengamankan catatan kehadiran dan tunjangan uang makan harianmu:
@@ -281,7 +247,7 @@ Hanya butuh 5 detik untuk mengamankan catatan kehadiran dan tunjangan uang makan
 (Buka saat sudah di area kantor Wisma NH Pasar Minggu).
 Semoga harimu menyenangkan dan bebas kendala! Tetap semangat pejuang hebat! ☕👍`,
 
-  // 23. Gaya Optimisme & Rezeki Melimpah
+  // 18. Gaya Optimisme & Rezeki Melimpah
   (name: string, url: string) => 
 `🌈 *Pagi Penuh Peluang & Rezeki Berlimpah, ${name}!* 💎🤲
 Yakinlah bahwa ikhtiar terbaik hari ini akan membuahkan hasil manis dan rezeki yang melimpah berkah.
@@ -290,11 +256,178 @@ Jangan lewatkan presensi harianmu ya:
 👉 ${url}
 
 Sistem otomatis mendeteksi kehadiranmu di area kantor Wisma NH.
-Selamat berjuang rekan tangguh, sukses besar selalu menyertaimu hari ini! ☀️🔥`
+Selamat berjuang rekan tangguh, sukses besar selalu menyertaimu hari ini! ☀️🔥`,
+
+  // 19. Gaya Sapaan Energi Positif
+  (name: string, url: string) => 
+`⚡ *Energi Penuh & Semangat Membara, ${name}!* 🔋🔥
+Awali hari dengan senyum lebar dan keyakinan diri. Segala target dan tantangan kerja hari ini pasti bisa kita tuntaskan bersama!
+
+Yuk segera tap link presensi harianmu:
+👉 ${url}
+
+(Aktif otomatis di area kantor Wisma NH Pasar Minggu).
+Semoga rezeki lancar dan kesehatan selalu terjaga! Salam sukses NMSA! 🏢💪`,
+
+  // 20. Gaya Tanggung Jawab & Integritas
+  (name: string, url: string) => 
+`🎖️ *Integritas & Kedisiplinan Karyawan NMSA*
+Halo rekan *${name}*! 📋⭐
+Kepercayaan dan disiplin adalah fondasi utama keberhasilan kita bersama. Pastikan kehadiranmu tercatat akurat hari ini:
+
+👉 ${url}
+
+Tautan langsung mendeteksi lokasi Wisma NH Pasar Minggu dan mengunci hak uang makanmu.
+Bekerjalah dengan penuh tanggung jawab dan bangga! 🌟👔`,
+
+  // 21. Gaya Harapan Baru & Fokus Masa Depan
+  (name: string, url: string) => 
+`🌄 *Fajar Baru, Harapan Gemilang, ${name}!* 🌤️🌱
+Setiap hari baru membawa peluang emas untuk belajar, berkarya, dan menjadi versi terbaik dari dirimu.
+
+Amankan hak kehadiranmu dengan sekali klik:
+👉 ${url}
+
+Cukup buka saat sudah tiba di Wisma NH Pasar Minggu.
+Semoga berkah melimpah dan segala urusanmu hari ini dimudahkan! ☕✨`
+];
+
+// ==========================================
+// 2. MONDAY BOOSTER TEMPLATES (4 Variasi)
+// ==========================================
+const MONDAY_TEMPLATES = [
+  (name: string, url: string) => 
+`🚀 *Senin Semangat, Waktunya Mengawali Pekan dengan Gemilang!*
+Selamat pagi rekan tangguh, *${name}*! 🌅
+Lembaran pekan baru telah dibuka. Bawa energi positif, fokus tajam, dan semangat segar untuk mencapai target baru!
+
+Awali hari pertama pekan ini dengan presensi tepat waktu:
+👉 ${url}
+
+Pastikan kamu sudah berada di area kantor Wisma NH Pasar Minggu ya. Semoga pekan ini membawa banyak keberhasilan untukmu! 💼🔥`,
+
+  (name: string, url: string) => 
+`🌟 *Happy Monday, Rekan Andalan ${name}!* 🏢⚡
+Senin adalah batu loncatan terbaik untuk merancang kemenangan sepekan ke depan. Mari mulai dengan langkah mantap dan senyuman penuh optimisme!
+
+Yuk absen mandiri pembuka pekan sekarang:
+👉 ${url}
+
+Sistem GPS Wisma NH langsung mengunci uang makanmu. Mari taklukkan target pekan ini bersama tim hebat NMSA! 🎯💪`,
+
+  (name: string, url: string) => 
+`🔥 *Bakar Semangat Awal Pekan, ${name}!* ☕📈
+Tinggalkan santai akhir pekan, sambut ritme produktif hari Senin dengan tekad juara. Kontribusimu sangat dinantikan tim!
+
+Presensi kilat hari Senin:
+👉 ${url}
+
+(Buka tautan di kantor Wisma NH Pasar Minggu).
+Semoga pekan ini penuh berkah, pencapaian luar biasa, dan kemudahan rezeki! 🚀✨`,
+
+  (name: string, url: string) => 
+`🌿 *Bismillah Mengawali Pekan Kerja, ${name}!* 🤲💼
+Senin penuh berkah, awali dengan niat ikhlas dan semangat membara. Setiap langkah ikhtiarmu bernilai kebaikan berlipat.
+
+Amankan presensi Senin di tautan resmi ini:
+👉 ${url}
+
+GPS Wisma NH langsung mendeteksi kehadiranmu secara sah. Selamat bertugas dengan penuh semangat rekan hebat! 🌻🏢`
+];
+
+// ==========================================
+// 3. FRIDAY BLESSINGS & SIGNATURE TEMPLATES (4 Variasi)
+// ==========================================
+const FRIDAY_TEMPLATES = [
+  (name: string, url: string) => 
+`🕌 *Jumat Berkah Penuh Kebaikan, ${name}!* 🌸🤲
+Alhamdulillah, kita sampai di penghujung hari kerja pekan ini. Semoga setiap lelah dan peluh perjuanganmu menjadi berkah berlipat ganda bagi keluarga.
+
+Yuk selesaikan presensi penutup pekanmu (sekaligus tanda tangan digital mingguan) di tautan berikut:
+👉 ${url}
+
+Cukup satu klik di area kantor Wisma NH, hak uang makan langsung terdata lengkap. Selamat menuntaskan tugas dengan senyuman dan salam berkah! 🌿❤️`,
+
+  (name: string, url: string) => 
+`✨ *Jumat Berkah & Penutupan Pekan Kerja, ${name}!* 🕌🎉
+Hari terakhir kerja pekan ini telah tiba! Mari tuntaskan seluruh amanah dengan sempurna sebelum menikmati libur akhir pekan bersama keluarga.
+
+Yuk konfirmasi kehadiran dan tanda tangan digitalmu:
+👉 ${url}
+
+Link ini memuat pad tanda tangan resmi yang langsung terekap di laporan mingguan NMSA. Terima kasih atas kerja kerasmu yang luar biasa sepekan ini! 🌟🤝`,
+
+  (name: string, url: string) => 
+`🌸 *Alhamdulillah Jumat Tiba, Rekan Hebat ${name}!* 🤲☕
+Kerja keras, ketekunan, dan loyalitasmu sepanjang pekan ini sungguh membanggakan. Mari tutup hari Jumat ini dengan performa terbaik!
+
+Amankan presensi & TTD digital Jumat di tautan ini:
+👉 ${url}
+
+(Buka saat berada di kantor Wisma NH Pasar Minggu).
+Selamat menyambut akhir pekan dengan hati bahagia dan penuh rasa syukur! 🌺✨`,
+
+  (name: string, url: string) => 
+`🕌 *Jumat Berkah — Lengkapi Presensi & Verifikasi TTD, ${name}!* 📋✒️
+Satu langkah terakhir sebelum akhir pekan: pastikan kehadiran fisik dan tanda tangan digitalmu tercatat rapi agar rekap keuangan uang makan diproses lancar.
+
+Tap tautan absen penutup pekan:
+👉 ${url}
+
+Terverifikasi GPS Wisma NH Pasar Minggu. Semoga Allah SWT memberkahi rezeki dan kesehatanmu serta keluarga tercinta! 🤲💎`
+];
+
+// ==========================================
+// 4. MIDDAY / AFTERNOON TEMPLATES (4 Variasi)
+// ==========================================
+const MIDDAY_TEMPLATES = [
+  (name: string, url: string) => 
+`🌤️ *Selamat Menjelang Siang, ${name}!* ☕
+Semoga seluruh agenda dan aktivitas pagi ini berjalan lancar tanpa kendala. Tetap terhidrasi dan jaga fokus ya!
+
+Sistem mencatat presensi kehadiranmu hari ini belum terkonfirmasi nih. Yuk segera klik link ini:
+👉 ${url}
+
+Supaya hak tunjangan uang makan harianmu tetap aman tercatat rapi sebelum rekapitulasi harian ditutup (area kantor Wisma NH).
+Selamat melanjutkan tugas dan tetap bersemangat rekan tangguh! 🛡️✨`,
+
+  (name: string, url: string) => 
+`🍱 *Waktunya Rehat Siang, Rekan ${name}!* ☀️🥗
+Waktunya sejenak meregangkan otot dan menikmati istirahat makan siang agar stamina kembali prima!
+
+Sambil santai, yuk pastikan presensi uang makan harianmu sudah beres hari ini melalui tautan berikut:
+👉 ${url}
+
+Sangat cepat dan praktis, langsung terverifikasi oleh GPS kantor Wisma NH Pasar Minggu.
+Selamat menikmati rehat siang dan salam kompak selalu! 🌟🤝`,
+
+  (name: string, url: string) => 
+`🍛 *Istirahat Siang & Amankan Absensi, ${name}!* 🥪📱
+Jangan lupa mengisi energi dengan makan siang yang bergizi dan istirahat sejenak dari layar komputer.
+
+Pengingat ramah: Presensimu hari ini belum terekam di sistem. Yuk tap link kilat ini:
+👉 ${url}
+
+Hanya butuh 5 detik saat berada di Wisma NH Pasar Minggu agar uang makan harianmu tidak terlewat. Selamat istirahat! 🥤✨`,
+
+  (name: string, url: string) => 
+`☀️ *Semangat Siang Rekan Andalan, ${name}!* 💼⚡
+Paruh kedua hari kerja segera berlanjut. Pastikan kehadiran harianmu sudah terkunci di portal absensi resmi:
+
+👉 ${url}
+
+(Area kantor Wisma NH Pasar Minggu).
+Jaga semangat, selesaikan tugas dengan tenang, dan semoga sore nanti pulang dengan rasa puas! 🚀🏢`
 ];
 
 /**
  * Main Function: Generates a completely varied, personalized reminder message.
+ * Guarantee:
+ * 1. Every worker receives a DIFFERENT template on the same day.
+ * 2. The same worker receives a DIFFERENT template on consecutive days.
+ * 3. Friday triggers varied Friday blessings / signature prompts.
+ * 4. Monday triggers varied Monday boosters.
+ * 5. Midday (11:00+) triggers midday / lunchbreak contextual reminders.
  */
 export function getDynamicReminderMessage(
   name: string,
@@ -308,50 +441,39 @@ export function getDynamicReminderMessage(
   const todayYMD = dateStr || new Date().toISOString().split("T")[0];
   const hour = customHour !== undefined ? customHour : getJakartaHour();
   const dayOfWeek = getIndoDayOfWeek(todayYMD);
+  const dayOrdinal = getDayOrdinal(todayYMD);
 
-  // Time-of-day flags
-  const isMidMorning = hour >= 10 && hour < 12;
-  const isAfternoon = hour >= 12 && hour < 15;
-  const isLateAfternoon = hour >= 15;
-
-  // Compute a high-entropy pseudo-random hash unique to (workerId + dateStr)
-  const seedStr = `${cleanWorkerId}_${cleanName}_${todayYMD}`;
-  let hash = 0;
-  for (let i = 0; i < seedStr.length; i++) {
-    hash = (hash << 5) - hash + seedStr.charCodeAt(i);
-    hash |= 0;
-  }
-  const absHash = Math.abs(hash);
-
-  // Priority Day-of-Week Themes (Every Monday, Wednesday, Friday have tailored templates mixed in)
-  if (dayOfWeek === 1 && absHash % 3 === 0) {
-    // Monday boost
-    return TEMPLATE_GENERATORS[6](cleanName, url);
-  }
-  if (dayOfWeek === 5 && absHash % 3 === 0) {
-    // Friday blessings
-    return TEMPLATE_GENERATORS[7](cleanName, url);
-  }
-  if (dayOfWeek === 3 && absHash % 4 === 0) {
-    // Wednesday midpoint
-    return TEMPLATE_GENERATORS[8](cleanName, url);
-  }
-
-  // Time-of-day pools
-  if (isMidMorning && absHash % 2 === 0) {
-    return TEMPLATE_GENERATORS[15](cleanName, url);
-  }
-  if (isAfternoon && absHash % 2 === 0) {
-    return TEMPLATE_GENERATORS[16](cleanName, url);
-  }
-
-  // General diverse rotation across all 24 templates
-  // Shift by day-of-week and character sums to guarantee that adjacent workers get vastly different templates
-  let workerOffset = 0;
+  // Compute a high-entropy numeric hash unique to the worker
+  let workerHash = 0;
   for (let i = 0; i < cleanWorkerId.length; i++) {
-    workerOffset += cleanWorkerId.charCodeAt(i) * (i + 1);
+    workerHash = (workerHash * 31 + cleanWorkerId.charCodeAt(i)) >>> 0;
+  }
+  let nameHash = 0;
+  for (let i = 0; i < cleanName.length; i++) {
+    nameHash = (nameHash * 17 + cleanName.charCodeAt(i)) >>> 0;
+  }
+  const combinedWorkerSeed = Math.abs((workerHash ^ nameHash) >>> 0);
+
+  // 1. FRIDAY (Jumat) Themed Pools
+  if (dayOfWeek === 5) {
+    const idx = (combinedWorkerSeed + dayOrdinal) % FRIDAY_TEMPLATES.length;
+    return FRIDAY_TEMPLATES[idx](cleanName, url);
   }
 
-  const chosenIndex = (absHash + workerOffset + dayOfWeek * 7) % TEMPLATE_GENERATORS.length;
-  return TEMPLATE_GENERATORS[chosenIndex](cleanName, url);
+  // 2. MONDAY (Senin) Themed Pools
+  if (dayOfWeek === 1) {
+    const idx = (combinedWorkerSeed + dayOrdinal) % MONDAY_TEMPLATES.length;
+    return MONDAY_TEMPLATES[idx](cleanName, url);
+  }
+
+  // 3. MIDDAY / LATE MORNING (>= 11 WIB) Themed Pools
+  if (hour >= 11) {
+    const idx = (combinedWorkerSeed + dayOrdinal) % MIDDAY_TEMPLATES.length;
+    return MIDDAY_TEMPLATES[idx](cleanName, url);
+  }
+
+  // 4. GENERAL MORNING / MIDWEEK ROTATION
+  // Using prime multiplier (13) with dayOrdinal to ensure full cyclic traversal across all 22 general templates
+  const generalIdx = (combinedWorkerSeed + dayOrdinal * 13 + dayOfWeek * 5) % GENERAL_TEMPLATES.length;
+  return GENERAL_TEMPLATES[generalIdx](cleanName, url);
 }

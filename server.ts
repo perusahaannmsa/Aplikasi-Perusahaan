@@ -54,6 +54,22 @@ app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use(express.static(path.join(process.cwd(), "public")));
 
+const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NETLIFY);
+const STORAGE_BASE = isServerless ? "/tmp" : process.cwd();
+const DATA_FILE = path.join(STORAGE_BASE, "data-store.json");
+
+// Ensure writable data-store in serverless environment
+if (isServerless) {
+  try {
+    const rootDataFile = path.join(process.cwd(), "data-store.json");
+    if (!fs.existsSync(DATA_FILE) && fs.existsSync(rootDataFile)) {
+      fs.copyFileSync(rootDataFile, DATA_FILE);
+    }
+  } catch (err) {
+    console.warn("Could not copy initial data-store.json to /tmp:", err);
+  }
+}
+
 function getGeminiClient() {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
@@ -668,11 +684,12 @@ function getServiceAccountCredentials(): { clientEmail: string; privateKey: stri
     }
   }
 
-  // 3. Check local service-account.json file in root
-  const saFilePath = path.join(process.cwd(), "service-account.json");
-  if (fs.existsSync(saFilePath)) {
+  // 3. Check local service-account.json file
+  const saFilePath = path.join(STORAGE_BASE, "service-account.json");
+  if (fs.existsSync(saFilePath) || fs.existsSync(path.join(process.cwd(), "service-account.json"))) {
     try {
-      const content = fs.readFileSync(saFilePath, "utf8");
+      const actualPath = fs.existsSync(saFilePath) ? saFilePath : path.join(process.cwd(), "service-account.json");
+      const content = fs.readFileSync(actualPath, "utf8");
       const creds = JSON.parse(content);
       if (creds.client_email && creds.private_key) {
         const pk = sanitizePrivateKey(creds.private_key);
@@ -692,7 +709,7 @@ function getServiceAccountCredentials(): { clientEmail: string; privateKey: stri
 
   // 4. Check data-store.json (persisted in dataStore)
   try {
-    const dataStorePath = path.join(process.cwd(), "data-store.json");
+    const dataStorePath = DATA_FILE;
     if (fs.existsSync(dataStorePath)) {
       const ds = JSON.parse(fs.readFileSync(dataStorePath, "utf8"));
       if (ds.serviceAccount && ds.serviceAccount.client_email && ds.serviceAccount.private_key) {
@@ -784,12 +801,16 @@ app.post("/api/service-account/save", async (req, res) => {
       private_key: cleanPrivateKey
     };
 
-    const saFilePath = path.join(process.cwd(), "service-account.json");
-    fs.writeFileSync(saFilePath, JSON.stringify(saData, null, 2), "utf8");
+    const saFilePath = path.join(STORAGE_BASE, "service-account.json");
+    try {
+      fs.writeFileSync(saFilePath, JSON.stringify(saData, null, 2), "utf8");
+    } catch (e) {
+      console.warn("Could not write local saFilePath, will rely on data-store:", e);
+    }
 
     // Also persist in data-store.json as resilient backup
     try {
-      const dataStorePath = path.join(process.cwd(), "data-store.json");
+      const dataStorePath = DATA_FILE;
       let ds: any = {};
       if (fs.existsSync(dataStorePath)) {
         ds = JSON.parse(fs.readFileSync(dataStorePath, "utf8"));
@@ -889,13 +910,13 @@ app.post("/api/service-account/test", async (req, res) => {
 // 4. Remove / Delete Service Account
 app.delete("/api/service-account/remove", (req, res) => {
   try {
-    const saFilePath = path.join(process.cwd(), "service-account.json");
+    const saFilePath = path.join(STORAGE_BASE, "service-account.json");
     if (fs.existsSync(saFilePath)) {
-      fs.unlinkSync(saFilePath);
+      try { fs.unlinkSync(saFilePath); } catch (e) {}
     }
 
     try {
-      const dataStorePath = path.join(process.cwd(), "data-store.json");
+      const dataStorePath = DATA_FILE;
       if (fs.existsSync(dataStorePath)) {
         const ds = JSON.parse(fs.readFileSync(dataStorePath, "utf8"));
         delete ds.serviceAccount;
@@ -1089,8 +1110,6 @@ app.get("/api/drive-proxy", async (req, res) => {
     fileId 
   });
 });
-
-const DATA_FILE = path.join(process.cwd(), "data-store.json");
 
 // Helper to get date string in Jakarta timezone
 function getJakartaDateStr(): string {
@@ -1525,6 +1544,12 @@ function readState() {
       if (parsed.autoReminderEnabled === undefined) {
         parsed.autoReminderEnabled = true;
       }
+      if (parsed.skipHolidays === undefined) {
+        parsed.skipHolidays = true;
+      }
+      if (parsed.skipWeekends === undefined) {
+        parsed.skipWeekends = true;
+      }
       if (!parsed.reminderActiveDays) {
         parsed.reminderActiveDays = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"];
       }
@@ -1593,6 +1618,8 @@ function readState() {
     waMethod: "desktop",
     autoReminderHour: "09:00",
     autoReminderEnabled: true,
+    skipHolidays: true,
+    skipWeekends: true,
     reminderActiveDays: ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"],
     requireFridaySignature: true,
     fridayVerifications: {},
@@ -1680,46 +1707,56 @@ app.post("/api/admin/login", (req, res) => {
 
 // GET Shared State (Workers, attendance records, reports) - Protected/Filtered
 app.get("/api/shared-state", (req, res) => {
-  const state = readState();
-  const hostOrigin = req.protocol + "://" + req.get("host");
-  if (hostOrigin && hostOrigin !== state.lastHostOrigin) {
-    state.lastHostOrigin = hostOrigin;
-    writeState(state);
-  }
-  const isAdmin = validateAdminToken(req);
-  if (isAdmin) {
-    res.json(state);
-  } else {
-    // Non-admin / worker view. Mask sensitive information to protect privacy.
-    const filteredWorkers = (state.workers || []).map((w: any) => ({
-      id: w.id,
-      name: w.name,
-      role: w.role,
-      photoUrl: w.photoUrl,
-      isActive: w.isActive,
-      updatedAt: w.updatedAt
-    }));
-    
-    const filteredAttendance = (state.attendanceRecords || []).map((r: any) => ({
-      workerId: r.workerId,
-      workerName: r.workerName,
-      attendance: r.attendance || {},
-      customStatus: r.customStatus || {},
-      reasons: r.reasons || {},
-      dailyAllowance: r.dailyAllowance || 25000,
-      allowanceRate: r.allowanceRate,
-      signatures: r.signatures || {},
-      notes: r.notes || {}
-    }));
+  try {
+    const state = readState();
+    const hostOrigin = req.protocol + "://" + req.get("host");
+    if (hostOrigin && hostOrigin !== state.lastHostOrigin) {
+      state.lastHostOrigin = hostOrigin;
+      try { writeState(state); } catch (e) {}
+    }
+    const isAdmin = validateAdminToken(req);
+    if (isAdmin) {
+      res.json(state);
+    } else {
+      // Non-admin / worker view. Mask sensitive information to protect privacy.
+      const filteredWorkers = (state.workers || []).map((w: any) => ({
+        id: w.id,
+        name: w.name,
+        role: w.role,
+        photoUrl: w.photoUrl,
+        isActive: w.isActive,
+        updatedAt: w.updatedAt
+      }));
+      
+      const filteredAttendance = (state.attendanceRecords || []).map((r: any) => ({
+        workerId: r.workerId,
+        workerName: r.workerName,
+        attendance: r.attendance || {},
+        customStatus: r.customStatus || {},
+        reasons: r.reasons || {},
+        dailyAllowance: r.dailyAllowance || 25000,
+        allowanceRate: r.allowanceRate,
+        signatures: r.signatures || {},
+        notes: r.notes || {}
+      }));
 
+      res.json({
+        workers: filteredWorkers,
+        attendanceRecords: filteredAttendance,
+        attendancePin: state.attendancePin, // Workers need this to check-in
+        signatures: {},
+        pettyCashReports: [],
+        weeklyReports: [],
+        attendanceLogs: []
+      });
+    }
+  } catch (err: any) {
+    console.error("Error in /api/shared-state:", err);
     res.json({
-      workers: filteredWorkers,
-      attendanceRecords: filteredAttendance,
-      attendancePin: state.attendancePin, // Workers need this to check-in
-      signatures: {},
-      pettyCashReports: [],
-      weeklyReports: [],
-      attendanceLogs: []
+      workers: defaultWorkers,
+      attendanceRecords: [],
+      submissions: [],
+      attendancePin: "1234"
     });
   }
 });
@@ -3362,67 +3399,98 @@ app.all(["/api/health", "/api/ping", "/api/keepalive", "/health", "/ping"], (req
 
 // GET Keep-alive stats for frontend modal
 app.get("/api/wa/keepalive-stats", (req, res) => {
-  const info = getKeepAliveInfo();
-  const waStatus = getWhatsAppStatus();
-  const hasCreds = fs.existsSync(path.join(process.cwd(), "auth_info_baileys", "creds.json")) || hasAuthBackup();
-  res.json({
-    success: true,
-    ...info,
-    uptimeSeconds: Math.floor(process.uptime()),
-    whatsapp: {
-      status: waStatus.status,
-      user: waStatus.user,
-      hasCredentials: hasCreds,
-    }
-  });
+  try {
+    const info = getKeepAliveInfo();
+    const waStatus = getWhatsAppStatus();
+    const hasCreds = fs.existsSync(path.join(STORAGE_BASE, "auth_info_baileys", "creds.json")) || hasAuthBackup();
+    res.json({
+      success: true,
+      ...info,
+      uptimeSeconds: Math.floor(process.uptime()),
+      whatsapp: {
+        status: waStatus.status,
+        user: waStatus.user,
+        hasCredentials: hasCreds,
+      }
+    });
+  } catch (err: any) {
+    res.json({
+      success: true,
+      status: "active",
+      uptimeSeconds: Math.floor(process.uptime()),
+      whatsapp: {
+        status: "disconnected",
+        user: null,
+        hasCredentials: false
+      }
+    });
+  }
 });
 
 // --- WHATSAPP BAILEYS BOT INTEGRATION ENDPOINTS ---
 
 // GET WhatsApp connection status
 app.get("/api/wa/status", (req, res) => {
-  if (!validateAdminToken(req)) {
-    return res.status(401).json({ success: false, error: "Unauthorized: Admin login required" });
+  try {
+    if (!validateAdminToken(req)) {
+      return res.status(401).json({ success: false, error: "Unauthorized: Admin login required" });
+    }
+    let status = getWhatsAppStatus();
+    if (status.status === "disconnected") {
+      initWhatsApp().catch((err) => console.warn("Auto init WA on status error:", err));
+      status = getWhatsAppStatus();
+    }
+    
+    // Calculate late reminder pending status
+    const state = readState();
+    const todayYMD = getJakartaDateStr();
+    
+    // Get current Jakarta hour/minute
+    let currentHour = 9;
+    let currentMinute = 0;
+    try {
+      const jktTimeString = new Date().toLocaleTimeString("en-US", { timeZone: "Asia/Jakarta", hour12: false });
+      [currentHour, currentMinute] = jktTimeString.split(":").map(Number);
+    } catch (e) {}
+    
+    // Parse scheduled hour/minute
+    const scheduledTime = state.autoReminderHour || "09:00";
+    const [targetHour, targetMinute] = scheduledTime.split(":").map(Number);
+
+    const isTimeTrigger = currentHour > targetHour || (currentHour === targetHour && currentMinute >= targetMinute);
+    const alreadySentToday = state.lastCronSentDate === todayYMD;
+
+    // Find workers who haven't checked in yet today
+    const workers = state.workers || [];
+    const records = state.attendanceRecords || [];
+    const activeWorkers = workers.filter((w: any) => w.isActive);
+    const absentWorkers = activeWorkers.filter((worker: any) => {
+      const record = records.find((r: any) => r.workerId === worker.id);
+      return !record || !record.attendance || !record.attendance[todayYMD];
+    });
+
+    res.json({
+      ...status,
+      lateReminderPending: status.status === "connected" && isTimeTrigger && !alreadySentToday && absentWorkers.length > 0,
+      absentWorkersCount: absentWorkers.length,
+      absentWorkersNames: absentWorkers.map((w: any) => w.name),
+      todayDate: todayYMD
+    });
+  } catch (err: any) {
+    console.error("Error in /api/wa/status:", err);
+    res.json({
+      status: "disconnected",
+      qr: null,
+      user: null,
+      error: err?.message || null,
+      hasCredentials: hasAuthBackup(),
+      hasBackup: hasAuthBackup(),
+      lateReminderPending: false,
+      absentWorkersCount: 0,
+      absentWorkersNames: [],
+      todayDate: getJakartaDateStr()
+    });
   }
-  let status = getWhatsAppStatus();
-  if (status.status === "disconnected") {
-    initWhatsApp().catch((err) => console.error("Auto init WA on status error:", err));
-    status = getWhatsAppStatus();
-  }
-  
-  // Calculate late reminder pending status
-  const state = readState();
-  const todayYMD = getJakartaDateStr();
-  
-  // Get current Jakarta hour/minute
-  const jktTimeString = new Date().toLocaleTimeString("en-US", { timeZone: "Asia/Jakarta", hour12: false });
-  const [currentHour, currentMinute] = jktTimeString.split(":").map(Number);
-  
-  // Parse scheduled hour/minute
-  const scheduledTime = state.autoReminderHour || "09:00";
-  const [targetHour, targetMinute] = scheduledTime.split(":").map(Number);
-
-  const isTimeTrigger = currentHour > targetHour || (currentHour === targetHour && currentMinute >= targetMinute);
-  const alreadySentToday = state.lastCronSentDate === todayYMD;
-
-  // Find workers who haven't checked in yet today
-  const workers = state.workers || [];
-  const records = state.attendanceRecords || [];
-  const activeWorkers = workers.filter((w: any) => w.isActive);
-  const absentWorkers = activeWorkers.filter((worker: any) => {
-    const record = records.find((r: any) => r.workerId === worker.id);
-    return !record || !record.attendance || !record.attendance[todayYMD];
-  });
-
-  // Today must be a workday and not a national holiday to trigger standard flow, 
-  // but we can let them know about pending reminders if today is active
-  res.json({
-    ...status,
-    lateReminderPending: status.status === "connected" && isTimeTrigger && !alreadySentToday && absentWorkers.length > 0,
-    absentWorkersCount: absentWorkers.length,
-    absentWorkersNames: absentWorkers.map(w => w.name),
-    todayDate: todayYMD
-  });
 });
 
 // POST Disconnect WhatsApp connection
@@ -3466,41 +3534,59 @@ app.post("/api/wa/send-test", async (req, res) => {
 
 // GET WhatsApp Security & Privacy Settings for Financial Vouchers
 app.get("/api/wa/security-settings", (req, res) => {
-  const state = readState();
-  const waStatus = getWhatsAppStatus();
-  
-  const defaultSettings = {
-    privacyMode: "whitelist", // 'whitelist' | 'pin' | 'public'
-    allowedPhones: [],
-    securityPin: "1234",
-    enableDriveLinks: true,
-    unauthorizedMessage: "Nomor WhatsApp Anda belum terdaftar dalam otorisasi akses voucher keuangan PT NMSA. Silakan hubungi Finance/Admin untuk mendaftarkan nomor Anda."
-  };
+  try {
+    const state = readState();
+    const waStatus = getWhatsAppStatus();
+    
+    const defaultSettings = {
+      privacyMode: "whitelist", // 'whitelist' | 'pin' | 'public'
+      allowedPhones: [],
+      securityPin: "1234",
+      enableDriveLinks: true,
+      unauthorizedMessage: "Nomor WhatsApp Anda belum terdaftar dalam otorisasi akses voucher keuangan PT NMSA. Silakan hubungi Finance/Admin untuk mendaftarkan nomor Anda."
+    };
 
-  const settings = state.waSecuritySettings || defaultSettings;
-  res.json({
-    success: true,
-    settings,
-    connectedUser: waStatus.user
-  });
+    const settings = state.waSecuritySettings || defaultSettings;
+    res.json({
+      success: true,
+      settings,
+      connectedUser: waStatus.user
+    });
+  } catch (err: any) {
+    res.json({
+      success: true,
+      settings: {
+        privacyMode: "whitelist",
+        allowedPhones: [],
+        securityPin: "1234",
+        enableDriveLinks: true,
+        unauthorizedMessage: "Nomor WhatsApp Anda belum terdaftar dalam otorisasi akses voucher keuangan PT NMSA. Silakan hubungi Finance/Admin untuk mendaftarkan nomor Anda."
+      },
+      connectedUser: null
+    });
+  }
 });
 
 // POST WhatsApp Security & Privacy Settings
 app.post("/api/wa/security-settings", (req, res) => {
-  if (!validateAdminToken(req)) {
-    return res.status(401).json({ success: false, error: "Unauthorized: Admin login required" });
+  try {
+    if (!validateAdminToken(req)) {
+      return res.status(401).json({ success: false, error: "Unauthorized: Admin login required" });
+    }
+    const { privacyMode, allowedPhones, securityPin, enableDriveLinks, unauthorizedMessage } = req.body;
+    const state = readState();
+    state.waSecuritySettings = {
+      privacyMode: privacyMode || "whitelist",
+      allowedPhones: Array.isArray(allowedPhones) ? allowedPhones : [],
+      securityPin: securityPin || "1234",
+      enableDriveLinks: enableDriveLinks !== false,
+      unauthorizedMessage: unauthorizedMessage || "Nomor WhatsApp Anda belum terdaftar dalam otorisasi akses voucher keuangan PT NMSA. Silakan hubungi Finance/Admin untuk mendaftarkan nomor Anda."
+    };
+    writeState(state);
+    res.json({ success: true, settings: state.waSecuritySettings });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
   }
-  const { privacyMode, allowedPhones, securityPin, enableDriveLinks, unauthorizedMessage } = req.body;
-  const state = readState();
-  state.waSecuritySettings = {
-    privacyMode: privacyMode || "whitelist",
-    allowedPhones: Array.isArray(allowedPhones) ? allowedPhones : [],
-    securityPin: securityPin || "1234",
-    enableDriveLinks: enableDriveLinks !== false,
-    unauthorizedMessage: unauthorizedMessage || "Nomor WhatsApp Anda belum terdaftar dalam otorisasi akses voucher keuangan PT NMSA. Silakan hubungi Finance/Admin untuk mendaftarkan nomor Anda."
-  };
-  writeState(state);
-  res.json({ success: true, settings: state.waSecuritySettings });
 });
 
 // --- UNIVERSAL WHATSAPP WEBHOOK & MAKE.COM / FONNTE / WABLAS INTEGRATION ---
@@ -3910,30 +3996,40 @@ async function fetchIndonesianHolidays(): Promise<Record<string, { holiday: bool
 }
 
 // Returns { isBlocked: boolean; reason: string | null }
-async function checkIsHolidayOrWeekend(dateStr: string): Promise<{ isBlocked: boolean; reason: string | null }> {
+async function checkIsHolidayOrWeekend(
+  dateStr: string,
+  options?: { skipHolidays?: boolean; skipWeekends?: boolean }
+): Promise<{ isBlocked: boolean; reason: string | null }> {
+  const skipWeekends = options?.skipWeekends !== false;
+  const skipHolidays = options?.skipHolidays !== false;
+
   const dayOfWeek = getJakartaDayOfWeek(dateStr);
-  if (dayOfWeek === 0) {
-    return { isBlocked: true, reason: "Hari Minggu (Akhir Pekan)" };
-  }
-  if (dayOfWeek === 6) {
-    return { isBlocked: true, reason: "Hari Sabtu (Akhir Pekan)" };
-  }
-
-  // Check online calendar API
-  const holidays = await fetchIndonesianHolidays();
-  if (holidays[dateStr] && holidays[dateStr].holiday) {
-    return { isBlocked: true, reason: `Hari Libur Nasional: ${holidays[dateStr].name}` };
+  if (skipWeekends) {
+    if (dayOfWeek === 0) {
+      return { isBlocked: true, reason: "Hari Minggu (Akhir Pekan)" };
+    }
+    if (dayOfWeek === 6) {
+      return { isBlocked: true, reason: "Hari Sabtu (Akhir Pekan)" };
+    }
   }
 
-  // Check static multi-year map
-  if (FALLBACK_HOLIDAYS[dateStr]) {
-    return { isBlocked: true, reason: `Hari Libur Nasional: ${FALLBACK_HOLIDAYS[dateStr]}` };
-  }
+  if (skipHolidays) {
+    // Check online calendar API
+    const holidays = await fetchIndonesianHolidays();
+    if (holidays[dateStr] && holidays[dateStr].holiday) {
+      return { isBlocked: true, reason: `Hari Libur Nasional: ${holidays[dateStr].name}` };
+    }
 
-  // Check fixed annual recurring holidays (MM-DD for endless future years: 2026, 2027, 2028, 2029, 2030, etc.)
-  const monthDay = dateStr.slice(5); // "MM-DD"
-  if (FIXED_ANNUAL_HOLIDAYS[monthDay]) {
-    return { isBlocked: true, reason: `Hari Libur Nasional: ${FIXED_ANNUAL_HOLIDAYS[monthDay]}` };
+    // Check static multi-year map
+    if (FALLBACK_HOLIDAYS[dateStr]) {
+      return { isBlocked: true, reason: `Hari Libur Nasional: ${FALLBACK_HOLIDAYS[dateStr]}` };
+    }
+
+    // Check fixed annual recurring holidays (MM-DD for endless future years: 2026, 2027, 2028, 2029, 2030, etc.)
+    const monthDay = dateStr.slice(5); // "MM-DD"
+    if (FIXED_ANNUAL_HOLIDAYS[monthDay]) {
+      return { isBlocked: true, reason: `Hari Libur Nasional: ${FIXED_ANNUAL_HOLIDAYS[monthDay]}` };
+    }
   }
 
   return { isBlocked: false, reason: null };
@@ -3942,11 +4038,16 @@ async function checkIsHolidayOrWeekend(dateStr: string): Promise<{ isBlocked: bo
 // GET /api/check-holiday (Check if a given date YYYY-MM-DD is holiday or weekend)
 app.get("/api/check-holiday", async (req, res) => {
   const dateStr = (req.query.date as string) || getJakartaDateStr();
-  const holidayCheck = await checkIsHolidayOrWeekend(dateStr);
+  const state = readState();
+  const skipHolidays = req.query.skipHolidays !== undefined ? req.query.skipHolidays === "true" : state.skipHolidays !== false;
+  const skipWeekends = req.query.skipWeekends !== undefined ? req.query.skipWeekends === "true" : state.skipWeekends !== false;
+  const holidayCheck = await checkIsHolidayOrWeekend(dateStr, { skipHolidays, skipWeekends });
   res.json({
     date: dateStr,
     isHoliday: holidayCheck.isBlocked,
-    reason: holidayCheck.reason
+    reason: holidayCheck.reason,
+    skipHolidays,
+    skipWeekends
   });
 });
 
@@ -3979,7 +4080,9 @@ app.get("/api/cron-reminder", async (req, res) => {
   const alreadySentToday = state.lastCronSentDate === todayYMD;
 
   // Holiday and Weekend Check
-  const holidayCheck = await checkIsHolidayOrWeekend(todayYMD);
+  const skipHolidays = state.skipHolidays !== false;
+  const skipWeekends = state.skipWeekends !== false;
+  const holidayCheck = await checkIsHolidayOrWeekend(todayYMD, { skipHolidays, skipWeekends });
 
   if (holidayCheck.isBlocked && !force) {
     // If it's Saturday, Sunday, or a National Holiday, we block the reminder and mark today as handled.
@@ -4118,6 +4221,8 @@ app.get("/api/bot-reminder-settings", (req, res) => {
       success: true,
       autoReminderHour: state.autoReminderHour || "09:00",
       autoReminderEnabled: state.autoReminderEnabled !== false,
+      skipHolidays: state.skipHolidays !== false,
+      skipWeekends: state.skipWeekends !== false,
       reminderActiveDays: state.reminderActiveDays || ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"],
       requireFridaySignature: state.requireFridaySignature !== false,
       lastCronPing: state.lastCronPing || "",
@@ -4137,10 +4242,12 @@ app.get("/api/bot-reminder-settings", (req, res) => {
 // POST /api/bot-reminder-settings (Update reminder configuration)
 app.post("/api/bot-reminder-settings", (req, res) => {
   try {
-    const { autoReminderHour, autoReminderEnabled, reminderActiveDays, requireFridaySignature } = req.body;
+    const { autoReminderHour, autoReminderEnabled, skipHolidays, skipWeekends, reminderActiveDays, requireFridaySignature } = req.body;
     const state = readState();
     if (autoReminderHour !== undefined) state.autoReminderHour = autoReminderHour;
     if (autoReminderEnabled !== undefined) state.autoReminderEnabled = autoReminderEnabled;
+    if (skipHolidays !== undefined) state.skipHolidays = skipHolidays;
+    if (skipWeekends !== undefined) state.skipWeekends = skipWeekends;
     if (reminderActiveDays !== undefined) state.reminderActiveDays = reminderActiveDays;
     if (requireFridaySignature !== undefined) state.requireFridaySignature = requireFridaySignature;
     writeState(state);
@@ -4150,6 +4257,8 @@ app.post("/api/bot-reminder-settings", (req, res) => {
       settings: {
         autoReminderHour: state.autoReminderHour,
         autoReminderEnabled: state.autoReminderEnabled,
+        skipHolidays: state.skipHolidays,
+        skipWeekends: state.skipWeekends,
         reminderActiveDays: state.reminderActiveDays,
         requireFridaySignature: state.requireFridaySignature
       }

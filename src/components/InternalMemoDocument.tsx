@@ -98,17 +98,17 @@ export const InternalMemoDocument: React.FC<InternalMemoDocumentProps> = ({
         ) : (
           <div className="w-full">
             {/* Indikator Mode Tanpa Kop Surat (Hanya Tampil di Layar, Tersembunyi Saat Dicetak) */}
-            <div className="print:hidden mb-4 p-2.5 bg-amber-50 border border-amber-300 rounded-xl text-center text-xs font-mono text-amber-900 flex items-center justify-center gap-2 select-none shadow-2xs">
+            <div className="print:hidden mb-2 p-2 bg-amber-50 border border-amber-300 rounded-xl text-center text-xs font-mono text-amber-900 flex items-center justify-center gap-2 select-none shadow-2xs">
               <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
-              <strong>Mode Memo Tanpa Kop Surat</strong> &bull; Disediakan ruang atas untuk dicetak langsung pada kertas blanko / berkop fisik perusahaan.
+              <strong>Mode Memo Tanpa Kop Surat</strong> &bull; Ruang atas disesuaikan rapi untuk dicetak langsung pada kertas blanko / berkop fisik perusahaan.
             </div>
-            {/* Spasi kosong proporsional untuk kertas berkop fisik */}
-            <div className="w-full h-16 sm:h-20 print:h-24 print:block" />
+            {/* Spasi proporsional hemat ruang tanpa kop surat agar memo tidak terlalu jauh dari header fisik */}
+            <div className="w-full h-8 sm:h-10 print:h-12 print:block" />
           </div>
         )}
 
-        {/* TITLE & NUMBER - Spasi Renggang Sesuai Word */}
-        <div className="text-center my-4 sm:my-5 print:my-4">
+        {/* TITLE & NUMBER - Spasi Rapi Sesuai Word */}
+        <div className="text-center my-3 sm:my-3.5 print:my-2.5">
           <h2 className="text-[13pt] print:text-[13pt] font-bold uppercase tracking-wider underline underline-offset-4 text-black">
             INTERNAL MEMO
           </h2>

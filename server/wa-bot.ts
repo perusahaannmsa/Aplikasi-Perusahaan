@@ -44,9 +44,31 @@ async function getDisconnectReason() {
   }
 }
 
-const AUTH_DIR = path.join(process.cwd(), "auth_info_baileys");
-const BACKUP_FILE = path.join(process.cwd(), "wa_session_backup.json");
-const DATA_FILE = path.join(process.cwd(), "data-store.json");
+const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NETLIFY);
+const STORAGE_BASE = isServerless ? "/tmp" : process.cwd();
+
+export const AUTH_DIR = path.join(STORAGE_BASE, "auth_info_baileys");
+export const BACKUP_FILE = path.join(STORAGE_BASE, "wa_session_backup.json");
+export const DATA_FILE = path.join(STORAGE_BASE, "data-store.json");
+
+// In serverless environments (like Vercel), ensure /tmp directory structures exist and seed from root read-only files
+if (isServerless) {
+  try {
+    if (!fs.existsSync(AUTH_DIR)) {
+      fs.mkdirSync(AUTH_DIR, { recursive: true });
+    }
+    const defaultDataFile = path.join(process.cwd(), "data-store.json");
+    if (!fs.existsSync(DATA_FILE) && fs.existsSync(defaultDataFile)) {
+      fs.copyFileSync(defaultDataFile, DATA_FILE);
+    }
+    const defaultBackupFile = path.join(process.cwd(), "wa_session_backup.json");
+    if (!fs.existsSync(BACKUP_FILE) && fs.existsSync(defaultBackupFile)) {
+      fs.copyFileSync(defaultBackupFile, BACKUP_FILE);
+    }
+  } catch (initErr) {
+    console.warn("[WhatsApp Bot] Serverless init warning:", initErr);
+  }
+}
 
 // Global state variables for WhatsApp Bot
 let sock: any = null;
@@ -313,7 +335,6 @@ export async function initWhatsApp() {
           const senderPhone = senderJid.split("@")[0]; // e.g. "628123456789"
           
           // Load data-store to find if sender is a registered worker
-          const DATA_FILE = path.join(process.cwd(), "data-store.json");
           if (!fs.existsSync(DATA_FILE)) continue;
           
           let state;
@@ -913,7 +934,6 @@ export async function generateBusinessAiReply(userQuery: string, senderName?: st
   }
 
   // Load available data store
-  const DATA_FILE = path.join(process.cwd(), "data-store.json");
   let stateData: any = {};
   if (fs.existsSync(DATA_FILE)) {
     try {

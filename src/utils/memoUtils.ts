@@ -86,15 +86,37 @@ export function toRomanMonth(monthZeroIndexed: number): string {
   return romanMonths[monthZeroIndexed] || 'IX';
 }
 
-export function generateDefaultMemoNumber(sequence = 164, date = new Date()): string {
+export function generateDefaultMemoNumber(sequence = 164, date = new Date(), withKop = true): string {
   const roman = toRomanMonth(date.getMonth());
   const year = date.getFullYear();
   const seqStr = String(sequence).padStart(3, '0');
-  return `${seqStr}/IM-NMSA/KEU/${roman}/${year}`;
+  if (withKop) {
+    return `${seqStr}/IM-NMSA/KEU/${roman}/${year}`;
+  }
+  // Format nomor memo tanpa kop surat: 001/IM/KEU/X/2026
+  return `${seqStr}/IM/KEU/${roman}/${year}`;
 }
 
 /**
- * Extracts sequence number from memo number string like "168/IM-NMSA/KEU/IX/2026", "No. : 168/...", or "169/..." -> 168, 169
+ * Checks if a memo is classified as "without kop surat".
+ */
+export function isMemoWithoutKopSurat(memo: Partial<InternalMemo> | undefined | null): boolean {
+  if (!memo) return false;
+  if (memo.showKopSurat === false) return true;
+  if (memo.nomorMemo) {
+    const cleaned = memo.nomorMemo.trim();
+    if (/IM\/KEU/i.test(cleaned) && !/IM-NMSA/i.test(cleaned)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Extracts sequence number from memo number string like:
+ * - "168/IM-NMSA/KEU/IX/2026" -> 168
+ * - "No. : 001/IM/KEU/X/2026" -> 1
+ * - "001/IM/KEU/X/2026" -> 1
  */
 export function extractMemoSequence(nomorMemo: string | undefined): number | null {
   if (!nomorMemo) return null;
@@ -121,15 +143,63 @@ export function extractMemoSequence(nomorMemo: string | undefined): number | nul
 }
 
 /**
- * Calculates the next sequential accumulated memo number based on all existing memos.
- * Always increments by +1 from the highest existing memo number found.
+ * Extracts the 4-digit year from a memo or memo number.
  */
-export function getNextMemoSequence(existingMemos: InternalMemo[] = [], baseSequence = 168): number {
-  if (!existingMemos || existingMemos.length === 0) {
-    return baseSequence;
+export function extractMemoYear(nomorMemoOrMemo: string | Partial<InternalMemo> | undefined): number | null {
+  if (!nomorMemoOrMemo) return null;
+  if (typeof nomorMemoOrMemo === 'object') {
+    if (nomorMemoOrMemo.tanggal) {
+      const d = new Date(nomorMemoOrMemo.tanggal);
+      if (!isNaN(d.getFullYear())) return d.getFullYear();
+    }
+    return extractMemoYear(nomorMemoOrMemo.nomorMemo);
   }
+  const match = nomorMemoOrMemo.match(/\/(20\d{2})(?:\b|[^\d])/);
+  if (match && match[1]) {
+    return parseInt(match[1], 10);
+  }
+  const matchAnyYear = nomorMemoOrMemo.match(/\b(20\d{2})\b/);
+  if (matchAnyYear && matchAnyYear[1]) {
+    return parseInt(matchAnyYear[1], 10);
+  }
+  return null;
+}
+
+/**
+ * Calculates the next sequential accumulated memo number based on all existing memos.
+ * Differentiates between memo with kop surat vs memo without kop surat.
+ * If target year is different, sequence for without-kop resets to 1 (001).
+ * Sequence continues month-to-month within the same year (bulan berganti nomor tetap berlanjut).
+ */
+export function getNextMemoSequence(
+  existingMemos: InternalMemo[] = [],
+  baseSequence = 168,
+  withKop = true,
+  targetYear?: number
+): number {
+  const currentYear = targetYear || new Date().getFullYear();
+
+  if (!existingMemos || existingMemos.length === 0) {
+    return withKop ? baseSequence : 1;
+  }
+
   const foundSeqs: number[] = [];
+
   for (const m of existingMemos) {
+    const mIsWithoutKop = isMemoWithoutKopSurat(m);
+    // Filter matching category
+    if (withKop && mIsWithoutKop) continue;
+    if (!withKop && !mIsWithoutKop) continue;
+
+    // Check year constraint: if without kop, reset sequence per year
+    if (!withKop) {
+      const mYear = extractMemoYear(m);
+      if (mYear !== null && mYear !== currentYear) {
+        // Different year: ignore for sequence count so new year resets to 1
+        continue;
+      }
+    }
+
     const seq = extractMemoSequence(m.nomorMemo);
     if (seq !== null && seq > 0) {
       foundSeqs.push(seq);
@@ -137,7 +207,7 @@ export function getNextMemoSequence(existingMemos: InternalMemo[] = [], baseSequ
   }
 
   if (foundSeqs.length === 0) {
-    return baseSequence;
+    return withKop ? baseSequence : 1;
   }
 
   const maxSeq = Math.max(...foundSeqs);
@@ -146,21 +216,24 @@ export function getNextMemoSequence(existingMemos: InternalMemo[] = [], baseSequ
 
 /**
  * Generates the next official sequential memo number, automatically accumulating
+ * according to kop surat status and year.
  */
 export function generateNextMemoNumber(
   existingMemosOrCount: InternalMemo[] | number = [],
   date = new Date(),
-  baseSequence = 168
+  baseSequence = 168,
+  withKop = true
 ): string {
+  const targetYear = date.getFullYear();
   let nextSeq: number;
   if (Array.isArray(existingMemosOrCount)) {
-    nextSeq = getNextMemoSequence(existingMemosOrCount, baseSequence);
+    nextSeq = getNextMemoSequence(existingMemosOrCount, baseSequence, withKop, targetYear);
   } else if (typeof existingMemosOrCount === 'number') {
     nextSeq = existingMemosOrCount;
   } else {
-    nextSeq = baseSequence;
+    nextSeq = withKop ? baseSequence : 1;
   }
-  return generateDefaultMemoNumber(nextSeq, date);
+  return generateDefaultMemoNumber(nextSeq, date, withKop);
 }
 
 export function getSavedBankAccounts(): BankAccountMaster[] {
@@ -219,18 +292,44 @@ export function saveInternalMemos(memos: InternalMemo[]): void {
 }
 
 /**
+ * Generates an official clean document title / file name according to memo number and perihal
+ * e.g. "001-IM-KEU-X-2026 - Pembayaran Operasional" or "168-IM-NMSA-KEU-IX-2026 - DP Batubara"
+ */
+export function formatMemoDocumentTitle(memo: Partial<InternalMemo> | undefined): string {
+  if (!memo) return 'Internal_Memo';
+  const rawNomor = (memo.nomorMemo || '').trim();
+  const cleanNomor = rawNomor
+    .replace(/^No\.?\s*:?\s*/i, '')
+    .replace(/[\/\\:?*"<>|]+/g, '-')
+    .replace(/\s+/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+  const cleanPerihal = (memo.perihal || 'Dokumen')
+    .replace(/[\/\\:?*"<>|]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 60);
+
+  if (cleanNomor && cleanPerihal) {
+    return `${cleanNomor} - ${cleanPerihal}`;
+  }
+  return cleanNomor || cleanPerihal || 'Internal_Memo';
+}
+
+/**
  * Creates initial memo with sequential number accumulation
  */
 export function createInitialMemo(
   submission?: Submission | null,
-  existingMemosOrCount: InternalMemo[] | number = []
+  existingMemosOrCount: InternalMemo[] | number = [],
+  withKop = true
 ): InternalMemo {
   const now = new Date();
   const todayIso = now.toISOString().split('T')[0];
   const hariTanggalDisplay = formatHariTanggalMemo(now);
   const defaultAccounts = getSavedBankAccounts();
   const defaultBank = defaultAccounts.find(a => a.isDefault) || defaultAccounts[0] || DEFAULT_BANK_ACCOUNTS[0];
-  const nextNomorMemo = generateNextMemoNumber(existingMemosOrCount, now, 168);
+  const nextNomorMemo = generateNextMemoNumber(existingMemosOrCount, now, 168, withKop);
 
   if (submission) {
     const subTotal = (submission.items || []).reduce((sum, item) => sum + (item.total || 0), 0);
@@ -263,7 +362,8 @@ export function createInitialMemo(
       linkedAmount: subTotal,
       companyName: 'PT. NUSANTARA MINERAL SUKSES ABADI',
       companyHeaderUrl: OFFICIAL_KOP_SURAT_IMAGE_URL,
-      useImageHeader: true, // Always use banner kop surat as requested
+      useImageHeader: withKop,
+      showKopSurat: withKop,
       includeBankDetails: true,
       createdAt: new Date().toISOString(),
     };
@@ -299,8 +399,8 @@ export function createInitialMemo(
     penandatanganJabatan3: 'Direktur Utama ANH',
     companyName: 'PT. NUSANTARA MINERAL SUKSES ABADI',
     companyHeaderUrl: OFFICIAL_KOP_SURAT_IMAGE_URL,
-    useImageHeader: true, // Always use banner kop surat as requested
-    showKopSurat: true,
+    useImageHeader: withKop,
+    showKopSurat: withKop,
     createdAt: new Date().toISOString(),
   };
 }
@@ -620,8 +720,8 @@ export async function generateInternalMemoPdfBlob(
       yPos += 7;
     }
   } else {
-    // Mode Tanpa Kop Surat: Sisakan ruang atas ~30mm untuk dicetak pada kertas berkop fisik
-    yPos = 38;
+    // Mode Tanpa Kop Surat: Sisakan ruang atas proporsional dan tidak terlalu jauh dari header fisik
+    yPos = 26;
   }
 
   // 2. Title & Nomor Memo (Spasi Renggang Sesuai Word)

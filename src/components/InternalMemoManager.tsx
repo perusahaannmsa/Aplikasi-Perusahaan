@@ -13,6 +13,8 @@ import {
   generateMemoPdfBlobFromElement,
   OFFICIAL_KOP_SURAT_IMAGE_URL,
   parseDari,
+  formatMemoDocumentTitle,
+  isMemoWithoutKopSurat,
 } from '../utils/memoUtils';
 import { memoGoogleDriveService } from '../utils/memoDriveService';
 import { getInternalMemoLink } from '../utils/appLinks';
@@ -179,13 +181,24 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
   // When memos list updates, if user is on a fresh new draft, keep nomorMemo aligned with latest sequence
   useEffect(() => {
     if (!editingExistingId && memos.length > 0) {
-      const nextNomor = generateNextMemoNumber(memos, currentMemo.tanggal ? new Date(currentMemo.tanggal) : new Date(), 168);
+      const isWithKop = currentMemo.showKopSurat !== false;
+      const nextNomor = generateNextMemoNumber(
+        memos,
+        currentMemo.tanggal ? new Date(currentMemo.tanggal) : new Date(),
+        168,
+        isWithKop
+      );
       // Only auto-update if nomorMemo matches a default template pattern
-      if (currentMemo.nomorMemo !== nextNomor && (!currentMemo.nomorMemo || currentMemo.nomorMemo.includes('/IM-NMSA/KEU/'))) {
+      if (
+        currentMemo.nomorMemo !== nextNomor &&
+        (!currentMemo.nomorMemo ||
+          currentMemo.nomorMemo.includes('/IM-NMSA/KEU/') ||
+          currentMemo.nomorMemo.includes('/IM/KEU/'))
+      ) {
         setCurrentMemo((prev) => ({ ...prev, nomorMemo: nextNomor }));
       }
     }
-  }, [memos.length, editingExistingId]);
+  }, [memos.length, editingExistingId, currentMemo.showKopSurat]);
 
   // If initialSubmissionForMemo changes, update currentMemo with sequential number
   useEffect(() => {
@@ -273,15 +286,17 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
     if (shouldSaveAsNew) {
       const newId = `memo-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
       // If forced as new, ensure number advances if it matched old memo
+      const isWithKop = currentMemo.showKopSurat !== false;
       const nextNomor = options?.forceAsNew && !isDifferentNumber
-        ? generateNextMemoNumber(memos, currentMemo.tanggal ? new Date(currentMemo.tanggal) : new Date(), 168)
+        ? generateNextMemoNumber(memos, currentMemo.tanggal ? new Date(currentMemo.tanggal) : new Date(), 168, isWithKop)
         : currentMemo.nomorMemo;
 
       payload = {
         ...currentMemo,
         id: newId,
         nomorMemo: nextNomor,
-        useImageHeader: true,
+        useImageHeader: isWithKop,
+        showKopSurat: isWithKop,
         companyHeaderUrl: currentMemo.companyHeaderUrl || OFFICIAL_KOP_SURAT_IMAGE_URL,
         updatedAt: new Date().toISOString(),
         createdAt: currentMemo.createdAt || new Date().toISOString(),
@@ -557,18 +572,20 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
 
   // Duplicate current memo with next accumulated sequence
   const handleDuplicateMemo = (memoToDupe: InternalMemo = currentMemo) => {
-    const nextNomor = generateNextMemoNumber(memos, new Date(), 168);
+    const isWithKop = memoToDupe.showKopSurat !== false;
+    const nextNomor = generateNextMemoNumber(memos, new Date(), 168, isWithKop);
     const duplicated: InternalMemo = {
       ...memoToDupe,
       id: `memo-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       nomorMemo: nextNomor,
+      showKopSurat: isWithKop,
+      useImageHeader: isWithKop,
       tanggal: new Date().toISOString().split('T')[0],
       hariTanggalDisplay: formatHariTanggalMemo(new Date()),
       driveFileId: undefined,
       driveUrl: undefined,
       driveFolderPath: undefined,
       driveSyncedAt: undefined,
-      useImageHeader: true,
       companyHeaderUrl: memoToDupe.companyHeaderUrl || OFFICIAL_KOP_SURAT_IMAGE_URL,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -653,9 +670,10 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
 
     // Check if currently opened memo was already saved in history
     const isExistingSaved = memos.some((m) => m.id === currentMemo.id);
+    const isWithKop = currentMemo.showKopSurat !== false;
     const nextNomor = isExistingSaved
-      ? generateNextMemoNumber(memos, new Date(), 168)
-      : currentMemo.nomorMemo || generateNextMemoNumber(memos, new Date(), 168);
+      ? generateNextMemoNumber(memos, new Date(), 168, isWithKop)
+      : currentMemo.nomorMemo || generateNextMemoNumber(memos, new Date(), 168, isWithKop);
     const newId = isExistingSaved
       ? `memo-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`
       : currentMemo.id;
@@ -764,13 +782,20 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
   };
 
   // Print function with complete isolation to match Microsoft Word exact output
-  const handlePrint = () => {
+  const handlePrint = (targetMemo: InternalMemo = currentMemo) => {
     // Automatically save before print
     handleSaveCurrentMemo();
     document.body.classList.add('is-printing-internal-memo');
 
+    const originalTitle = document.title;
+    const docTitle = formatMemoDocumentTitle(targetMemo);
+    if (docTitle) {
+      document.title = docTitle;
+    }
+
     const cleanup = () => {
       document.body.classList.remove('is-printing-internal-memo');
+      document.title = originalTitle;
       window.removeEventListener('afterprint', cleanup);
     };
 
@@ -992,7 +1017,13 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    const next = generateNextMemoNumber(memos, currentMemo.tanggal ? new Date(currentMemo.tanggal) : new Date(), 168);
+                    const isWithKop = currentMemo.showKopSurat !== false;
+                    const next = generateNextMemoNumber(
+                      memos,
+                      currentMemo.tanggal ? new Date(currentMemo.tanggal) : new Date(),
+                      168,
+                      isWithKop
+                    );
                     setCurrentMemo((prev) => ({ ...prev, nomorMemo: next }));
                     setSaveSuccessMsg(`Nomor otomatis disegarkan: ${next}`);
                     setTimeout(() => setSaveSuccessMsg(''), 2500);
@@ -1069,13 +1100,18 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                   <div className="inline-flex rounded-lg border border-stone-300 p-0.5 bg-stone-200/70 text-[11px]">
                     <button
                       type="button"
-                      onClick={() =>
+                      onClick={() => {
+                        const targetDate = currentMemo.tanggal ? new Date(currentMemo.tanggal) : new Date();
+                        const nextNomor = generateNextMemoNumber(memos, targetDate, 168, true);
                         setCurrentMemo((prev) => ({
                           ...prev,
                           showKopSurat: true,
                           useImageHeader: true,
-                        }))
-                      }
+                          nomorMemo: (!prev.nomorMemo || prev.nomorMemo.includes('/IM/KEU/') || prev.nomorMemo.includes('/IM-NMSA/KEU/')) ? nextNomor : prev.nomorMemo,
+                        }));
+                        setSaveSuccessMsg('Format diubah: Dengan Kop Surat resmi NMSA');
+                        setTimeout(() => setSaveSuccessMsg(''), 2500);
+                      }}
                       className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer flex items-center gap-1 ${
                         currentMemo.showKopSurat !== false
                           ? 'bg-amber-600 text-white shadow-xs'
@@ -1088,12 +1124,17 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                     </button>
                     <button
                       type="button"
-                      onClick={() =>
+                      onClick={() => {
+                        const targetDate = currentMemo.tanggal ? new Date(currentMemo.tanggal) : new Date();
+                        const nextNomor = generateNextMemoNumber(memos, targetDate, 168, false);
                         setCurrentMemo((prev) => ({
                           ...prev,
                           showKopSurat: false,
-                        }))
-                      }
+                          nomorMemo: (!prev.nomorMemo || prev.nomorMemo.includes('/IM-NMSA/KEU/') || prev.nomorMemo.includes('/IM/KEU/')) ? nextNomor : prev.nomorMemo,
+                        }));
+                        setSaveSuccessMsg('Format diubah: Tanpa Kop Surat (No: 001/IM/KEU/...)');
+                        setTimeout(() => setSaveSuccessMsg(''), 2500);
+                      }}
                       className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer flex items-center gap-1 ${
                         currentMemo.showKopSurat === false
                           ? 'bg-amber-600 text-white shadow-xs'
@@ -1109,13 +1150,16 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
 
                 {currentMemo.showKopSurat !== false ? (
                   <div className="bg-white border border-stone-200 rounded-xl p-2.5 shadow-2xs space-y-2">
-                    <div className="w-full bg-stone-100 rounded-lg overflow-hidden border border-stone-200/80 p-1 flex items-center justify-center">
+                    <div className="w-full bg-stone-100 rounded-lg overflow-hidden border border-stone-200/80 p-2 flex flex-col items-center justify-center gap-1">
                       <img
                         src={currentMemo.companyHeaderUrl || OFFICIAL_KOP_SURAT_IMAGE_URL}
-                        alt="Banner Kop Surat PT. NMSA"
+                        alt={`Kop Surat - ${formatMemoDocumentTitle(currentMemo)}`}
                         className="w-full h-auto max-h-16 object-contain"
                         referrerPolicy="no-referrer"
                       />
+                      <div className="text-[10px] text-stone-500 font-mono text-center truncate max-w-full px-2">
+                        Nama Dokumen: <strong className="text-stone-700">{formatMemoDocumentTitle(currentMemo)}</strong>
+                      </div>
                     </div>
 
                     <div>
@@ -1173,8 +1217,9 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                     <AlertCircle size={16} className="text-amber-600 shrink-0" />
                     <div>
                       <strong className="text-amber-950 font-bold block">Mode Tanpa Kop Surat Aktif</strong>
-                      <span className="text-[11px] text-stone-600">
-                        Banner kop surat dihilangkan dan ruang margin atas otomatis disiapkan untuk dicetak langsung pada kertas blanko berkop fisik resmi perusahaan.
+                      <span className="text-[11px] text-stone-600 block mt-0.5">
+                        Format nomor: <code className="font-mono font-bold text-amber-900 bg-amber-100 px-1 py-0.5 rounded">001/IM/KEU/X/2026</code>.
+                        Jarak atas diperpendek rapi untuk dicetak langsung pada kertas blanko berkop fisik resmi perusahaan.
                       </span>
                     </div>
                   </div>
@@ -1183,9 +1228,14 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
 
               {/* No Memo */}
               <div>
-                <label className="block text-[11px] font-bold text-stone-700 mb-1">
-                  Nomor Dokumen Memo
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[11px] font-bold text-stone-700">
+                    Nomor Dokumen Memo
+                  </label>
+                  <span className="text-[10px] font-bold text-stone-500 font-mono">
+                    {currentMemo.showKopSurat === false ? 'Format: [No]/IM/KEU/[Bulan]/[Tahun]' : 'Format: [No]/IM-NMSA/KEU/[Bulan]/[Tahun]'}
+                  </span>
+                </div>
                 <div className="flex gap-2">
                   <input
                     type="text"
@@ -1193,23 +1243,28 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                     onChange={(e) =>
                       setCurrentMemo((prev) => ({ ...prev, nomorMemo: e.target.value }))
                     }
-                    placeholder="164/IM-NMSA/KEU/IX/2026"
+                    placeholder={currentMemo.showKopSurat === false ? "001/IM/KEU/X/2026" : "164/IM-NMSA/KEU/IX/2026"}
                     className="flex-1 px-3 py-2 text-xs font-mono font-bold bg-stone-50 border border-stone-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:bg-white focus:outline-none"
                   />
                   <button
                     type="button"
-                    onClick={() =>
+                    onClick={() => {
+                      const isWithKop = currentMemo.showKopSurat !== false;
+                      const next = generateNextMemoNumber(
+                        memos,
+                        currentMemo.tanggal ? new Date(currentMemo.tanggal) : new Date(),
+                        168,
+                        isWithKop
+                      );
                       setCurrentMemo((prev) => ({
                         ...prev,
-                        nomorMemo: generateNextMemoNumber(
-                          memos,
-                          prev.tanggal ? new Date(prev.tanggal) : new Date(),
-                          168
-                        ),
-                      }))
-                    }
+                        nomorMemo: next,
+                      }));
+                      setSaveSuccessMsg(`Nomor urut otomatis diperbarui: ${next}`);
+                      setTimeout(() => setSaveSuccessMsg(''), 2500);
+                    }}
                     className="px-2.5 py-2 bg-stone-100 hover:bg-amber-100 text-stone-700 hover:text-amber-900 text-xs font-bold rounded-xl transition flex items-center gap-1 cursor-pointer"
-                    title="Generate nomor urut memo otomatis terakumulasi (+1 dari nomor tertinggi)"
+                    title="Generate nomor urut memo otomatis (+1 dari nomor tertinggi, reset 001 tiap tahun baru)"
                   >
                     <RefreshCw size={12} />
                     <span>Auto Urut</span>
@@ -2040,13 +2095,16 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                 <div className="inline-flex rounded-lg border border-stone-300 p-0.5 bg-stone-100 text-[11px] shadow-2xs">
                   <button
                     type="button"
-                    onClick={() =>
+                    onClick={() => {
+                      const targetDate = currentMemo.tanggal ? new Date(currentMemo.tanggal) : new Date();
+                      const nextNomor = generateNextMemoNumber(memos, targetDate, 168, true);
                       setCurrentMemo((prev) => ({
                         ...prev,
                         showKopSurat: true,
                         useImageHeader: true,
-                      }))
-                    }
+                        nomorMemo: (!prev.nomorMemo || prev.nomorMemo.includes('/IM/KEU/') || prev.nomorMemo.includes('/IM-NMSA/KEU/')) ? nextNomor : prev.nomorMemo,
+                      }));
+                    }}
                     className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer flex items-center gap-1 ${
                       currentMemo.showKopSurat !== false
                         ? 'bg-amber-600 text-white shadow-xs'
@@ -2059,12 +2117,15 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                   </button>
                   <button
                     type="button"
-                    onClick={() =>
+                    onClick={() => {
+                      const targetDate = currentMemo.tanggal ? new Date(currentMemo.tanggal) : new Date();
+                      const nextNomor = generateNextMemoNumber(memos, targetDate, 168, false);
                       setCurrentMemo((prev) => ({
                         ...prev,
                         showKopSurat: false,
-                      }))
-                    }
+                        nomorMemo: (!prev.nomorMemo || prev.nomorMemo.includes('/IM-NMSA/KEU/') || prev.nomorMemo.includes('/IM/KEU/')) ? nextNomor : prev.nomorMemo,
+                      }));
+                    }}
                     className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer flex items-center gap-1 ${
                       currentMemo.showKopSurat === false
                         ? 'bg-amber-600 text-white shadow-xs'
@@ -2339,13 +2400,9 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                     <button
                       onClick={() => {
                         handleSelectMemoFromHistory(memo);
-                        document.body.classList.add('is-printing-internal-memo');
                         setTimeout(() => {
-                          window.print();
-                          setTimeout(() => {
-                            document.body.classList.remove('is-printing-internal-memo');
-                          }, 1000);
-                        }, 200);
+                          handlePrint(memo);
+                        }, 100);
                       }}
                       className="px-2 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold rounded-lg transition cursor-pointer"
                       title="Cetak langsung"

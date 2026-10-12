@@ -5535,7 +5535,7 @@
       "submissionCode": "BKK-NMSA/VIII/26/1036"
     }
   ],
-  "attendancePin": "8762",
+  "attendancePin": "8788",
   "signatures": {},
   "pettyCashHolders": [
     "Suryo Pranoto",
@@ -26464,7 +26464,7 @@
       "deletedPageIds": []
     },
     {
-      "id": "zHtFjDAdJXJBlnHWON26",
+      "id": "sub-1788837752571",
       "lokasi": "Lt. 1",
       "tanggal": "2026-05-21",
       "jenisPengajuan": "Biaya Notaris",
@@ -26519,7 +26519,7 @@
       "deletedPageIds": []
     },
     {
-      "id": "hihOULZlm7TelDMBLbyQ",
+      "id": "sub-1788837752571",
       "lokasi": "Lt. 1",
       "tanggal": "2026-05-21",
       "jenisPengajuan": "Biaya Notaris",
@@ -26574,7 +26574,7 @@
       "deletedPageIds": []
     },
     {
-      "id": "glTMEMyfzGNFeAiUL0FR",
+      "id": "sub-1788837752571",
       "lokasi": "Lt. 1",
       "tanggal": "2026-05-21",
       "jenisPengajuan": "Biaya Notaris",
@@ -26629,7 +26629,7 @@
       "deletedPageIds": []
     },
     {
-      "id": "cdDGY5wRSshklyuD6hcI",
+      "id": "sub-1788837752571",
       "lokasi": "Lt. 1",
       "tanggal": "2026-05-21",
       "jenisPengajuan": "Biaya Notaris",
@@ -34923,7 +34923,10 @@
   "adminUsername": "admin",
   "adminPassword": "admin123",
   "adminToken": "c82bbb9c-0fdf-4204-a16a-154bd888762d",
-  "lastPinDate": "2026-10-07",
+  "lastPinDate": "2026-10-12",
   "bankStatements": [],
-  "internalMemos": []
+  "internalMemos": [],
+  "skipHolidays": true,
+  "skipWeekends": true,
+  "lastHostOrigin": "http://localhost:3000"
 }
