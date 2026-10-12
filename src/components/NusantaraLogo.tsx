@@ -2,7 +2,7 @@ import React from 'react';
 
 interface LogoProps {
   className?: string;
-  size?: 'xs' | 'sm' | 'md' | 'lg';
+  size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl' | '2xl';
   companyName?: string;
   logoUrl?: string;
 }
@@ -18,6 +18,8 @@ export const NusantaraLogo: React.FC<LogoProps> = ({
     sm: 'h-12 w-auto max-w-[150px]',
     md: 'h-20 w-auto max-w-[240px]',
     lg: 'h-28 w-auto max-w-[320px]',
+    xl: 'h-36 w-auto max-w-[360px]',
+    '2xl': 'h-44 w-auto max-w-[420px]',
   };
 
   const dimClass = dimensions[size] || dimensions.md;
