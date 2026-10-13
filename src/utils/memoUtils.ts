@@ -1,4 +1,4 @@
-import { BankAccountMaster, InternalMemo, Submission } from '../types';
+import { BankAccountMaster, InternalMemo, Submission, SavedKopSuratLink } from '../types';
 import { OFFICIAL_KOP_SURAT_BASE64 } from './kopSuratBase64';
 
 export const OFFICIAL_KOP_SURAT_IMAGE_URL = '/kop-surat-nmsa-full.png';
@@ -191,8 +191,9 @@ export function extractMemoYear(nomorMemoOrMemo: string | Partial<InternalMemo> 
 
 /**
  * Calculates the next sequential accumulated memo number based on all existing memos.
- * Differentiates between memo with kop surat vs memo without kop surat.
- * If target year is different, sequence for without-kop resets to 1 (001).
+ * Differentiates strictly between memo with kop surat vs memo without kop surat.
+ * Both categories track their own independent sequence counter.
+ * Both categories reset at the beginning of each year (di awal tahun reset ke 001).
  * Sequence continues month-to-month within the same year (bulan berganti nomor tetap berlanjut).
  */
 export function getNextMemoSequence(
@@ -203,25 +204,29 @@ export function getNextMemoSequence(
 ): number {
   const currentYear = targetYear || new Date().getFullYear();
 
+  // In the inception year 2026: withKop starts at baseSequence (168), withoutKop starts at 1 (001).
+  // In any new year (2027, etc.): both reset to 1 at the beginning of the year.
+  const defaultStartingSeq = withKop ? (currentYear === 2026 ? baseSequence : 1) : 1;
+
   if (!existingMemos || existingMemos.length === 0) {
-    return withKop ? baseSequence : 1;
+    return defaultStartingSeq;
   }
 
   const foundSeqs: number[] = [];
 
   for (const m of existingMemos) {
     const mIsWithoutKop = isMemoWithoutKopSurat(m);
-    // Filter matching category
+    // Filter matching category strictly:
+    // With-kop memos ONLY count other with-kop memos
+    // Without-kop memos ONLY count other without-kop memos
     if (withKop && mIsWithoutKop) continue;
     if (!withKop && !mIsWithoutKop) continue;
 
-    // Check year constraint: if without kop, reset sequence per year
-    if (!withKop) {
-      const mYear = extractMemoYear(m);
-      if (mYear !== null && mYear !== currentYear) {
-        // Different year: ignore for sequence count so new year resets to 1
-        continue;
-      }
+    // Reset di awal tahun: hanya perhitungkan memo pada tahun yang sama (currentYear)
+    const mYear = extractMemoYear(m);
+    if (mYear !== null && mYear !== currentYear) {
+      // Memo dari tahun sebelumnya diabaikan agar nomor urut mereset di awal tahun baru
+      continue;
     }
 
     const seq = extractMemoSequence(m.nomorMemo);
@@ -231,7 +236,7 @@ export function getNextMemoSequence(
   }
 
   if (foundSeqs.length === 0) {
-    return withKop ? baseSequence : 1;
+    return defaultStartingSeq;
   }
 
   const maxSeq = Math.max(...foundSeqs);
@@ -313,6 +318,51 @@ export function saveInternalMemos(memos: InternalMemo[]): void {
   } catch (e) {
     console.error('Failed to save internal memos:', e);
   }
+}
+
+export const DEFAULT_SAVED_KOP_SURAT_LINKS: SavedKopSuratLink[] = [
+  {
+    id: 'kop-nmsa-resmi',
+    name: 'Kop Surat Resmi PT NMSA',
+    url: OFFICIAL_KOP_SURAT_IMAGE_URL,
+    isDefault: true,
+    createdAt: '2026-01-01T00:00:00.000Z',
+  },
+];
+
+export function getSavedKopSuratLinks(): SavedKopSuratLink[] {
+  try {
+    const raw = localStorage.getItem('NMSA_SAVED_KOP_SURAT_LINKS');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load saved kop surat links:', e);
+  }
+  return DEFAULT_SAVED_KOP_SURAT_LINKS;
+}
+
+export function saveKopSuratLinks(links: SavedKopSuratLink[]): void {
+  try {
+    localStorage.setItem('NMSA_SAVED_KOP_SURAT_LINKS', JSON.stringify(links));
+  } catch (e) {
+    console.error('Failed to save kop surat links:', e);
+  }
+}
+
+export function findKopSuratNameByUrl(url?: string, links?: SavedKopSuratLink[]): string {
+  if (!url) return '';
+  const list = links || getSavedKopSuratLinks();
+  const cleanUrl = url.trim();
+  const found = list.find((item) => item.url.trim() === cleanUrl);
+  if (found) return found.name;
+  if (cleanUrl === OFFICIAL_KOP_SURAT_IMAGE_URL || cleanUrl.includes('kop-surat-nmsa-full.png')) {
+    return 'Kop Surat Resmi PT NMSA';
+  }
+  return cleanUrl;
 }
 
 /**

@@ -533,6 +533,7 @@ export interface InternalMemo {
   companyContact?: string;
   companyLogoUrl?: string;
   companyHeaderUrl?: string;
+  companyHeaderName?: string; // Nama alias / label kop surat (misal: "Kop Surat Resmi PT NMSA", "Kop Surat ANH", dll.)
   useImageHeader?: boolean;
   showKopSurat?: boolean; // true = Dengan Kop Surat (Banner Resmi), false = Tanpa Kop Surat (Kertas Berkop Fisik / Polos)
   driveFileId?: string;
@@ -555,6 +556,10 @@ export interface InternalMemo {
   updatedAt?: string;
 }
 
-
-
-
+export interface SavedKopSuratLink {
+  id: string;
+  name: string;        // Nama alias kop surat (misal: "b" atau "Kop Surat Resmi PT NMSA")
+  url: string;         // Direct link URL (misal: "a" atau "/kop-surat-nmsa-full.png")
+  isDefault?: boolean;
+  createdAt?: string;
+}

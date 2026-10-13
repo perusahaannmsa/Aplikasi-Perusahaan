@@ -47,6 +47,14 @@ process.on("SIGINT", () => {
   process.exit(0);
 });
 
+// Prevent unhandled promise rejections and exceptions from crashing the server process
+process.on("uncaughtException", (err) => {
+  console.error("[Server Process] Handled Uncaught Exception:", err);
+});
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[Server Process] Handled Unhandled Promise Rejection:", reason);
+});
+
 // Global reference to Vite dev server instance for HTML transforms
 let viteInstance: any = null;
 
@@ -4907,25 +4915,26 @@ async function bootstrap() {
         if (fs.existsSync(path.join(process.cwd(), "auth_info_baileys", "creds.json")) || hasAuthBackup()) {
           console.log("[Startup] Kredensial / backup sesi WhatsApp terdeteksi, mengaktifkan bot...");
           initWhatsApp().catch((err) => console.error("Error initializing WhatsApp Bot on startup:", err));
-        // Restore attendance from Firebase Firestore so data is NEVER lost across updates/restarts
-        setTimeout(async () => {
-          try {
-            console.log("[Startup] Memeriksa Firebase Firestore untuk memulihkan data absensi...");
-            const cur = readState();
-            const restored = await restoreAttendanceFromFirestore(cur);
-            if (restored && restored.attendanceRecords && restored.attendanceRecords.length > 0) {
-              writeState(restored);
-              console.log(`[Startup] Berhasil memulihkan ${restored.attendanceRecords.length} data absensi & ${(restored.weeklyReports || []).length} laporan mingguan dari Firebase Firestore!`);
-            }
-          } catch (err: any) {
-            console.warn("[Startup] Gagal auto-restore dari Firestore:", err?.message);
-          }
-        }, 1500);
         }
       } catch (e) {
         console.warn("Could not check WhatsApp credentials on startup:", e);
       }
     }, 1000);
+
+    // Restore attendance from Firebase Firestore so data is NEVER lost across updates/restarts
+    setTimeout(async () => {
+      try {
+        console.log("[Startup] Memeriksa Firebase Firestore untuk memulihkan data absensi...");
+        const cur = readState();
+        const restored = await restoreAttendanceFromFirestore(cur);
+        if (restored && restored.attendanceRecords && restored.attendanceRecords.length > 0) {
+          writeState(restored);
+          console.log(`[Startup] Berhasil memulihkan ${restored.attendanceRecords.length} data absensi & ${(restored.weeklyReports || []).length} laporan mingguan dari Firebase Firestore!`);
+        }
+      } catch (err: any) {
+        console.warn("[Startup] Gagal auto-restore dari Firestore:", err?.message);
+      }
+    }, 1500);
   });
 
   serverInstance.on("error", (err: any) => {

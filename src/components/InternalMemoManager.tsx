@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { InternalMemo, BankAccountMaster, Submission } from '../types';
+import { InternalMemo, BankAccountMaster, Submission, SavedKopSuratLink } from '../types';
 import {
   formatHariTanggalMemo,
   generateDefaultMemoNumber,
@@ -15,6 +15,9 @@ import {
   parseDari,
   formatMemoDocumentTitle,
   isMemoWithoutKopSurat,
+  getSavedKopSuratLinks,
+  saveKopSuratLinks,
+  findKopSuratNameByUrl,
 } from '../utils/memoUtils';
 import { memoGoogleDriveService } from '../utils/memoDriveService';
 import { getInternalMemoLink } from '../utils/appLinks';
@@ -25,6 +28,7 @@ import {
 } from '../firebase';
 import { InternalMemoDocument } from './InternalMemoDocument';
 import { ManageBankAccountsModal } from './ManageBankAccountsModal';
+import { ManageKopSuratLinksModal } from './ManageKopSuratLinksModal';
 import { MemoRichEditor } from './MemoRichEditor';
 import {
   FileText,
@@ -88,9 +92,31 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
   onCreateVoucher,
 }) => {
   const [activeTab, setActiveTab] = useState<'editor' | 'history' | 'banks'>('editor');
+  const [historyCategory, setHistoryCategory] = useState<'with_kop' | 'without_kop' | 'all'>('with_kop');
   const [memos, setMemos] = useState<InternalMemo[]>(() => getSavedInternalMemos());
   const [bankAccounts, setBankAccounts] = useState<BankAccountMaster[]>(() => getSavedBankAccounts());
   const [isBankModalOpen, setIsBankModalOpen] = useState(false);
+
+  // Saved Kop Surat Links state (nama alias & direct url)
+  const [savedKopLinks, setSavedKopLinks] = useState<SavedKopSuratLink[]>(() => getSavedKopSuratLinks());
+  const [isKopModalOpen, setIsKopModalOpen] = useState(false);
+  const [isKopDropdownOpen, setIsKopDropdownOpen] = useState(false);
+  const kopDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on click outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (kopDropdownRef.current && !kopDropdownRef.current.contains(event.target as Node)) {
+        setIsKopDropdownOpen(false);
+      }
+    };
+    if (isKopDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isKopDropdownOpen]);
 
   // Google Drive backup state
   const [isAutoDriveUploadEnabled, setIsAutoDriveUploadEnabled] = useState<boolean>(() => {
@@ -561,13 +587,30 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
   };
 
   // Create new blank / default memo with next accumulated sequence
-  const handleCreateNewMemo = () => {
-    const fresh = createInitialMemo(null, memos);
+  const handleCreateNewMemo = (withKop?: boolean) => {
+    const isWithKop = withKop !== undefined ? withKop : currentMemo.showKopSurat !== false;
+    const fresh = createInitialMemo(null, memos, isWithKop);
     setCurrentMemo(fresh);
     setEditingExistingId(null);
     setActiveTab('editor');
-    setSaveSuccessMsg(`Draf memo baru dengan Nomor ${fresh.nomorMemo} siap diedit.`);
+    setSaveSuccessMsg(`Draf memo baru (${isWithKop ? 'Dengan Kop Surat' : 'Tanpa Kop Surat'}) nomor ${fresh.nomorMemo} siap diedit.`);
     setTimeout(() => setSaveSuccessMsg(''), 3500);
+  };
+
+  const handleSaveKopLinks = (updated: SavedKopSuratLink[]) => {
+    setSavedKopLinks(updated);
+    saveKopSuratLinks(updated);
+  };
+
+  const handleSelectKopLink = (link: SavedKopSuratLink) => {
+    setCurrentMemo((prev) => ({
+      ...prev,
+      useImageHeader: true,
+      companyHeaderUrl: link.url,
+      companyHeaderName: link.name,
+    }));
+    setSaveSuccessMsg(`Kop Surat aktif: "${link.name}"`);
+    setTimeout(() => setSaveSuccessMsg(''), 2500);
   };
 
   // Duplicate current memo with next accumulated sequence
@@ -644,11 +687,29 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
   // Handle date change
   const handleDateChange = (isoDate: string) => {
     const formatted = formatHariTanggalMemo(isoDate);
-    setCurrentMemo((prev) => ({
-      ...prev,
-      tanggal: isoDate,
-      hariTanggalDisplay: formatted,
-    }));
+    const dateObj = new Date(isoDate);
+    const isWithKop = currentMemo.showKopSurat !== false;
+
+    if (!editingExistingId) {
+      const nextNomor = generateNextMemoNumber(
+        memos,
+        isNaN(dateObj.getTime()) ? new Date() : dateObj,
+        168,
+        isWithKop
+      );
+      setCurrentMemo((prev) => ({
+        ...prev,
+        tanggal: isoDate,
+        hariTanggalDisplay: formatted,
+        nomorMemo: nextNomor,
+      }));
+    } else {
+      setCurrentMemo((prev) => ({
+        ...prev,
+        tanggal: isoDate,
+        hariTanggalDisplay: formatted,
+      }));
+    }
   };
 
   // Handle bank account change from dropdown
@@ -782,13 +843,14 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
   };
 
   // Print function with complete isolation to match Microsoft Word exact output
-  const handlePrint = (targetMemo: InternalMemo = currentMemo) => {
+  const handlePrint = (targetMemo?: InternalMemo) => {
+    const memoToPrint = targetMemo || currentMemo;
     // Automatically save before print
     handleSaveCurrentMemo();
     document.body.classList.add('is-printing-internal-memo');
 
     const originalTitle = document.title;
-    const docTitle = formatMemoDocumentTitle(targetMemo);
+    const docTitle = formatMemoDocumentTitle(memoToPrint);
     if (docTitle) {
       document.title = docTitle;
     }
@@ -808,9 +870,18 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
     }, 150);
   };
 
-  // Filter memos for history tab
+  // Counts by category
+  const countWithKop = memos.filter((m) => !isMemoWithoutKopSurat(m)).length;
+  const countWithoutKop = memos.filter((m) => isMemoWithoutKopSurat(m)).length;
+
+  // Filter memos for history tab with strict category separation
   const filteredMemos = memos.filter((m) => {
+    const isWithoutKop = isMemoWithoutKopSurat(m);
+    if (historyCategory === 'with_kop' && isWithoutKop) return false;
+    if (historyCategory === 'without_kop' && !isWithoutKop) return false;
+
     const q = searchQuery.toLowerCase();
+    if (!q) return true;
     return (
       m.nomorMemo.toLowerCase().includes(q) ||
       m.perihal.toLowerCase().includes(q) ||
@@ -904,7 +975,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
           </button>
 
           <button
-            onClick={handlePrint}
+            onClick={() => handlePrint()}
             className="px-3.5 py-2 bg-stone-900 hover:bg-black text-white text-xs font-bold rounded-xl transition shadow-sm flex items-center gap-1.5 cursor-pointer"
             title="Cetak A4 atau Simpan sebagai PDF"
           >
@@ -962,7 +1033,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
               <div className="flex items-center gap-1.5">
                 <button
                   type="button"
-                  onClick={handleCreateNewMemo}
+                  onClick={() => handleCreateNewMemo()}
                   className="px-2.5 py-1 text-[11px] font-bold bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-lg transition flex items-center gap-1 cursor-pointer"
                   title="Buat draf memo baru (nomor otomatis)"
                 >
@@ -993,7 +1064,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                 </div>
                 <button
                   type="button"
-                  onClick={handleCreateNewMemo}
+                  onClick={() => handleCreateNewMemo()}
                   className="px-2.5 py-1.5 bg-white hover:bg-stone-50 border border-amber-300 text-stone-800 text-[11px] font-bold rounded-lg transition shrink-0 cursor-pointer shadow-2xs"
                   title="Batal edit dan buat draf memo baru"
                 >
@@ -1163,52 +1234,152 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                     </div>
 
                     <div>
-                      <label className="block text-[10px] font-bold text-stone-600 mb-1">
-                        Link Direct Gambar Kop Surat :
-                      </label>
-                      <div className="flex items-center gap-1.5">
-                        <input
-                          type="text"
-                          value={currentMemo.companyHeaderUrl || OFFICIAL_KOP_SURAT_IMAGE_URL}
-                          onChange={(e) =>
-                            setCurrentMemo((prev) => ({
-                              ...prev,
-                              useImageHeader: true,
-                              companyHeaderUrl: e.target.value,
-                            }))
-                          }
-                          placeholder="https://... atau /kop-surat-nmsa-full.png"
-                          className="flex-1 px-2.5 py-1.5 text-[11px] font-mono bg-stone-50 border border-stone-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500 focus:bg-white"
-                        />
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-[10px] font-bold text-stone-600 flex items-center gap-1">
+                          <LinkIcon size={12} className="text-amber-600" />
+                          <span>Link Direct Gambar Kop Surat :</span>
+                        </label>
                         <button
                           type="button"
-                          onClick={() => {
-                            const url = currentMemo.companyHeaderUrl || OFFICIAL_KOP_SURAT_IMAGE_URL;
-                            const fullUrl = url.startsWith('http') ? url : `${window.location.origin}${url}`;
-                            navigator.clipboard.writeText(fullUrl);
-                            setSaveSuccessMsg('Link direct kop surat berhasil disalin!');
-                            setTimeout(() => setSaveSuccessMsg(''), 2500);
-                          }}
-                          className="px-2.5 py-1.5 bg-stone-100 hover:bg-stone-200 text-[10.5px] font-bold text-stone-700 rounded-lg transition shrink-0 cursor-pointer flex items-center gap-1"
-                          title="Salin link direct kop surat"
+                          onClick={() => setIsKopModalOpen(true)}
+                          className="text-[10px] font-bold text-amber-800 hover:text-amber-950 bg-amber-50 hover:bg-amber-100 px-2 py-0.5 rounded-md border border-amber-200 transition cursor-pointer flex items-center gap-1"
+                          title="Buka panel kelola & simpan link kop surat dengan nama alias"
                         >
-                          <Copy size={12} />
-                          <span>Salin Link</span>
+                          <Sparkles size={11} className="text-amber-600" />
+                          <span>Kelola / Simpan Link ({savedKopLinks.length})</span>
                         </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setCurrentMemo((prev) => ({
-                              ...prev,
-                              useImageHeader: true,
-                              companyHeaderUrl: OFFICIAL_KOP_SURAT_IMAGE_URL,
-                            }))
-                          }
-                          className="px-2.5 py-1.5 bg-stone-100 hover:bg-amber-100 text-[10.5px] font-bold text-stone-600 hover:text-amber-900 rounded-lg transition shrink-0 cursor-pointer"
-                          title="Reset ke Kop Surat Resmi Default NMSA"
-                        >
-                          Reset
-                        </button>
+                      </div>
+
+                      <div className="relative" ref={kopDropdownRef}>
+                        <div className="flex items-center gap-1.5">
+                          {/* Kolom Direct Link: Saat diklik muncul pilihan link dengan nama lain/alias kop suratnya */}
+                          <div
+                            onClick={() => setIsKopDropdownOpen(!isKopDropdownOpen)}
+                            className="flex-1 px-3 py-2 text-xs font-semibold bg-stone-50 hover:bg-amber-50/60 border border-stone-300 hover:border-amber-400 rounded-xl cursor-pointer flex items-center justify-between transition shadow-2xs group select-none"
+                            title="Klik untuk memilih nama link kop surat yang tersimpan"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <ImageIcon size={14} className="text-amber-600 shrink-0" />
+                              <span className="truncate font-bold text-stone-900">
+                                {currentMemo.companyHeaderName ||
+                                  findKopSuratNameByUrl(
+                                    currentMemo.companyHeaderUrl || OFFICIAL_KOP_SURAT_IMAGE_URL,
+                                    savedKopLinks
+                                  )}
+                              </span>
+                            </div>
+                            <ChevronDown
+                              size={14}
+                              className={`text-stone-400 group-hover:text-amber-700 transition shrink-0 ml-1.5 ${
+                                isKopDropdownOpen ? 'rotate-180 text-amber-600' : ''
+                              }`}
+                            />
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const url = currentMemo.companyHeaderUrl || OFFICIAL_KOP_SURAT_IMAGE_URL;
+                              const fullUrl = url.startsWith('http') ? url : `${window.location.origin}${url}`;
+                              navigator.clipboard.writeText(fullUrl);
+                              setSaveSuccessMsg('URL direct kop surat berhasil disalin!');
+                              setTimeout(() => setSaveSuccessMsg(''), 2500);
+                            }}
+                            className="px-2.5 py-2 bg-stone-100 hover:bg-stone-200 text-[10.5px] font-bold text-stone-700 rounded-xl transition shrink-0 cursor-pointer flex items-center gap-1"
+                            title="Salin URL asli gambar ke clipboard"
+                          >
+                            <Copy size={12} />
+                            <span className="hidden sm:inline">Salin URL</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCurrentMemo((prev) => ({
+                                ...prev,
+                                useImageHeader: true,
+                                companyHeaderUrl: OFFICIAL_KOP_SURAT_IMAGE_URL,
+                                companyHeaderName: 'Kop Surat Resmi PT NMSA',
+                              }));
+                              setSaveSuccessMsg('Kop surat direset ke Resmi Default PT NMSA');
+                              setTimeout(() => setSaveSuccessMsg(''), 2500);
+                            }}
+                            className="px-2.5 py-2 bg-stone-100 hover:bg-amber-100 text-[10.5px] font-bold text-stone-600 hover:text-amber-900 rounded-xl transition shrink-0 cursor-pointer"
+                            title="Reset ke Kop Surat Resmi Default NMSA"
+                          >
+                            Reset
+                          </button>
+                        </div>
+
+                        {/* Dropdown Menu: Muncul saat kolom direct link diklik */}
+                        {isKopDropdownOpen && (
+                          <div className="absolute left-0 right-0 top-full mt-1.5 z-40 bg-white border border-stone-200 rounded-xl shadow-xl p-2 space-y-1.5 animate-in fade-in slide-in-from-top-1 duration-150">
+                            <div className="px-2 py-1 text-[10px] font-black uppercase tracking-wider text-stone-500 border-b border-stone-100 flex items-center justify-between">
+                              <span>Pilihan Kop Surat Tersimpan:</span>
+                              <span className="text-amber-700 font-bold">{savedKopLinks.length} Pilihan</span>
+                            </div>
+
+                            <div className="max-h-56 overflow-y-auto space-y-1">
+                              {savedKopLinks.map((item) => {
+                                const activeUrl = currentMemo.companyHeaderUrl || OFFICIAL_KOP_SURAT_IMAGE_URL;
+                                const isSelected =
+                                  activeUrl === item.url ||
+                                  (item.url === OFFICIAL_KOP_SURAT_IMAGE_URL && activeUrl.includes('kop-surat-nmsa-full.png'));
+                                return (
+                                  <button
+                                    key={item.id}
+                                    type="button"
+                                    onClick={() => {
+                                      handleSelectKopLink(item);
+                                      setIsKopDropdownOpen(false);
+                                    }}
+                                    className={`w-full text-left p-2 rounded-lg transition flex items-center justify-between gap-2 cursor-pointer ${
+                                      isSelected
+                                        ? 'bg-amber-50 text-amber-950 font-bold border border-amber-300'
+                                        : 'hover:bg-stone-50 text-stone-800'
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                      <div className="w-12 h-6 bg-stone-100 border border-stone-200 rounded shrink-0 flex items-center justify-center overflow-hidden">
+                                        <img
+                                          src={item.url}
+                                          alt={item.name}
+                                          className="max-h-full max-w-full object-contain"
+                                          referrerPolicy="no-referrer"
+                                        />
+                                      </div>
+                                      <div className="min-w-0 flex-1">
+                                        <div className="text-xs font-bold truncate">
+                                          {item.name}
+                                        </div>
+                                        <div className="text-[10px] font-mono text-stone-400 truncate">
+                                          {item.url}
+                                        </div>
+                                      </div>
+                                    </div>
+                                    {isSelected && (
+                                      <Check size={14} className="text-amber-600 shrink-0" />
+                                    )}
+                                  </button>
+                                );
+                              })}
+                            </div>
+
+                            <div className="pt-2 border-t border-stone-100 flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setIsKopDropdownOpen(false);
+                                  setIsKopModalOpen(true);
+                                }}
+                                className="flex-1 py-1.5 px-2 bg-stone-900 hover:bg-black text-white text-[11px] font-bold rounded-lg transition flex items-center justify-center gap-1 cursor-pointer"
+                              >
+                                <Plus size={12} />
+                                <span>+ Simpan / Kelola Link Baru</span>
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -2139,7 +2310,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                 </div>
 
                 <button
-                  onClick={handlePrint}
+                  onClick={() => handlePrint()}
                   className="px-3 py-1.5 bg-stone-900 hover:bg-black text-white text-xs font-bold rounded-lg transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
                 >
                   <Printer size={13} />
@@ -2252,11 +2423,106 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
               </div>
 
               <button
-                onClick={handleCreateNewMemo}
+                onClick={() => handleCreateNewMemo()}
                 className="px-3 py-1.5 bg-stone-900 hover:bg-black text-white text-xs font-bold rounded-xl transition flex items-center gap-1 shrink-0 cursor-pointer"
               >
                 <Plus size={14} /> Buat Memo
               </button>
+            </div>
+          </div>
+
+          {/* PEMISAH HASIL & RIWAYAT: SUB-TABS DENGAN KOP VS TANPA KOP SURAT */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-stone-100/90 p-2 rounded-2xl border border-stone-200">
+            <div className="inline-flex rounded-xl border border-stone-300 p-0.5 bg-white text-xs font-bold shadow-2xs">
+              <button
+                type="button"
+                onClick={() => setHistoryCategory('with_kop')}
+                className={`px-3.5 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1.5 ${
+                  historyCategory === 'with_kop'
+                    ? 'bg-amber-600 text-white shadow-xs'
+                    : 'text-stone-700 hover:text-stone-900 hover:bg-stone-50'
+                }`}
+                title="Tampilkan hanya riwayat memo dengan kop surat resmi PT. NMSA"
+              >
+                <ImageIcon size={13} />
+                <span>Dengan Kop Surat ({countWithKop})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setHistoryCategory('without_kop')}
+                className={`px-3.5 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1.5 ${
+                  historyCategory === 'without_kop'
+                    ? 'bg-stone-900 text-white shadow-xs'
+                    : 'text-stone-700 hover:text-stone-900 hover:bg-stone-50'
+                }`}
+                title="Tampilkan hanya riwayat memo tanpa kop surat (kertas blanko fisik)"
+              >
+                <FileText size={13} />
+                <span>Tanpa Kop Surat ({countWithoutKop})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setHistoryCategory('all')}
+                className={`px-3.5 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1.5 ${
+                  historyCategory === 'all'
+                    ? 'bg-amber-800 text-white shadow-xs'
+                    : 'text-stone-700 hover:text-stone-900 hover:bg-stone-50'
+                }`}
+                title="Tampilkan semua gabungan memo"
+              >
+                <span>Semua Memo ({memos.length})</span>
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {historyCategory === 'with_kop' && (
+                <button
+                  type="button"
+                  onClick={() => handleCreateNewMemo(true)}
+                  className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                >
+                  <Plus size={13} />
+                  <span>Buat Memo Dengan Kop</span>
+                </button>
+              )}
+              {historyCategory === 'without_kop' && (
+                <button
+                  type="button"
+                  onClick={() => handleCreateNewMemo(false)}
+                  className="px-3 py-1.5 bg-stone-900 hover:bg-black text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                >
+                  <Plus size={13} />
+                  <span>Buat Memo Tanpa Kop</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Banner Penjelasan Kategori Riwayat */}
+          <div className="px-3.5 py-2 rounded-xl text-xs flex items-center justify-between gap-2 border bg-stone-50 border-stone-200">
+            <div className="flex items-center gap-2 min-w-0">
+              {historyCategory === 'with_kop' ? (
+                <>
+                  <ImageIcon size={14} className="text-amber-600 shrink-0" />
+                  <span className="text-stone-700">
+                    Kategori: <strong className="text-amber-950 font-bold">Memo Dengan Kop Surat Resmi NMSA</strong> (Format: <code className="font-mono font-bold text-amber-900">XXX/IM-NMSA/KEU/X/2026</code>). Nomor urut independen terakumulasi.
+                  </span>
+                </>
+              ) : historyCategory === 'without_kop' ? (
+                <>
+                  <FileText size={14} className="text-stone-600 shrink-0" />
+                  <span className="text-stone-700">
+                    Kategori: <strong className="text-stone-900 font-bold">Memo Tanpa Kop Surat / Kertas Blanko Fisik</strong> (Format: <code className="font-mono font-bold text-stone-900">001/IM/KEU/X/2026</code>). Nomor urut independen &amp; reset awal tahun.
+                  </span>
+                </>
+              ) : (
+                <>
+                  <Sparkles size={14} className="text-amber-600 shrink-0" />
+                  <span className="text-stone-700">
+                    Menampilkan seluruh riwayat memo ({countWithKop} dengan kop surat, {countWithoutKop} tanpa kop surat).
+                  </span>
+                </>
+              )}
             </div>
           </div>
 
@@ -2315,6 +2581,15 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                         <span className="font-mono text-xs font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded">
                           {memo.nomorMemo}
                         </span>
+                        {isMemoWithoutKopSurat(memo) ? (
+                          <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-stone-100 text-stone-700 border border-stone-300 shrink-0">
+                            Tanpa Kop
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-300 shrink-0">
+                            Dengan Kop
+                          </span>
+                        )}
                       </div>
                       <span className="text-[11px] text-stone-500">
                         {memo.hariTanggalDisplay}
@@ -2438,6 +2713,16 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
         accounts={bankAccounts}
         onSaveAccounts={handleSaveBankAccounts}
         onSelectAccount={handleSelectBankAccount}
+      />
+
+      {/* KELOLA & SIMPAN LINK KOP SURAT MODAL */}
+      <ManageKopSuratLinksModal
+        isOpen={isKopModalOpen}
+        onClose={() => setIsKopModalOpen(false)}
+        links={savedKopLinks}
+        onSaveLinks={handleSaveKopLinks}
+        activeUrl={currentMemo.companyHeaderUrl || OFFICIAL_KOP_SURAT_IMAGE_URL}
+        onSelectLink={handleSelectKopLink}
       />
     </div>
   );
