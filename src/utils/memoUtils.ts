@@ -443,7 +443,7 @@ export function createInitialMemo(
     };
   }
 
-  // Default sample exactly matching user's official "IM - Pembayaran Tongkang" Word document
+  // Blank / clean new memo with accumulated sequence, empty perihal & content to avoid dummy data
   return {
     id: `memo-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
     nomorMemo: nextNomorMemo,
@@ -451,13 +451,57 @@ export function createInitialMemo(
     hariTanggalDisplay: formatHariTanggalMemo(now),
     dari: 'Andi Muhammad Rifki – Direktur',
     kepada: 'Harijon – Direktur Keuangan',
+    perihal: '',
+    isiSurat: '',
+    bankName: defaultBank?.bankName || '',
+    accountNumber: defaultBank?.accountNumber || '',
+    accountHolder: defaultBank?.accountHolder || '',
+    includeBankDetails: true,
+    penutup: 'Demikian Internal Memo ini dibuat untuk dapat dipahami bersama dan dilaksanakan sebaik baiknya',
+    salamPenutup: 'Hormat Saya',
+    penandatanganNama: 'Andi Muhammad Rifki',
+    penandatanganJabatan: 'Direktur',
+    signerCount: 2,
+    useSecondSigner: true,
+    useThirdSigner: false,
+    approvalHeaderTitle: 'Mengetahui dan Menyetujui',
+    salamPenutup2: 'Menyetujui,',
+    penandatanganNama2: 'Harijon',
+    penandatanganJabatan2: 'Direktur Keuangan',
+    companyName: 'PT. NUSANTARA MINERAL SUKSES ABADI',
+    companyHeaderUrl: OFFICIAL_KOP_SURAT_IMAGE_URL,
+    useImageHeader: withKop,
+    showKopSurat: withKop,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Creates a sample memo matching the official "DP Batubara PLTU Pelabuhan Ratu" document
+ * Only loaded when explicitly requested by user.
+ */
+export function createSampleDpBatubaraMemo(
+  existingMemosOrCount: InternalMemo[] | number = [],
+  withKop = true
+): InternalMemo {
+  const now = new Date();
+  const nextNomorMemo = generateNextMemoNumber(existingMemosOrCount, now, 168, withKop);
+  return {
+    id: `memo-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    nomorMemo: nextNomorMemo,
+    tanggal: '2026-09-24',
+    hariTanggalDisplay: 'Kamis / 24 September 2026',
+    dari: 'Andi Muhammad Rifki – Direktur',
+    kepada: 'Harijon – Direktur Keuangan',
     perihal: 'Pembayaran DP Batubara 50%',
-    isiSurat: 'Sehubungan dengan akan dilakukannya kegiatan pengiriman Batubara ke <strong>PLTU Pelabuhan Ratu ADC</strong>, dengan ini kami memohon untuk dapat dilakukan pembayaran <strong>DP Tongkang sebesar 50%</strong> dari total biaya yang terlampir didalam <strong>Invoice No. 001-DP/WAA-BJM-NMSA/IX/26 Tanggal 23 September 2026</strong>, yaitu <strong>Sebesar Rp. 712.500.000,-</strong> dapat di Transfer ke :',
+    isiSurat:
+      'Sehubungan dengan akan dilakukannya kegiatan pengiriman Batubara ke <strong>PLTU Pelabuhan Ratu ADC</strong>, dengan ini kami memohon untuk dapat dilakukan pembayaran <strong>DP Tongkang sebesar 50%</strong> dari total biaya yang terlampir didalam <strong>Invoice No. 001-DP/WAA-BJM-NMSA/IX/26 Tanggal 23 September 2026</strong>, yaitu <strong>Sebesar Rp. 712.500.000,-</strong> dapat di Transfer ke :',
     bankName: 'Bank Mandiri',
     accountNumber: '1030013139064',
     accountHolder: 'PT. Nusantara Mineral Sukses Abadi',
     includeBankDetails: true,
-    penutup: 'Demikian Internal Memo ini dibuat untuk dapat dipahami bersama dan dilaksanakan sebaik baiknya',
+    penutup:
+      'Demikian Internal Memo ini dibuat untuk dapat dipahami bersama dan dilaksanakan sebaik baiknya',
     salamPenutup: 'Hormat Saya',
     penandatanganNama: 'Andi Muhammad Rifki',
     penandatanganJabatan: 'Direktur',

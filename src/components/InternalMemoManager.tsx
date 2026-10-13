@@ -10,6 +10,7 @@ import {
   getSavedInternalMemos,
   saveInternalMemos,
   createInitialMemo,
+  createSampleDpBatubaraMemo,
   generateMemoPdfBlobFromElement,
   OFFICIAL_KOP_SURAT_IMAGE_URL,
   parseDari,
@@ -118,12 +119,12 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
     };
   }, [isKopDropdownOpen]);
 
-  // Google Drive backup state
+  // Google Drive backup state (default: false agar tidak otomatis upload saat cetak/simpan)
   const [isAutoDriveUploadEnabled, setIsAutoDriveUploadEnabled] = useState<boolean>(() => {
     try {
-      return localStorage.getItem('NMSA_MEMO_AUTO_DRIVE_BACKUP') !== 'false';
+      return localStorage.getItem('NMSA_MEMO_AUTO_DRIVE_BACKUP') === 'true';
     } catch {
-      return true;
+      return false;
     }
   });
   const [isUploadingDrive, setIsUploadingDrive] = useState(false);
@@ -287,7 +288,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
   };
 
   // Save current memo to Riwayat & optionally to Google Drive
-  const handleSaveCurrentMemo = async (options?: { forceUploadDrive?: boolean; forceAsNew?: boolean }) => {
+  const handleSaveCurrentMemo = async (options?: { forceUploadDrive?: boolean; forceAsNew?: boolean; skipDriveUpload?: boolean }) => {
     const existingIndex = editingExistingId
       ? memos.findIndex((m) => m.id === editingExistingId)
       : memos.findIndex((m) => m.id === currentMemo.id);
@@ -334,7 +335,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
     } else {
       payload = {
         ...currentMemo,
-        useImageHeader: true,
+        useImageHeader: currentMemo.showKopSurat !== false,
         companyHeaderUrl: currentMemo.companyHeaderUrl || OFFICIAL_KOP_SURAT_IMAGE_URL,
         updatedAt: new Date().toISOString(),
       };
@@ -366,7 +367,8 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
         : `Perubahan memo (${payload.nomorMemo}) berhasil disimpan ke Riwayat!`
     );
 
-    const shouldUploadDrive = options?.forceUploadDrive || isAutoDriveUploadEnabled;
+    // PENTING: Saat hendak mencetak (skipDriveUpload === true), TIDAK PERNAH mengunggah ke Google Drive!
+    const shouldUploadDrive = !options?.skipDriveUpload && Boolean(options?.forceUploadDrive || isAutoDriveUploadEnabled);
 
     if (shouldUploadDrive) {
       setIsUploadingDrive(true);
@@ -388,7 +390,6 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
 
           const reUpdated = updated.map((m) => (m.id === payload.id ? payload : m));
           persistMemos(reUpdated);
-          setCurrentMemo(payload);
 
           // Update backend & Firestore with Drive link
           fetch('/api/internal-memos', {
@@ -398,8 +399,19 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
           }).catch(() => {});
           saveInternalMemoToFirestore(payload).catch(() => {});
 
-          setDriveSuccessMsg(`Tersimpan di Google Drive: ${driveRes.folderPath}`);
+          setDriveSuccessMsg(`Memo ${payload.nomorMemo} berhasil disimpan ke Google Drive: ${driveRes.folderPath}`);
           setTimeout(() => setDriveSuccessMsg(''), 7000);
+
+          // PENTING SESUAI PERMINTAAN USER:
+          // Ketika aplikasi sudah menyimpan dokumen ke Google Drive:
+          // Isi dari memo di sebelah kiri hilang/terhapus (dibersihkan) agar tidak menjadi data dummy
+          // dan tidak tersimpan ganda (double data) di Google Drive.
+          const isWithKop = payload.showKopSurat !== false;
+          const freshMemo = createInitialMemo(null, reUpdated, isWithKop);
+          setCurrentMemo(freshMemo);
+          setEditingExistingId(null);
+          setSaveSuccessMsg(`Memo ${payload.nomorMemo} tersimpan di Google Drive. Form sebelah kiri telah dibersihkan.`);
+          setTimeout(() => setSaveSuccessMsg(''), 4000);
         } else if (driveRes.error) {
           setDriveErrorMsg(`Google Drive: ${driveRes.error}`);
           setTimeout(() => setDriveErrorMsg(''), 6000);
@@ -434,8 +446,14 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
 
         const updatedList = memos.map((m) => (m.id === updatedMemo.id ? updatedMemo : m));
         persistMemos(updatedList);
-        if (currentMemo.id === updatedMemo.id) {
-          setCurrentMemo(updatedMemo);
+
+        // PENTING: Jika memo yang diupload adalah yang sedang dibuka/diedit di form sebelah kiri,
+        // kosongkan isi formnya agar tidak menjadi data dummy berulang di form
+        if (currentMemo.id === updatedMemo.id || editingExistingId === updatedMemo.id) {
+          const isWithKop = updatedMemo.showKopSurat !== false;
+          const freshMemo = createInitialMemo(null, updatedList, isWithKop);
+          setCurrentMemo(freshMemo);
+          setEditingExistingId(null);
         }
 
         // Sync to server and Firestore
@@ -802,51 +820,24 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
     }
   };
 
-  // Restore sample document matching user's official "IM - Pembayaran Tongkang" Word document
+  // Muat contoh DP Batubara secara eksplisit jika pengguna menginginkannya
   const handleLoadSampleDokumen = () => {
-    const nextNomor = generateNextMemoNumber(memos, new Date(), 168);
-    setCurrentMemo({
-      id: `memo-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-      nomorMemo: nextNomor,
-      tanggal: '2026-09-24',
-      hariTanggalDisplay: 'Kamis / 24 September 2026',
-      dari: 'Andi Muhammad Rifki – Direktur',
-      kepada: 'Harijon – Direktur Keuangan',
-      perihal: 'Pembayaran DP Batubara 50%',
-      isiSurat:
-        'Sehubungan dengan akan dilakukannya kegiatan pengiriman Batubara ke <strong>PLTU Pelabuhan Ratu ADC</strong>, dengan ini kami memohon untuk dapat dilakukan pembayaran <strong>DP Tongkang sebesar 50%</strong> dari total biaya yang terlampir didalam <strong>Invoice No. 001-DP/WAA-BJM-NMSA/IX/26 Tanggal 23 September 2026</strong>, yaitu <strong>Sebesar Rp. 712.500.000,-</strong> dapat di Transfer ke :',
-      bankName: 'Bank Mandiri',
-      accountNumber: '1030013139064',
-      accountHolder: 'PT. Nusantara Mineral Sukses Abadi',
-      penutup:
-        'Demikian Internal Memo ini dibuat untuk dapat dipahami bersama dan dilaksanakan sebaik baiknya',
-      salamPenutup: 'Hormat Saya',
-      penandatanganNama: 'Andi Muhammad Rifki',
-      penandatanganJabatan: 'Direktur',
-      signerCount: 3,
-      useSecondSigner: true,
-      useThirdSigner: true,
-      approvalHeaderTitle: 'Mengetahui dan Menyetujui',
-      salamPenutup2: 'Menyetujui,',
-      penandatanganNama2: 'Harijon',
-      penandatanganJabatan2: 'Direktur Keuangan',
-      salamPenutup3: 'Menyetujui,',
-      penandatanganNama3: 'Abdul Aziz Halid',
-      penandatanganJabatan3: 'Direktur Utama ANH',
-      companyName: 'PT. NUSANTARA MINERAL SUKSES ABADI',
-      companyHeaderUrl: OFFICIAL_KOP_SURAT_IMAGE_URL,
-      useImageHeader: true,
-      createdAt: new Date().toISOString(),
-    });
-    setSaveSuccessMsg(`Contoh DP Batubara dimuat dengan Nomor ${nextNomor}!`);
+    const isWithKop = currentMemo.showKopSurat !== false;
+    const sample = createSampleDpBatubaraMemo(memos, isWithKop);
+    setCurrentMemo(sample);
+    setEditingExistingId(null);
+    setSaveSuccessMsg(`Contoh DP Batubara dimuat dengan Nomor ${sample.nomorMemo}!`);
     setTimeout(() => setSaveSuccessMsg(''), 3000);
   };
 
-  // Print function with complete isolation to match Microsoft Word exact output
+  // Print function: Membuka dialog cetak printer browser TANPA mengunggah ke Google Drive
   const handlePrint = (targetMemo?: InternalMemo) => {
     const memoToPrint = targetMemo || currentMemo;
-    // Automatically save before print
-    handleSaveCurrentMemo();
+    // PENTING: Saat hendak mencetak, TIDAK PERNAH mengunggah dokumen ke Google Drive!
+    // Hanya simpan draf lokal jika sedang mengedit memo aktif dengan opsi skipDriveUpload: true
+    if (!targetMemo) {
+      handleSaveCurrentMemo({ skipDriveUpload: true });
+    }
     document.body.classList.add('is-printing-internal-memo');
 
     const originalTitle = document.title;
@@ -1035,9 +1026,24 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                   type="button"
                   onClick={() => handleCreateNewMemo()}
                   className="px-2.5 py-1 text-[11px] font-bold bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-lg transition flex items-center gap-1 cursor-pointer"
-                  title="Buat draf memo baru (nomor otomatis)"
+                  title="Buat draf memo baru yang bersih (nomor otomatis)"
                 >
                   <Plus size={13} /> Baru
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const isWithKop = currentMemo.showKopSurat !== false;
+                    const fresh = createInitialMemo(null, memos, isWithKop);
+                    setCurrentMemo(fresh);
+                    setEditingExistingId(null);
+                    setSaveSuccessMsg('Formulir draf memo di sebelah kiri telah dibersihkan.');
+                    setTimeout(() => setSaveSuccessMsg(''), 3000);
+                  }}
+                  className="px-2.5 py-1 text-[11px] font-bold bg-stone-100 hover:bg-stone-200 text-stone-600 rounded-lg transition flex items-center gap-1 cursor-pointer"
+                  title="Kosongkan isi formulir memo di sebelah kiri agar bersih dari data dummy"
+                >
+                  <Trash2 size={13} /> Kosongkan Form
                 </button>
                 <button
                   type="button"
