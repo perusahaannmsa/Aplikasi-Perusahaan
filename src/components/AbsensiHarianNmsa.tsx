@@ -91,6 +91,7 @@ import { SelfSigningPortal } from "./SelfSigningPortal";
 import { WhatsAppBotReminderMenu } from "./WhatsAppBotReminderMenu";
 import { CopyAttendanceModal } from "./CopyAttendanceModal";
 import { getDynamicReminderMessage } from "../utils/reminderMessageGenerator";
+import { apiFetch } from "../utils/backendApi";
 
 // Utility to format Date as local YYYY-MM-DD
 function formatLocalYYYYMMDD(date: Date): string {
@@ -1643,7 +1644,7 @@ export function AbsensiHarianNmsa({
     let active = true;
     const checkWaStatus = async () => {
       try {
-        const res = await fetch("/api/wa/status", {
+        const res = await apiFetch("/api/wa/status", {
           headers: { Accept: "application/json" }
         });
         const contentType = res.headers.get("content-type");
@@ -4242,7 +4243,7 @@ export function AbsensiHarianNmsa({
     setWaPairingLoading(true);
     setWaPairingCode(null);
     try {
-      const res = await fetch("/api/wa/pairing-code", {
+      const res = await apiFetch("/api/wa/pairing-code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phone: waPairingPhone }),
@@ -4264,7 +4265,7 @@ export function AbsensiHarianNmsa({
   const handleDisconnectWa = async () => {
     if (!window.confirm("Apakah Anda yakin ingin memutuskan koneksi WhatsApp? Sesi Anda akan dihapus dan Anda harus melakukan scan QR code kembali.")) return;
     try {
-      const res = await fetch("/api/wa/disconnect", { method: "POST" });
+      const res = await apiFetch("/api/wa/disconnect", { method: "POST" });
       const data = await res.json();
       if (data.success) {
         setWaBotStatus("disconnected");
@@ -4288,7 +4289,7 @@ export function AbsensiHarianNmsa({
     setWaTestSending(true);
     setWaTestResult(null);
     try {
-      const res = await fetch("/api/wa/send-test", {
+      const res = await apiFetch("/api/wa/send-test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phone: waTestPhone, message: waTestMessage }),
@@ -7286,7 +7287,7 @@ export function AbsensiHarianNmsa({
                                 type="button"
                                 onClick={async () => {
                                   try {
-                                    const res = await fetch("/api/wa/disconnect", { method: "POST" });
+                                    const res = await apiFetch("/api/wa/disconnect", { method: "POST" });
                                     const data = await res.json();
                                     if (data.success) {
                                       setWaBotStatus("disconnected");
@@ -10624,7 +10625,7 @@ export function AbsensiHarianNmsa({
                                     const customMsg = getDeterministicReminderMessage(worker.name, worker.id, quickUrl);
                                     setSendingBotMsgId(worker.id);
                                     try {
-                                      const res = await fetch("/api/wa/send-test", {
+                                      const res = await apiFetch("/api/wa/send-test", {
                                         method: "POST",
                                         headers: { "Content-Type": "application/json" },
                                         body: JSON.stringify({

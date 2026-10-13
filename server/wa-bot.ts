@@ -44,29 +44,17 @@ async function getDisconnectReason() {
   }
 }
 
-const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NETLIFY);
-const STORAGE_BASE = isServerless ? "/tmp" : process.cwd();
+const AUTH_DIR = process.env.VERCEL ? path.join("/tmp", "auth_info_baileys") : path.join(process.cwd(), "auth_info_baileys");
+const BACKUP_FILE = process.env.VERCEL ? path.join("/tmp", "wa_session_backup.json") : path.join(process.cwd(), "wa_session_backup.json");
+const DATA_FILE = process.env.VERCEL ? path.join("/tmp", "data-store.json") : path.join(process.cwd(), "data-store.json");
 
-export const AUTH_DIR = path.join(STORAGE_BASE, "auth_info_baileys");
-export const BACKUP_FILE = path.join(STORAGE_BASE, "wa_session_backup.json");
-export const DATA_FILE = path.join(STORAGE_BASE, "data-store.json");
-
-// In serverless environments (like Vercel), ensure /tmp directory structures exist and seed from root read-only files
-if (isServerless) {
-  try {
-    if (!fs.existsSync(AUTH_DIR)) {
-      fs.mkdirSync(AUTH_DIR, { recursive: true });
-    }
-    const defaultDataFile = path.join(process.cwd(), "data-store.json");
-    if (!fs.existsSync(DATA_FILE) && fs.existsSync(defaultDataFile)) {
-      fs.copyFileSync(defaultDataFile, DATA_FILE);
-    }
-    const defaultBackupFile = path.join(process.cwd(), "wa_session_backup.json");
-    if (!fs.existsSync(BACKUP_FILE) && fs.existsSync(defaultBackupFile)) {
-      fs.copyFileSync(defaultBackupFile, BACKUP_FILE);
-    }
-  } catch (initErr) {
-    console.warn("[WhatsApp Bot] Serverless init warning:", initErr);
+// Ensure /tmp copy of data-store.json on Vercel
+if (process.env.VERCEL && !fs.existsSync(DATA_FILE)) {
+  const orig = path.join(process.cwd(), "data-store.json");
+  if (fs.existsSync(orig)) {
+    try {
+      fs.copyFileSync(orig, DATA_FILE);
+    } catch (e) {}
   }
 }
 
@@ -335,6 +323,7 @@ export async function initWhatsApp() {
           const senderPhone = senderJid.split("@")[0]; // e.g. "628123456789"
           
           // Load data-store to find if sender is a registered worker
+          const DATA_FILE = path.join(process.cwd(), "data-store.json");
           if (!fs.existsSync(DATA_FILE)) continue;
           
           let state;
@@ -835,16 +824,7 @@ export async function sendWhatsAppMessage(phoneNumber: string, text: string): Pr
 // Request pairing code helper (Link via Phone Number)
 export async function requestWhatsAppPairingCode(phone: string): Promise<string> {
   if (connectionStatus === "connected") {
-    throw new Error("WhatsApp sudah terhubung. Sila putuskan koneksi terlebih dahulu.");
-  }
-
-  // Ensure socket is initialized and alive
-  if (!sock) {
-    await initWhatsApp();
-  }
-
-  if (!sock) {
-    throw new Error("Gagal menginisialisasi server WhatsApp.");
+    throw new Error("WhatsApp sudah terhubung. Sila putuskan koneksi terlebih dahulu jika ingin menautkan nomor baru.");
   }
 
   let cleaned = phone.replace(/[^0-9]/g, "");
@@ -854,13 +834,36 @@ export async function requestWhatsAppPairingCode(phone: string): Promise<string>
     cleaned = "62" + cleaned;
   }
 
-  console.log(`Requesting pairing code for phone number: ${cleaned}`);
+  if (cleaned.length < 9) {
+    throw new Error("Nomor WhatsApp tidak valid. Masukkan nomor lengkap dengan kode area (misal: 0812xxxxxx).");
+  }
+
+  // Ensure socket is initialized and alive
+  if (!sock) {
+    await initWhatsApp();
+  }
+
+  if (!sock) {
+    throw new Error("Gagal menginisialisasi server WhatsApp. Pastikan server backend sedang aktif.");
+  }
+
+  // Brief pause to allow socket handshake if recently opened
+  await new Promise(r => setTimeout(r, 800));
+
+  console.log(`[WhatsApp Bot] Requesting pairing code for phone number: ${cleaned}`);
   try {
-    const code = await sock.requestPairingCode(cleaned);
-    return code;
+    const rawCode = await sock.requestPairingCode(cleaned);
+    if (!rawCode) {
+      throw new Error("WhatsApp tidak mengembalikan kode pairing. Coba gunakan metode Scan QR.");
+    }
+    const strCode = String(rawCode).trim();
+    if (strCode.length === 8 && !strCode.includes("-")) {
+      return `${strCode.slice(0, 4)}-${strCode.slice(4)}`;
+    }
+    return strCode;
   } catch (err: any) {
     console.error("Error requesting pairing code from Baileys:", err);
-    throw new Error(err.message || "Gagal meminta kode pairing dari WhatsApp. Coba beberapa saat lagi atau putuskan koneksi dulu.");
+    throw new Error(err.message || "Gagal meminta kode pairing dari WhatsApp. Coba refresh atau gunakan Scan QR.");
   }
 }
 
@@ -934,6 +937,7 @@ export async function generateBusinessAiReply(userQuery: string, senderName?: st
   }
 
   // Load available data store
+  const DATA_FILE = path.join(process.cwd(), "data-store.json");
   let stateData: any = {};
   if (fs.existsSync(DATA_FILE)) {
     try {

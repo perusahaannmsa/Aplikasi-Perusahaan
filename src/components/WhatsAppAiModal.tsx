@@ -33,9 +33,12 @@ import {
   Clock,
   ArrowRight,
   Radio,
-  CheckCheck
+  CheckCheck,
+  Server,
+  Settings
 } from 'lucide-react';
 import { Submission } from '../types';
+import { apiFetch, getBackendBaseUrl, setBackendBaseUrl, buildApiUrl } from '../utils/backendApi';
 
 interface WhatsAppAiModalProps {
   isOpen: boolean;
@@ -44,7 +47,7 @@ interface WhatsAppAiModalProps {
 }
 
 export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClose, submissions = [] }) => {
-  const [activeTab, setActiveTab] = useState<'connect' | 'uptime' | 'security' | 'attendance' | 'test' | 'webhook'>('connect');
+  const [activeTab, setActiveTab] = useState<'connect' | 'uptime' | 'security' | 'attendance' | 'test' | 'webhook' | 'server'>('connect');
   
   // Status states
   const [status, setStatus] = useState<string>('connecting');
@@ -52,6 +55,12 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
   const [connectedUser, setConnectedUser] = useState<any>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isRefreshingQr, setIsRefreshingQr] = useState<boolean>(false);
+
+  // Server Backend Config states
+  const [backendUrlInput, setBackendUrlInput] = useState<string>(getBackendBaseUrl());
+  const [serverTestStatus, setServerTestStatus] = useState<{ success: boolean; latencyMs?: number; message: string } | null>(null);
+  const [isTestingServer, setIsTestingServer] = useState<boolean>(false);
 
   // Keep-Alive & UptimeRobot states
   const [keepAliveStats, setKeepAliveStats] = useState<any>(null);
@@ -99,7 +108,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
   // Copy helpers
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
-  const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+  const baseUrl = typeof window !== 'undefined' ? (getBackendBaseUrl() || window.location.origin) : '';
   const healthUrl = `${baseUrl}/api/health`;
   const webhookUrl = `${baseUrl}/api/whatsapp-webhook`;
   const fonnteWebhookUrl = `${baseUrl}/api/fonnte-webhook`;
@@ -108,7 +117,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
   // Fetch Keep-Alive stats
   const fetchKeepAliveStats = async () => {
     try {
-      const res = await fetch('/api/wa/keepalive-stats');
+      const res = await apiFetch('/api/wa/keepalive-stats');
       if (res.ok) {
         const data = await res.json();
         setKeepAliveStats(data);
@@ -124,7 +133,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
     setPingTestResult(null);
     const start = performance.now();
     try {
-      const res = await fetch('/api/health');
+      const res = await apiFetch('/api/health');
       const timeMs = Math.round(performance.now() - start);
       if (res.ok) {
         const data = await res.json();
@@ -158,23 +167,49 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
   // Fetch WhatsApp connection status
   const fetchStatus = async () => {
     try {
-      const res = await fetch('/api/wa/status');
+      const res = await apiFetch('/api/wa/status');
       if (res.ok) {
         const data = await res.json();
         setStatus(data.status || 'disconnected');
         setQrCode(data.qr || null);
         setConnectedUser(data.user || null);
         setErrorMessage(data.error || null);
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setErrorMessage(errData.error || `HTTP ${res.status}`);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Error fetching WA status:', err);
+      setErrorMessage('Tidak dapat terhubung ke server backend.');
+    }
+  };
+
+  // Refresh QR code manually
+  const handleRefreshQr = async () => {
+    setIsRefreshingQr(true);
+    setErrorMessage(null);
+    try {
+      const res = await apiFetch('/api/wa/refresh-qr', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (data.success) {
+        setStatus('connecting');
+        setTimeout(() => {
+          fetchStatus();
+        }, 1200);
+      } else {
+        setErrorMessage(data.error || 'Gagal memperbarui QR Code.');
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Gagal menghubungi server.');
+    } finally {
+      setIsRefreshingQr(false);
     }
   };
 
   // Fetch security settings
   const fetchSecuritySettings = async () => {
     try {
-      const res = await fetch('/api/wa/security-settings');
+      const res = await apiFetch('/api/wa/security-settings');
       if (res.ok) {
         const data = await res.json();
         if (data.settings) {
@@ -194,6 +229,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
 
   useEffect(() => {
     if (isOpen) {
+      setBackendUrlInput(getBackendBaseUrl());
       fetchStatus();
       fetchSecuritySettings();
       fetchKeepAliveStats();
@@ -208,7 +244,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
   // Sync submissions to server whenever modal opens so AI has latest state
   useEffect(() => {
     if (isOpen && submissions.length > 0) {
-      fetch('/api/sync-submissions', {
+      apiFetch('/api/sync-submissions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ submissions })
@@ -228,7 +264,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
     }
     setIsLoading(true);
     try {
-      await fetch('/api/wa/disconnect', { method: 'POST' });
+      await apiFetch('/api/wa/disconnect', { method: 'POST' });
       await fetchStatus();
     } catch (err) {
       console.error('Disconnect error:', err);
@@ -244,19 +280,19 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
     setPairingCode(null);
     setErrorMessage(null);
     try {
-      const res = await fetch('/api/wa/pairing-code', {
+      const res = await apiFetch('/api/wa/pairing-code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: pairingPhone.trim() })
       });
       const data = await res.json();
-      if (res.ok && data.code) {
+      if (data.success && data.code) {
         setPairingCode(data.code);
       } else {
-        setErrorMessage(data.error || 'Gagal meminta Kode Pairing.');
+        setErrorMessage(data.error || 'Gagal meminta Kode Pairing. Coba gunakan metode Scan QR Code.');
       }
     } catch (err: any) {
-      setErrorMessage(err.message || 'Terjadi gangguan jaringan.');
+      setErrorMessage(err.message || 'Terjadi gangguan jaringan atau server backend belum aktif.');
     } finally {
       setPairingLoading(false);
     }
@@ -268,7 +304,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
     setSecurityStatusMsg(null);
     try {
       const adminToken = localStorage.getItem('nmsa_admin_token') || 'bypass_token';
-      const res = await fetch('/api/wa/security-settings', {
+      const res = await apiFetch('/api/wa/security-settings', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -331,7 +367,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
     setSendTestStatus(null);
     try {
       const adminToken = localStorage.getItem('nmsa_admin_token') || 'bypass_token';
-      const res = await fetch('/api/wa/send-test', {
+      const res = await apiFetch('/api/wa/send-test', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -359,7 +395,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
     setIsTriggeringCron(true);
     setCronResult(null);
     try {
-      const res = await fetch('/api/cron/late-reminder?force=true&markSent=false');
+      const res = await apiFetch('/api/cron/late-reminder?force=true&markSent=false');
       const data = await res.json();
       if (data.success) {
         setCronResult({ success: true, message: data.message || 'Pengiriman link absensi ke karyawan berhasil diproses!' });
@@ -389,7 +425,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
     setIsAiReplying(true);
 
     try {
-      const res = await fetch('/api/ai-query', {
+      const res = await apiFetch('/api/ai-query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query, sender: 'Admin UI', senderPhone: 'admin_ui' })
@@ -421,389 +457,440 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
     }
   };
 
+  const handleSaveBackendUrl = () => {
+    setBackendBaseUrl(backendUrlInput);
+    fetchStatus();
+    fetchKeepAliveStats();
+  };
+
+  const handleTestBackendConnection = async () => {
+    setIsTestingServer(true);
+    setServerTestStatus(null);
+    const start = performance.now();
+    try {
+      const testUrl = backendUrlInput ? `${backendUrlInput.trim().replace(/\/+$/, '')}/api/health` : '/api/health';
+      const res = await fetch(testUrl, { method: 'GET', headers: { 'Accept': 'application/json' } });
+      const latencyMs = Math.round(performance.now() - start);
+      if (res.ok) {
+        setServerTestStatus({
+          success: true,
+          latencyMs,
+          message: `Server aktif & merespons dalam ${latencyMs}ms!`
+        });
+        setBackendBaseUrl(backendUrlInput);
+        fetchStatus();
+      } else {
+        setServerTestStatus({
+          success: false,
+          latencyMs,
+          message: `Server merespons status ${res.status}.`
+        });
+      }
+    } catch (e: any) {
+      setServerTestStatus({
+        success: false,
+        message: `Koneksi gagal: ${e?.message || 'Cek kembali URL server'}`
+      });
+    } finally {
+      setIsTestingServer(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-950/70 backdrop-blur-xs animate-in fade-in duration-150">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-stone-950/70 backdrop-blur-xs animate-in fade-in duration-150 overflow-y-auto">
       <div 
-        className="bg-white rounded-3xl shadow-2xl border border-stone-200 w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-150 font-sans"
+        className="bg-white rounded-2xl shadow-2xl border border-stone-200 w-full max-w-2xl lg:max-w-3xl max-h-[85vh] sm:max-h-[88vh] my-auto flex flex-col overflow-hidden animate-in zoom-in-95 duration-150 font-sans"
         onClick={e => e.stopPropagation()}
       >
-        {/* Header */}
-        <div className="px-6 py-4 bg-gradient-to-r from-emerald-800 to-teal-900 text-white flex items-center justify-between border-b border-emerald-700/50">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-emerald-500/20 rounded-2xl text-emerald-300 border border-emerald-400/30">
-              <MessageSquare size={24} className="text-emerald-300" />
+        {/* Header - Compact and modern */}
+        <div className="px-4 py-2.5 sm:px-5 sm:py-3 bg-gradient-to-r from-emerald-800 to-teal-900 text-white flex items-center justify-between border-b border-emerald-700/50 shrink-0">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="p-2 bg-emerald-500/20 rounded-xl text-emerald-300 border border-emerald-400/30 shrink-0">
+              <MessageSquare size={18} className="text-emerald-300" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-base sm:text-lg font-black tracking-tight text-white flex items-center gap-1.5">
-                  Pusat Integrasi WhatsApp Terpadu PT NMSA
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-sm sm:text-base font-black tracking-tight text-white truncate">
+                  Pusat Integrasi WhatsApp PT NMSA
                 </h2>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider bg-emerald-500/30 text-emerald-200 border border-emerald-400/40">
-                  1x Penautan untuk Semua
+                <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase tracking-wider bg-emerald-500/30 text-emerald-200 border border-emerald-400/40 shrink-0">
+                  Terpadu
                 </span>
               </div>
-              <p className="text-xs text-emerald-100/80 font-mono">
-                1x tautan mengaktifkan Pengiriman Link Absensi, Share Location, & AI Voucher Transaksi Otomatis
+              <p className="text-[11px] text-emerald-100/80 truncate">
+                Absensi Mandiri, Share Location &amp; Asisten AI Keuangan
               </p>
             </div>
           </div>
 
           <button
             onClick={onClose}
-            className="p-2 text-emerald-100 hover:text-white hover:bg-emerald-700/50 rounded-xl transition cursor-pointer"
+            className="p-1.5 text-emerald-100 hover:text-white hover:bg-emerald-700/50 rounded-lg transition cursor-pointer shrink-0 ml-2"
+            title="Tutup"
           >
-            <X size={20} />
+            <X size={18} />
           </button>
         </div>
 
-        {/* Unified Service Notice Banner */}
-        <div className="bg-emerald-50/90 border-b border-emerald-200 px-6 py-2.5 flex items-center justify-between gap-3 text-xs text-emerald-950">
-          <div className="flex items-center gap-2">
-            <ShieldCheck size={16} className="text-emerald-700 shrink-0" />
-            <span className="font-semibold">
-              <strong>Satu Sesi Terpadu:</strong> Penautan WhatsApp di sini otomatis terhubung dengan menu <strong>Absensi Harian</strong>, <strong>Otorisasi Privasi Keuangan</strong>, dan <strong>AI Voucher Transaksi</strong>.
+        {/* Compact Status Indicator Bar */}
+        <div className="bg-emerald-50 border-b border-emerald-200 px-4 sm:px-5 py-1.5 flex items-center justify-between gap-2 text-[11px] text-emerald-950 shrink-0">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <ShieldCheck size={14} className="text-emerald-700 shrink-0" />
+            <span className="truncate">
+              {status === 'connected' ? (
+                <>Terhubung sebagai: <strong>{connectedUser?.name || 'Admin'}</strong> ({connectedUser?.id?.split('@')[0] || 'Aktif'})</>
+              ) : status === 'qr' ? (
+                <>Menunggu scan QR Code atau kode pairing</>
+              ) : (
+                <>WhatsApp belum terhubung ke sistem</>
+              )}
             </span>
           </div>
-          <div className="flex items-center gap-1.5 shrink-0 font-mono text-[11px]">
-            <span className={`w-2.5 h-2.5 rounded-full ${status === 'connected' ? 'bg-emerald-500 shadow-xs animate-pulse' : 'bg-amber-400'}`} />
-            <span className="font-bold">{status === 'connected' ? 'TERHUBUNG (24/7)' : 'BELUM TERTAUT'}</span>
+          <div className="flex items-center gap-1.5 shrink-0 font-mono text-[10px]">
+            <span className={`w-2 h-2 rounded-full ${status === 'connected' ? 'bg-emerald-500 animate-pulse' : status === 'qr' ? 'bg-amber-400 animate-ping' : 'bg-stone-400'}`} />
+            <span className="font-bold">{status === 'connected' ? 'TERHUBUNG' : status === 'qr' ? 'SCAN QR' : 'OFFLINE'}</span>
           </div>
         </div>
 
-        {/* Tab Navigation */}
-        <div className="flex border-b border-stone-200 bg-stone-50 px-6 pt-2 gap-2 overflow-x-auto">
+        {/* Tab Navigation - Scrollable & Compact */}
+        <div className="flex border-b border-stone-200 bg-stone-50 px-3 sm:px-5 pt-1.5 gap-1 overflow-x-auto scrollbar-none shrink-0">
           <button
             type="button"
             onClick={() => setActiveTab('connect')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold rounded-t-xl transition cursor-pointer border-t border-x shrink-0 ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-t-lg transition cursor-pointer border-t border-x shrink-0 ${
               activeTab === 'connect'
-                ? 'bg-white border-stone-200 text-emerald-800 shadow-xs'
+                ? 'bg-white border-stone-200 text-emerald-800 shadow-2xs'
                 : 'border-transparent text-stone-500 hover:text-stone-800'
             }`}
           >
-            <QrCode size={15} className={activeTab === 'connect' ? 'text-emerald-600' : 'text-stone-400'} />
-            <span>1. Penautan WhatsApp (QR / Kode)</span>
+            <QrCode size={13} className={activeTab === 'connect' ? 'text-emerald-600' : 'text-stone-400'} />
+            <span>1. Tautkan WA</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab('uptime')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold rounded-t-xl transition cursor-pointer border-t border-x shrink-0 ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-t-lg transition cursor-pointer border-t border-x shrink-0 ${
               activeTab === 'uptime'
-                ? 'bg-white border-stone-200 text-emerald-800 shadow-xs'
+                ? 'bg-white border-stone-200 text-emerald-800 shadow-2xs'
                 : 'border-transparent text-stone-500 hover:text-stone-800'
             }`}
           >
-            <Activity size={15} className={activeTab === 'uptime' ? 'text-emerald-600 animate-pulse' : 'text-stone-400'} />
-            <span>2. Keep-Alive 24/7 (UptimeRobot)</span>
-            <span className="px-1.5 py-0.2 text-[9px] bg-emerald-100 text-emerald-800 font-bold rounded">Bebas Scan</span>
+            <Activity size={13} className={activeTab === 'uptime' ? 'text-emerald-600 animate-pulse' : 'text-stone-400'} />
+            <span>2. Keep-Alive 24/7</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab('security')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold rounded-t-xl transition cursor-pointer border-t border-x shrink-0 ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-t-lg transition cursor-pointer border-t border-x shrink-0 ${
               activeTab === 'security'
-                ? 'bg-white border-stone-200 text-emerald-800 shadow-xs'
+                ? 'bg-white border-stone-200 text-emerald-800 shadow-2xs'
                 : 'border-transparent text-stone-500 hover:text-stone-800'
             }`}
           >
-            <Lock size={15} className={activeTab === 'security' ? 'text-emerald-600' : 'text-stone-400'} />
-            <span>3. Keamanan & Otorisasi Voucher</span>
-            <span className="px-1.5 py-0.2 text-[9px] bg-rose-100 text-rose-800 font-bold rounded">Privasi</span>
+            <Lock size={13} className={activeTab === 'security' ? 'text-emerald-600' : 'text-stone-400'} />
+            <span>3. Keamanan Voucher</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab('attendance')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold rounded-t-xl transition cursor-pointer border-t border-x shrink-0 ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-t-lg transition cursor-pointer border-t border-x shrink-0 ${
               activeTab === 'attendance'
-                ? 'bg-white border-stone-200 text-emerald-800 shadow-xs'
+                ? 'bg-white border-stone-200 text-emerald-800 shadow-2xs'
                 : 'border-transparent text-stone-500 hover:text-stone-800'
             }`}
           >
-            <CalendarCheck size={15} className={activeTab === 'attendance' ? 'text-emerald-600' : 'text-stone-400'} />
-            <span>4. Kirim Link Absen & Broadcast</span>
+            <CalendarCheck size={13} className={activeTab === 'attendance' ? 'text-emerald-600' : 'text-stone-400'} />
+            <span>4. Broadcast Absen</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab('test')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold rounded-t-xl transition cursor-pointer border-t border-x shrink-0 ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-t-lg transition cursor-pointer border-t border-x shrink-0 ${
               activeTab === 'test'
-                ? 'bg-white border-stone-200 text-emerald-800 shadow-xs'
+                ? 'bg-white border-stone-200 text-emerald-800 shadow-2xs'
                 : 'border-transparent text-stone-500 hover:text-stone-800'
             }`}
           >
-            <Bot size={15} className={activeTab === 'test' ? 'text-emerald-600' : 'text-stone-400'} />
-            <span>5. Uji Chat AI Transaksi & File</span>
-            <Sparkles size={12} className="text-amber-500" />
+            <Bot size={13} className={activeTab === 'test' ? 'text-emerald-600' : 'text-stone-400'} />
+            <span>5. Chat AI Transaksi</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab('webhook')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold rounded-t-xl transition cursor-pointer border-t border-x shrink-0 ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-t-lg transition cursor-pointer border-t border-x shrink-0 ${
               activeTab === 'webhook'
-                ? 'bg-white border-stone-200 text-emerald-800 shadow-xs'
+                ? 'bg-white border-stone-200 text-emerald-800 shadow-2xs'
                 : 'border-transparent text-stone-500 hover:text-stone-800'
             }`}
           >
-            <Globe size={15} className={activeTab === 'webhook' ? 'text-emerald-600' : 'text-stone-400'} />
-            <span>6. Webhook (Make.com / Fonnte)</span>
+            <Globe size={13} className={activeTab === 'webhook' ? 'text-emerald-600' : 'text-stone-400'} />
+            <span>6. Webhook</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('server')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-t-lg transition cursor-pointer border-t border-x shrink-0 ${
+              activeTab === 'server'
+                ? 'bg-white border-stone-200 text-emerald-800 shadow-2xs'
+                : 'border-transparent text-stone-500 hover:text-stone-800'
+            }`}
+          >
+            <Server size={13} className={activeTab === 'server' ? 'text-emerald-600' : 'text-stone-400'} />
+            <span>7. Server Backend ⚙️</span>
           </button>
         </div>
 
-        {/* Tab Content */}
-        <div className="flex-1 overflow-y-auto p-6 bg-white space-y-6">
+        {/* Tab Content - Clean, responsive, compact */}
+        <div className="flex-1 overflow-y-auto p-3.5 sm:p-5 bg-white space-y-4">
           
           {/* TAB 1: CONNECT WHATSAPP DIRECTLY */}
           {activeTab === 'connect' && (
-            <div className="space-y-6">
-              {/* Keep-Alive 24/7 Feature Callout Banner */}
-              <div className="bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-100/70 border border-emerald-300 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
-                <div className="flex items-center gap-3">
-                  <div className="p-2.5 bg-emerald-600 text-white rounded-xl shadow-xs shrink-0">
-                    <Zap size={20} />
-                  </div>
-                  <div>
-                    <h4 className="text-xs sm:text-sm font-bold text-emerald-950 flex items-center gap-2">
-                      <span>Ingin Penautan WhatsApp Aktif 24 Jam Tanpa Scan Ulang?</span>
-                      <span className="px-1.5 py-0.5 text-[9px] bg-emerald-700 text-white font-mono font-bold rounded uppercase">
-                        100% Gratis
-                      </span>
-                    </h4>
-                    <p className="text-[11px] text-emerald-800 mt-0.5">
-                      Gunakan pemantau UptimeRobot agar hosting (Render) tidak pernah tidur (sleep) dan sesi WhatsApp Anda tetap aktif selamanya.
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('uptime')}
-                  className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl transition cursor-pointer shrink-0 flex items-center gap-1.5 shadow-xs"
-                >
-                  <span>Buka Panduan UptimeRobot</span>
-                  <ArrowRight size={14} />
-                </button>
-              </div>
+            <div className="space-y-4">
 
-              {/* Status Banner */}
-              <div className={`p-4 rounded-2xl border flex items-center justify-between gap-4 ${
+              {/* Status & Action Buttons Bar */}
+              <div className={`p-3 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 ${
                 status === 'connected'
-                  ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                  ? 'bg-emerald-50/80 border-emerald-200 text-emerald-900'
                   : status === 'qr'
-                  ? 'bg-amber-50 border-amber-200 text-amber-900'
+                  ? 'bg-amber-50/80 border-amber-200 text-amber-900'
                   : 'bg-stone-50 border-stone-200 text-stone-850'
               }`}>
-                <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-2xl flex items-center justify-center font-bold shrink-0 ${
+                <div className="flex items-center gap-2.5">
+                  <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-bold shrink-0 ${
                     status === 'connected'
                       ? 'bg-emerald-600 text-white'
                       : status === 'qr'
                       ? 'bg-amber-500 text-white'
                       : 'bg-stone-300 text-stone-700'
                   }`}>
-                    {status === 'connected' ? <CheckCircle2 size={20} /> : <QrCode size={20} />}
+                    {status === 'connected' ? <CheckCircle2 size={18} /> : <QrCode size={18} />}
                   </div>
                   <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-extrabold text-sm">
-                        {status === 'connected' && 'WhatsApp Terhubung & Aktif untuk Seluruh Sistem!'}
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-extrabold text-xs sm:text-sm">
+                        {status === 'connected' && 'WhatsApp Terhubung & Aktif!'}
                         {status === 'qr' && 'Menunggu Pemindaian QR Code'}
-                        {status === 'connecting' && 'Sedang Menginisialisasi Server...'}
+                        {status === 'connecting' && 'Menginisialisasi Server WhatsApp...'}
                         {status === 'disconnected' && 'WhatsApp Belum Terhubung'}
                       </span>
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
-                        status === 'connected' ? 'bg-emerald-200 text-emerald-900' : 'bg-amber-200 text-amber-900'
-                      }`}>
-                        {status.toUpperCase()}
-                      </span>
                     </div>
-                    <p className="text-xs opacity-80 mt-0.5">
+                    <p className="text-[11px] opacity-80">
                       {status === 'connected'
-                        ? `Terhubung sebagai: ${connectedUser?.name || 'Admin'} (${connectedUser?.id || 'Akun Aktif'}). Otomatis melayani Absensi & AI Bisnis.`
-                        : 'Pindai QR code atau gunakan nomor telepon untuk menghubungkan WhatsApp ke seluruh sistem aplikasi.'}
+                        ? `Nomor: ${connectedUser?.id?.split('@')[0] || 'Aktif'} - Siap melayani Absensi & Asisten AI.`
+                        : 'Pindai QR code di bawah atau tautkan nomor HP via Kode Pairing 8 digit.'}
                     </p>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 shrink-0 w-full sm:w-auto justify-end">
                   {status === 'connected' ? (
                     <button
                       type="button"
                       onClick={handleDisconnect}
                       disabled={isLoading}
-                      className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5"
+                      className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1"
                     >
-                      <Power size={14} />
+                      <Power size={13} />
                       <span>Putuskan Sesi</span>
                     </button>
                   ) : (
-                    <button
-                      type="button"
-                      onClick={fetchStatus}
-                      className="px-3.5 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5"
-                    >
-                      <RefreshCw size={14} className={status === 'connecting' ? 'animate-spin' : ''} />
-                      <span>Segarkan Status</span>
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleRefreshQr}
+                        disabled={isRefreshingQr}
+                        className="px-2.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1 shadow-2xs"
+                        title="Buat QR Baru"
+                      >
+                        <RefreshCw size={13} className={isRefreshingQr ? 'animate-spin' : ''} />
+                        <span>Refresh QR Baru</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={fetchStatus}
+                        className="px-2.5 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1"
+                        title="Cek Status"
+                      >
+                        <RefreshCw size={13} className={status === 'connecting' ? 'animate-spin' : ''} />
+                        <span>Cek</span>
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
 
-              {/* Automatic Workflow Explanation Guide */}
-              <div className="p-4 bg-teal-50/70 border border-teal-200 rounded-2xl space-y-3">
-                <div className="flex items-center gap-2 text-teal-950 font-extrabold text-xs uppercase tracking-wider">
-                  <Sparkles size={16} className="text-teal-700" />
-                  <span>Bagaimana Cara Kerja Otomatis Setelah Anda Scan QR Code?</span>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-teal-950">
-                  <div className="bg-white p-3 rounded-xl border border-teal-100 space-y-1">
-                    <span className="w-5 h-5 rounded-full bg-teal-100 text-teal-800 font-bold inline-flex items-center justify-center text-[10px]">1</span>
-                    <p className="font-bold text-stone-900">Langsung Aktif 24 Jam</p>
-                    <p className="text-[11px] text-stone-600">
-                      Setelah QR code di-scan, WhatsApp langsung otomatis standby menerima pertanyaan transaksi kapan saja tanpa perlu login manual lagi.
-                    </p>
-                  </div>
-                  <div className="bg-white p-3 rounded-xl border border-teal-100 space-y-1">
-                    <span className="w-5 h-5 rounded-full bg-teal-100 text-teal-800 font-bold inline-flex items-center justify-center text-[10px]">2</span>
-                    <p className="font-bold text-stone-900">Paham Rincian & Status Bayar</p>
-                    <p className="text-[11px] text-stone-600">
-                      AI hafal status voucher (<strong>SUDAH DIBAYAR</strong> atau <strong>BELUM DIBAYAR</strong>), nama penerima, tanggal, dan rincian biaya.
-                    </p>
-                  </div>
-                  <div className="bg-white p-3 rounded-xl border border-teal-100 space-y-1">
-                    <span className="w-5 h-5 rounded-full bg-teal-100 text-teal-800 font-bold inline-flex items-center justify-center text-[10px]">3</span>
-                    <p className="font-bold text-stone-900">Lampiran 1 File Google Drive</p>
-                    <p className="text-[11px] text-stone-600">
-                      Jika diminta berkas/file, AI langsung memberikan link dokumen lengkap dari Google Drive dalam pesan WhatsApp yang sama.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* QR Code & Pairing Section */}
+              {/* QR Code & Pairing Section - 2-Column Responsive */}
               {status !== 'connected' && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
                   {/* Option A: Scan QR Code */}
-                  <div className="p-5 rounded-2xl border border-stone-200 bg-stone-50/50 flex flex-col items-center text-center space-y-4">
-                    <div className="flex items-center gap-2 text-xs font-extrabold text-stone-900 uppercase tracking-wider">
-                      <QrCode size={16} className="text-emerald-600" />
-                      <span>Metode 1: Scan QR Code (Paling Cepat)</span>
+                  <div className="p-3.5 sm:p-4 rounded-xl border border-stone-200 bg-stone-50/60 flex flex-col items-center text-center space-y-3">
+                    <div className="flex items-center gap-1.5 text-xs font-black text-stone-900 uppercase tracking-wider">
+                      <QrCode size={15} className="text-emerald-600" />
+                      <span>Metode 1: Scan QR Code</span>
                     </div>
 
-                    <div className="w-56 h-56 bg-white p-3 rounded-2xl border border-stone-200 shadow-xs flex items-center justify-center">
+                    {/* QR Box - Perfectly fitted */}
+                    <div className="w-40 h-40 sm:w-44 sm:h-44 bg-white p-2.5 rounded-xl border border-stone-200 shadow-2xs flex items-center justify-center relative">
                       {qrCode ? (
                         <img 
                           src={qrCode} 
                           alt="WhatsApp Bot QR Code" 
-                          className="w-full h-full object-contain rounded-lg"
+                          className="w-full h-full object-contain rounded-md"
                         />
                       ) : (
-                        <div className="flex flex-col items-center gap-2 text-stone-400 text-xs">
-                          <RefreshCw size={24} className="animate-spin text-emerald-600" />
-                          <span>Menyiapkan QR Code...</span>
+                        <div className="flex flex-col items-center gap-2 text-stone-400 text-xs p-3">
+                          <RefreshCw size={22} className="animate-spin text-emerald-600" />
+                          <span className="font-medium text-[11px] text-center">Menyiapkan QR Code WhatsApp...</span>
+                          <button
+                            type="button"
+                            onClick={handleRefreshQr}
+                            className="mt-1 px-2.5 py-1 text-[10px] font-bold bg-emerald-100 text-emerald-800 rounded-md hover:bg-emerald-200 transition cursor-pointer"
+                          >
+                            Klik Refresh QR
+                          </button>
                         </div>
                       )}
                     </div>
 
-                    <div className="text-xs text-stone-600 space-y-1 text-left w-full bg-white p-3 rounded-xl border border-stone-200">
-                      <p className="font-bold text-stone-900">Cara Scan:</p>
-                      <ol className="list-decimal list-inside space-y-0.5 text-[11px]">
-                        <li>Buka aplikasi WhatsApp / WhatsApp Business di HP</li>
-                        <li>Ketuk menu Titik Tiga (⋮) atau Pengaturan ⚙️</li>
-                        <li>Pilih <strong>Perangkat Tertaut (Linked Devices)</strong></li>
-                        <li>Ketuk <strong>Tautkan Perangkat</strong> & scan QR di atas</li>
+                    <div className="text-[11px] text-stone-600 space-y-0.5 text-left w-full bg-white p-2.5 rounded-lg border border-stone-200">
+                      <p className="font-bold text-stone-900">Langkah Pemindaian:</p>
+                      <ol className="list-decimal list-inside space-y-0.5 text-[10.5px]">
+                        <li>Buka WhatsApp di HP Anda</li>
+                        <li>Menu Titik Tiga (⋮) atau Pengaturan ⚙️</li>
+                        <li>Pilih <strong>Perangkat Tertaut</strong></li>
+                        <li>Ketuk <strong>Tautkan Perangkat</strong> &amp; scan QR</li>
                       </ol>
                     </div>
                   </div>
 
                   {/* Option B: Link with Phone Number (Pairing Code) */}
-                  <div className="p-5 rounded-2xl border border-stone-200 bg-stone-50/50 flex flex-col space-y-4">
-                    <div className="flex items-center gap-2 text-xs font-extrabold text-stone-900 uppercase tracking-wider">
-                      <Smartphone size={16} className="text-emerald-600" />
-                      <span>Metode 2: Tautkan dengan Nomor HP (Pairing Code)</span>
+                  <div className="p-3.5 sm:p-4 rounded-xl border border-stone-200 bg-stone-50/60 flex flex-col space-y-3 justify-between">
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-1.5 text-xs font-black text-stone-900 uppercase tracking-wider">
+                        <Smartphone size={15} className="text-emerald-600" />
+                        <span>Metode 2: Kode Pairing HP</span>
+                      </div>
+
+                      <p className="text-[11px] text-stone-600 leading-relaxed">
+                        Jika Anda membuka aplikasi ini dari HP yang sama dan tidak bisa scan QR, masukkan nomor WhatsApp Anda untuk mendapatkan kode 8 digit.
+                      </p>
+
+                      <form onSubmit={handleRequestPairingCode} className="space-y-2 pt-1">
+                        <div>
+                          <label className="block text-[10.5px] font-mono font-bold text-stone-700 mb-1 uppercase">
+                            Nomor WhatsApp Anda:
+                          </label>
+                          <div className="flex gap-1.5">
+                            <input
+                              type="text"
+                              placeholder="08123456789 atau 62812..."
+                              value={pairingPhone}
+                              onChange={e => setPairingPhone(e.target.value)}
+                              className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-stone-300 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 font-mono"
+                            />
+                            <button
+                              type="submit"
+                              disabled={pairingLoading || !pairingPhone.trim()}
+                              className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1 shadow-2xs shrink-0"
+                            >
+                              {pairingLoading ? <RefreshCw size={13} className="animate-spin" /> : <Key size={13} />}
+                              <span>Minta Kode</span>
+                            </button>
+                          </div>
+                        </div>
+                      </form>
+
+                      {pairingCode && (
+                        <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-center space-y-1.5 animate-in zoom-in-95">
+                          <span className="text-[10px] font-mono font-bold text-emerald-800 uppercase tracking-wider block">
+                            Kode Pairing WhatsApp Anda:
+                          </span>
+                          <div className="flex items-center justify-center gap-2">
+                            <span className="text-xl sm:text-2xl font-black font-mono tracking-widest text-emerald-950 bg-white py-1 px-3 rounded-md border border-emerald-300 inline-block shadow-inner select-all">
+                              {pairingCode}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleCopy(pairingCode, 'pairing-code')}
+                              className="p-1.5 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition cursor-pointer"
+                              title="Salin Kode"
+                            >
+                              {copiedKey === 'pairing-code' ? <Check size={14} /> : <Copy size={14} />}
+                            </button>
+                          </div>
+                          <p className="text-[10.5px] text-emerald-800">
+                            Buka WA di HP &gt; Perangkat Tertaut &gt; Tautkan dengan nomor telepon &gt; Masukkan kode di atas.
+                          </p>
+                        </div>
+                      )}
+
+                      {errorMessage && (
+                        <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-800 text-[11px] rounded-lg flex items-start gap-1.5">
+                          <AlertCircle size={14} className="shrink-0 mt-0.5 text-rose-600" />
+                          <span>{errorMessage}</span>
+                        </div>
+                      )}
                     </div>
 
-                    <p className="text-xs text-stone-600">
-                      Jika Anda membuka aplikasi ini dari HP yang sama dan tidak bisa scan QR, gunakan kode pairing 8 digit.
-                    </p>
-
-                    <form onSubmit={handleRequestPairingCode} className="space-y-3">
-                      <div>
-                        <label className="block text-[11px] font-mono font-bold text-stone-700 mb-1 uppercase">
-                          Nomor WhatsApp Anda:
-                        </label>
-                        <div className="flex gap-2">
-                          <input
-                            type="text"
-                            placeholder="Contoh: 08123456789 atau 628123456789"
-                            value={pairingPhone}
-                            onChange={e => setPairingPhone(e.target.value)}
-                            className="flex-1 px-3 py-2 text-xs rounded-xl border border-stone-300 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 font-mono"
-                          />
-                          <button
-                            type="submit"
-                            disabled={pairingLoading || !pairingPhone.trim()}
-                            className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow-3xs"
-                          >
-                            {pairingLoading ? <RefreshCw size={14} className="animate-spin" /> : <Key size={14} />}
-                            <span>Dapatkan Kode</span>
-                          </button>
-                        </div>
-                      </div>
-                    </form>
-
-                    {pairingCode && (
-                      <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-center space-y-2 animate-in zoom-in-95">
-                        <span className="text-[11px] font-mono font-bold text-emerald-800 uppercase tracking-wider block">
-                          Kode Pairing Anda:
-                        </span>
-                        <div className="text-2xl font-black font-mono tracking-widest text-emerald-950 bg-white py-2 px-4 rounded-lg border border-emerald-300 inline-block shadow-inner">
-                          {pairingCode}
-                        </div>
-                        <p className="text-[11px] text-emerald-800">
-                          Buka notifikasi WhatsApp di HP Anda atau pilih &quot;Tautkan dengan nomor telepon&quot; lalu masukkan kode 8 digit di atas.
-                        </p>
-                      </div>
-                    )}
-
-                    {errorMessage && (
-                      <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded-xl flex items-start gap-2">
-                        <AlertCircle size={15} className="shrink-0 mt-0.5 text-rose-600" />
-                        <span>{errorMessage}</span>
-                      </div>
-                    )}
+                    <div className="text-[11px] text-stone-600 bg-white p-2.5 rounded-lg border border-stone-200 space-y-0.5">
+                      <p className="font-bold text-stone-900">Cara Memasukkan Kode di HP:</p>
+                      <ol className="list-decimal list-inside space-y-0.5 text-[10.5px]">
+                        <li>Buka WhatsApp &gt; <strong>Perangkat Tertaut</strong></li>
+                        <li>Pilih <strong>Tautkan dengan nomor telepon</strong></li>
+                        <li>Ketik kode 8 digit yang muncul di atas</li>
+                      </ol>
+                    </div>
                   </div>
                 </div>
               )}
+
+              {/* Fast Backend Server Callout */}
+              <div className="p-3 bg-teal-50/80 border border-teal-200 rounded-xl flex items-center justify-between gap-3 text-xs text-teal-950">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Server size={16} className="text-teal-700 shrink-0" />
+                  <span className="text-[11px] truncate">
+                    {getBackendBaseUrl() ? (
+                      <>Menggunakan Server Backend: <strong className="font-mono">{getBackendBaseUrl()}</strong></>
+                    ) : (
+                      <>Menggunakan Server Asal (Origin). Ingin WhatsApp aktif 24/7 di hosting Render/Railway?</>
+                    )}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('server')}
+                  className="px-2.5 py-1 bg-teal-700 hover:bg-teal-800 text-white text-[11px] font-bold rounded-lg transition cursor-pointer shrink-0"
+                >
+                  Pengaturan Server ⚙️
+                </button>
+              </div>
+
             </div>
           )}
 
-          {/* TAB 2: KEEP-ALIVE 24/7 & UPTIMEROBOT GUIDE (BEBAS SCAN SELAMANYA) */}
+          {/* TAB 2: KEEP-ALIVE 24/7 & UPTIMEROBOT GUIDE */}
           {activeTab === 'uptime' && (
-            <div className="space-y-6">
-              {/* Header Banner */}
-              <div className="p-5 bg-gradient-to-r from-emerald-950 via-teal-900 to-stone-900 text-white rounded-3xl shadow-lg border border-emerald-800/40 space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 flex items-center justify-center shrink-0 shadow-inner">
-                      <Activity size={26} className="text-emerald-400 animate-pulse" />
+            <div className="space-y-4">
+              <div className="p-3.5 bg-gradient-to-r from-emerald-950 to-teal-900 text-white rounded-xl shadow-md border border-emerald-800/40 space-y-2">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 flex items-center justify-center shrink-0">
+                      <Activity size={20} className="text-emerald-400 animate-pulse" />
                     </div>
                     <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="text-base sm:text-lg font-black tracking-tight text-white">
-                          Keep-Alive 24/7 &amp; Bebas Scan QR Selamanya
-                        </h3>
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider bg-emerald-500/30 text-emerald-200 border border-emerald-400/40">
-                          UptimeRobot Ready
-                        </span>
-                      </div>
-                      <p className="text-xs text-emerald-100/80 mt-0.5">
-                        Menjaga server hosting (Render) tetap aktif 24 jam nonstop &amp; memulihkan koneksi WhatsApp otomatis tanpa perlu scan ulang.
+                      <h3 className="text-sm font-black text-white">
+                        Keep-Alive 24/7 &amp; Bebas Scan Selamanya
+                      </h3>
+                      <p className="text-[11px] text-emerald-100/80">
+                        Menjaga server tetap aktif dan memulihkan sesi WhatsApp otomatis tanpa perlu scan ulang.
                       </p>
                     </div>
                   </div>
@@ -812,846 +899,588 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                     href="https://uptimerobot.com"
                     target="_blank"
                     rel="noreferrer"
-                    className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-stone-950 font-bold text-xs rounded-xl transition cursor-pointer flex items-center gap-2 shrink-0 shadow-sm"
+                    className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-stone-950 font-bold text-xs rounded-lg transition flex items-center gap-1.5 shrink-0"
                   >
-                    <span>Buka UptimeRobot.com</span>
-                    <ExternalLink size={14} />
+                    <span>UptimeRobot.com</span>
+                    <ExternalLink size={12} />
                   </a>
                 </div>
               </div>
 
               {/* URL Health Check Box */}
-              <div className="bg-stone-50 border border-stone-200 rounded-3xl p-5 space-y-3">
+              <div className="bg-stone-50 border border-stone-200 rounded-xl p-3.5 space-y-2">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Radio size={16} className="text-emerald-600" />
-                    <h4 className="text-xs font-black uppercase tracking-wider text-stone-900 font-mono">
-                      URL Endpoint Health Check (Salin untuk UptimeRobot)
-                    </h4>
-                  </div>
-                  <span className="text-[11px] text-stone-500 font-mono">Metode: GET / HEAD</span>
+                  <span className="text-xs font-black uppercase tracking-wider text-stone-900 flex items-center gap-1.5 font-mono">
+                    <Radio size={14} className="text-emerald-600" />
+                    URL Health Check (Salin untuk UptimeRobot):
+                  </span>
+                  <span className="text-[10px] text-stone-500 font-mono">GET</span>
                 </div>
 
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                  <div className="flex-1 bg-white border border-stone-300 rounded-2xl px-4 py-3 font-mono text-xs text-stone-850 break-all select-all shadow-inner">
-                    {healthUrl}
-                  </div>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    readOnly
+                    value={healthUrl}
+                    className="flex-1 bg-white border border-stone-300 rounded-lg px-3 py-1.5 font-mono text-xs text-stone-850 select-all"
+                  />
                   <button
                     type="button"
                     onClick={() => handleCopy(healthUrl, 'health-url')}
-                    className={`px-5 py-3 rounded-2xl text-xs font-bold transition flex items-center justify-center gap-2 shrink-0 cursor-pointer shadow-xs ${
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1 shrink-0 ${
                       copiedKey === 'health-url'
                         ? 'bg-emerald-600 text-white'
                         : 'bg-stone-900 hover:bg-stone-800 text-white'
                     }`}
                   >
-                    {copiedKey === 'health-url' ? <Check size={16} /> : <Copy size={16} />}
-                    <span>{copiedKey === 'health-url' ? 'Tersalin!' : 'Salin URL'}</span>
+                    {copiedKey === 'health-url' ? <Check size={14} /> : <Copy size={14} />}
+                    <span>{copiedKey === 'health-url' ? 'Tersalin' : 'Salin'}</span>
                   </button>
                 </div>
-                <p className="text-[11px] text-stone-500 font-sans">
-                  * URL ini dapat diakses secara publik oleh layanan pemantau (tanpa perlu token otentikasi) untuk menjaga server tetap terjaga.
-                </p>
               </div>
 
-              {/* Status Pemantauan & Test Live Button */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Metric 1: Uptime & Ping Stats */}
-                <div className="bg-white border border-stone-200 rounded-3xl p-5 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-black text-stone-900 uppercase tracking-wider flex items-center gap-1.5 font-mono">
-                      <Clock size={15} className="text-emerald-600" />
-                      Status Server &amp; Ping
-                    </span>
-                    <button
-                      type="button"
-                      onClick={fetchKeepAliveStats}
-                      className="p-1.5 text-stone-400 hover:text-stone-700 hover:bg-stone-100 rounded-lg transition"
-                      title="Segarkan Metrik"
-                    >
-                      <RefreshCw size={13} />
-                    </button>
-                  </div>
-
-                  <div className="space-y-2 text-xs">
-                    <div className="flex items-center justify-between py-1.5 border-b border-stone-100">
+              {/* Status Pemantauan & Test Live */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="bg-white border border-stone-200 rounded-xl p-3.5 space-y-2 text-xs">
+                  <span className="font-bold text-stone-900 flex items-center gap-1.5 font-mono">
+                    <Clock size={13} className="text-emerald-600" />
+                    Metrik Server:
+                  </span>
+                  <div className="space-y-1.5 text-[11px]">
+                    <div className="flex justify-between border-b border-stone-100 pb-1">
                       <span className="text-stone-500">Uptime Server:</span>
-                      <span className="font-mono font-bold text-stone-900">
+                      <span className="font-mono font-bold text-stone-850">
                         {keepAliveStats?.uptimeSeconds
-                          ? `${Math.floor(keepAliveStats.uptimeSeconds / 3600)} jam ${Math.floor((keepAliveStats.uptimeSeconds % 3600) / 60)} menit`
+                          ? `${Math.floor(keepAliveStats.uptimeSeconds / 3600)}j ${Math.floor((keepAliveStats.uptimeSeconds % 3600) / 60)}m`
                           : 'Aktif'}
                       </span>
                     </div>
-
-                    <div className="flex items-center justify-between py-1.5 border-b border-stone-100">
-                      <span className="text-stone-500">Total Ping UptimeRobot:</span>
+                    <div className="flex justify-between border-b border-stone-100 pb-1">
+                      <span className="text-stone-500">Total Ping Masuk:</span>
                       <span className="font-mono font-bold text-emerald-700">
                         {keepAliveStats?.totalPings ?? 0} kali
                       </span>
                     </div>
-
-                    <div className="flex items-center justify-between py-1.5 border-b border-stone-100">
+                    <div className="flex justify-between">
                       <span className="text-stone-500">Ping Terakhir:</span>
-                      <span className="font-mono text-stone-800">
+                      <span className="font-mono text-stone-850">
                         {keepAliveStats?.lastPing
-                          ? new Date(keepAliveStats.lastPing).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-                          : 'Menunggu ping pertama'}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-between py-1.5">
-                      <span className="text-stone-500">Backup Sesi Persisten:</span>
-                      <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
-                        keepAliveStats?.hasSessionBackup 
-                          ? 'bg-emerald-100 text-emerald-800' 
-                          : 'bg-stone-100 text-stone-600'
-                      }`}>
-                        {keepAliveStats?.hasSessionBackup ? 'Tersimpan (Aman saat Restart)' : 'Belum Ada Sesi'}
+                          ? new Date(keepAliveStats.lastPing).toLocaleTimeString('id-ID')
+                          : 'Menunggu'}
                       </span>
                     </div>
                   </div>
                 </div>
 
-                {/* Metric 2: Uji Coba Health Check Live */}
-                <div className="bg-white border border-stone-200 rounded-3xl p-5 space-y-3 flex flex-col justify-between">
+                <div className="bg-white border border-stone-200 rounded-xl p-3.5 space-y-2 flex flex-col justify-between">
                   <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-black text-stone-900 uppercase tracking-wider flex items-center gap-1.5 font-mono">
-                        <Zap size={15} className="text-amber-500" />
-                        Uji Health Check Langsung
-                      </span>
-                    </div>
-                    <p className="text-xs text-stone-600">
-                      Uji coba endpoint <code>/api/health</code> sekarang dari browser Anda untuk memverifikasi respons server dan fitur auto-revive WhatsApp.
+                    <span className="font-bold text-xs text-stone-900 flex items-center gap-1.5 font-mono">
+                      <Zap size={13} className="text-amber-500" />
+                      Uji Ping Sekarang:
+                    </span>
+                    <p className="text-[11px] text-stone-600 mt-1">
+                      Cek respon server secara langsung dari browser Anda.
                     </p>
                   </div>
 
-                  <div className="space-y-3">
-                    {pingTestResult && (
-                      <div className={`p-3 rounded-2xl text-xs space-y-1 border ${
-                        pingTestResult.success
-                          ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
-                          : 'bg-rose-50 border-rose-200 text-rose-950'
-                      }`}>
-                        <div className="flex items-center justify-between font-bold">
-                          <span className="flex items-center gap-1.5">
-                            {pingTestResult.success ? <CheckCircle2 size={14} className="text-emerald-600" /> : <AlertCircle size={14} className="text-rose-600" />}
-                            <span>Respons: {pingTestResult.status || 200} OK</span>
-                          </span>
-                          <span className="font-mono text-[11px] bg-white px-2 py-0.5 rounded border border-emerald-200">
-                            {pingTestResult.latencyMs} ms
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-stone-600">
-                          {pingTestResult.success
-                            ? 'Server merespons normal! WhatsApp Bot dipantau & terlindungi dari sleep.'
-                            : pingTestResult.error}
-                        </p>
-                      </div>
-                    )}
-
+                  <div className="pt-2">
                     <button
                       type="button"
                       onClick={handleTestPing}
                       disabled={isTestingPing}
-                      className="w-full py-2.5 bg-stone-900 hover:bg-stone-800 text-white rounded-2xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-xs disabled:opacity-50"
+                      className="w-full py-1.5 bg-stone-900 hover:bg-stone-800 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5"
                     >
-                      <RefreshCw size={14} className={isTestingPing ? 'animate-spin' : ''} />
-                      <span>{isTestingPing ? 'Menguji Endpoint...' : 'Uji Health Check Sekarang'}</span>
+                      <RefreshCw size={13} className={isTestingPing ? 'animate-spin' : ''} />
+                      <span>{isTestingPing ? 'Menguji...' : 'Uji Ping Server'}</span>
                     </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Panduan Langkah Demi Langkah UptimeRobot */}
-              <div className="bg-emerald-50/70 border border-emerald-200 rounded-3xl p-6 space-y-4">
-                <div className="flex items-center gap-2 text-emerald-950 font-black text-sm uppercase tracking-wider font-mono">
-                  <ShieldCheck size={18} className="text-emerald-700" />
-                  <span>Panduan Langkah Demi Langkah Setup UptimeRobot (100% Gratis)</span>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
-                  <div className="bg-white p-4 rounded-2xl border border-emerald-100 space-y-1.5 shadow-2xs">
-                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-extrabold flex items-center justify-center text-xs">
-                      1
-                    </span>
-                    <h5 className="font-bold text-stone-900">Daftar Akun Gratis</h5>
-                    <p className="text-[11px] text-stone-600 leading-relaxed">
-                      Buka <strong>uptimerobot.com</strong> lalu klik <em>Register for FREE</em>. Paket gratis menyediakan 50 monitor tanpa biaya selamanya.
-                    </p>
-                  </div>
-
-                  <div className="bg-white p-4 rounded-2xl border border-emerald-100 space-y-1.5 shadow-2xs">
-                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-extrabold flex items-center justify-center text-xs">
-                      2
-                    </span>
-                    <h5 className="font-bold text-stone-900">Add New Monitor</h5>
-                    <p className="text-[11px] text-stone-600 leading-relaxed">
-                      Di halaman Dashboard UptimeRobot, klik tombol biru <strong>+ Add New Monitor</strong> di pojok kiri atas.
-                    </p>
-                  </div>
-
-                  <div className="bg-white p-4 rounded-2xl border border-emerald-100 space-y-1.5 shadow-2xs">
-                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-extrabold flex items-center justify-center text-xs">
-                      3
-                    </span>
-                    <h5 className="font-bold text-stone-900">Isi Pengaturan</h5>
-                    <ul className="text-[11px] text-stone-600 leading-relaxed list-disc list-inside space-y-0.5">
-                      <li><strong>Type:</strong> HTTP(s)</li>
-                      <li><strong>Name:</strong> Bot WA NMSA 24/7</li>
-                      <li><strong>URL:</strong> <em>Tempelkan URL di atas</em></li>
-                      <li><strong>Interval:</strong> 5 minutes</li>
-                    </ul>
-                  </div>
-
-                  <div className="bg-white p-4 rounded-2xl border border-emerald-100 space-y-1.5 shadow-2xs">
-                    <span className="w-6 h-6 rounded-full bg-emerald-600 text-white font-extrabold flex items-center justify-center text-xs">
-                      4
-                    </span>
-                    <h5 className="font-bold text-stone-900">Simpan &amp; Aktif</h5>
-                    <p className="text-[11px] text-stone-600 leading-relaxed">
-                      Klik tombol <strong>Create Monitor</strong> di bawah. UptimeRobot akan otomatis mengirim ping tiap 5 menit. Selesai!
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Mengapa ini bekerja selamanya? */}
-              <div className="border border-stone-200 rounded-3xl p-5 bg-white space-y-3">
-                <h4 className="text-xs font-black uppercase tracking-wider text-stone-900 font-mono flex items-center gap-2">
-                  <Sparkles size={16} className="text-amber-500" />
-                  <span>Bagaimana Ini Mencegah Anda Harus Scan Ulang Selamanya?</span>
-                </h4>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-stone-700">
-                  <div className="p-3 bg-stone-50 rounded-2xl border border-stone-200 space-y-1">
-                    <p className="font-bold text-stone-900">1. Anti-Sleep Render</p>
-                    <p className="text-[11px] text-stone-600 leading-relaxed">
-                      Render Free-tier akan mematikan server setelah 15 menit tanpa traffic. UptimeRobot mem-ping setiap 5 menit sehingga Render tidak pernah tidur.
-                    </p>
-                  </div>
-                  <div className="p-3 bg-stone-50 rounded-2xl border border-stone-200 space-y-1">
-                    <p className="font-bold text-stone-900">2. Auto-Revive Bot Otomatis</p>
-                    <p className="text-[11px] text-stone-600 leading-relaxed">
-                      Setiap kali menerima ping, server mengecek status koneksi WhatsApp. Jika sempat putus, server langsung memulihkannya kembali secara otomatis.
-                    </p>
-                  </div>
-                  <div className="p-3 bg-stone-50 rounded-2xl border border-stone-200 space-y-1">
-                    <p className="font-bold text-stone-900">3. Sesi Persisten Ganda</p>
-                    <p className="text-[11px] text-stone-600 leading-relaxed">
-                      Kredensial akun di-backup otomatis ke penyimpanan persisten. Bahkan jika Render me-restart container, sesi langsung dimuat kembali tanpa scan QR!
-                    </p>
+                    {pingTestResult && (
+                      <p className={`text-[10.5px] mt-1.5 font-mono ${pingTestResult.success ? 'text-emerald-700' : 'text-rose-600'}`}>
+                        {pingTestResult.success ? `✓ Sukses (${pingTestResult.latencyMs}ms)` : `✗ Gagal: ${pingTestResult.error}`}
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
             </div>
           )}
 
-          {/* TAB 3: SECURITY & PRIVACY SETTINGS FOR VOUCHERS */}
+          {/* TAB 3: KEAMANAN & OTORISASI */}
           {activeTab === 'security' && (
-            <div className="space-y-6">
-              {/* Security Header Banner */}
-              <div className="p-4 bg-stone-900 text-white rounded-2xl flex items-start justify-between gap-3 shadow-md">
-                <div className="flex items-start gap-3">
-                  <div className="p-2.5 bg-rose-500/20 text-rose-400 rounded-xl border border-rose-500/30 shrink-0">
-                    <Lock size={22} />
-                  </div>
-                  <div>
-                    <h3 className="font-extrabold text-sm text-white">
-                      Pengaturan Keamanan & Privasi Data Voucher Keuangan
-                    </h3>
-                    <p className="text-xs text-stone-300 mt-1 leading-relaxed">
-                      Atur siapa saja yang berhak menanyakan rincian voucher transaksi, status pembayaran, kas kecil, dan tautan file Google Drive melalui WhatsApp agar data keuangan perusahaan tidak bocor ke sembarang orang.
-                    </p>
-                  </div>
-                </div>
+            <div className="space-y-4">
+              <div className="p-3 bg-stone-50 border border-stone-200 rounded-xl text-xs space-y-1">
+                <span className="font-bold text-stone-900 flex items-center gap-1.5">
+                  <Lock size={14} className="text-emerald-700" />
+                  Privasi &amp; Akses Database Voucher:
+                </span>
+                <p className="text-[11px] text-stone-600 leading-relaxed">
+                  Batasi siapa saja yang berhak meminta data transaksi atau status bayar keuangan melalui WhatsApp.
+                </p>
               </div>
 
-              {securityStatusMsg && (
-                <div className={`p-3.5 rounded-xl text-xs flex items-center gap-2 border ${
-                  securityStatusMsg.success ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-rose-50 border-rose-200 text-rose-900'
-                }`}>
-                  {securityStatusMsg.success ? <CheckCircle2 size={16} className="text-emerald-600 shrink-0" /> : <AlertCircle size={16} className="text-rose-600 shrink-0" />}
-                  <span className="font-medium">{securityStatusMsg.text}</span>
-                </div>
-              )}
-
-              {/* Mode Selection */}
-              <div className="border border-stone-200 rounded-2xl p-5 bg-white space-y-4">
-                <h4 className="text-xs font-extrabold text-stone-900 uppercase tracking-wider flex items-center gap-2">
-                  <ShieldCheck size={16} className="text-emerald-600" />
-                  <span>1. Pilih Mode Otorisasi Akses Voucher:</span>
-                </h4>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  {/* Mode 1: Whitelist (Recommended) */}
-                  <label className={`p-4 rounded-xl border-2 transition cursor-pointer flex flex-col justify-between space-y-2 ${
-                    privacyMode === 'whitelist'
-                      ? 'border-emerald-600 bg-emerald-50/50 shadow-xs'
-                      : 'border-stone-200 hover:border-stone-300 bg-stone-50/40'
+              <form onSubmit={handleSaveSecurity} className="space-y-3">
+                {/* Mode Seleksi */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <label className={`p-2.5 rounded-xl border cursor-pointer text-xs transition ${
+                    privacyMode === 'whitelist' ? 'border-emerald-500 bg-emerald-50/50 text-emerald-950 font-bold' : 'border-stone-200 text-stone-700'
                   }`}>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="radio"
-                          name="privacyMode"
-                          value="whitelist"
-                          checked={privacyMode === 'whitelist'}
-                          onChange={() => setPrivacyMode('whitelist')}
-                          className="text-emerald-600 focus:ring-emerald-500"
-                        />
-                        <span className="font-extrabold text-xs text-stone-900">🛡️ Hanya Nomor Terdaftar</span>
-                      </div>
-                      <span className="px-1.5 py-0.5 bg-emerald-200 text-emerald-900 text-[9px] font-bold rounded">Direkomendasikan</span>
+                    <input
+                      type="radio"
+                      name="privacyMode"
+                      value="whitelist"
+                      checked={privacyMode === 'whitelist'}
+                      onChange={() => setPrivacyMode('whitelist')}
+                      className="sr-only"
+                    />
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <UserCheck size={14} className="text-emerald-600" />
+                      <span>Whitelist Nomor</span>
                     </div>
-                    <p className="text-[11px] text-stone-600 leading-relaxed">
-                      Hanya nomor WhatsApp yang didaftarkan di bawah (Direksi, Finance, Manager) yang diizinkan melihat rincian voucher & file Google Drive.
-                    </p>
+                    <p className="text-[10px] font-normal text-stone-500">Hanya nomor terdaftar</p>
                   </label>
 
-                  {/* Mode 2: PIN Protection */}
-                  <label className={`p-4 rounded-xl border-2 transition cursor-pointer flex flex-col justify-between space-y-2 ${
-                    privacyMode === 'pin'
-                      ? 'border-emerald-600 bg-emerald-50/50 shadow-xs'
-                      : 'border-stone-200 hover:border-stone-300 bg-stone-50/40'
+                  <label className={`p-2.5 rounded-xl border cursor-pointer text-xs transition ${
+                    privacyMode === 'pin' ? 'border-emerald-500 bg-emerald-50/50 text-emerald-950 font-bold' : 'border-stone-200 text-stone-700'
                   }`}>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="radio"
-                          name="privacyMode"
-                          value="pin"
-                          checked={privacyMode === 'pin'}
-                          onChange={() => setPrivacyMode('pin')}
-                          className="text-emerald-600 focus:ring-emerald-500"
-                        />
-                        <span className="font-extrabold text-xs text-stone-900">🔑 Proteksi PIN Keamanan</span>
-                      </div>
-                      <span className="px-1.5 py-0.5 bg-amber-100 text-amber-900 text-[9px] font-bold rounded">PIN Wajib</span>
+                    <input
+                      type="radio"
+                      name="privacyMode"
+                      value="pin"
+                      checked={privacyMode === 'pin'}
+                      onChange={() => setPrivacyMode('pin')}
+                      className="sr-only"
+                    />
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <Key size={14} className="text-amber-600" />
+                      <span>Gunakan PIN Rahasia</span>
                     </div>
-                    <p className="text-[11px] text-stone-600 leading-relaxed">
-                      Penanya wajib menyertakan PIN keamanan (contoh: <code>#PIN1234</code>) di dalam pesan chat WhatsApp untuk membuka rincian voucher.
-                    </p>
+                    <p className="text-[10px] font-normal text-stone-500">Ketik PIN saat chat</p>
                   </label>
 
-                  {/* Mode 3: Public (Open) */}
-                  <label className={`p-4 rounded-xl border-2 transition cursor-pointer flex flex-col justify-between space-y-2 ${
-                    privacyMode === 'public'
-                      ? 'border-emerald-600 bg-emerald-50/50 shadow-xs'
-                      : 'border-stone-200 hover:border-stone-300 bg-stone-50/40'
+                  <label className={`p-2.5 rounded-xl border cursor-pointer text-xs transition ${
+                    privacyMode === 'public' ? 'border-emerald-500 bg-emerald-50/50 text-emerald-950 font-bold' : 'border-stone-200 text-stone-700'
                   }`}>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="radio"
-                          name="privacyMode"
-                          value="public"
-                          checked={privacyMode === 'public'}
-                          onChange={() => setPrivacyMode('public')}
-                          className="text-emerald-600 focus:ring-emerald-500"
-                        />
-                        <span className="font-extrabold text-xs text-stone-900">🌐 Terbuka (Publik)</span>
-                      </div>
-                      <span className="px-1.5 py-0.5 bg-rose-100 text-rose-800 text-[9px] font-bold rounded">Tidak Aman</span>
+                    <input
+                      type="radio"
+                      name="privacyMode"
+                      value="public"
+                      checked={privacyMode === 'public'}
+                      onChange={() => setPrivacyMode('public')}
+                      className="sr-only"
+                    />
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <Globe size={14} className="text-teal-600" />
+                      <span>Publik (Semua)</span>
                     </div>
-                    <p className="text-[11px] text-stone-600 leading-relaxed">
-                      Siapa saja yang mengirim pesan chat ke nomor WhatsApp dapat menanyakan rincian data voucher dan keuangan perusahaan.
-                    </p>
+                    <p className="text-[10px] font-normal text-stone-500">Bebas diakses</p>
                   </label>
                 </div>
-              </div>
 
-              {/* Whitelist Manager */}
-              {privacyMode === 'whitelist' && (
-                <div className="border border-stone-200 rounded-2xl p-5 bg-white space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h4 className="text-xs font-extrabold text-stone-900 uppercase tracking-wider flex items-center gap-2">
-                        <UserCheck size={16} className="text-emerald-600" />
-                        <span>2. Daftar Nomor WhatsApp yang Diizinkan (Whitelist Otorisasi):</span>
-                      </h4>
-                      <p className="text-[11px] text-stone-500 mt-0.5">
-                        Karyawan dengan role Admin/Finance otomatis memiliki izin akses. Tambahkan nomor HP lain di bawah:
-                      </p>
+                {/* Whitelist Number List */}
+                {privacyMode === 'whitelist' && (
+                  <div className="space-y-2 bg-stone-50 p-3 rounded-xl border border-stone-200">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-stone-900">Daftar Nomor Terotorisasi:</span>
+                      {connectedUser?.id && (
+                        <button
+                          type="button"
+                          onClick={handleQuickAddConnectedPhone}
+                          className="text-[10.5px] text-emerald-700 font-bold hover:underline cursor-pointer"
+                        >
+                          + Tambah Nomor Admin ({connectedUser?.id?.split('@')[0]})
+                        </button>
+                      )}
                     </div>
 
-                    {connectedUser?.id && (
+                    <div className="flex gap-1.5">
+                      <input
+                        type="text"
+                        placeholder="Contoh: 08123456789"
+                        value={newPhoneInput}
+                        onChange={e => setNewPhoneInput(e.target.value)}
+                        className="flex-1 px-3 py-1.5 bg-white border border-stone-300 rounded-lg text-xs font-mono"
+                      />
                       <button
                         type="button"
-                        onClick={handleQuickAddConnectedPhone}
-                        className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5"
+                        onClick={handleAddAllowedPhone}
+                        className="px-3 py-1.5 bg-emerald-700 text-white rounded-lg text-xs font-bold hover:bg-emerald-800 transition cursor-pointer"
                       >
-                        <Plus size={13} />
-                        <span>+ Tambah Nomor WA Terhubung</span>
+                        Tambah
                       </button>
-                    )}
-                  </div>
+                    </div>
 
-                  {/* Add Input */}
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      placeholder="Masukkan nomor HP (contoh: 08123456789 atau 628123456789)"
-                      value={newPhoneInput}
-                      onChange={e => setNewPhoneInput(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddAllowedPhone(); } }}
-                      className="flex-1 px-3 py-2 text-xs rounded-xl border border-stone-300 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 font-mono"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleAddAllowedPhone}
-                      disabled={!newPhoneInput.trim()}
-                      className="px-4 py-2 bg-stone-900 hover:bg-stone-800 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow-3xs"
-                    >
-                      <Plus size={14} />
-                      <span>Tambah Nomor</span>
-                    </button>
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {allowedPhones.map(phone => (
+                        <span key={phone} className="inline-flex items-center gap-1 px-2.5 py-1 bg-white border border-stone-300 rounded-lg text-[11px] font-mono">
+                          <span>{phone}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveAllowedPhone(phone)}
+                            className="text-rose-500 hover:text-rose-700 cursor-pointer"
+                          >
+                            <X size={12} />
+                          </button>
+                        </span>
+                      ))}
+                      {allowedPhones.length === 0 && (
+                        <span className="text-[11px] text-stone-400 italic">Belum ada nomor didaftarkan.</span>
+                      )}
+                    </div>
                   </div>
+                )}
 
-                  {/* Allowed Phones List */}
-                  <div className="space-y-2 max-h-48 overflow-y-auto">
-                    {allowedPhones.length === 0 ? (
-                      <div className="p-4 rounded-xl bg-stone-50 border border-dashed border-stone-200 text-center text-xs text-stone-500">
-                        Belum ada nomor khusus yang didaftarkan. Tambahkan nomor Direktur/Finance di atas.
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {allowedPhones.map((phone, idx) => (
-                          <div key={idx} className="flex items-center justify-between p-2.5 bg-stone-50 rounded-xl border border-stone-200 text-xs">
-                            <span className="font-mono font-bold text-stone-800 flex items-center gap-1.5">
-                              <Smartphone size={13} className="text-emerald-600" />
-                              +{phone}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveAllowedPhone(phone)}
-                              className="p-1 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition cursor-pointer"
-                              title="Hapus nomor dari daftar otorisasi"
-                            >
-                              <Trash2 size={13} />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* PIN Settings */}
-              {privacyMode === 'pin' && (
-                <div className="border border-stone-200 rounded-2xl p-5 bg-white space-y-3">
-                  <h4 className="text-xs font-extrabold text-stone-900 uppercase tracking-wider flex items-center gap-2">
-                    <Key size={16} className="text-amber-600" />
-                    <span>2. Konfigurasi PIN Otorisasi:</span>
-                  </h4>
-                  <div className="flex items-center gap-3">
+                {/* PIN Settings */}
+                {privacyMode === 'pin' && (
+                  <div className="space-y-1.5 bg-stone-50 p-3 rounded-xl border border-stone-200">
+                    <label className="block text-xs font-bold text-stone-900">PIN Rahasia:</label>
                     <input
                       type="text"
                       value={securityPin}
                       onChange={e => setSecurityPin(e.target.value)}
-                      placeholder="Contoh: 1234"
-                      className="px-3 py-2 text-xs rounded-xl border border-stone-300 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 font-mono font-bold tracking-widest text-center w-36"
+                      className="w-40 px-3 py-1.5 bg-white border border-stone-300 rounded-lg text-xs font-mono font-bold tracking-widest"
+                      maxLength={8}
                     />
-                    <span className="text-xs text-stone-500">
-                      Pengguna harus menyertakan <code>#PIN{securityPin || '1234'}</code> di akhir chat WhatsApp untuk mendapatkan jawaban voucher.
-                    </span>
                   </div>
-                </div>
-              )}
+                )}
 
-              {/* File Attachment Toggle & Rejection Message */}
-              <div className="border border-stone-200 rounded-2xl p-5 bg-white space-y-4">
-                <h4 className="text-xs font-extrabold text-stone-900 uppercase tracking-wider flex items-center gap-2">
-                  <FileCheck size={16} className="text-teal-600" />
-                  <span>3. Pengaturan Balasan & Lampiran Google Drive:</span>
-                </h4>
-
-                <label className="flex items-start gap-3 p-3 bg-stone-50 rounded-xl border border-stone-200 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={enableDriveLinks}
-                    onChange={e => setEnableDriveLinks(e.target.checked)}
-                    className="mt-0.5 text-emerald-600 focus:ring-emerald-500 rounded"
-                  />
-                  <div>
-                    <span className="font-bold text-xs text-stone-900 block">
-                      Sertakan Tautan Dokumen Lengkap Google Drive (1 File Utuh)
+                <div className="flex items-center justify-between pt-1">
+                  <button
+                    type="submit"
+                    disabled={isSavingSecurity}
+                    className="px-4 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-bold transition cursor-pointer shadow-2xs"
+                  >
+                    {isSavingSecurity ? 'Menyimpan...' : 'Simpan Pengaturan'}
+                  </button>
+                  {securityStatusMsg && (
+                    <span className={`text-[11px] ${securityStatusMsg.success ? 'text-emerald-700 font-bold' : 'text-rose-600'}`}>
+                      {securityStatusMsg.text}
                     </span>
-                    <span className="text-[11px] text-stone-500">
-                      Jika aktif, AI akan langsung memberikan link download Google Drive pada setiap rincian voucher yang ditanyakan di WhatsApp.
-                    </span>
-                  </div>
-                </label>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-stone-700 uppercase mb-1">
-                    Pesan Penolakan Jika Nomor Tidak Terdaftar:
-                  </label>
-                  <textarea
-                    rows={2}
-                    value={unauthorizedMessage}
-                    onChange={e => setUnauthorizedMessage(e.target.value)}
-                    className="w-full px-3 py-2 text-xs rounded-xl border border-stone-300 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 font-sans"
-                  />
+                  )}
                 </div>
-              </div>
-
-              {/* Save Button */}
-              <div className="flex items-center justify-end gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={handleSaveSecurity}
-                  disabled={isSavingSecurity}
-                  className="px-6 py-2.5 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-2 shadow-sm"
-                >
-                  {isSavingSecurity ? <RefreshCw size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
-                  <span>Simpan Pengaturan Keamanan</span>
-                </button>
-              </div>
+              </form>
             </div>
           )}
 
-          {/* TAB 3: ATTENDANCE & BROADCAST TOOLS */}
+          {/* TAB 4: BROADCAST & KIRIM LINK ABSEN */}
           {activeTab === 'attendance' && (
-            <div className="space-y-6">
-              <div className="bg-stone-50 p-4 rounded-2xl border border-stone-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                <div>
-                  <h4 className="text-xs font-bold text-stone-900 flex items-center gap-1.5">
-                    <CalendarCheck size={16} className="text-emerald-600" />
-                    Pengiriman Link Absensi Harian ke Seluruh Karyawan
-                  </h4>
-                  <p className="text-[11px] text-stone-500 mt-0.5">
-                    Kirim link check-in presensi instan ke seluruh nomor WhatsApp karyawan aktif yang belum absen hari ini.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleTriggerBroadcastAbsensi}
-                  disabled={isTriggeringCron || status !== 'connected'}
-                  className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow-3xs shrink-0"
-                >
-                  {isTriggeringCron ? <RefreshCw size={14} className="animate-spin" /> : <SendHorizontal size={14} />}
-                  <span>Kirim Link Absensi Sekarang</span>
-                </button>
+            <div className="space-y-4">
+              <div className="p-3 bg-stone-50 border border-stone-200 rounded-xl space-y-1 text-xs">
+                <span className="font-bold text-stone-900 flex items-center gap-1.5">
+                  <CalendarCheck size={14} className="text-emerald-700" />
+                  Kirim Notifikasi &amp; Link Absen ke Karyawan:
+                </span>
+                <p className="text-[11px] text-stone-600 leading-relaxed">
+                  Kirim pesan link presensi mandiri secara otomatis atau manual langsung melalui bot WhatsApp yang tertaut.
+                </p>
               </div>
 
-              {cronResult && (
-                <div className={`p-3 rounded-xl text-xs flex items-center gap-2 border ${
-                  cronResult.success ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-800'
-                }`}>
-                  {cronResult.success ? <CheckCircle2 size={16} className="text-emerald-600" /> : <AlertCircle size={16} className="text-rose-600" />}
-                  <span>{cronResult.message}</span>
+              {/* Broadcast Action Card */}
+              <div className="p-3.5 border border-stone-200 rounded-xl bg-white space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-stone-900">Kirim Link Absensi ke Seluruh Karyawan Belum Hadir</span>
+                  <button
+                    type="button"
+                    onClick={handleTriggerBroadcastAbsensi}
+                    disabled={isTriggeringCron || status !== 'connected'}
+                    className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition cursor-pointer shadow-2xs flex items-center gap-1.5"
+                  >
+                    <SendHorizontal size={13} className={isTriggeringCron ? 'animate-spin' : ''} />
+                    <span>{isTriggeringCron ? 'Mengirim...' : 'Kirim Sekarang'}</span>
+                  </button>
                 </div>
-              )}
 
-              {/* Single Test Message Box */}
-              <div className="border border-stone-200 rounded-2xl p-4 bg-white space-y-4">
-                <h4 className="text-xs font-bold text-stone-900 uppercase tracking-wider flex items-center gap-1.5">
-                  <MessageSquare size={14} className="text-teal-600" />
-                  Tes Kirim Pesan WhatsApp ke Nomor Tertentu
-                </h4>
+                {cronResult && (
+                  <p className={`text-[11px] ${cronResult.success ? 'text-emerald-700 font-bold' : 'text-rose-600'}`}>
+                    {cronResult.message}
+                  </p>
+                )}
+              </div>
 
-                <form onSubmit={handleSendTestMessage} className="space-y-3">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[11px] font-mono font-bold text-stone-700 mb-1 uppercase">
-                        Nomor Penerima (WhatsApp):
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="Contoh: 08123456789 atau 628123456789"
-                        value={testPhone}
-                        onChange={e => setTestPhone(e.target.value)}
-                        className="w-full px-3 py-2 text-xs rounded-xl border border-stone-300 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-mono font-bold text-stone-700 mb-1 uppercase">
-                        Isi Pesan:
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="Ketik pesan..."
-                        value={testMessage}
-                        onChange={e => setTestMessage(e.target.value)}
-                        className="w-full px-3 py-2 text-xs rounded-xl border border-stone-300 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 font-sans"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between pt-1">
-                    <span className="text-[11px] text-stone-500">
-                      Pastikan nomor diawali kode 08xx atau 628xx.
-                    </span>
+              {/* Single Test Message */}
+              <div className="p-3.5 border border-stone-200 rounded-xl bg-white space-y-2.5">
+                <span className="text-xs font-bold text-stone-900 block">Kirim Pesan Uji Coba ke Nomor Tertentu:</span>
+                <form onSubmit={handleSendTestMessage} className="space-y-2">
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      placeholder="Nomor HP tujuan (08...)"
+                      value={testPhone}
+                      onChange={e => setTestPhone(e.target.value)}
+                      className="w-48 px-3 py-1.5 border border-stone-300 rounded-lg text-xs font-mono"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Tulis pesan uji coba..."
+                      value={testMessage}
+                      onChange={e => setTestMessage(e.target.value)}
+                      className="flex-1 px-3 py-1.5 border border-stone-300 rounded-lg text-xs"
+                    />
                     <button
                       type="submit"
                       disabled={isSendingTest || !testPhone.trim() || status !== 'connected'}
-                      className="px-4 py-2 bg-stone-900 hover:bg-stone-800 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow-3xs"
+                      className="px-3 py-1.5 bg-stone-900 hover:bg-stone-800 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition cursor-pointer shrink-0"
                     >
-                      {isSendingTest ? <RefreshCw size={14} className="animate-spin" /> : <Send size={14} />}
-                      <span>Kirim Pesan Uji Coba</span>
+                      {isSendingTest ? 'Mengirim...' : 'Kirim Uji'}
                     </button>
                   </div>
+                  {sendTestStatus && (
+                    <p className={`text-[11px] ${sendTestStatus.success ? 'text-emerald-700 font-bold' : 'text-rose-600'}`}>
+                      {sendTestStatus.message}
+                    </p>
+                  )}
                 </form>
-
-                {sendTestStatus && (
-                  <div className={`p-3 rounded-xl text-xs flex items-center gap-2 border ${
-                    sendTestStatus.success ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-800'
-                  }`}>
-                    {sendTestStatus.success ? <CheckCircle2 size={16} className="text-emerald-600" /> : <AlertCircle size={16} className="text-rose-600" />}
-                    <span>{sendTestStatus.message}</span>
-                  </div>
-                )}
               </div>
             </div>
           )}
 
-          {/* TAB 4: AI SANDBOX TEST (CHAT & GOOGLE DRIVE ATTACHMENTS) */}
+          {/* TAB 5: UJI CHAT AI TRANSAKSI */}
           {activeTab === 'test' && (
-            <div className="space-y-4">
-              <div className="bg-stone-50 p-4 rounded-2xl border border-stone-200 text-xs text-stone-600 flex items-center justify-between">
-                <div>
-                  <p className="font-bold text-stone-900 flex items-center gap-1.5">
-                    <Bot size={15} className="text-emerald-600" />
-                    Simulasi Chat AI Keuangan & Voucher Transaksi
-                  </p>
-                  <p className="text-[11px] text-stone-500">
-                    Ketik pertanyaan di bawah ini untuk melihat bagaimana WhatsApp AI menjawab rincian voucher, status lunas, dan memberikan link Google Drive.
-                  </p>
-                </div>
-                <span className="px-2.5 py-1 bg-emerald-100 text-emerald-900 font-mono text-[10px] font-bold rounded-lg border border-emerald-200">
-                  {submissions.length} Dokumen Voucher Tersambung
+            <div className="space-y-3">
+              <div className="p-3 bg-stone-50 border border-stone-200 rounded-xl text-xs space-y-1">
+                <span className="font-bold text-stone-900 flex items-center gap-1.5">
+                  <Sparkles size={14} className="text-amber-500" />
+                  Simulasi Jawaban Asisten AI Keuangan:
                 </span>
+                <p className="text-[11px] text-stone-600 leading-relaxed">
+                  Coba ajukan pertanyaan transaksi voucher atau status pembayaran di bawah ini seperti chat di WhatsApp.
+                </p>
               </div>
 
-              {/* Quick Sample Prompts */}
-              <div className="flex flex-wrap gap-1.5">
-                <span className="text-[11px] font-bold text-stone-500 self-center mr-1">Contoh Cepat:</span>
-                {[
-                  'Cek voucher HO-2024-001 apakah sudah lunas?',
-                  'Ada data transaksi apa saja di bulan Mei?',
-                  'Siapa saja karyawan yang sudah absen hari ini?',
-                  'Rekap absensi & uang makan karyawan',
-                  'Minta file lampiran pengajuan solar pak suryo',
-                  'Berapa total voucher yang belum dibayar?'
-                ].map((prompt, i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => handleSendTestQuery(undefined, prompt)}
-                    className="px-2.5 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 text-[11px] font-semibold rounded-lg transition cursor-pointer border border-stone-200"
-                  >
-                    {prompt}
-                  </button>
-                ))}
-              </div>
-
-              {/* Chat Window */}
-              <div className="bg-stone-900/5 rounded-2xl border border-stone-200 p-4 min-h-[300px] max-h-[380px] overflow-y-auto space-y-3 font-sans">
+              {/* Chat Message Box */}
+              <div className="h-60 overflow-y-auto p-3 bg-stone-50 rounded-xl border border-stone-200 space-y-2.5 font-sans text-xs">
                 {testMessages.map((msg, idx) => (
-                  <div
-                    key={idx}
-                    className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
-                  >
-                    <div
-                      className={`max-w-[85%] rounded-2xl p-3.5 text-xs shadow-xs space-y-1 ${
-                        msg.role === 'user'
-                          ? 'bg-emerald-700 text-white rounded-tr-xs'
-                          : 'bg-white text-stone-850 border border-stone-200 rounded-tl-xs'
-                      }`}
-                    >
-                      <div className="whitespace-pre-line leading-relaxed">
-                        {msg.text}
-                      </div>
-                      <div className={`text-[9px] font-mono text-right ${msg.role === 'user' ? 'text-emerald-200' : 'text-stone-400'}`}>
+                  <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`max-w-[85%] p-2.5 rounded-xl whitespace-pre-wrap leading-relaxed ${
+                      msg.role === 'user'
+                        ? 'bg-emerald-700 text-white rounded-br-xs'
+                        : 'bg-white border border-stone-200 text-stone-900 rounded-bl-xs shadow-2xs'
+                    }`}>
+                      <p className="text-[11.5px]">{msg.text}</p>
+                      <span className={`text-[9.5px] block mt-1 text-right ${msg.role === 'user' ? 'text-emerald-200' : 'text-stone-400'}`}>
                         {msg.time}
-                      </div>
+                      </span>
                     </div>
                   </div>
                 ))}
                 {isAiReplying && (
-                  <div className="flex items-center gap-2 text-xs text-stone-500 p-2">
-                    <RefreshCw size={14} className="animate-spin text-emerald-600" />
-                    <span>AI sedang mencari transaksi di database & menyiapkan lampiran Google Drive...</span>
+                  <div className="flex justify-start">
+                    <div className="p-2.5 bg-white border border-stone-200 rounded-xl text-stone-400 text-xs flex items-center gap-1.5">
+                      <RefreshCw size={13} className="animate-spin text-emerald-600" />
+                      <span>AI sedang mencari data di Firestore...</span>
+                    </div>
                   </div>
                 )}
               </div>
 
+              {/* Quick Prompts */}
+              <div className="flex gap-1.5 overflow-x-auto pb-1 text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => handleSendTestQuery(undefined, 'Voucher apa saja yang belum dibayar?')}
+                  className="px-2.5 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-lg shrink-0 transition"
+                >
+                  Belum Dibayar?
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSendTestQuery(undefined, 'Cek voucher BBM kapal')}
+                  className="px-2.5 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-lg shrink-0 transition"
+                >
+                  Cek BBM Kapal
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSendTestQuery(undefined, 'Total pengeluaran bulan ini berapa?')}
+                  className="px-2.5 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-lg shrink-0 transition"
+                >
+                  Total Pengeluaran
+                </button>
+              </div>
+
               {/* Chat Input */}
-              <form onSubmit={e => handleSendTestQuery(e)} className="flex gap-2">
+              <form onSubmit={handleSendTestQuery} className="flex gap-1.5">
                 <input
                   type="text"
-                  placeholder="Ketik pertanyaan untuk AI seputar voucher transaksi, status bayar, atau minta file..."
+                  placeholder="Ketik pertanyaan transaksi di sini..."
                   value={testQuery}
                   onChange={e => setTestQuery(e.target.value)}
-                  className="flex-1 px-4 py-2.5 text-xs rounded-xl border border-stone-300 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 font-sans shadow-inner"
+                  className="flex-1 px-3 py-1.5 border border-stone-300 rounded-lg text-xs"
                 />
                 <button
                   type="submit"
-                  disabled={isAiReplying || !testQuery.trim()}
-                  className="px-5 py-2.5 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow-3xs"
+                  disabled={!testQuery.trim() || isAiReplying}
+                  className="px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition flex items-center gap-1"
                 >
-                  <Send size={14} />
+                  <Send size={13} />
                   <span>Kirim</span>
                 </button>
               </form>
             </div>
           )}
 
-          {/* TAB 5: WEBHOOK & MAKE.COM / FONNTE API */}
+          {/* TAB 6: WEBHOOK */}
           {activeTab === 'webhook' && (
-            <div className="space-y-6">
-              <div className="p-4 bg-amber-50 border border-amber-200 text-amber-900 rounded-2xl text-xs space-y-1">
-                <p className="font-bold flex items-center gap-1.5">
-                  <Sparkles size={15} className="text-amber-700" />
-                  Solusi Bebas Ribet untuk Make.com & Fonnte:
-                </p>
+            <div className="space-y-3">
+              <div className="p-3 bg-amber-50 border border-amber-200 text-amber-900 rounded-xl text-xs space-y-1">
+                <span className="font-bold flex items-center gap-1.5">
+                  <Globe size={14} className="text-amber-700" />
+                  Integrasi Webhook Fonnte &amp; Make.com:
+                </span>
                 <p className="text-[11px] leading-relaxed">
-                  Anda tidak perlu lagi pusing menyusun format JSON manual, API key Gemini, atau membagi-bagi string di Make.com. Cukup arahkan Webhook Fonnte atau Make.com ke URL Webhook di bawah ini. Server backend ini otomatis membaca seluruh basis data Firestore dan langsung mengembalikan balasan cerdas!
+                  Jika menggunakan gateway pihak ketiga seperti Fonnte atau Make.com, cukup tempel link Webhook di bawah ini.
                 </p>
               </div>
 
-              {/* Webhook URLs */}
-              <div className="space-y-3">
-                <h4 className="text-xs font-mono font-bold text-stone-700 uppercase tracking-wider">
-                  Link Endpoint Webhook Resmi Aplikasi:
-                </h4>
-
-                {/* Main Universal Webhook */}
-                <div className="p-3.5 bg-stone-50 rounded-2xl border border-stone-200 space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-stone-900 flex items-center gap-1.5">
-                      <Globe size={14} className="text-emerald-600" />
-                      Universal WhatsApp Webhook (Make.com / Webhook Langsung)
-                    </span>
-                    <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 bg-emerald-100 text-emerald-800 rounded">
-                      POST
-                    </span>
+              <div className="space-y-2 text-xs">
+                <div className="p-2.5 bg-stone-50 rounded-xl border border-stone-200 space-y-1">
+                  <div className="flex justify-between items-center">
+                    <span className="font-bold text-stone-900">Universal WhatsApp Webhook:</span>
+                    <span className="text-[9.5px] font-mono font-bold px-1.5 bg-emerald-100 text-emerald-800 rounded">POST</span>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex gap-1.5">
                     <input
                       type="text"
                       readOnly
                       value={webhookUrl}
-                      className="flex-1 px-3 py-1.5 bg-white border border-stone-300 rounded-xl text-xs font-mono text-stone-800 select-all"
+                      className="flex-1 px-2.5 py-1 bg-white border border-stone-300 rounded-lg text-[11px] font-mono select-all"
                     />
                     <button
                       type="button"
                       onClick={() => handleCopy(webhookUrl, 'universal')}
-                      className="px-3 py-1.5 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1 shrink-0"
+                      className="px-2.5 py-1 bg-stone-900 text-white rounded-lg text-[11px] font-bold"
                     >
-                      {copiedKey === 'universal' ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
-                      <span>{copiedKey === 'universal' ? 'Tersalin' : 'Salin URL'}</span>
+                      {copiedKey === 'universal' ? 'Tersalin' : 'Salin'}
                     </button>
                   </div>
                 </div>
 
-                {/* Fonnte Direct Webhook */}
-                <div className="p-3.5 bg-stone-50 rounded-2xl border border-stone-200 space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-stone-900 flex items-center gap-1.5">
-                      <MessageSquare size={14} className="text-teal-600" />
-                      Fonnte Webhook URL (Langsung Tempel di Dashboard Fonnte)
-                    </span>
-                    <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 bg-teal-100 text-teal-800 rounded">
-                      POST
-                    </span>
+                <div className="p-2.5 bg-stone-50 rounded-xl border border-stone-200 space-y-1">
+                  <div className="flex justify-between items-center">
+                    <span className="font-bold text-stone-900">Fonnte Webhook URL:</span>
+                    <span className="text-[9.5px] font-mono font-bold px-1.5 bg-teal-100 text-teal-800 rounded">POST</span>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex gap-1.5">
                     <input
                       type="text"
                       readOnly
                       value={fonnteWebhookUrl}
-                      className="flex-1 px-3 py-1.5 bg-white border border-stone-300 rounded-xl text-xs font-mono text-stone-800 select-all"
+                      className="flex-1 px-2.5 py-1 bg-white border border-stone-300 rounded-lg text-[11px] font-mono select-all"
                     />
                     <button
                       type="button"
                       onClick={() => handleCopy(fonnteWebhookUrl, 'fonnte')}
-                      className="px-3 py-1.5 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1 shrink-0"
+                      className="px-2.5 py-1 bg-stone-900 text-white rounded-lg text-[11px] font-bold"
                     >
-                      {copiedKey === 'fonnte' ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
-                      <span>{copiedKey === 'fonnte' ? 'Tersalin' : 'Salin URL'}</span>
+                      {copiedKey === 'fonnte' ? 'Tersalin' : 'Salin'}
                     </button>
-                  </div>
-                </div>
-
-                {/* Data API (Clean JSON) */}
-                <div className="p-3.5 bg-stone-50 rounded-2xl border border-stone-200 space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-stone-900 flex items-center gap-1.5">
-                      <Database size={14} className="text-amber-600" />
-                      Data API (JSON Bersih Semua Voucher & Kas Kecil)
-                    </span>
-                    <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 bg-amber-100 text-amber-800 rounded">
-                      GET
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      readOnly
-                      value={dataApiUrl}
-                      className="flex-1 px-3 py-1.5 bg-white border border-stone-300 rounded-xl text-xs font-mono text-stone-800 select-all"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => handleCopy(dataApiUrl, 'data')}
-                      className="px-3 py-1.5 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1 shrink-0"
-                    >
-                      {copiedKey === 'data' ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
-                      <span>{copiedKey === 'data' ? 'Tersalin' : 'Salin URL'}</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Simple Step by Step for Make.com / Fonnte */}
-              <div className="border border-stone-200 rounded-2xl p-4 space-y-3 bg-white">
-                <h4 className="text-xs font-bold text-stone-900 uppercase tracking-wider">
-                  Cara Pasang di Make.com / Fonnte:
-                </h4>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs text-stone-600">
-                  <div className="p-3 bg-stone-50 rounded-xl border border-stone-200 space-y-1.5">
-                    <p className="font-bold text-stone-900">Opsi 1: Tempel di Fonnte Langsung</p>
-                    <ol className="list-decimal list-inside space-y-1 text-[11px]">
-                      <li>Buka dashboard <strong>Fonnte.com</strong> &gt; Menu <strong>Device</strong></li>
-                      <li>Klik <strong>Edit</strong> pada nama device WhatsApp Anda</li>
-                      <li>Di kolom <strong>Webhook URL</strong>, paste link Fonnte Webhook di atas</li>
-                      <li>Klik <strong>Save/Update</strong>. Selesai! Pesan WA akan otomatis dibalas AI NMSA.</li>
-                    </ol>
-                  </div>
-
-                  <div className="p-3 bg-stone-50 rounded-xl border border-stone-200 space-y-1.5">
-                    <p className="font-bold text-stone-900">Opsi 2: Menggunakan Make.com</p>
-                    <ol className="list-decimal list-inside space-y-1 text-[11px]">
-                      <li>Modul 1: <strong>Custom Webhook</strong> (menerima pesan WA)</li>
-                      <li>Modul 2: <strong>HTTP Make a Request</strong> (POST ke URL Webhook di atas dengan body JSON: {`{"message": 1.pesan, "sender": 1.sender}`})</li>
-                      <li>Modul 3: <strong>HTTP Fonnte Send</strong> (mengirim output variabel <code>reply</code> kembali ke WhatsApp)</li>
-                    </ol>
                   </div>
                 </div>
               </div>
             </div>
           )}
 
+          {/* TAB 7: SERVER BACKEND CONFIG */}
+          {activeTab === 'server' && (
+            <div className="space-y-4">
+              <div className="p-3.5 bg-teal-50 border border-teal-200 rounded-xl text-xs space-y-1.5">
+                <span className="font-bold text-teal-950 flex items-center gap-1.5">
+                  <Server size={15} className="text-teal-700" />
+                  Koneksi Server Backend WhatsApp (24/7 Persistent):
+                </span>
+                <p className="text-[11px] text-teal-900 leading-relaxed">
+                  WhatsApp Bot membutuhkan server Node.js yang berjalan terus-menerus (seperti di <strong>Render</strong> atau <strong>Railway</strong>) agar koneksi WebSocket WhatsApp tidak putus. Jika aplikasi Anda di-deploy di <strong>Vercel</strong>, sambungkan ke URL server Render Anda di bawah ini!
+                </p>
+              </div>
+
+              <div className="bg-white border border-stone-200 rounded-xl p-3.5 space-y-3">
+                <div>
+                  <label className="block text-xs font-bold text-stone-900 mb-1">
+                    URL Server Backend (Render / Railway / VPS):
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Contoh: https://aplikasi-perusahaan-nmsa.onrender.com (atau kosongkan untuk /api asal)"
+                    value={backendUrlInput}
+                    onChange={e => setBackendUrlInput(e.target.value)}
+                    className="w-full px-3 py-2 border border-stone-300 rounded-lg text-xs font-mono"
+                  />
+                  <p className="text-[10.5px] text-stone-500 mt-1">
+                    Kosongkan jika server backend berjalan di domain yang sama (misal port 3000 atau dev server).
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={handleSaveBackendUrl}
+                    className="px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-bold transition shadow-2xs"
+                  >
+                    Simpan &amp; Terapkan
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleTestBackendConnection}
+                    disabled={isTestingServer}
+                    className="px-3.5 py-1.5 bg-stone-900 hover:bg-stone-800 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition flex items-center gap-1"
+                  >
+                    <RefreshCw size={13} className={isTestingServer ? 'animate-spin' : ''} />
+                    <span>Tes Koneksi</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBackendUrlInput('');
+                      setBackendBaseUrl('');
+                      fetchStatus();
+                    }}
+                    className="px-3 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-lg text-xs font-medium transition"
+                  >
+                    Reset ke Asal (/api)
+                  </button>
+                </div>
+
+                {serverTestStatus && (
+                  <p className={`text-xs font-mono ${serverTestStatus.success ? 'text-emerald-700 font-bold' : 'text-rose-600'}`}>
+                    {serverTestStatus.message}
+                  </p>
+                )}
+              </div>
+
+              {/* Quick 2-Minute Deployment Guide */}
+              <div className="bg-stone-50 border border-stone-200 rounded-xl p-3.5 space-y-2 text-xs text-stone-700">
+                <span className="font-bold text-stone-900 flex items-center gap-1.5">
+                  <Zap size={14} className="text-amber-500" />
+                  Panduan Cepat Deploy Backend ke Render (Gratis 24 Jam):
+                </span>
+                <ol className="list-decimal list-inside space-y-1 text-[11px]">
+                  <li>Buka <strong>dashboard.render.com</strong> &gt; Pilih <strong>New Web Service</strong></li>
+                  <li>Hubungkan dengan repository GitHub aplikasi ini</li>
+                  <li>Build Command: <code className="bg-stone-200 px-1 py-0.5 rounded text-[10px]">npm install &amp;&amp; npm run build</code></li>
+                  <li>Start Command: <code className="bg-stone-200 px-1 py-0.5 rounded text-[10px]">npm start</code></li>
+                  <li>Salin URL dari Render (misal: <code className="bg-stone-200 px-1 py-0.5 rounded text-[10px]">https://xxx.onrender.com</code>) dan tempel di kolom atas!</li>
+                </ol>
+              </div>
+            </div>
+          )}
+
         </div>
 
-        {/* Footer */}
-        <div className="px-6 py-3.5 bg-stone-50 border-t border-stone-200 flex items-center justify-between text-xs text-stone-500">
+        {/* Footer - Compact */}
+        <div className="px-4 py-2.5 bg-stone-50 border-t border-stone-200 flex items-center justify-between text-xs text-stone-500 shrink-0">
           <div className="flex items-center gap-2">
             <span className={`w-2 h-2 rounded-full ${status === 'connected' ? 'bg-emerald-500 animate-pulse' : 'bg-stone-400'}`} />
-            <span className="font-mono text-[11px]">
-              Status Gateway: <strong>{status.toUpperCase()}</strong> (Aktif untuk Absensi + AI Bisnis)
+            <span className="font-mono text-[10.5px]">
+              Status: <strong>{status.toUpperCase()}</strong>
             </span>
           </div>
 
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-bold transition cursor-pointer shadow-3xs"
+            className="px-3.5 py-1.5 bg-stone-900 hover:bg-stone-800 text-white rounded-lg text-xs font-bold transition cursor-pointer shadow-2xs"
           >
-            Tutup Jendela
+            Tutup
           </button>
         </div>
       </div>

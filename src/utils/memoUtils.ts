@@ -1,6 +1,30 @@
 import { BankAccountMaster, InternalMemo, Submission } from '../types';
+import { OFFICIAL_KOP_SURAT_BASE64 } from './kopSuratBase64';
 
 export const OFFICIAL_KOP_SURAT_IMAGE_URL = '/kop-surat-nmsa-full.png';
+
+/**
+ * Cleanly format and sanitize rich text HTML from Word editor or plain text legacy memos
+ */
+export function formatMemoBodyHtml(raw: string | undefined): string {
+  if (!raw) return '';
+
+  // If content contains HTML tags (bold, italic, underline, mark, etc.)
+  if (/<[a-z][\s\S]*>/i.test(raw)) {
+    // Sanitize any dangerous scripts
+    return raw
+      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+      .replace(/on\w+="[^"]*"/gi, '')
+      .replace(/on\w+='[^']*'/gi, '');
+  }
+
+  // Legacy plain text fallback: convert newlines to <br /> and escape basic symbols
+  return raw
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br />');
+}
 
 /**
  * Parses a "Dari" string into Name and Role/Jabatan.
