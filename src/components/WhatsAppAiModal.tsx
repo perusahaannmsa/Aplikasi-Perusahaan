@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   MessageSquare, 
   QrCode, 
@@ -35,7 +35,9 @@ import {
   Radio,
   CheckCheck,
   Server,
-  Settings
+  Settings,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { Submission } from '../types';
 import { apiFetch, getBackendBaseUrl, setBackendBaseUrl, buildApiUrl } from '../utils/backendApi';
@@ -64,9 +66,43 @@ export function safeString(val: any, fallback = ''): string {
   return String(val);
 }
 
+const TABS = [
+  { id: 'connect' as const, number: 1, label: 'Tautkan WA', shortLabel: 'Tautkan WA', icon: QrCode },
+  { id: 'uptime' as const, number: 2, label: 'Keep-Alive 24/7', shortLabel: 'Keep-Alive', icon: Activity },
+  { id: 'security' as const, number: 3, label: 'Keamanan Voucher', shortLabel: 'Keamanan', icon: Lock },
+  { id: 'attendance' as const, number: 4, label: 'Broadcast Absen', shortLabel: 'Broadcast', icon: CalendarCheck },
+  { id: 'test' as const, number: 5, label: 'Chat AI Transaksi', shortLabel: 'Chat AI', icon: Bot },
+  { id: 'webhook' as const, number: 6, label: 'Webhook', shortLabel: 'Webhook', icon: Globe },
+  { id: 'server' as const, number: 7, label: 'Server Backend ⚙️', shortLabel: 'Backend ⚙️', icon: Server },
+];
+
 export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClose, submissions = [] }) => {
   const [activeTab, setActiveTab] = useState<'connect' | 'uptime' | 'security' | 'attendance' | 'test' | 'webhook' | 'server'>('connect');
   
+  // Vercel host detection
+  const [isVercelHost, setIsVercelHost] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.location.hostname.includes('vercel.app');
+  });
+
+  const tabsContainerRef = useRef<HTMLDivElement>(null);
+
+  const scrollTabs = (direction: 'left' | 'right') => {
+    if (tabsContainerRef.current) {
+      const scrollAmount = direction === 'left' ? -220 : 220;
+      tabsContainerRef.current.scrollBy({ left: scrollAmount, behavior: 'smooth' });
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      const activeEl = tabsContainerRef.current?.querySelector(`[data-tab-id="${activeTab}"]`) as HTMLElement;
+      if (activeEl) {
+        activeEl.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+      }
+    }
+  }, [activeTab, isOpen]);
+
   // Status states
   const [status, setStatus] = useState<string>('connecting');
   const [qrCode, setQrCode] = useState<string | null>(null);
@@ -191,7 +227,15 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
         setStatus(data.status || 'disconnected');
         setQrCode(data.qr || null);
         setConnectedUser(data.user || null);
-        setErrorMessage(data.error ? safeString(data.error) : null);
+        if (data.isVercel || data.isVercelServerless) {
+          setIsVercelHost(true);
+        }
+        if (data.isVercel && !getBackendBaseUrl()) {
+          // If on Vercel and no backend set, suppress generic error, show informative card
+          setErrorMessage(null);
+        } else {
+          setErrorMessage(data.error ? safeString(data.error) : null);
+        }
       } else {
         const errData = await res.json().catch(() => ({}));
         const raw = errData.error || errData.message || `HTTP ${res.status}`;
@@ -210,18 +254,39 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
     try {
       const res = await apiFetch('/api/wa/refresh-qr', { method: 'POST' });
       const data = await res.json().catch(() => ({}));
-      if (data.success) {
+      if (data.qr) {
+        setQrCode(data.qr);
+        setStatus('qr');
+      } else if (data.success) {
         setStatus('connecting');
         setTimeout(() => {
           fetchStatus();
         }, 1200);
       } else {
-        setErrorMessage(safeString(data.error, 'Gagal memperbarui QR Code.'));
+        setErrorMessage(safeString(data.error, data.message || 'Gagal memperbarui QR Code.'));
       }
     } catch (err: any) {
       setErrorMessage(safeString(err?.message, 'Gagal menghubungi server.'));
     } finally {
       setIsRefreshingQr(false);
+    }
+  };
+
+  // Connect to persistent 24/7 AI Studio Cloud Backend in 1 click
+  const handleConnectCloudBackend = async () => {
+    const cloudUrl = 'https://ais-dev-6g7nnluiqpm4mdcziw4ppt-958431568317.asia-east1.run.app';
+    setBackendUrlInput(cloudUrl);
+    setBackendBaseUrl(cloudUrl);
+    setIsTestingServer(true);
+    setErrorMessage(null);
+    try {
+      await fetch(`${cloudUrl}/api/health`, { method: 'GET', headers: { 'Accept': 'application/json' } }).catch(() => {});
+      await fetchStatus();
+      await handleRefreshQr();
+    } catch (e: any) {
+      console.warn('Cloud connection check:', e);
+    } finally {
+      setIsTestingServer(false);
     }
   };
 
@@ -573,97 +638,67 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
           </div>
         </div>
 
-        {/* Tab Navigation - Scrollable & Compact */}
-        <div className="flex border-b border-stone-200 bg-stone-50 px-3 sm:px-5 pt-1.5 gap-1 overflow-x-auto scrollbar-none shrink-0">
+        {/* Tab Navigation - Fully Responsive with Chevrons and Circle Number Badges */}
+        <div className="relative border-b border-stone-200 bg-stone-50/95 shrink-0">
+          {/* Left scroll chevron */}
           <button
             type="button"
-            onClick={() => setActiveTab('connect')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-t-lg transition cursor-pointer border-t border-x shrink-0 ${
-              activeTab === 'connect'
-                ? 'bg-white border-stone-200 text-emerald-800 shadow-2xs'
-                : 'border-transparent text-stone-500 hover:text-stone-800'
-            }`}
+            onClick={() => scrollTabs('left')}
+            className="absolute left-0 top-0 bottom-0 z-10 px-1 bg-gradient-to-r from-stone-100 via-stone-100/90 to-transparent text-stone-600 hover:text-stone-900 flex items-center justify-center transition cursor-pointer"
+            title="Geser tab ke kiri"
           >
-            <QrCode size={13} className={activeTab === 'connect' ? 'text-emerald-600' : 'text-stone-400'} />
-            <span>1. Tautkan WA</span>
+            <ChevronLeft size={16} />
           </button>
 
-          <button
-            type="button"
-            onClick={() => setActiveTab('uptime')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-t-lg transition cursor-pointer border-t border-x shrink-0 ${
-              activeTab === 'uptime'
-                ? 'bg-white border-stone-200 text-emerald-800 shadow-2xs'
-                : 'border-transparent text-stone-500 hover:text-stone-800'
-            }`}
+          {/* Scrollable Tab Container */}
+          <div 
+            ref={tabsContainerRef}
+            className="flex px-6 sm:px-7 pt-1.5 gap-1.5 overflow-x-auto scroll-smooth scrollbar-thin scrollbar-thumb-stone-300"
+            style={{ WebkitOverflowScrolling: 'touch' }}
           >
-            <Activity size={13} className={activeTab === 'uptime' ? 'text-emerald-600 animate-pulse' : 'text-stone-400'} />
-            <span>2. Keep-Alive 24/7</span>
-          </button>
+            {TABS.map((tab) => {
+              const isActive = activeTab === tab.id;
+              const IconComp = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  data-tab-id={tab.id}
+                  type="button"
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`group flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-t-xl transition-all cursor-pointer border-t border-x shrink-0 select-none ${
+                    isActive
+                      ? 'bg-white border-stone-200 text-emerald-950 shadow-2xs font-black z-10'
+                      : 'border-transparent text-stone-600 hover:text-stone-900 hover:bg-stone-100/80'
+                  }`}
+                >
+                  {/* Distinct circular number badge - NEVER cut off */}
+                  <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10.5px] font-mono font-black shrink-0 transition-colors ${
+                    isActive
+                      ? 'bg-emerald-600 text-white shadow-2xs'
+                      : 'bg-stone-200 text-stone-700 group-hover:bg-stone-300'
+                  }`}>
+                    {tab.number}
+                  </span>
+                  <IconComp size={13} className={`shrink-0 ${isActive ? 'text-emerald-600' : 'text-stone-400 group-hover:text-stone-600'}`} />
+                  <span className="whitespace-nowrap hidden sm:inline">
+                    {tab.label}
+                  </span>
+                  <span className="whitespace-nowrap sm:hidden">
+                    {tab.shortLabel}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
 
+          {/* Right scroll chevron */}
           <button
             type="button"
-            onClick={() => setActiveTab('security')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-t-lg transition cursor-pointer border-t border-x shrink-0 ${
-              activeTab === 'security'
-                ? 'bg-white border-stone-200 text-emerald-800 shadow-2xs'
-                : 'border-transparent text-stone-500 hover:text-stone-800'
-            }`}
+            onClick={() => scrollTabs('right')}
+            className="absolute right-0 top-0 bottom-0 z-10 px-1 bg-gradient-to-l from-stone-100 via-stone-100/90 to-transparent text-stone-600 hover:text-stone-900 flex items-center justify-center transition cursor-pointer"
+            title="Geser tab ke kanan"
           >
-            <Lock size={13} className={activeTab === 'security' ? 'text-emerald-600' : 'text-stone-400'} />
-            <span>3. Keamanan Voucher</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('attendance')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-t-lg transition cursor-pointer border-t border-x shrink-0 ${
-              activeTab === 'attendance'
-                ? 'bg-white border-stone-200 text-emerald-800 shadow-2xs'
-                : 'border-transparent text-stone-500 hover:text-stone-800'
-            }`}
-          >
-            <CalendarCheck size={13} className={activeTab === 'attendance' ? 'text-emerald-600' : 'text-stone-400'} />
-            <span>4. Broadcast Absen</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('test')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-t-lg transition cursor-pointer border-t border-x shrink-0 ${
-              activeTab === 'test'
-                ? 'bg-white border-stone-200 text-emerald-800 shadow-2xs'
-                : 'border-transparent text-stone-500 hover:text-stone-800'
-            }`}
-          >
-            <Bot size={13} className={activeTab === 'test' ? 'text-emerald-600' : 'text-stone-400'} />
-            <span>5. Chat AI Transaksi</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('webhook')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-t-lg transition cursor-pointer border-t border-x shrink-0 ${
-              activeTab === 'webhook'
-                ? 'bg-white border-stone-200 text-emerald-800 shadow-2xs'
-                : 'border-transparent text-stone-500 hover:text-stone-800'
-            }`}
-          >
-            <Globe size={13} className={activeTab === 'webhook' ? 'text-emerald-600' : 'text-stone-400'} />
-            <span>6. Webhook</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('server')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-t-lg transition cursor-pointer border-t border-x shrink-0 ${
-              activeTab === 'server'
-                ? 'bg-white border-stone-200 text-emerald-800 shadow-2xs'
-                : 'border-transparent text-stone-500 hover:text-stone-800'
-            }`}
-          >
-            <Server size={13} className={activeTab === 'server' ? 'text-emerald-600' : 'text-stone-400'} />
-            <span>7. Server Backend ⚙️</span>
+            <ChevronRight size={16} />
           </button>
         </div>
 
@@ -746,6 +781,69 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                 </div>
               </div>
 
+              {/* Vercel Serverless Notice & 1-Click Backend Connect */}
+              {isVercelHost && !getBackendBaseUrl() && (
+                <div className="p-3.5 sm:p-4 rounded-xl border border-teal-200 bg-teal-50/80 space-y-3">
+                  <div className="flex items-start gap-2.5">
+                    <div className="p-2 bg-teal-600 text-white rounded-xl shrink-0 mt-0.5 shadow-2xs">
+                      <Server size={17} />
+                    </div>
+                    <div className="flex-1 space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h4 className="text-xs sm:text-sm font-black text-teal-950">
+                          Hosting Vercel Serverless Terdeteksi
+                        </h4>
+                        <span className="text-[10px] font-mono bg-teal-200 text-teal-900 px-2 py-0.5 rounded-full font-bold">
+                          Serverless
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-teal-900 leading-relaxed">
+                        Hosting Vercel Serverless secara otomatis memutus koneksi WebSocket setelah beberapa detik. Agar <strong>QR Code WhatsApp muncul</strong> dan bot dapat online 24/7, tautkan server backend Node.js persisten Anda (misal di Render / Railway / Replit) atau langsung gunakan Server Cloud AI Studio!
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="bg-white p-3 rounded-xl border border-teal-200 space-y-2">
+                    <label className="block text-[11px] font-bold text-stone-800">
+                      Tautkan URL Server Backend Anda:
+                    </label>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        type="text"
+                        placeholder="Contoh: https://aplikasi-perusahaan-nmsa.onrender.com"
+                        value={backendUrlInput}
+                        onChange={e => setBackendUrlInput(e.target.value)}
+                        className="flex-1 px-3 py-1.5 text-xs font-mono border border-stone-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-teal-500"
+                      />
+                      <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBackendBaseUrl(backendUrlInput);
+                            handleTestBackendConnection();
+                            setTimeout(() => {
+                              handleRefreshQr();
+                            }, 500);
+                          }}
+                          className="px-3 py-1.5 bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold rounded-lg transition cursor-pointer shadow-2xs"
+                        >
+                          Hubungkan &amp; Tampilkan QR
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleConnectCloudBackend}
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg transition cursor-pointer flex items-center gap-1 shadow-2xs"
+                          title="Tautkan otomatis ke Server Cloud AI Studio"
+                        >
+                          <Sparkles size={13} />
+                          <span>Gunakan Server Cloud 24 Jam</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* QR Code & Pairing Section - 2-Column Responsive */}
               {status !== 'connected' && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
@@ -757,7 +855,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                     </div>
 
                     {/* QR Box - Perfectly fitted */}
-                    <div className="w-40 h-40 sm:w-44 sm:h-44 bg-white p-2.5 rounded-xl border border-stone-200 shadow-2xs flex items-center justify-center relative">
+                    <div className="w-44 h-44 sm:w-48 sm:h-48 bg-white p-2.5 rounded-xl border border-stone-200 shadow-2xs flex items-center justify-center relative">
                       {qrCode ? (
                         <img 
                           src={qrCode} 
@@ -765,16 +863,45 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                           className="w-full h-full object-contain rounded-md"
                         />
                       ) : (
-                        <div className="flex flex-col items-center gap-2 text-stone-400 text-xs p-3">
-                          <RefreshCw size={22} className="animate-spin text-emerald-600" />
-                          <span className="font-medium text-[11px] text-center">Menyiapkan QR Code WhatsApp...</span>
-                          <button
-                            type="button"
-                            onClick={handleRefreshQr}
-                            className="mt-1 px-2.5 py-1 text-[10px] font-bold bg-emerald-100 text-emerald-800 rounded-md hover:bg-emerald-200 transition cursor-pointer"
-                          >
-                            Klik Refresh QR
-                          </button>
+                        <div className="flex flex-col items-center gap-2 text-stone-500 text-xs p-3 text-center">
+                          {isRefreshingQr ? (
+                            <>
+                              <RefreshCw size={24} className="animate-spin text-emerald-600" />
+                              <span className="font-bold text-[11px] text-emerald-800">Menghubungi Server WhatsApp...</span>
+                              <span className="text-[10px] text-stone-400">Meminta QR code baru...</span>
+                            </>
+                          ) : isVercelHost && !getBackendBaseUrl() ? (
+                            <>
+                              <div className="p-2.5 bg-amber-100 text-amber-800 rounded-xl">
+                                <Server size={24} className="text-amber-700" />
+                              </div>
+                              <span className="font-bold text-[11px] text-stone-900 leading-tight">Perlu Server Backend</span>
+                              <p className="text-[10px] text-stone-500 leading-tight">
+                                Tautkan backend Render atau klik tombol Cloud di atas agar QR muncul
+                              </p>
+                              <button
+                                type="button"
+                                onClick={handleConnectCloudBackend}
+                                className="mt-1 px-2.5 py-1 text-[10.5px] font-bold bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition cursor-pointer shadow-3xs"
+                              >
+                                Tautkan Cloud 24 Jam
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <RefreshCw size={22} className={status === 'connecting' ? 'animate-spin text-emerald-600' : 'text-stone-400'} />
+                              <span className="font-medium text-[11px]">
+                                {status === 'connecting' ? 'Menyiapkan QR Code WhatsApp...' : 'QR Code Belum Dimuat'}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={handleRefreshQr}
+                                className="mt-1 px-2.5 py-1 text-[10px] font-bold bg-emerald-100 text-emerald-800 rounded-md hover:bg-emerald-200 transition cursor-pointer"
+                              >
+                                Buat QR Baru
+                              </button>
+                            </>
+                          )}
                         </div>
                       )}
                     </div>
