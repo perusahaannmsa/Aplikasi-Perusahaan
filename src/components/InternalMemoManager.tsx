@@ -541,6 +541,15 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
       }
     }
 
+    // PENTING: Jika memo yang sedang diedit di form sebelah kiri termasuk yang diarsipkan ke Drive,
+    // bersihkan isi formnya agar tidak menjadi data dummy berulang di form
+    if (selectedMemoIds.includes(currentMemo.id) || (editingExistingId && selectedMemoIds.includes(editingExistingId))) {
+      const isWithKop = currentMemo.showKopSurat !== false;
+      const freshMemo = createInitialMemo(null, getSavedInternalMemos(), isWithKop);
+      setCurrentMemo(freshMemo);
+      setEditingExistingId(null);
+    }
+
     setUploadProgress(null);
     setIsBulkSyncing(false);
     setSelectedMemoIds([]);
@@ -594,6 +603,13 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
         console.warn(`Failed to sync memo ${m.nomorMemo}:`, err);
         failCount++;
       }
+    }
+
+    if (editingExistingId || memos.some((m) => m.id === currentMemo.id)) {
+      const isWithKop = currentMemo.showKopSurat !== false;
+      const freshMemo = createInitialMemo(null, getSavedInternalMemos(), isWithKop);
+      setCurrentMemo(freshMemo);
+      setEditingExistingId(null);
     }
 
     setUploadProgress(null);
