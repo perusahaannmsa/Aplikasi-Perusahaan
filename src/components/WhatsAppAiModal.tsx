@@ -46,6 +46,24 @@ interface WhatsAppAiModalProps {
   submissions?: Submission[];
 }
 
+export function safeString(val: any, fallback = ''): string {
+  if (val === null || val === undefined) return fallback;
+  if (typeof val === 'string') return val;
+  if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+  if (typeof val === 'object') {
+    if (val.message && typeof val.message === 'string') {
+      return val.code ? `[${val.code}] ${val.message}` : val.message;
+    }
+    if (val.error) return safeString(val.error, fallback);
+    try {
+      return JSON.stringify(val);
+    } catch {
+      return fallback;
+    }
+  }
+  return String(val);
+}
+
 export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClose, submissions = [] }) => {
   const [activeTab, setActiveTab] = useState<'connect' | 'uptime' | 'security' | 'attendance' | 'test' | 'webhook' | 'server'>('connect');
   
@@ -119,7 +137,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
     try {
       const res = await apiFetch('/api/wa/keepalive-stats');
       if (res.ok) {
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         setKeepAliveStats(data);
       }
     } catch (e) {
@@ -136,7 +154,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
       const res = await apiFetch('/api/health');
       const timeMs = Math.round(performance.now() - start);
       if (res.ok) {
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         setPingTestResult({
           success: true,
           latencyMs: timeMs,
@@ -157,7 +175,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
       setPingTestResult({
         success: false,
         latencyMs: 0,
-        error: err.message || 'Koneksi gagal'
+        error: safeString(err?.message, 'Koneksi gagal')
       });
     } finally {
       setIsTestingPing(false);
@@ -169,18 +187,19 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
     try {
       const res = await apiFetch('/api/wa/status');
       if (res.ok) {
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         setStatus(data.status || 'disconnected');
         setQrCode(data.qr || null);
         setConnectedUser(data.user || null);
-        setErrorMessage(data.error || null);
+        setErrorMessage(data.error ? safeString(data.error) : null);
       } else {
         const errData = await res.json().catch(() => ({}));
-        setErrorMessage(errData.error || `HTTP ${res.status}`);
+        const raw = errData.error || errData.message || `HTTP ${res.status}`;
+        setErrorMessage(safeString(raw, `HTTP ${res.status}`));
       }
     } catch (err: any) {
       console.warn('Error fetching WA status:', err);
-      setErrorMessage('Tidak dapat terhubung ke server backend.');
+      setErrorMessage(safeString(err?.message, 'Tidak dapat terhubung ke server backend.'));
     }
   };
 
@@ -197,10 +216,10 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
           fetchStatus();
         }, 1200);
       } else {
-        setErrorMessage(data.error || 'Gagal memperbarui QR Code.');
+        setErrorMessage(safeString(data.error, 'Gagal memperbarui QR Code.'));
       }
     } catch (err: any) {
-      setErrorMessage(err?.message || 'Gagal menghubungi server.');
+      setErrorMessage(safeString(err?.message, 'Gagal menghubungi server.'));
     } finally {
       setIsRefreshingQr(false);
     }
@@ -285,14 +304,14 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: pairingPhone.trim() })
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (data.success && data.code) {
-        setPairingCode(data.code);
+        setPairingCode(safeString(data.code));
       } else {
-        setErrorMessage(data.error || 'Gagal meminta Kode Pairing. Coba gunakan metode Scan QR Code.');
+        setErrorMessage(safeString(data.error, 'Gagal meminta Kode Pairing. Coba gunakan metode Scan QR Code.'));
       }
     } catch (err: any) {
-      setErrorMessage(err.message || 'Terjadi gangguan jaringan atau server backend belum aktif.');
+      setErrorMessage(safeString(err?.message, 'Terjadi gangguan jaringan atau server backend belum aktif.'));
     } finally {
       setPairingLoading(false);
     }
@@ -318,14 +337,14 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
           unauthorizedMessage
         })
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (data.success) {
         setSecurityStatusMsg({ success: true, text: 'Pengaturan keamanan dan otorisasi WhatsApp AI berhasil disimpan!' });
       } else {
-        setSecurityStatusMsg({ success: false, text: data.error || 'Gagal menyimpan pengaturan.' });
+        setSecurityStatusMsg({ success: false, text: safeString(data.error, 'Gagal menyimpan pengaturan.') });
       }
     } catch (err: any) {
-      setSecurityStatusMsg({ success: false, text: err.message || 'Kesalahan jaringan.' });
+      setSecurityStatusMsg({ success: false, text: safeString(err?.message, 'Kesalahan jaringan.') });
     } finally {
       setIsSavingSecurity(false);
     }
@@ -375,14 +394,14 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
         },
         body: JSON.stringify({ phone: testPhone.trim(), message: testMessage.trim() })
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (data.success) {
         setSendTestStatus({ success: true, message: 'Pesan berhasil terkirim langsung ke nomor WhatsApp penerima!' });
       } else {
-        setSendTestStatus({ success: false, message: data.error || 'Gagal mengirim pesan WhatsApp.' });
+        setSendTestStatus({ success: false, message: safeString(data.error, 'Gagal mengirim pesan WhatsApp.') });
       }
     } catch (err: any) {
-      setSendTestStatus({ success: false, message: err.message || 'Kesalahan koneksi.' });
+      setSendTestStatus({ success: false, message: safeString(err?.message, 'Kesalahan koneksi.') });
     } finally {
       setIsSendingTest(false);
     }
@@ -396,14 +415,14 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
     setCronResult(null);
     try {
       const res = await apiFetch('/api/cron/late-reminder?force=true&markSent=false');
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (data.success) {
-        setCronResult({ success: true, message: data.message || 'Pengiriman link absensi ke karyawan berhasil diproses!' });
+        setCronResult({ success: true, message: safeString(data.message, 'Pengiriman link absensi ke karyawan berhasil diproses!') });
       } else {
-        setCronResult({ success: false, message: data.message || data.error || 'Gagal memproses pengiriman.' });
+        setCronResult({ success: false, message: safeString(data.message || data.error, 'Gagal memproses pengiriman.') });
       }
     } catch (err: any) {
-      setCronResult({ success: false, message: err.message || 'Terjadi kesalahan jaringan.' });
+      setCronResult({ success: false, message: safeString(err?.message, 'Terjadi kesalahan jaringan.') });
     } finally {
       setIsTriggeringCron(false);
     }
@@ -430,25 +449,25 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query, sender: 'Admin UI', senderPhone: 'admin_ui' })
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (data.reply) {
         setTestMessages(prev => [
           ...prev,
           {
             role: 'assistant',
-            text: data.reply,
+            text: safeString(data.reply),
             time: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
           }
         ]);
       } else {
-        throw new Error(data.error || 'Gagal memproses');
+        throw new Error(safeString(data.error, 'Gagal memproses jawaban'));
       }
     } catch (err: any) {
       setTestMessages(prev => [
         ...prev,
         {
           role: 'assistant',
-          text: `⚠️ *Error*: ${err.message || 'Gagal terhubung ke AI server'}`,
+          text: `⚠️ *Error*: ${safeString(err?.message, 'Gagal terhubung ke AI server')}`,
           time: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
         }
       ]);
@@ -489,7 +508,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
     } catch (e: any) {
       setServerTestStatus({
         success: false,
-        message: `Koneksi gagal: ${e?.message || 'Cek kembali URL server'}`
+        message: `Koneksi gagal: ${safeString(e?.message, 'Cek kembali URL server')}`
       });
     } finally {
       setIsTestingServer(false);
@@ -835,7 +854,21 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                       {errorMessage && (
                         <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-800 text-[11px] rounded-lg flex items-start gap-1.5">
                           <AlertCircle size={14} className="shrink-0 mt-0.5 text-rose-600" />
-                          <span>{errorMessage}</span>
+                          <div className="flex-1 space-y-1">
+                            <span className="block leading-relaxed">{safeString(errorMessage)}</span>
+                            {safeString(errorMessage).toLowerCase().includes('vercel') && (
+                              <div className="pt-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setActiveTab('server')}
+                                  className="px-2.5 py-1 bg-teal-700 hover:bg-teal-800 text-white font-bold rounded text-[10.5px] transition cursor-pointer flex items-center gap-1 shadow-2xs"
+                                >
+                                  <Server size={12} />
+                                  <span>Buka Tab Server Backend (Render / AI Studio) ⚙️</span>
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>
@@ -995,7 +1028,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                     </button>
                     {pingTestResult && (
                       <p className={`text-[10.5px] mt-1.5 font-mono ${pingTestResult.success ? 'text-emerald-700' : 'text-rose-600'}`}>
-                        {pingTestResult.success ? `✓ Sukses (${pingTestResult.latencyMs}ms)` : `✗ Gagal: ${pingTestResult.error}`}
+                        {pingTestResult.success ? `✓ Sukses (${pingTestResult.latencyMs}ms)` : `✗ Gagal: ${safeString(pingTestResult.error)}`}
                       </p>
                     )}
                   </div>
@@ -1152,7 +1185,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                   </button>
                   {securityStatusMsg && (
                     <span className={`text-[11px] ${securityStatusMsg.success ? 'text-emerald-700 font-bold' : 'text-rose-600'}`}>
-                      {securityStatusMsg.text}
+                      {safeString(securityStatusMsg.text)}
                     </span>
                   )}
                 </div>
@@ -1190,7 +1223,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
 
                 {cronResult && (
                   <p className={`text-[11px] ${cronResult.success ? 'text-emerald-700 font-bold' : 'text-rose-600'}`}>
-                    {cronResult.message}
+                    {safeString(cronResult.message)}
                   </p>
                 )}
               </div>
@@ -1224,7 +1257,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                   </div>
                   {sendTestStatus && (
                     <p className={`text-[11px] ${sendTestStatus.success ? 'text-emerald-700 font-bold' : 'text-rose-600'}`}>
-                      {sendTestStatus.message}
+                      {safeString(sendTestStatus.message)}
                     </p>
                   )}
                 </form>
@@ -1419,6 +1452,22 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
 
                   <button
                     type="button"
+                    onClick={() => {
+                      const cloudUrl = 'https://ais-dev-6g7nnluiqpm4mdcziw4ppt-958431568317.asia-east1.run.app';
+                      setBackendUrlInput(cloudUrl);
+                      setBackendBaseUrl(cloudUrl);
+                      fetchStatus();
+                      fetchKeepAliveStats();
+                    }}
+                    className="px-3.5 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 shadow-2xs"
+                    title="Tautkan otomatis ke Server Cloud AI Studio yang sedang aktif 24 jam"
+                  >
+                    <Server size={13} />
+                    <span>Gunakan Server Cloud AI Studio</span>
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={handleTestBackendConnection}
                     disabled={isTestingServer}
                     className="px-3.5 py-1.5 bg-stone-900 hover:bg-stone-800 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition flex items-center gap-1"
@@ -1442,7 +1491,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
 
                 {serverTestStatus && (
                   <p className={`text-xs font-mono ${serverTestStatus.success ? 'text-emerald-700 font-bold' : 'text-rose-600'}`}>
-                    {serverTestStatus.message}
+                    {safeString(serverTestStatus.message)}
                   </p>
                 )}
               </div>

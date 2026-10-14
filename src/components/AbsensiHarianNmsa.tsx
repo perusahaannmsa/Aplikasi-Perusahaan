@@ -1653,7 +1653,7 @@ export function AbsensiHarianNmsa({
           setWaBotStatus(data.status);
           setWaBotQr(data.qr);
           setWaBotUser(data.user);
-          setWaBotError(data.error);
+          setWaBotError(data.error ? (typeof data.error === 'object' ? data.error?.message || JSON.stringify(data.error) : String(data.error)) : null);
 
           // If there is a late reminder pending, show confirmation popup unless dismissed today
           if (data.lateReminderPending) {
@@ -7277,9 +7277,9 @@ export function AbsensiHarianNmsa({
                             <div className="flex items-start gap-1 text-left leading-normal">
                               <span className="shrink-0 mt-0.5">⚠️</span>
                               <span>
-                                {waBotError.includes("Logged out of WhatsApp") 
+                                {String(waBotError || '').includes("Logged out of WhatsApp") 
                                   ? "Koneksi terputus/dibatalkan oleh WhatsApp HP Anda. Silakan bersihkan sesi server lalu tautkan ulang." 
-                                  : waBotError}
+                                  : String(typeof waBotError === 'object' ? (waBotError as any)?.message || JSON.stringify(waBotError) : waBotError)}
                               </span>
                             </div>
                             <div className="flex gap-2">
