@@ -1394,63 +1394,32 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 </button>
               </div>
 
-              {/* Quick Filter & Analisis: Potensi Dobel Input */}
-              {duplicateSubmissionIds.size > 0 && (
-                <div className="self-end pb-0.5 flex items-center gap-1.5 flex-wrap">
-                  {activeDuplicateSubmissionIds.size > 0 ? (
-                    <>
-                      <button
-                        type="button"
-                        id="btn-open-duplicate-modal"
-                        onClick={() => {
-                          setSelectedClusterKey(null);
-                          setDuplicateModalSearch('');
-                          setIsDuplicateModalOpen(true);
-                        }}
-                        title="Klik untuk membuka dialog analisis & rekap voucher yang berpotensi dobel dengan transaksi terakhir"
-                        className="px-3.5 py-2 text-xs font-bold font-mono rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-xs bg-amber-500 hover:bg-amber-600 text-stone-950 font-black ring-2 ring-amber-400 active:scale-95"
-                      >
-                        <AlertTriangle size={14} className="text-stone-950" />
-                        <span>⚠️ Potensi Dobel ({activeDuplicateSubmissionIds.size})</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={handleAcknowledgeAllHistory}
-                        title="Pilih bahwa transaksi ini seluruhnya tidak dobel (Status potensi dobel menjadi 0 & riwayat diabaikan)"
-                        className="px-3 py-2 text-xs font-bold font-mono rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-3xs bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold active:scale-95"
-                      >
-                        <Check size={13} className="text-white font-bold" />
-                        <span>✓ Beri Tanda (Set 0)</span>
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedClusterKey(null);
-                        setDuplicateModalSearch('');
-                        setIsDuplicateModalOpen(true);
-                      }}
-                      title="Status potensi dobel 0 (sudah ditandai aman). Klik untuk melihat detail atau mengatur ulang."
-                      className="px-3 py-2 text-xs font-bold font-mono rounded-xl transition flex items-center gap-1.5 cursor-pointer border bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border-emerald-300 shadow-3xs"
-                    >
-                      <Check size={13} className="text-emerald-700" />
-                      <span>✓ Potensi Dobel: 0 (Aman)</span>
-                    </button>
-                  )}
+              {/* Quick Filter & Analisis: Potensi Dobel Input (Auto-hidden jika 0 / sudah disahkan aman) */}
+              {activeDuplicateSubmissionIds.size > 0 && (
+                <div className="self-end pb-0.5 flex items-center gap-1.5 flex-wrap animate-fade-in">
+                  <button
+                    type="button"
+                    id="btn-open-duplicate-modal"
+                    onClick={() => {
+                      setSelectedClusterKey(null);
+                      setDuplicateModalSearch('');
+                      setIsDuplicateModalOpen(true);
+                    }}
+                    title="Klik untuk membuka dialog analisis & rekap voucher yang berpotensi dobel dengan transaksi terakhir"
+                    className="px-3.5 py-2 text-xs font-bold font-mono rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-xs bg-amber-500 hover:bg-amber-600 text-stone-950 font-black ring-2 ring-amber-400 active:scale-95 animate-pulse"
+                  >
+                    <AlertTriangle size={14} className="text-stone-950" />
+                    <span>⚠️ Potensi Dobel ({activeDuplicateSubmissionIds.size})</span>
+                  </button>
 
                   <button
                     type="button"
-                    onClick={() => setShowOnlyDuplicates(prev => !prev)}
-                    title={showOnlyDuplicates ? "Matikan filter dobel (tampilkan semua)" : "Saring tabel di bawah hanya untuk voucher dobel"}
-                    className={`px-2.5 py-2 text-xs font-bold font-mono rounded-xl transition cursor-pointer border ${
-                      showOnlyDuplicates
-                        ? 'bg-amber-100 text-amber-950 border-amber-400 font-extrabold shadow-3xs'
-                        : 'bg-white hover:bg-stone-100 text-stone-600 border-stone-300'
-                    }`}
+                    onClick={handleAcknowledgeAllHistory}
+                    title="Pilih bahwa transaksi ini seluruhnya tidak dobel (Status potensi dobel menjadi 0 & riwayat disahkan/diabaikan)"
+                    className="px-3 py-2 text-xs font-bold font-mono rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-3xs bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold active:scale-95"
                   >
-                    {showOnlyDuplicates ? '✓ Filter Aktif' : 'Saring Tabel'}
+                    <Check size={13} className="text-white font-bold" />
+                    <span>✓ Sahkan / Beri Tanda (Set 0)</span>
                   </button>
                 </div>
               )}
