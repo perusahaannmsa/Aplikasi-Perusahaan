@@ -221,22 +221,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
 
   const [qrCountdown, setQrCountdown] = useState<number>(60);
 
-  // Generate crisp, authentic QR Code Data URL on demand
-  const generateClientQr = async (): Promise<string> => {
-    try {
-      const rawPayload = `2@${Date.now()},nmsa_gateway_${Math.random().toString(36).substring(2, 9)},${btoa('PT Nusantara Mineral Sukses Abadi - WhatsApp Bridge')}`;
-      return await QRCode.toDataURL(rawPayload, {
-        width: 320,
-        margin: 1,
-        color: { dark: '#064e3b', light: '#ffffff' }
-      });
-    } catch (e) {
-      console.warn('Local QR generation error:', e);
-      return '';
-    }
-  };
-
-  // Fetch WhatsApp connection status
+  // Fetch WhatsApp connection status from active server
   const fetchStatus = async () => {
     try {
       // Check if simulated session is active in localStorage
@@ -251,35 +236,26 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
       const res = await apiFetch('/api/wa/status');
       if (res.ok) {
         const data = await res.json().catch(() => ({}));
+        if (data.isVercel || data.isVercelServerless || data.requiresBackendServer) {
+          setIsVercelHost(true);
+        }
         if (data.status === 'connected') {
           setStatus('connected');
           setConnectedUser(data.user || { id: '6281288997766@s.whatsapp.net', name: 'Admin Keuangan PT NMSA' });
           setErrorMessage(null);
         } else {
           setStatus('qr');
-          if (data.qr) {
-            setQrCode(data.qr);
-          } else {
-            const localQr = await generateClientQr();
-            setQrCode(localQr);
-          }
+          setQrCode(data.qr || null);
           setConnectedUser(null);
         }
-        if (data.isVercel || data.isVercelServerless) {
-          setIsVercelHost(true);
-        }
       } else {
-        // Fallback: always generate valid QR Code
         setStatus('qr');
-        const localQr = await generateClientQr();
-        setQrCode(localQr);
+        setQrCode(null);
       }
     } catch (err: any) {
       console.warn('Error fetching WA status:', err);
-      // Fallback: even on offline/network errors, show QR Code
       setStatus('qr');
-      const localQr = await generateClientQr();
-      setQrCode(localQr);
+      setQrCode(null);
     }
   };
 
@@ -399,10 +375,10 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
         body: JSON.stringify({ phone: pairingPhone.trim() })
       });
       const data = await res.json().catch(() => ({}));
-      if (data.success && data.code) {
-        setPairingCode(safeString(data.code));
+      if (data.success && (data.code || data.pairingCode)) {
+        setPairingCode(safeString(data.code || data.pairingCode));
       } else {
-        setErrorMessage(safeString(data.error, 'Gagal meminta Kode Pairing. Coba gunakan metode Scan QR Code.'));
+        setErrorMessage(safeString(data.error, 'Gagal meminta Kode Pairing. Pastikan Server Backend aktif atau gunakan metode Scan QR Code.'));
       }
     } catch (err: any) {
       setErrorMessage(safeString(err?.message, 'Terjadi gangguan jaringan atau server backend belum aktif.'));
@@ -828,6 +804,19 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                 </div>
               </div>
 
+              {/* Vercel Serverless Guidance Banner */}
+              {isVercelHost && status !== 'connected' && (
+                <div className="p-3 bg-amber-50/90 border border-amber-200 rounded-xl flex items-start gap-2.5 text-xs text-amber-900">
+                  <AlertCircle size={16} className="text-amber-600 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="font-bold text-amber-950">Aplikasi Berjalan di Vercel (Serverless Environment)</p>
+                    <p className="text-[11px] text-amber-800 leading-relaxed">
+                      WhatsApp Multi-Device memerlukan koneksi WebSocket server 24/7 (tidak didukung fungsi serverless Vercel). Untuk scan QR atau pairing nomor HP asli dari WhatsApp di HP Anda, buka <strong>Tab 7 (Server Backend)</strong> dan sambungkan URL server Node.js Anda (Render / Railway / VPS). Jika hanya ingin menguji sistem di Vercel, klik tombol <strong>"Tautkan Sesi Sekarang"</strong> di bawah.
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {/* QR Code & Pairing Section - 2-Column Responsive */}
               {status !== 'connected' && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -838,7 +827,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                       <span>Metode 1: Pindai (Scan) QR Code</span>
                     </div>
 
-                    {/* QR Box - Always visible & Crisp */}
+                    {/* QR Box - Shows real WhatsApp QR or clear serverless guidance */}
                     <div className="w-52 h-52 bg-white p-3 rounded-2xl border-2 border-emerald-500/30 shadow-md flex flex-col items-center justify-center relative group">
                       {qrCode ? (
                         <div className="relative w-full h-full flex items-center justify-center">
@@ -851,10 +840,19 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                             <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping block" />
                           </div>
                         </div>
+                      ) : isVercelHost ? (
+                        <div className="flex flex-col items-center justify-center gap-1.5 text-stone-600 text-xs p-2 text-center h-full">
+                          <Server size={22} className="text-amber-600" />
+                          <span className="font-bold text-[11px] text-amber-900 leading-tight">Serverless Vercel</span>
+                          <p className="text-[10px] text-stone-500 leading-tight">
+                            WhatsApp butuh server aktif 24/7. Hubungkan backend Render/Railway di Tab 7, atau klik tombol 'Tautkan Sesi Sekarang' di bawah.
+                          </p>
+                        </div>
                       ) : (
-                        <div className="flex flex-col items-center gap-2 text-stone-500 text-xs p-3 text-center">
+                        <div className="flex flex-col items-center justify-center gap-2 text-stone-500 text-xs p-3 text-center h-full">
                           <RefreshCw size={24} className="animate-spin text-emerald-600" />
-                          <span className="font-bold text-xs text-emerald-800">Menyiapkan QR Code...</span>
+                          <span className="font-bold text-xs text-emerald-800">Menyiapkan QR Code Resmi...</span>
+                          <span className="text-[10px] text-stone-400">Menghubungkan ke server WhatsApp</span>
                         </div>
                       )}
                     </div>

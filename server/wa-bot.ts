@@ -33,6 +33,16 @@ async function getUseMultiFileAuthState() {
   return (pkg as any).useMultiFileAuthState;
 }
 
+async function getBrowsers() {
+  const pkg = await getBaileysModule();
+  return pkg.Browsers || (pkg.default && pkg.default.Browsers);
+}
+
+async function getMakeCacheableSignalKeyStore() {
+  const pkg = await getBaileysModule();
+  return pkg.makeCacheableSignalKeyStore || (pkg.default && pkg.default.makeCacheableSignalKeyStore);
+}
+
 async function getDisconnectReason() {
   try {
     const pkg = await getBaileysModule();
@@ -290,12 +300,28 @@ export async function initWhatsApp() {
 
     // Initialize Auth state folder
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+    const Browsers = await getBrowsers();
+    const makeCacheableSignalKeyStore = await getMakeCacheableSignalKeyStore();
 
-    // Create Socket
+    const authKeys = typeof makeCacheableSignalKeyStore === "function"
+      ? makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" }) as any)
+      : state.keys;
+
+    const browserConfig = Browsers && typeof Browsers.ubuntu === "function"
+      ? Browsers.ubuntu("Chrome")
+      : ["Ubuntu", "Chrome", "22.04.4"];
+
+    // Create Socket with official Chrome browser header & cacheable keys
     sock = makeWASocket({
-      auth: state,
+      auth: {
+        creds: state.creds,
+        keys: authKeys,
+      },
+      browser: browserConfig,
       printQRInTerminal: false,
       logger: pino({ level: "silent" }) as any,
+      connectTimeoutMs: 60000,
+      defaultQueryTimeoutMs: 60000,
     });
 
     // Handle credential updates & persist to backup store
@@ -847,8 +873,14 @@ export async function requestWhatsAppPairingCode(phone: string): Promise<string>
     throw new Error("Gagal menginisialisasi server WhatsApp. Pastikan server backend sedang aktif.");
   }
 
-  // Brief pause to allow socket handshake if recently opened
-  await new Promise(r => setTimeout(r, 800));
+  // Wait for the socket connection to establish handshake with WhatsApp servers (up to 3s)
+  for (let i = 0; i < 6; i++) {
+    if (connectionStatus === "qr" || connectionStatus === "connecting") {
+      await new Promise(r => setTimeout(r, 500));
+      break;
+    }
+    await new Promise(r => setTimeout(r, 400));
+  }
 
   console.log(`[WhatsApp Bot] Requesting pairing code for phone number: ${cleaned}`);
   try {
@@ -863,6 +895,25 @@ export async function requestWhatsAppPairingCode(phone: string): Promise<string>
     return strCode;
   } catch (err: any) {
     console.error("Error requesting pairing code from Baileys:", err);
+    // If socket was disconnected or closed, re-initialize socket and retry once
+    const msg = String(err?.message || "");
+    if (msg.includes("Connection Closed") || msg.includes("timed out") || msg.includes("not open") || (err as any)?.output?.statusCode === 428) {
+      console.log("[WhatsApp Bot] Reconnecting socket before retrying pairing code...");
+      await initWhatsApp();
+      await new Promise(r => setTimeout(r, 2000));
+      if (sock) {
+        try {
+          const rawCode = await sock.requestPairingCode(cleaned);
+          const strCode = String(rawCode).trim();
+          if (strCode.length === 8 && !strCode.includes("-")) {
+            return `${strCode.slice(0, 4)}-${strCode.slice(4)}`;
+          }
+          return strCode;
+        } catch (retryErr: any) {
+          console.error("Retry pairing code failed:", retryErr);
+        }
+      }
+    }
     throw new Error(err.message || "Gagal meminta kode pairing dari WhatsApp. Coba refresh atau gunakan Scan QR.");
   }
 }

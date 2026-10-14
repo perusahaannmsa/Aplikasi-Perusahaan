@@ -3509,7 +3509,7 @@ app.post("/api/wa/pairing-code", async (req, res) => {
   }
   try {
     const code = await requestWhatsAppPairingCode(String(phone).trim());
-    return res.json({ success: true, code });
+    return res.json({ success: true, code, pairingCode: code });
   } catch (err: any) {
     console.error("[Pairing Code Error]", err);
     return res.status(400).json({ success: false, error: err.message || "Gagal membuat Kode Pairing WhatsApp." });

@@ -170,53 +170,37 @@ export default async function handler(req: any, res: any) {
         }
       }
 
-      // Generate QR Code data URL for Vercel Serverless
-      const generateQrDataUrl = async (): Promise<string> => {
-        try {
-          const QRCode = await import("qrcode").then((m: any) => m.default || m);
-          const rawPayload = `2@${Date.now()},nmsa_ver_${Math.random().toString(36).substring(2, 9)},${Buffer.from("PT Nusantara Mineral Sukses Abadi - WhatsApp Gateway").toString("base64")}`;
-          return await QRCode.toDataURL(rawPayload, {
-            width: 280,
-            margin: 2,
-            color: { dark: "#064e3b", light: "#ffffff" }
-          });
-        } catch (e) {
-          console.warn("[Vercel QR Gen Warning]", e);
-          return "";
-        }
-      };
-
-      // Default Vercel serverless responses for WhatsApp (Never 500)
+      // WhatsApp handlers for Vercel Serverless
       if (subWa === "status") {
         const state = loadState();
         const isSessionConnected = state.waConnected === true;
-        const qrUrl = isSessionConnected ? null : await generateQrDataUrl();
         return res.end(JSON.stringify({
           success: true,
-          status: isSessionConnected ? "connected" : "qr",
-          qr: qrUrl,
+          status: isSessionConnected ? "connected" : "disconnected",
+          qr: null,
           user: isSessionConnected ? (state.waUser || { id: "6281288997766@s.whatsapp.net", name: "Admin Keuangan NMSA" }) : null,
           isVercel: true,
           isVercelServerless: true,
+          requiresBackendServer: !isSessionConnected,
           notice: isSessionConnected 
             ? "WhatsApp aktif dan terhubung ke sistem PT NMSA." 
-            : "Silakan pindai QR code berikut melalui WhatsApp di ponsel Anda (Perangkat Tertaut).",
+            : "Aplikasi di Vercel berjalan secara Serverless. Untuk scan QR atau pairing nomor HP sungguhan melalui WhatsApp di ponsel Anda, sambungkan ke Server Backend (Render/Railway/VPS) pada Tab 'Server Backend', atau gunakan tombol 'Tautkan Sesi Sekarang' untuk simulasi langsung di Vercel.",
           error: null
         }));
       }
 
       if (subWa === "refresh-qr") {
-        const qrUrl = await generateQrDataUrl();
         const state = loadState();
         state.waConnected = false;
         saveState(state);
         return res.end(JSON.stringify({
-          success: true,
-          status: "qr",
-          qr: qrUrl,
+          success: false,
+          status: "disconnected",
+          qr: null,
           isVercel: true,
           isVercelServerless: true,
-          message: "QR Code baru berhasil digenerate."
+          requiresBackendServer: true,
+          message: "Vercel Serverless tidak dapat membuat koneksi WebSocket WhatsApp ke ponsel. Tautkan Server Backend di Tab 'Server Backend'."
         }));
       }
 
@@ -252,14 +236,14 @@ export default async function handler(req: any, res: any) {
       }
 
       if (subWa === "pairing-code") {
-        const body = await parseRequestBody(req);
-        const randomCode = `NMSA-${Math.floor(1000 + Math.random() * 9000)}`;
         return res.end(JSON.stringify({
-          success: true,
-          pairingCode: randomCode,
-          phone: body?.phone || "",
+          success: false,
+          code: null,
+          pairingCode: null,
           isVercel: true,
-          message: "Kode pairing dibuat. Masukkan kode ini pada WhatsApp HP Anda > Perangkat Tertaut > Tautkan dengan Nomor Telepon."
+          requiresBackendServer: true,
+          error: "Vercel Serverless tidak memiliki socket WebSocket aktif ke WhatsApp untuk meminta kode pairing resmi. Silakan jalankan backend Node.js (Render/Railway/VPS) dan masukkan URL-nya pada Tab 'Server Backend'.",
+          message: "Pairing nomor HP membutuhkan Server Backend Node.js aktif."
         }));
       }
 

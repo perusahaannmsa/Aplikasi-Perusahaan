@@ -4249,10 +4249,10 @@ export function AbsensiHarianNmsa({
         body: JSON.stringify({ phone: waPairingPhone }),
       });
       const data = await res.json();
-      if (res.ok && data.code) {
-        setWaPairingCode(data.code);
+      if (res.ok && (data.code || data.pairingCode)) {
+        setWaPairingCode(data.code || data.pairingCode);
       } else {
-        alert("Gagal membuat Kode Pairing: " + (data.error || "Kesalahan server"));
+        alert("Gagal membuat Kode Pairing: " + (data.error || "Pastikan Server Backend sedang aktif."));
       }
     } catch (err: any) {
       console.error("Failed to request pairing code:", err);
