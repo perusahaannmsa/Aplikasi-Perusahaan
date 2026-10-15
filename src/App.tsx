@@ -460,41 +460,6 @@ export default function App() {
     };
   }, []);
 
-  // ⚡ Otomatis membaca database penyimpanan di Firebase secara langsung ketika menu terkait dibuka
-  useEffect(() => {
-    if (view === 'npwp' || view === 'pph23') {
-      loadNpwpRecordsFromFirestore()
-        .then(records => {
-          if (records && records.length > 0) {
-            setNpwpRecords(records);
-            localStorage.setItem('npwp_records_v1', JSON.stringify(records));
-            console.log(`☁️ [Auto-Fetch] ${records.length} data NPWP berhasil dibaca langsung dari Firebase Firestore.`);
-          }
-        })
-        .catch(err => console.warn('Auto-read NPWP from Firestore failed:', err));
-    } else if (view === 'sppd') {
-      loadSppdRecordsFromFirestore()
-        .then(records => {
-          if (records && records.length > 0) {
-            setSppdRecords(records);
-            localStorage.setItem('sppd_records_v1', JSON.stringify(records));
-            console.log(`☁️ [Auto-Fetch] ${records.length} data SPPD berhasil dibaca langsung dari Firebase Firestore.`);
-          }
-        })
-        .catch(err => console.warn('Auto-read SPPD from Firestore failed:', err));
-    } else if (view === 'list') {
-      loadSubmissionsFromFirestore()
-        .then(subs => {
-          if (subs && subs.length > 0) {
-            setSubmissions(subs);
-            localStorage.setItem('voucher_submissions', JSON.stringify(subs));
-          }
-        })
-        .catch(err => console.warn('Auto-read Submissions from Firestore failed:', err));
-    }
-  }, [view]);
-
-
   // Auto-sync Petty Cash submissions into pettyCashReports & pettyCashHolders
   useEffect(() => {
     if (!submissions || submissions.length === 0) return;
@@ -875,6 +840,40 @@ export default function App() {
       return newView;
     });
   };
+
+  // ⚡ Otomatis membaca database penyimpanan di Firebase secara langsung ketika menu terkait dibuka
+  useEffect(() => {
+    if (view === 'npwp' || view === 'pph23') {
+      loadNpwpRecordsFromFirestore()
+        .then(records => {
+          if (records && records.length > 0) {
+            setNpwpRecords(records);
+            localStorage.setItem('npwp_records_v1', JSON.stringify(records));
+            console.log(`☁️ [Auto-Fetch] ${records.length} data NPWP berhasil dibaca langsung dari Firebase Firestore.`);
+          }
+        })
+        .catch(err => console.warn('Auto-read NPWP from Firestore failed:', err));
+    } else if (view === 'sppd') {
+      loadSppdRecordsFromFirestore()
+        .then(records => {
+          if (records && records.length > 0) {
+            setSppdRecords(records);
+            localStorage.setItem('sppd_records_v1', JSON.stringify(records));
+            console.log(`☁️ [Auto-Fetch] ${records.length} data SPPD berhasil dibaca langsung dari Firebase Firestore.`);
+          }
+        })
+        .catch(err => console.warn('Auto-read SPPD from Firestore failed:', err));
+    } else if (view === 'list') {
+      loadSubmissionsFromFirestore()
+        .then(subs => {
+          if (subs && subs.length > 0) {
+            setSubmissions(subs);
+            localStorage.setItem('voucher_submissions', JSON.stringify(subs));
+          }
+        })
+        .catch(err => console.warn('Auto-read Submissions from Firestore failed:', err));
+    }
+  }, [view]);
 
   // Handlers for Project & RAB Management
   const handleSaveProject = async (project: Project) => {

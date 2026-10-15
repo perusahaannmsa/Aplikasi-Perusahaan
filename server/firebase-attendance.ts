@@ -227,3 +227,125 @@ export async function restoreAttendanceFromFirestore(currentState: any): Promise
     return currentState;
   }
 }
+
+// 3. Sync NPWP master records to Firestore
+export async function syncNpwpToFirestore(npwpRecords: any[]): Promise<boolean> {
+  const db = initFirebaseFirestore();
+  if (!db) return false;
+
+  await ensureServerAuth();
+
+  try {
+    const timestamp = new Date().toISOString();
+    const list = Array.isArray(npwpRecords) ? npwpRecords : [];
+
+    // 1. Save master NPWP snapshot document in 'npwp_records' collection with ID 'master_records'
+    await setDoc(doc(db, "npwp_records", "master_records"), {
+      npwpRecords: list,
+      totalRecords: list.length,
+      updatedAt: timestamp
+    }, { merge: true });
+
+    // 2. Also save to app_settings general doc for settings sync
+    try {
+      await setDoc(doc(db, "app_settings", "general"), {
+        npwpRecords: list,
+        updatedAt: timestamp
+      }, { merge: true });
+    } catch (_) {}
+
+    // 3. Granular docs in npwp_records collection for each record
+    for (const record of list) {
+      if (record && record.id) {
+        await setDoc(doc(db, "npwp_records", String(record.id)), {
+          ...record,
+          updatedAt: timestamp
+        }, { merge: true });
+      }
+    }
+
+    console.log(`[Firebase] Successfully synchronized ${list.length} NPWP records to Firestore!`);
+    return true;
+  } catch (err: any) {
+    console.warn("[Firebase] Error during NPWP Firestore sync:", err.message);
+    return false;
+  }
+}
+
+// 4. Restore NPWP records from Firestore
+export async function restoreNpwpFromFirestore(currentState: any): Promise<any> {
+  const db = initFirebaseFirestore();
+  if (!db) return currentState;
+
+  await ensureServerAuth();
+
+  try {
+    console.log("[Firebase] Checking Firestore for saved NPWP records...");
+    let updated = { ...currentState };
+    let hasChanges = false;
+    let cloudRecords: any[] = [];
+
+    // Check npwp_records/master_records
+    try {
+      const snap = await getDoc(doc(db, "npwp_records", "master_records"));
+      if (snap.exists()) {
+        const d = snap.data();
+        if (d && Array.isArray(d.npwpRecords) && d.npwpRecords.length > 0) {
+          cloudRecords = d.npwpRecords;
+        }
+      }
+    } catch (e: any) {
+      console.warn("[Firebase] Could not fetch master_records:", e.message);
+    }
+
+    // Check app_settings/general if not found yet
+    if (cloudRecords.length === 0) {
+      try {
+        const setSnap = await getDoc(doc(db, "app_settings", "general"));
+        if (setSnap.exists()) {
+          const sd = setSnap.data();
+          if (sd && Array.isArray(sd.npwpRecords) && sd.npwpRecords.length > 0) {
+            cloudRecords = sd.npwpRecords;
+          }
+        }
+      } catch (_) {}
+    }
+
+    // Fallback: list all docs in npwp_records collection
+    if (cloudRecords.length === 0) {
+      try {
+        const colSnap = await getDocs(collection(db, "npwp_records"));
+        colSnap.forEach((d) => {
+          if (d.id !== "master_records") {
+            cloudRecords.push({ id: d.id, ...d.data() });
+          }
+        });
+      } catch (_) {}
+    }
+
+    if (cloudRecords.length > 0) {
+      console.log(`[Firebase] Found ${cloudRecords.length} NPWP records in Firestore.`);
+      const map = new Map<string, any>();
+      cloudRecords.forEach((r: any) => {
+        if (r && (r.id || r.npwpNumber)) {
+          const key = r.id || r.npwpNumber;
+          map.set(String(key), r);
+        }
+      });
+      (currentState.npwpRecords || []).forEach((r: any) => {
+        if (r && (r.id || r.npwpNumber)) {
+          const key = r.id || r.npwpNumber;
+          map.set(String(key), { ...(map.get(String(key)) || {}), ...r });
+        }
+      });
+      updated.npwpRecords = Array.from(map.values());
+      hasChanges = true;
+    }
+
+    return hasChanges ? updated : currentState;
+  } catch (err: any) {
+    console.warn("[Firebase] Notice restoring NPWP from Firestore:", err.message);
+    return currentState;
+  }
+}
+

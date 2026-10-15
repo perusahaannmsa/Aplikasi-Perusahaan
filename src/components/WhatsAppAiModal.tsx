@@ -270,16 +270,15 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
       if (data.qr) {
         setQrCode(data.qr);
         setStatus('qr');
+      } else if (data.status) {
+        setStatus(data.status);
+        if (data.message) setErrorMessage(data.message);
       } else {
-        const localQr = await generateClientQr();
-        setQrCode(localQr);
-        setStatus('qr');
+        await fetchStatus();
       }
     } catch (err: any) {
-      console.warn('Fallback generating local QR:', err);
-      const localQr = await generateClientQr();
-      setQrCode(localQr);
-      setStatus('qr');
+      console.warn('Error refreshing WA QR:', err);
+      setErrorMessage('Gagal memuat QR Code dari server WhatsApp. Pastikan backend aktif.');
     } finally {
       setIsRefreshingQr(false);
     }
