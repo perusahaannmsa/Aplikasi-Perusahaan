@@ -222,27 +222,33 @@ export const saveAttendanceToFirestore = async (
       };
     });
 
+    const cleanWeeklyReports = cleanDataForFirestore(weeklyReportsList || []);
+
     await setDoc(doc(db, "attendance", "current_records"), {
       attendanceRecords: cleanDataForFirestore(cleanedRecords),
       workers: cleanDataForFirestore(workersList),
+      weeklyReports: cleanWeeklyReports,
       updatedAt: timestamp,
       totalWorkers: (workersList || []).length,
-      totalRecords: (cleanedRecords || []).length
+      totalRecords: (cleanedRecords || []).length,
+      totalReports: cleanWeeklyReports.length
     }, { merge: true });
 
-    if (weeklyReportsList && weeklyReportsList.length > 0) {
-      for (const rep of weeklyReportsList) {
+    // Also store individual reports under attendance collection where permissions are active
+    if (cleanWeeklyReports.length > 0) {
+      for (const rep of cleanWeeklyReports) {
         if (!rep) continue;
         const repId = rep.id || `rep_${rep.weekStartDate || Date.now()}`;
-        const repData = {
-          ...cleanDataForFirestore(rep),
-          syncedAt: timestamp
-        };
-        await setDoc(doc(db, "weekly_attendance_reports", repId), repData, { merge: true });
-        await setDoc(doc(db, "weekly_reports", repId), repData, { merge: true });
+        try {
+          await setDoc(doc(db, "attendance", `rep_${repId}`), {
+            ...rep,
+            syncedAt: timestamp
+          }, { merge: true });
+        } catch (_) {}
       }
     }
     return true;
+
   } catch (err: any) {
     const isPermissionDenied = err?.code === 'permission-denied' || String(err?.message).includes('PERMISSION_DENIED');
     if (isPermissionDenied) {
@@ -316,26 +322,20 @@ export const loadAttendanceFromFirestore = async (): Promise<{
       }
     }
 
-    // Load weekly attendance reports
+    // Load weekly attendance reports from master document
     const repMap = new Map<string, any>();
-    try {
-      const reportsSnap = await getDocs(collection(db, "weekly_attendance_reports"));
-      reportsSnap.forEach(d => {
-        const rd = d.data();
-        if (rd) repMap.set(rd.id || `${rd.weekStartDate}_${rd.weekEndDate}`, rd);
-      });
-    } catch (_) {}
+    if (masterDoc.exists()) {
+      const d = masterDoc.data();
+      if (d && Array.isArray(d.weeklyReports)) {
+        d.weeklyReports.forEach((rd: any) => {
+          if (rd) {
+            const key = rd.id || `${rd.weekStartDate}_${rd.weekEndDate}`;
+            repMap.set(key, rd);
+          }
+        });
+      }
+    }
 
-    try {
-      const snap2 = await getDocs(collection(db, "weekly_reports"));
-      snap2.forEach(d => {
-        const rd = d.data();
-        if (rd) {
-          const key = rd.id || `${rd.weekStartDate}_${rd.weekEndDate}`;
-          if (!repMap.has(key)) repMap.set(key, rd);
-        }
-      });
-    } catch (_) {}
 
     // Clean loaded records to ensure only truthy attendance dates
     const sanitizedRecs = (recs || []).map((r) => {

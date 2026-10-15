@@ -2079,12 +2079,7 @@ export function AbsensiHarianNmsa({
 
             // 2. Sync to Firebase
             try {
-              const { db } = await import('../lib/firebaseAbsen');
-              const { doc, setDoc } = await import('firebase/firestore');
-              await setDoc(doc(db, "weekly_reports", newReport.id), newReport);
-              
-              // Also sync workers
-              await setDoc(doc(db, "sync", "workers"), { workers });
+              saveAttendanceToFirestore(attendanceRecords, workers, updatedReports).catch(() => {});
               console.log("Data synced to Firebase!");
             } catch (fbErr) {
               console.error("Firebase sync failed", fbErr);
@@ -2123,12 +2118,11 @@ export function AbsensiHarianNmsa({
 
                 // Update Firebase and local state with the Google Drive links
                 try {
-                  const { db } = await import('../lib/firebaseAbsen');
-                  const { doc, setDoc } = await import('firebase/firestore');
-                  await setDoc(doc(db, "weekly_reports", newReport.id), newReport);
+                  saveAttendanceToFirestore(attendanceRecords, workers, updatedReports).catch(() => {});
                 } catch (updateFbErr) {
                   console.error("Firebase update failed", updateFbErr);
                 }
+
                 
                 alert("Laporan absensi hari Jumat otomatis terunggah aman ke Google Drive (Folder: Laporan-Absensi-NMSA)!");
               });

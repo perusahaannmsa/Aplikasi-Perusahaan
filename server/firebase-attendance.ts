@@ -127,28 +127,23 @@ export async function syncAttendanceToFirestore(state: {
       await setDoc(doc(db, "attendance", "current_records"), {
         attendanceRecords: cleaned,
         workers: state.workers || [],
+        weeklyReports: state.weeklyReports || [],
         updatedAt: timestamp,
         totalWorkers: (state.workers || []).length,
-        totalRecords: cleaned.length
+        totalRecords: cleaned.length,
+        totalReports: (state.weeklyReports || []).length
       }, { merge: true });
-    }
-
-    // 2. Save each weekly report to weekly_attendance_reports & weekly_reports collections
-    if (state.weeklyReports && state.weeklyReports.length > 0) {
-      for (const rep of state.weeklyReports) {
-        if (!rep) continue;
-        const repId = rep.id || `rep_${rep.weekStartDate || Date.now()}`;
-        const repData = {
-          ...rep,
-          syncedAt: timestamp
-        };
-        await setDoc(doc(db, "weekly_attendance_reports", repId), repData, { merge: true });
-        await setDoc(doc(db, "weekly_reports", repId), repData, { merge: true });
-      }
+    } else if (state.weeklyReports && state.weeklyReports.length > 0) {
+      await setDoc(doc(db, "attendance", "current_records"), {
+        weeklyReports: state.weeklyReports || [],
+        updatedAt: timestamp,
+        totalReports: (state.weeklyReports || []).length
+      }, { merge: true });
     }
 
     console.log("[Firebase] Successfully synchronized attendance & weekly reports to Firestore!");
     return true;
+
   } catch (err: any) {
     console.warn("[Firebase] Notice during attendance Firestore sync:", err.message);
     return false;
@@ -202,23 +197,19 @@ export async function restoreAttendanceFromFirestore(currentState: any): Promise
       }
     }
 
-    // Also pull weekly reports from weekly_attendance_reports collection
-    try {
-      const reportsSnap = await getDocs(collection(db, "weekly_attendance_reports"));
-      if (!reportsSnap.empty) {
-        const cloudReports: any[] = [];
-        reportsSnap.forEach(docSnap => {
-          cloudReports.push(docSnap.data());
-        });
-        console.log(`[Firebase] Restoring ${cloudReports.length} weekly attendance reports from Firestore.`);
+    // Restore weekly reports directly from master document
+    if (masterDocSnap.exists()) {
+      const data = masterDocSnap.data();
+      if (data && Array.isArray(data.weeklyReports) && data.weeklyReports.length > 0) {
+        console.log(`[Firebase] Restoring ${data.weeklyReports.length} weekly reports from attendance/current_records.`);
         const repMap = new Map();
-        (currentState.weeklyReports || []).forEach((r: any) => {
+        data.weeklyReports.forEach((r: any) => {
           if (r) {
             const key = r.id || `${r.weekStartDate}_${r.weekEndDate}`;
             repMap.set(key, r);
           }
         });
-        cloudReports.forEach((r: any) => {
+        (currentState.weeklyReports || []).forEach((r: any) => {
           if (r) {
             const key = r.id || `${r.weekStartDate}_${r.weekEndDate}`;
             repMap.set(key, { ...(repMap.get(key) || {}), ...r });
@@ -227,9 +218,8 @@ export async function restoreAttendanceFromFirestore(currentState: any): Promise
         updated.weeklyReports = Array.from(repMap.values());
         hasChanges = true;
       }
-    } catch (err: any) {
-      console.warn("[Firebase] Notice fetching weekly_attendance_reports collection:", err.message);
     }
+
 
     return hasChanges ? updated : currentState;
   } catch (err: any) {
@@ -237,118 +227,3 @@ export async function restoreAttendanceFromFirestore(currentState: any): Promise
     return currentState;
   }
 }
-
-// 3. Sync NPWP records to Firestore (npwp_records collection and companies/nmsa)
-export async function syncNpwpToFirestore(records: any[]): Promise<boolean> {
-  const db = initFirebaseFirestore();
-  if (!db || !Array.isArray(records)) return false;
-
-  await ensureServerAuth();
-
-  try {
-    const timestamp = new Date().toISOString();
-    for (const rec of records) {
-      if (rec && rec.id) {
-        const cleanRec = {
-          id: rec.id,
-          companyName: rec.companyName || '',
-          npwpNumber: rec.npwpNumber || '',
-          address: rec.address || '',
-          kppName: rec.kppName || '',
-          taxStatus: rec.taxStatus || 'PKP',
-          contactPerson: rec.contactPerson || '',
-          notes: rec.notes || '',
-          createdAt: rec.createdAt || timestamp,
-          updatedAt: timestamp
-        };
-        await setDoc(doc(db, "npwp_records", rec.id), cleanRec, { merge: true });
-      }
-    }
-
-    // Also mirror to companies/nmsa so company settings always has full snapshot
-    await setDoc(doc(db, "companies", "nmsa"), {
-      npwpRecords: records,
-      updatedAt: timestamp
-    }, { merge: true });
-
-    console.log(`[Firebase] Successfully synchronized ${records.length} NPWP records to Firestore!`);
-    return true;
-  } catch (err: any) {
-    console.warn("[Firebase] Notice during NPWP Firestore sync:", err.message);
-    return false;
-  }
-}
-
-// 4. Restore NPWP records from Firestore
-export async function restoreNpwpFromFirestore(currentState: any): Promise<any> {
-  const db = initFirebaseFirestore();
-  if (!db) return currentState;
-
-  await ensureServerAuth();
-
-  try {
-    console.log("[Firebase] Checking Firestore for saved NPWP records...");
-    let cloudRecords: any[] = [];
-
-    // 1. First try collection npwp_records
-    try {
-      const snap = await getDocs(collection(db, "npwp_records"));
-      if (!snap.empty) {
-        snap.forEach(d => {
-          const data = d.data();
-          if (data && data.companyName) {
-            cloudRecords.push({
-              id: d.id,
-              companyName: data.companyName,
-              npwpNumber: data.npwpNumber || '',
-              address: data.address || '',
-              kppName: data.kppName || '',
-              taxStatus: data.taxStatus || 'PKP',
-              contactPerson: data.contactPerson || '',
-              notes: data.notes || '',
-              createdAt: data.createdAt || ''
-            });
-          }
-        });
-      }
-    } catch (e: any) {
-      console.warn("[Firebase] Could not read npwp_records collection:", e.message);
-    }
-
-    // 2. Fallback: check companies/nmsa
-    if (cloudRecords.length === 0) {
-      try {
-        const compSnap = await getDoc(doc(db, "companies", "nmsa"));
-        if (compSnap.exists()) {
-          const compData = compSnap.data();
-          if (compData && Array.isArray(compData.npwpRecords) && compData.npwpRecords.length > 0) {
-            cloudRecords = compData.npwpRecords;
-          }
-        }
-      } catch (e: any) {
-        console.warn("[Firebase] Could not read companies/nmsa:", e.message);
-      }
-    }
-
-    if (cloudRecords.length > 0) {
-      console.log(`[Firebase] Restoring ${cloudRecords.length} NPWP records from Firestore.`);
-      const map = new Map<string, any>();
-      cloudRecords.forEach(r => { if (r && r.id) map.set(r.id, r); });
-      (currentState.npwpRecords || []).forEach((r: any) => {
-        if (r && r.id) {
-          map.set(r.id, { ...(map.get(r.id) || {}), ...r });
-        }
-      });
-      return {
-        ...currentState,
-        npwpRecords: Array.from(map.values())
-      };
-    }
-
-    return currentState;
-  } catch (err: any) {
-    console.warn("[Firebase] Notice restoring NPWP from Firestore:", err.message);
-    return currentState;
-  }
-}
-
