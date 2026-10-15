@@ -266,99 +266,139 @@ export const loadAttendanceFromFirestore = async (): Promise<{
   attendanceRecords: any[];
   workers: any[];
   weeklyReports: any[];
+  latestActiveDate?: string | null;
 } | null> => {
   try {
     const masterDoc = await getDoc(doc(db, "attendance", "current_records"));
-    let recs: any[] = [];
     let wrks: any[] = [];
+    const workerMap = new Map<string, any>();
+    const repMap = new Map<string, any>();
+
+    // 1. Load from master document if present
     if (masterDoc.exists()) {
       const data = masterDoc.data();
-      recs = data.attendanceRecords || [];
       wrks = data.workers || [];
-    }
 
-    // Fallback: check historical absen_records collection if master document is empty
-    if (recs.length === 0) {
-      try {
-        const snap = await getDocs(collection(db, "absen_records"));
-        if (!snap.empty) {
-          const workerMap = new Map<string, any>();
-          snap.forEach((d) => {
-            const data = d.data();
-            if (data?.attendanceRecords && Array.isArray(data.attendanceRecords)) {
-              if (data.attendanceRecords.length > recs.length) {
-                recs = data.attendanceRecords;
-                if (data.workers?.length) wrks = data.workers;
-              }
-            } else if (data?.workerId && data?.date) {
-              if (!workerMap.has(data.workerId)) {
-                workerMap.set(data.workerId, {
-                  workerId: data.workerId,
-                  attendance: {},
-                  customStatus: {},
-                  reasons: {},
-                  signatures: {}
+      // A. Master attendance records snapshot
+      if (Array.isArray(data.attendanceRecords)) {
+        data.attendanceRecords.forEach((r: any) => {
+          if (!r || !r.workerId) return;
+          const cleanAtt: Record<string, boolean> = {};
+          if (r.attendance) {
+            Object.entries(r.attendance).forEach(([d, val]) => {
+              if (val === true) cleanAtt[d] = true;
+            });
+          }
+          workerMap.set(r.workerId, {
+            workerId: r.workerId,
+            dailyAllowance: r.dailyAllowance || 25000,
+            attendance: cleanAtt,
+            customStatus: { ...(r.customStatus || {}) },
+            reasons: { ...(r.reasons || {}) },
+            signatures: { ...(r.signatures || {}) }
+          });
+        });
+      }
+
+      // B. Merge all attendance records contained inside all weeklyReports!
+      if (Array.isArray(data.weeklyReports)) {
+        data.weeklyReports.forEach((rep: any) => {
+          if (!rep) return;
+          const repKey = rep.id || `${rep.weekStartDate}_${rep.weekEndDate}`;
+          repMap.set(repKey, rep);
+
+          if (Array.isArray(rep.records)) {
+            rep.records.forEach((rec: any) => {
+              if (!rec || !rec.workerId) return;
+              const existing = workerMap.get(rec.workerId) || {
+                workerId: rec.workerId,
+                dailyAllowance: rec.dailyAllowance || 25000,
+                attendance: {},
+                customStatus: {},
+                reasons: {},
+                signatures: {}
+              };
+
+              if (rec.attendance) {
+                Object.entries(rec.attendance).forEach(([d, val]) => {
+                  if (val === true) existing.attendance[d] = true;
                 });
               }
-              const rec = workerMap.get(data.workerId);
-              if (data.status === "Hadir" || data.status === true) {
-                rec.attendance[data.date] = true;
-              } else if (data.status && data.status !== "Absen") {
-                rec.attendance[data.date] = false;
-                rec.customStatus[data.date] = data.status;
-                if (data.reason) rec.reasons[data.date] = data.reason;
+              if (rec.customStatus) {
+                Object.entries(rec.customStatus).forEach(([d, val]) => {
+                  if (val) existing.customStatus[d] = val;
+                });
               }
-              if (data.signature) {
-                rec.signatures[data.date] = data.signature;
+              if (rec.reasons) {
+                Object.entries(rec.reasons).forEach(([d, val]) => {
+                  if (val) existing.reasons[d] = val;
+                });
               }
+              workerMap.set(rec.workerId, existing);
+            });
+          }
+        });
+      }
+    }
+
+    // 2. Also check absen_records collection for individual clock-ins / live check-ins
+    try {
+      const snap = await getDocs(collection(db, "absen_records"));
+      if (!snap.empty) {
+        snap.forEach((d) => {
+          const ab = d.data();
+          if (!ab || !ab.workerId || !ab.date) return;
+          const existing = workerMap.get(ab.workerId) || {
+            workerId: ab.workerId,
+            dailyAllowance: 25000,
+            attendance: {},
+            customStatus: {},
+            reasons: {},
+            signatures: {}
+          };
+          if (ab.status === "Hadir" || ab.status === true) {
+            existing.attendance[ab.date] = true;
+          } else if (ab.status && ab.status !== "Absen") {
+            existing.customStatus[ab.date] = ab.status;
+            if (ab.reason) existing.reasons[ab.date] = ab.reason;
+          }
+          if (ab.signature) {
+            existing.signatures[ab.date] = ab.signature;
+          }
+          workerMap.set(ab.workerId, existing);
+        });
+      }
+    } catch (fbErr) {
+      console.warn("Fallback absen_records notice:", fbErr);
+    }
+
+    // 3. Find latestActiveDate across all consolidated attendance records
+    let latestActiveDate: string | null = null;
+    workerMap.forEach((rec) => {
+      if (rec.attendance) {
+        Object.entries(rec.attendance).forEach(([d, v]) => {
+          if (v === true) {
+            if (!latestActiveDate || d > latestActiveDate) {
+              latestActiveDate = d;
             }
-          });
-          if (recs.length === 0 && workerMap.size > 0) {
-            recs = Array.from(workerMap.values());
-          }
-        }
-      } catch (fbErr) {
-        console.warn("Fallback absen_records notice:", fbErr);
-      }
-    }
-
-    // Load weekly attendance reports from master document
-    const repMap = new Map<string, any>();
-    if (masterDoc.exists()) {
-      const d = masterDoc.data();
-      if (d && Array.isArray(d.weeklyReports)) {
-        d.weeklyReports.forEach((rd: any) => {
-          if (rd) {
-            const key = rd.id || `${rd.weekStartDate}_${rd.weekEndDate}`;
-            repMap.set(key, rd);
           }
         });
       }
-    }
-
-
-    // Clean loaded records to ensure only truthy attendance dates
-    const sanitizedRecs = (recs || []).map((r) => {
-      const cleanAtt: Record<string, boolean> = {};
-      if (r && r.attendance) {
-        Object.entries(r.attendance).forEach(([d, val]) => {
-          if (val === true) cleanAtt[d] = true;
-        });
-      }
-      return {
-        ...r,
-        attendance: cleanAtt
-      };
     });
 
+    const consolidatedRecords = Array.from(workerMap.values());
+    console.log(`[Firebase] Consolidated ${consolidatedRecords.length} workers with total attendance history. Latest active date: ${latestActiveDate}`);
+
     return {
-      attendanceRecords: sanitizedRecs,
+      attendanceRecords: consolidatedRecords,
       workers: wrks,
-      weeklyReports: Array.from(repMap.values())
+      weeklyReports: Array.from(repMap.values()),
+      latestActiveDate
     };
   } catch (err: any) {
     console.warn("Notice: Failed to load attendance from Firestore:", err?.message);
     return null;
   }
 };
+
 

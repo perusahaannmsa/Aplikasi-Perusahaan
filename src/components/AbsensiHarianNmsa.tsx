@@ -1333,6 +1333,21 @@ export function AbsensiHarianNmsa({
     try { sessionStorage.setItem("nmsa_absen_active_tab", tab); } catch (e) {}
   };
 
+  // State notifikasi banner pemulihan data Firebase (tanpa window.confirm/alert yang diblokir iframe)
+  const [restoreBanner, setRestoreBanner] = useState<{
+    type: "loading" | "success" | "error";
+    message: string;
+    latestDate?: string;
+  } | null>(null);
+
+  // Auto-dismiss restore banner after 7 seconds if successful
+  useEffect(() => {
+    if (restoreBanner?.type === "success") {
+      const t = setTimeout(() => setRestoreBanner(null), 7000);
+      return () => clearTimeout(t);
+    }
+  }, [restoreBanner]);
+
   // Friday Digital Signature & Server Verification States (Dinonaktifkan sesuai permintaan pengguna)
   const isFridayToday = false;
   const [fridaySignatureDraft, setFridaySignatureDraft] = useState<string | null>(null);
@@ -2437,6 +2452,7 @@ export function AbsensiHarianNmsa({
       try {
         const fbData = await loadAttendanceFromFirestore();
         if (fbData && fbData.attendanceRecords && fbData.attendanceRecords.length > 0) {
+          let finalMergedRecords: AttendanceRecord[] = [];
           setAttendanceRecords((prevLocal) => {
             const map = new Map<string, AttendanceRecord>();
             (prevLocal || []).forEach(r => {
@@ -2459,6 +2475,7 @@ export function AbsensiHarianNmsa({
               }
             });
             const mergedList = Array.from(map.values());
+            finalMergedRecords = mergedList;
             try {
               localStorage.setItem("absensi_uang_makan_records", JSON.stringify(mergedList));
             } catch (_) {}
@@ -2483,6 +2500,21 @@ export function AbsensiHarianNmsa({
               } catch (_) {}
               return deduped;
             });
+          }
+
+          // Otomatis arahkan tampilan tanggal ke minggu yang memiliki data absensi aktif jika minggu saat ini kosong
+          if (fbData.latestActiveDate) {
+            const curWeekHasAny = finalMergedRecords.some(r => {
+              if (!r.attendance) return false;
+              return weekDates.some(d => r.attendance[d] === true);
+            });
+            if (!curWeekHasAny) {
+              const activeD = new Date(fbData.latestActiveDate + "T12:00:00");
+              if (!isNaN(activeD.getTime())) {
+                setSelectedDate(activeD);
+                console.log(`⚡ [Firebase Auto-Sync] Mengarahkan tampilan ke minggu dengan data absensi aktif (${fbData.latestActiveDate})`);
+              }
+            }
           }
         }
       } catch (fbErr) {
@@ -4586,10 +4618,13 @@ export function AbsensiHarianNmsa({
   };
 
   const handleRestoreFromFirestore = async () => {
-    if (!window.confirm("Apakah Anda ingin memulihkan seluruh data absensi dan laporan langsung dari Cloud Firebase Firestore?")) return;
+    setRestoreBanner({
+      type: "loading",
+      message: "Sedang membaca & memulihkan seluruh riwayat absensi dari Cloud Firebase Firestore..."
+    });
     setServerSyncing(true);
     try {
-      // 1. Try directly via Firestore SDK
+      // 1. Ambil data gabungan langsung via Firestore SDK
       const fbData = await loadAttendanceFromFirestore();
       if (fbData && fbData.attendanceRecords && fbData.attendanceRecords.length > 0) {
         setAttendanceRecords(fbData.attendanceRecords);
@@ -4601,9 +4636,33 @@ export function AbsensiHarianNmsa({
         }
         try {
           localStorage.setItem("absensi_uang_makan_records", JSON.stringify(fbData.attendanceRecords));
+          localStorage.setItem("weekly_reports_nmsa", JSON.stringify(fbData.weeklyReports || []));
+          localStorage.setItem("weekly_reports", JSON.stringify(fbData.weeklyReports || []));
+          localStorage.setItem("laporan_uang_makan_log", JSON.stringify(fbData.weeklyReports || []));
         } catch (_) {}
-        await syncStateToServer(fbData.workers || workers, fbData.attendanceRecords, fbData.weeklyReports || weeklyReports);
-        alert(`SUKSES: Berhasil memulihkan ${fbData.attendanceRecords.length} data absensi dan ${(fbData.weeklyReports || []).length} laporan mingguan dari Firebase Firestore!`);
+
+        // Otomatis navigasikan kalender ke minggu dengan data aktif jika minggu saat ini kosong
+        if (fbData.latestActiveDate) {
+          const curWeekHasAny = fbData.attendanceRecords.some(r => {
+            if (!r.attendance) return false;
+            return weekDates.some(d => r.attendance[d] === true);
+          });
+          if (!curWeekHasAny) {
+            const activeD = new Date(fbData.latestActiveDate + "T12:00:00");
+            if (!isNaN(activeD.getTime())) {
+              setSelectedDate(activeD);
+            }
+          }
+        }
+
+        // Sinkronisasi pemulihan ke server background
+        syncStateToServer(fbData.workers || workers, fbData.attendanceRecords, fbData.weeklyReports || weeklyReports).catch(() => {});
+
+        setRestoreBanner({
+          type: "success",
+          message: `Berhasil memulihkan ${fbData.attendanceRecords.length} catatan absensi & ${(fbData.weeklyReports || []).length} laporan mingguan dari Firebase Firestore!`,
+          latestDate: fbData.latestActiveDate || undefined
+        });
         return;
       }
 
@@ -4617,12 +4676,22 @@ export function AbsensiHarianNmsa({
         try {
           localStorage.setItem("absensi_uang_makan_records", JSON.stringify(resData.data.attendanceRecords));
         } catch (_) {}
-        alert(resData.message || "Berhasil memulihkan data dari Firebase Firestore!");
+        setRestoreBanner({
+          type: "success",
+          message: resData.message || "Berhasil memulihkan data dari Firebase Firestore!"
+        });
       } else {
-        alert("Tidak ditemukan berkas cadangan absensi di Firebase Firestore.");
+        setRestoreBanner({
+          type: "error",
+          message: "Tidak ditemukan riwayat absensi di Firebase Firestore."
+        });
       }
     } catch (err: any) {
-      alert("Gagal memulihkan dari Firebase: " + (err?.message || "Kesalahan koneksi"));
+      console.error("Gagal memulihkan dari Firebase:", err);
+      setRestoreBanner({
+        type: "error",
+        message: "Gagal memulihkan dari Firebase: " + (err?.message || "Kesalahan koneksi")
+      });
     } finally {
       setServerSyncing(false);
     }
@@ -7994,6 +8063,49 @@ export function AbsensiHarianNmsa({
                   type="button"
                   onClick={() => setCopyStatusMessage(null)}
                   className="p-1 hover:bg-black/5 rounded-lg transition cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {/* Banner Feedback Pemulihan Firebase */}
+            {restoreBanner && (
+              <div
+                className={`p-4 rounded-2xl flex items-center justify-between gap-3 text-xs font-bold transition duration-200 shadow-xs ${
+                  restoreBanner.type === 'loading'
+                    ? 'bg-blue-50 text-blue-900 border border-blue-200'
+                    : restoreBanner.type === 'success'
+                    ? 'bg-emerald-50 text-emerald-900 border border-emerald-200'
+                    : 'bg-red-50 text-red-900 border border-red-200'
+                }`}
+              >
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  {restoreBanner.type === 'loading' && (
+                    <RefreshCw className="w-4 h-4 text-blue-600 shrink-0 animate-spin" />
+                  )}
+                  {restoreBanner.type === 'success' && (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  )}
+                  {restoreBanner.type === 'error' && (
+                    <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                  )}
+                  <span className="leading-relaxed">{restoreBanner.message}</span>
+                  {restoreBanner.latestDate && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedDate(new Date(restoreBanner.latestDate! + "T12:00:00"))}
+                      className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center gap-1 shadow-xs"
+                    >
+                      <Calendar className="w-3 h-3" />
+                      <span>Lihat Data Aktif ({new Date(restoreBanner.latestDate + "T12:00:00").toLocaleDateString('id-ID', { month: 'short', year: 'numeric' })})</span>
+                    </button>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRestoreBanner(null)}
+                  className="p-1 hover:bg-black/5 rounded-lg transition cursor-pointer shrink-0"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>

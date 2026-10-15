@@ -166,42 +166,127 @@ export async function restoreAttendanceFromFirestore(currentState: any): Promise
 
     if (masterDocSnap.exists()) {
       const data = masterDocSnap.data();
-      if (data && Array.isArray(data.attendanceRecords) && data.attendanceRecords.length > 0) {
-        console.log(`[Firebase] Restoring ${data.attendanceRecords.length} attendance records from Firestore.`);
-        // Merge attendance records: keep any newer local records, but restore all from Firestore
-        const mergedMap = new Map();
-        // First put cloud records
+      const mergedMap = new Map();
+
+      // 1. First populate from master attendanceRecords
+      if (data && Array.isArray(data.attendanceRecords)) {
         data.attendanceRecords.forEach((r: any) => {
-          if (r && r.workerId) mergedMap.set(r.workerId, r);
-        });
-        // Then overlay any existing local records
-        (currentState.attendanceRecords || []).forEach((r: any) => {
           if (r && r.workerId) {
-            const cloud = mergedMap.get(r.workerId);
-            if (!cloud) {
-              mergedMap.set(r.workerId, r);
-            } else {
-              // merge attendance dates
-              mergedMap.set(r.workerId, {
-                ...cloud,
-                ...r,
-                attendance: { ...(cloud.attendance || {}), ...(r.attendance || {}) },
-                customStatus: { ...(cloud.customStatus || {}), ...(r.customStatus || {}) },
-                reasons: { ...(cloud.reasons || {}), ...(r.reasons || {}) }
+            const cleanAtt: Record<string, boolean> = {};
+            if (r.attendance) {
+              Object.entries(r.attendance).forEach(([d, v]) => {
+                if (v === true) cleanAtt[d] = true;
               });
             }
+            mergedMap.set(r.workerId, {
+              ...r,
+              attendance: cleanAtt,
+              customStatus: { ...(r.customStatus || {}) },
+              reasons: { ...(r.reasons || {}) }
+            });
           }
         });
-        updated.attendanceRecords = Array.from(mergedMap.values());
+      }
+
+      // 2. Consolidate attendance dates from ALL historical weekly reports!
+      if (data && Array.isArray(data.weeklyReports)) {
+        data.weeklyReports.forEach((rep: any) => {
+          if (rep && Array.isArray(rep.records)) {
+            rep.records.forEach((rec: any) => {
+              if (!rec || !rec.workerId) return;
+              const existing = mergedMap.get(rec.workerId) || {
+                workerId: rec.workerId,
+                dailyAllowance: rec.dailyAllowance || 25000,
+                attendance: {},
+                customStatus: {},
+                reasons: {}
+              };
+              if (rec.attendance) {
+                Object.entries(rec.attendance).forEach(([d, v]) => {
+                  if (v === true) existing.attendance[d] = true;
+                });
+              }
+              if (rec.customStatus) {
+                Object.entries(rec.customStatus).forEach(([d, v]) => {
+                  if (v) existing.customStatus[d] = v;
+                });
+              }
+              if (rec.reasons) {
+                Object.entries(rec.reasons).forEach(([d, v]) => {
+                  if (v) existing.reasons[d] = v;
+                });
+              }
+              mergedMap.set(rec.workerId, existing);
+            });
+          }
+        });
+      }
+
+      // 3. Overlay any existing local state records
+      (currentState.attendanceRecords || []).forEach((r: any) => {
+        if (r && r.workerId) {
+          const cloud = mergedMap.get(r.workerId);
+          if (!cloud) {
+            mergedMap.set(r.workerId, r);
+          } else {
+            mergedMap.set(r.workerId, {
+              ...cloud,
+              ...r,
+              attendance: { ...(cloud.attendance || {}), ...(r.attendance || {}) },
+              customStatus: { ...(cloud.customStatus || {}), ...(r.customStatus || {}) },
+              reasons: { ...(cloud.reasons || {}), ...(r.reasons || {}) }
+            });
+          }
+        }
+      });
+
+      // 4. Also check absen_records collection for live check-in timestamps
+      try {
+        const snap = await getDocs(collection(db, "absen_records"));
+        if (!snap.empty) {
+          snap.forEach((d) => {
+            const ab = d.data();
+            if (!ab || !ab.workerId || !ab.date) return;
+            const existing = mergedMap.get(ab.workerId) || {
+              workerId: ab.workerId,
+              dailyAllowance: 25000,
+              attendance: {},
+              customStatus: {},
+              reasons: {}
+            };
+            if (ab.status === "Hadir" || ab.status === true) {
+              existing.attendance[ab.date] = true;
+            } else if (ab.status && ab.status !== "Absen") {
+              existing.customStatus[ab.date] = ab.status;
+              if (ab.reason) existing.reasons[ab.date] = ab.reason;
+            }
+            mergedMap.set(ab.workerId, existing);
+          });
+        }
+      } catch (fbErr) {
+        console.warn("[Firebase] Notice reading absen_records fallback:", fbErr);
+      }
+
+      const consolidatedList = Array.from(mergedMap.values());
+      if (consolidatedList.length > 0) {
+        console.log(`[Firebase] Restored ${consolidatedList.length} consolidated attendance records with all dates from Firestore.`);
+        updated.attendanceRecords = consolidatedList;
         hasChanges = true;
       }
-    }
 
-    // Restore weekly reports directly from master document
-    if (masterDocSnap.exists()) {
-      const data = masterDocSnap.data();
+      // 5. Restore workers
+      if (data && Array.isArray(data.workers) && data.workers.length > 0) {
+        const curWorkers = currentState.workers || [];
+        const wMap = new Map();
+        data.workers.forEach((w: any) => { if (w && w.id) wMap.set(w.id, w); });
+        curWorkers.forEach((w: any) => { if (w && w.id) wMap.set(w.id, { ...(wMap.get(w.id) || {}), ...w }); });
+        updated.workers = Array.from(wMap.values());
+        hasChanges = true;
+      }
+
+      // 6. Restore weekly reports
       if (data && Array.isArray(data.weeklyReports) && data.weeklyReports.length > 0) {
-        console.log(`[Firebase] Restoring ${data.weeklyReports.length} weekly reports from attendance/current_records.`);
+        console.log(`[Firebase] Restoring ${data.weeklyReports.length} weekly reports from Firestore.`);
         const repMap = new Map();
         data.weeklyReports.forEach((r: any) => {
           if (r) {
@@ -219,7 +304,6 @@ export async function restoreAttendanceFromFirestore(currentState: any): Promise
         hasChanges = true;
       }
     }
-
 
     return hasChanges ? updated : currentState;
   } catch (err: any) {

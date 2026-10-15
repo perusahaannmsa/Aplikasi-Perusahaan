@@ -64,6 +64,7 @@ import {
   switchUserCompany,
   setActiveCompanyId
 } from './firebase';
+import { loadAttendanceFromFirestore } from './lib/firebaseAbsen';
 
 import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, ArrowLeftRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell, MessageSquare, Bot, Sparkles, BookOpen, Wrench, Building2, Plus } from 'lucide-react';
 
@@ -872,6 +873,20 @@ export default function App() {
           }
         })
         .catch(err => console.warn('Auto-read Submissions from Firestore failed:', err));
+    } else if (view === 'absen') {
+      loadAttendanceFromFirestore()
+        .then(res => {
+          if (res && res.attendanceRecords && res.attendanceRecords.length > 0) {
+            localStorage.setItem('absensi_uang_makan_records', JSON.stringify(res.attendanceRecords));
+            if (res.weeklyReports && res.weeklyReports.length > 0) {
+              localStorage.setItem('weekly_reports_nmsa', JSON.stringify(res.weeklyReports));
+              localStorage.setItem('weekly_reports', JSON.stringify(res.weeklyReports));
+              localStorage.setItem('laporan_uang_makan_log', JSON.stringify(res.weeklyReports));
+            }
+            console.log(`☁️ [Auto-Fetch] ${res.attendanceRecords.length} data absensi & ${(res.weeklyReports || []).length} laporan mingguan berhasil dibaca langsung dari Firebase Firestore.`);
+          }
+        })
+        .catch(err => console.warn('Auto-read Attendance from Firestore failed:', err));
     }
   }, [view]);
 

@@ -4985,9 +4985,17 @@ async function bootstrap() {
         const restoredBoth = await restoreNpwpFromFirestore(restoredAtt);
         
         let shouldWrite = false;
-        if (restoredBoth.attendanceRecords && restoredBoth.attendanceRecords.length > (cur.attendanceRecords || []).length) {
+        const countAttDates = (recs: any[]) => (recs || []).reduce((sum, r) => sum + Object.values(r?.attendance || {}).filter(v => v === true).length, 0);
+        const curAttCount = countAttDates(cur.attendanceRecords);
+        const restAttCount = countAttDates(restoredBoth.attendanceRecords);
+
+        if (
+          restAttCount > curAttCount || 
+          (restoredBoth.attendanceRecords && restoredBoth.attendanceRecords.length > (cur.attendanceRecords || []).length) ||
+          ((restoredBoth.weeklyReports || []).length > (cur.weeklyReports || []).length)
+        ) {
           shouldWrite = true;
-          console.log(`[Startup] Berhasil memulihkan ${restoredBoth.attendanceRecords.length} data absensi & ${(restoredBoth.weeklyReports || []).length} laporan mingguan dari Firebase Firestore!`);
+          console.log(`[Startup] Berhasil memulihkan ${restAttCount} catatan absensi & ${(restoredBoth.weeklyReports || []).length} laporan mingguan dari Firebase Firestore!`);
         }
         if (restoredBoth.npwpRecords && restoredBoth.npwpRecords.length > (cur.npwpRecords || []).length) {
           shouldWrite = true;
