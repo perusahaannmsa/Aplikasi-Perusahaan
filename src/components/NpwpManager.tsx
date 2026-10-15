@@ -1,6 +1,7 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { NpwpRecord, Submission } from '../types';
 import { isVendorOrCompanyMatch, normalizeEntityString } from '../utils';
+import { loadNpwpRecordsFromFirestore, saveNpwpRecordsToFirestore } from '../firebase';
 import { 
   Building2, 
   Search, 
@@ -20,7 +21,11 @@ import {
   Filter,
   Eye,
   ShieldCheck,
-  Building
+  Building,
+  Cloud,
+  RefreshCw,
+  Zap,
+  Check
 } from 'lucide-react';
 
 interface NpwpManagerProps {
@@ -40,6 +45,30 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTaxFilter, setSelectedTaxFilter] = useState<'ALL' | 'PKP' | 'Non-PKP'>('ALL');
+  
+  // Cloud Firebase Sync state
+  const [isSyncingFirebase, setIsSyncingFirebase] = useState(false);
+  const [syncStatusMessage, setSyncStatusMessage] = useState<string | null>(null);
+
+  // Auto-read Firebase database directly whenever this menu is opened
+  useEffect(() => {
+    let isMounted = true;
+    setIsSyncingFirebase(true);
+    loadNpwpRecordsFromFirestore()
+      .then((cloudRecords) => {
+        if (isMounted && cloudRecords && cloudRecords.length > 0) {
+          onSaveNpwpRecords(cloudRecords);
+        }
+      })
+      .catch((err) => console.warn('Auto-read NPWP from Firestore notice:', err))
+      .finally(() => {
+        if (isMounted) setIsSyncingFirebase(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
   
   // Modal states
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
@@ -198,6 +227,81 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
     setIsFormModalOpen(true);
   };
 
+  // Manual trigger to pull directly from Firebase Firestore
+  const handleManualFirebaseSync = async () => {
+    setIsSyncingFirebase(true);
+    setSyncStatusMessage('Sedang membaca database langsung dari Cloud Firebase Firestore...');
+    try {
+      const cloudData = await loadNpwpRecordsFromFirestore();
+      if (cloudData && cloudData.length > 0) {
+        onSaveNpwpRecords(cloudData);
+        setSyncStatusMessage(`✓ Berhasil membaca ${cloudData.length} data NPWP dari Cloud Firebase!`);
+      } else {
+        setSyncStatusMessage('ℹ Database Firebase saat ini belum memiliki rekaman NPWP.');
+      }
+    } catch (err: any) {
+      setSyncStatusMessage('⚠️ Gagal membaca Firebase: ' + (err?.message || 'Koneksi error'));
+    } finally {
+      setIsSyncingFirebase(false);
+      setTimeout(() => setSyncStatusMessage(null), 5000);
+    }
+  };
+
+  // 1-Click: Automatically register all detected vendors from vouchers and store them permanently in Firebase Firestore
+  const handleAutoRegisterAllVendors = async () => {
+    if (unrecordedVendors.length === 0) return;
+    if (!window.confirm(`Daftarkan ${unrecordedVendors.length} vendor dari histori voucher ini ke Master List NPWP dan simpan langsung ke Firebase Firestore?`)) return;
+
+    setIsSyncingFirebase(true);
+    setSyncStatusMessage(`Sedang mendaftarkan ${unrecordedVendors.length} vendor & menyinkronkan ke Firebase Firestore...`);
+
+    try {
+      const existingMap = new Map<string, NpwpRecord>();
+      npwpRecords.forEach(r => existingMap.set(r.companyName.toLowerCase().trim(), r));
+
+      const newGenerated: NpwpRecord[] = [];
+      const nowIso = new Date().toISOString();
+
+      unrecordedVendors.forEach((v, idx) => {
+        const normName = v.name.trim();
+        if (existingMap.has(normName.toLowerCase())) return;
+
+        // Check if vendor has any invoice items with PPN or Faktur
+        const linked = getLinkedSubmissionsForCompany(normName);
+        const hasPpn = linked.some(s => 
+          (s.items && s.items.some(i => (i.item || '').toLowerCase().includes('ppn') || (i.item || '').toLowerCase().includes('faktur') || (i.item || '').toLowerCase().includes('pph -2%') || (i.item || '').toLowerCase().includes('pph 23')))
+        );
+
+        const newRec: NpwpRecord = {
+          id: `npwp_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
+          companyName: normName,
+          npwpNumber: '',
+          address: '',
+          kppName: '',
+          taxStatus: hasPpn ? 'PKP' : 'Non-PKP',
+          contactPerson: '',
+          notes: `Auto-terdaftar dari histori ${v.count} voucher (Rp ${v.totalAmount.toLocaleString('id-ID')})`,
+          createdAt: nowIso
+        };
+
+        newGenerated.push(newRec);
+        existingMap.set(normName.toLowerCase(), newRec);
+      });
+
+      const mergedList = [...newGenerated, ...npwpRecords];
+      onSaveNpwpRecords(mergedList);
+      await saveNpwpRecordsToFirestore(mergedList);
+
+      setSyncStatusMessage(`✓ Sukses! ${newGenerated.length} vendor berhasil didaftarkan dan tersimpan permanen di Firebase Firestore!`);
+    } catch (err: any) {
+      setSyncStatusMessage('⚠️ Gagal menyimpan ke Firebase: ' + (err?.message || 'Error'));
+    } finally {
+      setIsSyncingFirebase(false);
+      setTimeout(() => setSyncStatusMessage(null), 6000);
+    }
+  };
+
+
   // Get linked invoices for a given company name using smart fuzzy & token matching
   const getLinkedSubmissionsForCompany = (companyName: string) => {
     return submissions.filter(sub => {
@@ -310,6 +414,16 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
 
         <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto shrink-0">
           <button
+            onClick={handleManualFirebaseSync}
+            disabled={isSyncingFirebase}
+            className="flex-1 sm:flex-initial px-3.5 py-2 rounded-xl bg-indigo-900/80 hover:bg-indigo-800 text-indigo-100 border border-indigo-700/60 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-3xs whitespace-nowrap disabled:opacity-50"
+            title="Baca database penyimpanan langsung dari Cloud Firebase Firestore"
+          >
+            <Cloud size={14} className={isSyncingFirebase ? 'animate-pulse text-cyan-300' : 'text-indigo-300'} />
+            <RefreshCw size={12} className={isSyncingFirebase ? 'animate-spin' : ''} />
+            <span>{isSyncingFirebase ? 'Menyinkronkan...' : 'Sinkronkan Firebase'}</span>
+          </button>
+          <button
             onClick={handleExportCsv}
             className="flex-1 sm:flex-initial px-3.5 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 border border-stone-700 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-3xs whitespace-nowrap"
           >
@@ -325,6 +439,20 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Cloud Sync Status Banner */}
+      {syncStatusMessage && (
+        <div className="bg-stone-900 text-emerald-300 border border-emerald-500/40 px-4 py-2.5 rounded-xl text-xs font-medium flex items-center justify-between shadow-md">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
+            <span>{syncStatusMessage}</span>
+          </div>
+          <button onClick={() => setSyncStatusMessage(null)} className="text-stone-400 hover:text-white p-1 cursor-pointer">
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
 
       {/* Quick Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -383,18 +511,26 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
 
       {/* Unrecorded Vendors Suggestions (If any) */}
       {unrecordedVendors.length > 0 && (
-        <div className="bg-amber-50/80 border border-amber-200 rounded-2xl p-4 space-y-2">
-          <div className="flex items-center justify-between">
+        <div className="bg-amber-50/80 border border-amber-200 rounded-2xl p-4 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Sparkles className="text-amber-600 shrink-0" size={16} />
               <span className="text-xs font-bold text-amber-900">
                 Sistem Menemukan {unrecordedVendors.length} Vendor dari Histori Voucher yang Belum Dicatat NPWP-nya:
               </span>
             </div>
-            <span className="text-[10px] text-amber-700 font-mono">Klik untuk tambah cepat</span>
+            <button
+              onClick={handleAutoRegisterAllVendors}
+              disabled={isSyncingFirebase}
+              className="px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm cursor-pointer disabled:opacity-50 whitespace-nowrap self-start sm:self-auto"
+              title="Daftarkan seluruh vendor yang terdeteksi dari voucher & simpan otomatis ke database Cloud Firebase Firestore"
+            >
+              <Zap size={13} className="text-amber-300" />
+              <span>Daftarkan Semua ({unrecordedVendors.length}) ke Firebase</span>
+            </button>
           </div>
           <div className="flex flex-wrap gap-2 pt-1">
-            {unrecordedVendors.slice(0, 6).map((v) => (
+            {unrecordedVendors.slice(0, 8).map((v) => (
               <button
                 key={v.name}
                 onClick={() => handleQuickAddVendor(v.name)}
@@ -406,9 +542,15 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
                 <Plus size={12} className="text-amber-600 ml-0.5" />
               </button>
             ))}
+            {unrecordedVendors.length > 8 && (
+              <span className="text-[11px] text-amber-800 self-center font-mono font-medium">
+                +{unrecordedVendors.length - 8} vendor lainnya
+              </span>
+            )}
           </div>
         </div>
       )}
+
 
       {/* Search & Filter Controls */}
       <div className="bg-white p-4 rounded-2xl border border-stone-200 shadow-3xs flex flex-col sm:flex-row items-center justify-between gap-3">
@@ -456,12 +598,42 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
             <tbody className="divide-y divide-stone-150 text-xs text-stone-800">
               {filteredNpwpRecords.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-12 text-stone-400 space-y-2">
-                    <Building2 size={36} className="mx-auto text-stone-300" />
-                    <p className="font-bold">Belum ada data NPWP yang ditemukan.</p>
-                    <p className="text-[11px] font-mono">Klik "Tambah NPWP Baru" untuk mencatat data pajak perusahaan/vendor baru.</p>
+                  <td colSpan={7} className="text-center py-12 text-stone-400 space-y-3">
+                    <Building2 size={38} className="mx-auto text-stone-300" />
+                    <p className="font-bold text-stone-700 text-sm">Belum ada data NPWP yang ditemukan.</p>
+                    <p className="text-[11px] font-mono text-stone-500 max-w-md mx-auto">
+                      Seluruh data NPWP yang tersimpan di Cloud Firebase akan otomatis ditampilkan di sini.
+                    </p>
+                    <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+                      <button
+                        onClick={handleManualFirebaseSync}
+                        disabled={isSyncingFirebase}
+                        className="px-3 py-1.5 bg-stone-100 hover:bg-stone-200 border border-stone-300 rounded-xl text-xs font-bold text-stone-850 flex items-center gap-1.5 cursor-pointer shadow-3xs disabled:opacity-50"
+                      >
+                        <RefreshCw size={13} className={isSyncingFirebase ? 'animate-spin text-indigo-600' : 'text-stone-600'} />
+                        <span>Baca Ulang dari Firebase</span>
+                      </button>
+                      {unrecordedVendors.length > 0 && (
+                        <button
+                          onClick={handleAutoRegisterAllVendors}
+                          disabled={isSyncingFirebase}
+                          className="px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-50"
+                        >
+                          <Zap size={13} className="text-amber-300" />
+                          <span>Pulihkan & Daftarkan {unrecordedVendors.length} Vendor ke Firebase</span>
+                        </button>
+                      )}
+                      <button
+                        onClick={handleOpenAddModal}
+                        className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm"
+                      >
+                        <Plus size={14} />
+                        <span>Tambah NPWP Baru</span>
+                      </button>
+                    </div>
                   </td>
                 </tr>
+
               ) : (
                 filteredNpwpRecords.map((rec) => {
                   const linkedSubs = getLinkedSubmissionsForCompany(rec.companyName);

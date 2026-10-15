@@ -2384,7 +2384,7 @@ export const saveActivityLogToFirestore = async (
   }
 };
 
-// Fetch NPWP Records from Firestore (or fallback to local)
+// Fetch NPWP Records from Firestore (or fallback to local / server)
 export const loadNpwpRecordsFromFirestore = async (): Promise<NpwpRecord[]> => {
   if (!isFirebaseConfigured() || !firestoreDb) {
     try {
@@ -2417,10 +2417,48 @@ export const loadNpwpRecordsFromFirestore = async (): Promise<NpwpRecord[]> => {
       }
     });
     
+    // If collection was empty, check company doc snapshot
+    if (list.length === 0) {
+      try {
+        const compSnap = await getDoc(doc(firestoreDb, 'companies', 'nmsa'));
+        if (compSnap.exists()) {
+          const compData = compSnap.data();
+          if (compData && Array.isArray(compData.npwpRecords) && compData.npwpRecords.length > 0) {
+            compData.npwpRecords.forEach((r: any) => {
+              if (r && r.companyName) list.push(r);
+            });
+          }
+        }
+      } catch (compErr) {
+        console.warn('Fallback reading company doc NPWP:', compErr);
+      }
+    }
+
     if (list.length > 0) {
       localStorage.setItem('npwp_records_v1', JSON.stringify(list));
+      return list;
     }
-    return list;
+
+    // Secondary fallback: check local storage or server restore
+    try {
+      const stored = localStorage.getItem('npwp_records_v1');
+      const parsed = stored ? JSON.parse(stored) : [];
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    } catch {}
+
+    // Tertiary fallback: check server endpoint
+    try {
+      const srvRes = await fetch('/api/npwp/firebase-restore');
+      if (srvRes.ok) {
+        const srvData = await srvRes.json();
+        if (srvData && Array.isArray(srvData.npwpRecords) && srvData.npwpRecords.length > 0) {
+          localStorage.setItem('npwp_records_v1', JSON.stringify(srvData.npwpRecords));
+          return srvData.npwpRecords;
+        }
+      }
+    } catch {}
+
+    return [];
   } catch (error) {
     console.warn('Gagal memuat data NPWP dari Firestore:', error);
     try {
@@ -2432,7 +2470,46 @@ export const loadNpwpRecordsFromFirestore = async (): Promise<NpwpRecord[]> => {
   }
 };
 
-// Save all or single NPWP Record to Firestore
+// Real-time Cloud Firestore subscription for NPWP records
+export const subscribeToNpwpRecordsFromFirestore = (
+  onUpdate: (records: NpwpRecord[]) => void
+): (() => void) => {
+  if (!isFirebaseConfigured() || !firestoreDb) return () => {};
+  try {
+    const unsub = onSnapshot(collection(firestoreDb, 'npwp_records'), (snapshot) => {
+      if (snapshot.empty) return;
+      const list: NpwpRecord[] = [];
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        if (data && data.companyName) {
+          list.push({
+            id: docSnap.id || data.id,
+            companyName: data.companyName,
+            npwpNumber: data.npwpNumber || '',
+            address: data.address || '',
+            kppName: data.kppName || '',
+            taxStatus: data.taxStatus || 'PKP',
+            contactPerson: data.contactPerson || '',
+            notes: data.notes || '',
+            createdAt: data.createdAt || new Date().toISOString()
+          });
+        }
+      });
+      if (list.length > 0) {
+        localStorage.setItem('npwp_records_v1', JSON.stringify(list));
+        onUpdate(list);
+      }
+    }, (error) => {
+      console.warn('Real-time listener notice for npwp_records:', error);
+    });
+    return unsub;
+  } catch (err) {
+    console.warn('Failed to subscribe to npwp_records:', err);
+    return () => {};
+  }
+};
+
+// Save all or single NPWP Record to Firestore & sync everywhere
 export const saveNpwpRecordsToFirestore = async (records: NpwpRecord[]): Promise<void> => {
   try {
     localStorage.setItem('npwp_records_v1', JSON.stringify(records));
@@ -2440,20 +2517,38 @@ export const saveNpwpRecordsToFirestore = async (records: NpwpRecord[]): Promise
     console.warn('Gagal menyimpan NPWP ke localStorage:', e);
   }
 
+  // 1. Persist to server /api/unified-storage & /api/npwp/firebase-sync
+  try {
+    fetch('/api/unified-storage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ npwpRecords: records })
+    }).catch(() => {});
+  } catch {}
+
   if (!isFirebaseConfigured() || !firestoreDb) return;
 
   const path = 'npwp_records';
   try {
+    // 2. Save each record into npwp_records collection
     for (const rec of records) {
       if (rec.id) {
-        await setDoc(doc(firestoreDb, path, rec.id), cleanUndefined(rec));
+        await setDoc(doc(firestoreDb, path, rec.id), cleanUndefined(rec), { merge: true });
       }
     }
+
+    // 3. Mirror to companies/nmsa for company settings consistency
+    await setDoc(doc(firestoreDb, 'companies', 'nmsa'), {
+      npwpRecords: cleanUndefined(records),
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+
     console.log(`☁️ ${records.length} NPWP records synced to Firestore.`);
   } catch (error) {
     console.warn('Gagal menyimpan NPWP ke Firestore:', error);
   }
 };
+
 
 // Save Accurate Petty Cash Mappings to Firestore & localStorage
 export const saveAccurateMappingToFirestore = async (mappingData: any): Promise<void> => {
@@ -2571,10 +2666,6 @@ export const saveAbsenDataToFirestore = async (absenData: any): Promise<void> =>
   }
 
   if (!isFirebaseConfigured() || !firestoreDb) return;
-  if (!currentUser) {
-    console.log(`ℹ️ Absen record ${docId} disimpan lokal (sesi login Firebase belum aktif).`);
-    return;
-  }
 
   try {
     await setDoc(doc(firestoreDb, 'absen_records', docId), cleanUndefined(payload));
@@ -2618,6 +2709,32 @@ export const loadAbsenDataFromFirestore = async (): Promise<any[]> => {
 
 // Delete single NPWP record from Firestore
 export const deleteNpwpRecordFromFirestore = async (id: string): Promise<void> => {
+  try {
+    const stored = localStorage.getItem('npwp_records_v1');
+    if (stored) {
+      const list = JSON.parse(stored);
+      const remaining = list.filter((r: any) => r.id !== id);
+      localStorage.setItem('npwp_records_v1', JSON.stringify(remaining));
+      
+      // Sync to server
+      fetch('/api/unified-storage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ npwpRecords: remaining })
+      }).catch(() => {});
+
+      // Mirror to companies/nmsa
+      if (firestoreDb) {
+        setDoc(doc(firestoreDb, 'companies', 'nmsa'), {
+          npwpRecords: cleanUndefined(remaining),
+          updatedAt: new Date().toISOString()
+        }, { merge: true }).catch(() => {});
+      }
+    }
+  } catch (e) {
+    console.warn('Gagal menghapus NPWP dari localStorage:', e);
+  }
+
   if (!isFirebaseConfigured() || !firestoreDb) return;
   try {
     await deleteDoc(doc(firestoreDb, 'npwp_records', id));
@@ -2625,6 +2742,7 @@ export const deleteNpwpRecordFromFirestore = async (id: string): Promise<void> =
     console.warn('Gagal menghapus NPWP dari Firestore:', error);
   }
 };
+
 
 // Load SPPD (Surat Perintah Perjalanan Dinas) records from Firestore
 export const loadSppdRecordsFromFirestore = async (): Promise<any[]> => {

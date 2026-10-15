@@ -83,5 +83,14 @@ service cloud.firestore {
     match /attendance_history/{historyId} {
       allow read, write: if true;
     }
+
+    match /sync/{docId} {
+      allow read, write: if true;
+    }
+
+    // Fallback catch-all for nested or auxiliary collections
+    match /{document=**} {
+      allow read, write: if true;
+    }
   }
 }

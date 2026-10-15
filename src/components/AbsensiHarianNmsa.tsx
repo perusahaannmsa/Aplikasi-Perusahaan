@@ -930,9 +930,20 @@ export function AbsensiHarianNmsa({
 
   useEffect(() => {
     if (attendanceRecords && attendanceRecords.length > 0) {
-      localStorage.setItem("absensi_uang_makan_records", JSON.stringify(attendanceRecords));
+      try {
+        localStorage.setItem("absensi_uang_makan_records", JSON.stringify(attendanceRecords));
+      } catch (_) {}
+
+      // Only auto-persist to Cloud Firestore & server after user has actually interacted with data
+      if (lastUserInteractionTimeRef.current > 0) {
+        const persistTimer = setTimeout(() => {
+          saveAttendanceToFirestore(attendanceRecords, workers).catch(() => {});
+          syncStateToServer(workers, attendanceRecords, weeklyReports).catch(() => {});
+        }, 3000);
+        return () => clearTimeout(persistTimer);
+      }
     }
-  }, [attendanceRecords]);
+  }, [attendanceRecords, workers, weeklyReports]);
 
   useEffect(() => {
     if (workers && workers.length > 0) {
@@ -2288,37 +2299,23 @@ export function AbsensiHarianNmsa({
                       return;
                     }
 
-                    // Sync from server (protect truthy local state & avoid false-positive flickers)
+                    // Sync from server safely: always preserve positive local attendance if server is missing the date!
                     const sIsPresent = Boolean(r.attendance?.[d]);
                     const locIsPresent = Boolean(existing.attendance?.[d]);
-                    if (sIsPresent !== locIsPresent) {
-                      if (sIsPresent) {
-                        existing.attendance[d] = true;
-                      } else {
-                        delete existing.attendance[d];
-                      }
+                    if (sIsPresent && !locIsPresent) {
+                      existing.attendance[d] = true;
                       hasAnyChange = true;
                     }
 
                     const sCust = r.customStatus?.[d];
-                    const locCust = existing.customStatus?.[d];
-                    if (sCust !== locCust) {
-                      if (sCust) {
-                        existing.customStatus[d] = sCust as any;
-                      } else {
-                        delete existing.customStatus[d];
-                      }
+                    if (sCust && existing.customStatus?.[d] !== sCust) {
+                      existing.customStatus[d] = sCust as any;
                       hasAnyChange = true;
                     }
 
                     const sReason = r.reasons?.[d];
-                    const locReason = existing.reasons?.[d];
-                    if (sReason !== locReason) {
-                      if (sReason) {
-                        existing.reasons[d] = sReason;
-                      } else {
-                        delete existing.reasons[d];
-                      }
+                    if (sReason && existing.reasons?.[d] !== sReason) {
+                      existing.reasons[d] = sReason;
                       hasAnyChange = true;
                     }
                   });

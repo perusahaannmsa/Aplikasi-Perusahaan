@@ -132,6 +132,7 @@ export interface Submission {
 
   items: SubmissionItem[];
   createdAt: string;
+  updatedAt?: string;
   deletedPageIds?: string[];
 }
 

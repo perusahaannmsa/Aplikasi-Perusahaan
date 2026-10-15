@@ -25,12 +25,50 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "lokasi", "tanggal", "dibayarkanKepada", "items"]
+    },
+    "npwpRecord": {
+      "title": "NpwpRecord",
+      "description": "Master list of company and vendor tax records (NPWP).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "companyName": { "type": "string" },
+        "npwpNumber": { "type": "string" },
+        "address": { "type": "string" },
+        "kppName": { "type": "string" },
+        "taxStatus": { "type": "string", "enum": ["PKP", "Non-PKP"] },
+        "contactPerson": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "companyName", "npwpNumber"]
+    },
+    "attendanceRecord": {
+      "title": "AttendanceRecord",
+      "description": "Attendance tracking records for workers.",
+      "type": "object",
+      "properties": {
+        "workerId": { "type": "string" },
+        "attendance": { "type": "object" },
+        "customStatus": { "type": "object" },
+        "reasons": { "type": "object" }
+      },
+      "required": ["workerId"]
     }
   },
   "firestore": {
     "submissions": {
       "schema": "submission",
       "description": "Global user-submitted invoices ledger and cash book entries."
+    },
+    "npwp_records": {
+      "schema": "npwpRecord",
+      "description": "Master list of registered taxpayer companies and vendors."
+    },
+    "attendance": {
+      "schema": "attendanceRecord",
+      "description": "Daily employee attendance and meal allowance records."
     }
   }
 }
+

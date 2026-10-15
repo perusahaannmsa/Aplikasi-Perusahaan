@@ -1107,11 +1107,17 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
       setSendToAgenda(initialSubmission.sendToAgenda !== false);
       setIsPettyCash(initialSubmission.isPettyCash || false);
       setPettyCashCustodian(initialSubmission.pettyCashCustodian || '');
-      setPettyCashDriveFile(initialSubmission.pettyCashFile || null);
+      const existingPc = initialSubmission.pettyCashFile || 
+        initialSubmission.googleDriveFiles?.find(f => f.docType === 'petty_cash_report' || (f.name && f.name.toUpperCase().startsWith('PETTYCASH')));
+      setPettyCashDriveFile(existingPc ? { url: existingPc.url, name: existingPc.name } : null);
       setPettyCashLocalFile(null);
       setGoogleDriveFileUrl(initialSubmission.googleDriveFileUrl || '');
       setGoogleDriveFileName(initialSubmission.googleDriveFileName || '');
-      setBuktiPembayaranDrive(initialSubmission.buktiPembayaran || null);
+
+      const existingBp = initialSubmission.buktiPembayaran || 
+        initialSubmission.googleDriveFiles?.find(f => f.isBuktiPembayaran || (f.name && f.name.toUpperCase().startsWith('BUKTI_BAYAR')));
+      setBuktiPembayaranDrive(existingBp ? { url: existingBp.url, name: existingBp.name } : null);
+
       if (initialSubmission.googleDriveFiles && initialSubmission.googleDriveFiles.length > 0) {
         setGoogleDriveFiles(initialSubmission.googleDriveFiles);
         // Exclude system files (F1, F2, petty cash report, and payment proof) from the editable attachments list
@@ -1122,6 +1128,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
           const name = f.name || '';
           if (name.startsWith('F1 - ') && name.endsWith('.pdf')) return false;
           if (name.startsWith('F2 - ') && name.endsWith('.pdf')) return false;
+          if (name.startsWith('BUKTI_BAYAR') || name.startsWith('PettyCash')) return false;
           return true;
         });
         setFileItems(filteredAttachmentFiles.map((f, i) => ({
@@ -1146,11 +1153,6 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         setFileItems([]);
       }
 
-      if (initialSubmission.buktiPembayaran) {
-        setBuktiPembayaranDrive(initialSubmission.buktiPembayaran);
-      } else {
-        setBuktiPembayaranDrive(null);
-      }
       setBuktiPembayaranFile(null);
 
       setDibuatOleh(initialSubmission.dibuatOleh);
@@ -1513,102 +1515,55 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
 
         const txFolderName = cleanKode ? `${cleanKode} - ${txBaseName}` : txBaseName;
 
-        setSaveProgress(`6/6. Mencari/Membuat folder transaksi khusus: "${txFolderName}"...`);
-        targetFolderId = await getOrCreateFolder(token, txFolderName, dayId);
-        console.log('[Drive Upload] Folder Transaksi Khusus ID:', targetFolderId);
-
-        // Move existing files if the folder ID has changed (e.g., date/metadata modified)
+        // If editing an existing transaction, check and safely reuse existing folder
         const oldFolderId = (initialSubmission as any)?.googleDriveFolderId;
-        if (oldFolderId && oldFolderId !== targetFolderId) {
-          setSaveProgress('Memindahkan berkas-berkas lama ke folder tanggal baru...');
+        if (oldFolderId) {
           try {
-            const listRes = await fetch(
-              `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
-                `'${oldFolderId}' in parents and trashed = false`
-              )}&fields=files(id,name,mimeType)&pageSize=100`,
+            const checkFolderRes = await fetch(
+              `https://www.googleapis.com/drive/v3/files/${oldFolderId}?fields=id,name,trashed`,
               {
                 headers: {
                   Authorization: `Bearer ${token}`,
                 },
               }
             );
-
-            if (listRes.ok) {
-              const listData = await listRes.json();
-              const filesToMove = listData.files || [];
-              console.log('[Drive Move] Files found in old folder to move:', filesToMove);
-
-              for (const file of filesToMove) {
-                // Skip files we're going to regenerate anyway (like F1 & F2) to avoid unnecessary move calls
-                if (file.name.startsWith('F1 - ') || file.name.startsWith('F2 - ')) {
-                  continue;
-                }
-                setSaveProgress(`Memindahkan "${file.name}" ke folder baru...`);
-                await fetch(
-                  `https://www.googleapis.com/drive/v3/files/${file.id}?addParents=${targetFolderId}&removeParents=${oldFolderId}`,
-                  {
+            if (checkFolderRes.ok) {
+              const folderInfo = await checkFolderRes.json();
+              if (!folderInfo.trashed) {
+                targetFolderId = oldFolderId;
+                console.log('[Drive Upload] Menggunakan folder transaksi yang sudah ada:', targetFolderId);
+                if (folderInfo.name !== txFolderName) {
+                  // Safe rename without moving or deleting anything
+                  await fetch(`https://www.googleapis.com/drive/v3/files/${oldFolderId}`, {
                     method: 'PATCH',
                     headers: {
                       Authorization: `Bearer ${token}`,
                       'Content-Type': 'application/json',
                     },
-                  }
-                );
+                    body: JSON.stringify({ name: txFolderName }),
+                  });
+                }
               }
-
-              // Delete the old folder since it is now empty/obsolete
-              console.log('[Drive Move] Deleting old empty folder:', oldFolderId);
-              await fetch(`https://www.googleapis.com/drive/v3/files/${oldFolderId}`, {
-                method: 'DELETE',
-                headers: {
-                  Authorization: `Bearer ${token}`,
-                },
-              });
             }
-          } catch (moveErr) {
-            console.error('Error moving files to new folder:', moveErr);
+          } catch (chkErr) {
+            console.warn('[Drive Check] Peringatan pemeriksaan folder yang ada:', chkErr);
           }
         }
 
-        // Define reusable upload function to avoid duplicates
-        const uploadFileToFolder剩下 = async (
+        if (!targetFolderId) {
+          setSaveProgress(`6/6. Mencari/Membuat folder transaksi khusus: "${txFolderName}"...`);
+          targetFolderId = await getOrCreateFolder(token, txFolderName, dayId);
+          console.log('[Drive Upload] Folder Transaksi Khusus ID Baru:', targetFolderId);
+        }
+
+        // Reusable upload function: never destructively deletes existing attachments
+        const uploadFileToFolder = async (
           fileName: string,
           fileMimeType: string,
           fileBytes: Uint8Array,
           folderId: string
         ): Promise<{ url: string; name: string }> => {
           return executeDriveApiWithAutoRefresh(async (driveToken) => {
-            // Check if file already exists in this folder to avoid duplicates
-            try {
-              const searchRes = await fetch(
-                `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
-                  `name = '${fileName.replace(/'/g, "\\'")}' and '${folderId}' in parents and trashed = false`
-                )}&fields=files(id)`,
-                {
-                  headers: {
-                    Authorization: `Bearer ${driveToken}`,
-                  },
-                }
-              );
-              if (searchRes.status === 401) throw new Error('UNAUTHORIZED_401');
-              if (searchRes.ok) {
-                const searchData足 = await searchRes.json();
-                if (searchData足.files && searchData足.files.length > 0) {
-                  for (const existingFile of searchData足.files) {
-                    await fetch(`https://www.googleapis.com/drive/v3/files/${existingFile.id}`, {
-                      method: 'DELETE',
-                      headers: {
-                        Authorization: `Bearer ${driveToken}`,
-                      },
-                    });
-                  }
-                }
-              }
-            } catch (dupErr: any) {
-              if (dupErr?.message?.includes('UNAUTHORIZED') || dupErr?.message?.includes('401')) throw dupErr;
-              console.warn('Error checking/deleting duplicate file:', fileName, dupErr);
-            }
-
             const fileBlob = new Blob([fileBytes], { type: fileMimeType });
             const compiledFile = new File([fileBlob], fileName, { type: fileMimeType });
 
@@ -1637,7 +1592,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
             );
 
             if (res.status === 401) {
-              throw new Error('UNAUTHORIZED_401'); // Triggers auto-renewal without collision in wrapper
+              throw new Error('UNAUTHORIZED_401');
             }
 
             if (!res.ok) {
@@ -1660,13 +1615,6 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
             };
           }, { actionName: `upload ${fileName}` });
         };
-
-        const uploadFileToFolder = (
-          fileName: string,
-          fileMimeType: string,
-          fileBytes: Uint8Array,
-          folderId: string
-        ) => uploadFileToFolder剩下(fileName, fileMimeType, fileBytes, folderId);
 
         // Create a temporary object representation for PDF drawing
         const tempSubmissionForPdf = {
@@ -1773,9 +1721,38 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         usedNames.add(`F1 - ${txBaseName}.pdf`.toLowerCase());
         usedNames.add(`F2 - ${txBaseName}.pdf`.toLowerCase());
 
-        let bCounter = 1;
-        let invCounter = 1;
-        let pettyCashCounter = 1;
+        // Pre-scan all items to register existing files and determine starting counters accurately
+        let maxB = 0;
+        let maxInv = 0;
+        let maxPetty = 0;
+
+        for (const item of fileItems) {
+          if (item.name) {
+            usedNames.add(item.name.toLowerCase());
+
+            const bMatch = item.name.match(/^B(\d+)\s*-\s*/i);
+            if (bMatch) {
+              const num = parseInt(bMatch[1], 10);
+              if (!isNaN(num) && num > maxB) maxB = num;
+            }
+
+            const invMatch = item.name.match(/^INV(\d*)\s*-\s*/i);
+            if (invMatch) {
+              const num = invMatch[1] ? parseInt(invMatch[1], 10) : 1;
+              if (!isNaN(num) && num > maxInv) maxInv = num;
+            }
+
+            const pcMatch = item.name.match(/^PettyCash(\d*)\s*-\s*/i);
+            if (pcMatch) {
+              const num = pcMatch[1] ? parseInt(pcMatch[1], 10) : 1;
+              if (!isNaN(num) && num > maxPetty) maxPetty = num;
+            }
+          }
+        }
+
+        let bCounter = maxB + 1;
+        let invCounter = maxInv + 1;
+        let pettyCashCounter = maxPetty + 1;
 
         for (let i = 0; i < fileItems.length; i++) {
           const item = fileItems[i];
@@ -1841,20 +1818,27 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
 
           const ext = mimeType === 'application/pdf' ? '.pdf' : (getFileExtensionForSave(originalName) || '.bin');
           
-          let prefix = '';
-          if (item.docType === 'invoice_vendor') {
-            prefix = invCounter === 1 ? 'INV' : `INV${invCounter}`;
-            invCounter++;
-          } else if (item.docType === 'petty_cash_report') {
-            prefix = pettyCashCounter === 1 ? 'PettyCash' : `PettyCash${pettyCashCounter}`;
-            pettyCashCounter++;
-          } else {
-            prefix = `B${bCounter}`;
-            bCounter++;
-          }
+          let finalFileName = '';
+          while (true) {
+            let prefix = '';
+            if (item.docType === 'invoice_vendor') {
+              prefix = invCounter === 1 ? 'INV' : `INV${invCounter}`;
+              invCounter++;
+            } else if (item.docType === 'petty_cash_report') {
+              prefix = pettyCashCounter === 1 ? 'PettyCash' : `PettyCash${pettyCashCounter}`;
+              pettyCashCounter++;
+            } else {
+              prefix = `B${bCounter}`;
+              bCounter++;
+            }
 
-          const finalFileName = `${prefix} - ${txBaseName}${ext}`;
-          usedNames.add(finalFileName.toLowerCase());
+            const candidate = `${prefix} - ${txBaseName}${ext}`;
+            if (!usedNames.has(candidate.toLowerCase())) {
+              finalFileName = candidate;
+              usedNames.add(candidate.toLowerCase());
+              break;
+            }
+          }
 
           const resData = await uploadFileToFolder(finalFileName, mimeType, fileBytes, targetFolderId);
           finalFiles.push({
@@ -2080,7 +2064,8 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         projectAccountName: projectAccountName || undefined,
 
         items: cleanedItems,
-        createdAt: initialSubmission ? initialSubmission.createdAt : new Date().toISOString()
+        createdAt: initialSubmission ? initialSubmission.createdAt : new Date().toISOString(),
+        updatedAt: new Date().toISOString()
       };
 
       // Update recipient history in localStorage for future quick selections

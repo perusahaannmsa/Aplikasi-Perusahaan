@@ -1,4 +1,10 @@
-import { initFirebaseFirestore, syncAttendanceToFirestore, restoreAttendanceFromFirestore } from "./server/firebase-attendance";
+import { 
+  initFirebaseFirestore, 
+  syncAttendanceToFirestore, 
+  restoreAttendanceFromFirestore,
+  syncNpwpToFirestore,
+  restoreNpwpFromFirestore
+} from "./server/firebase-attendance";
 import express from "express";
 import path from "path";
 import fs from "fs";
@@ -1481,15 +1487,6 @@ function readState() {
       if (!parsed.signatures) {
         parsed.signatures = {};
       }
-      if (!parsed.pettyCashHolders) {
-        parsed.pettyCashHolders = ["Suryo Pranoto"];
-      }
-      if (!parsed.attendanceLogs) {
-        parsed.attendanceLogs = [];
-      }
-      if (!parsed.npwpRecords) {
-        parsed.npwpRecords = [];
-      }
       if (!parsed.workers) {
         parsed.workers = defaultWorkers;
       }
@@ -1511,6 +1508,7 @@ function readState() {
       if (!parsed.npwpRecords) {
         parsed.npwpRecords = [];
       }
+
       if (!parsed.sppdRecords) {
         parsed.sppdRecords = [];
       }
@@ -1685,9 +1683,16 @@ function writeState(data: any) {
         syncAttendanceToFirestore(data).catch(() => {});
       }, 500);
     }
+    // Auto-sync NPWP records to Firebase Firestore so data is never lost across updates/restarts
+    if (data.npwpRecords && data.npwpRecords.length > 0) {
+      setTimeout(() => {
+        syncNpwpToFirestore(data.npwpRecords).catch(() => {});
+      }, 500);
+    }
   } catch (error) {
     console.error("Error writing data-store.json:", error);
   }
+
 }
 
 // Helper to validate Admin Token
@@ -1970,11 +1975,61 @@ app.post("/api/shared-state", (req, res) => {
     syncAttendanceToFirestore(updatedState).catch((err) => {
       console.warn("[Firestore] Auto-sync notice:", err?.message);
     });
+    if (updatedState.npwpRecords && updatedState.npwpRecords.length > 0) {
+      syncNpwpToFirestore(updatedState.npwpRecords).catch((err) => {
+        console.warn("[Firestore] Auto-sync NPWP notice:", err?.message);
+      });
+    }
     res.json({ success: true, message: "State synchronized successfully" });
   } catch (err: any) {
     res.status(500).json({ error: err.message || "Failed to synchronize state" });
   }
 });
+
+// Sync & Restore NPWP directly to/from Firebase Firestore
+app.post("/api/npwp/firebase-sync", async (req, res) => {
+  try {
+    const cur = readState();
+    const records = req.body?.npwpRecords || cur.npwpRecords || [];
+    const ok = await syncNpwpToFirestore(records);
+    if (ok && records.length > 0) {
+      cur.npwpRecords = records;
+      writeState(cur);
+    }
+    return res.json({
+      success: ok,
+      message: ok ? `Berhasil menyinkronkan ${records.length} data NPWP ke Firebase Firestore!` : "Gagal sinkron data NPWP ke Firebase",
+      totalRecords: records.length
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: "Gagal sinkron NPWP ke Firestore: " + err.message });
+  }
+});
+
+app.get("/api/npwp/firebase-restore", async (req, res) => {
+  try {
+    const cur = readState();
+    const restored = await restoreNpwpFromFirestore(cur);
+    if (restored && restored.npwpRecords && restored.npwpRecords.length > 0) {
+      writeState(restored);
+      return res.json({
+        success: true,
+        message: `Berhasil memulihkan ${restored.npwpRecords.length} data NPWP dari Firebase Firestore!`,
+        totalRecords: restored.npwpRecords.length,
+        npwpRecords: restored.npwpRecords
+      });
+    }
+    return res.json({
+      success: true,
+      message: "Tidak ada data NPWP baru di Firebase Firestore.",
+      totalRecords: (cur.npwpRecords || []).length,
+      npwpRecords: cur.npwpRecords || []
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: "Gagal memulihkan NPWP dari Firestore: " + err.message });
+  }
+});
+
 
 // Restore Attendance directly from Firebase Firestore
 app.post("/api/admin/restore-from-firestore", async (req, res) => {
@@ -4921,21 +4976,32 @@ async function bootstrap() {
       }
     }, 1000);
 
-    // Restore attendance from Firebase Firestore so data is NEVER lost across updates/restarts
+    // Restore attendance & NPWP records from Firebase Firestore so data is NEVER lost across updates/restarts
     setTimeout(async () => {
       try {
-        console.log("[Startup] Memeriksa Firebase Firestore untuk memulihkan data absensi...");
+        console.log("[Startup] Memeriksa Firebase Firestore untuk memulihkan data absensi & NPWP...");
         const cur = readState();
-        const restored = await restoreAttendanceFromFirestore(cur);
-        if (restored && restored.attendanceRecords && restored.attendanceRecords.length > 0) {
-          writeState(restored);
-          console.log(`[Startup] Berhasil memulihkan ${restored.attendanceRecords.length} data absensi & ${(restored.weeklyReports || []).length} laporan mingguan dari Firebase Firestore!`);
+        const restoredAtt = await restoreAttendanceFromFirestore(cur);
+        const restoredBoth = await restoreNpwpFromFirestore(restoredAtt);
+        
+        let shouldWrite = false;
+        if (restoredBoth.attendanceRecords && restoredBoth.attendanceRecords.length > (cur.attendanceRecords || []).length) {
+          shouldWrite = true;
+          console.log(`[Startup] Berhasil memulihkan ${restoredBoth.attendanceRecords.length} data absensi & ${(restoredBoth.weeklyReports || []).length} laporan mingguan dari Firebase Firestore!`);
+        }
+        if (restoredBoth.npwpRecords && restoredBoth.npwpRecords.length > (cur.npwpRecords || []).length) {
+          shouldWrite = true;
+          console.log(`[Startup] Berhasil memulihkan ${restoredBoth.npwpRecords.length} data NPWP dari Firebase Firestore!`);
+        }
+        if (shouldWrite) {
+          writeState(restoredBoth);
         }
       } catch (err: any) {
         console.warn("[Startup] Gagal auto-restore dari Firestore:", err?.message);
       }
     }, 1500);
   });
+
 
   serverInstance.on("error", (err: any) => {
     console.error("Server listen error:", err);

@@ -74,7 +74,8 @@ export const VoucherOnlineQr: React.FC<{
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
   const cleanSlug = (submission.jenisPengajuan || 'transaksi').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
   const grandTotal = (submission.items || []).reduce((sum, item) => sum + (item.total || 0), 0);
-  const targetUrl = `${origin}/shared-view?id=${encodeURIComponent(submission.id)}&kode=${encodeURIComponent(submission.kode || '')}&transaksi=${encodeURIComponent(cleanSlug)}&nominal=${grandTotal}`;
+  const versionKey = submission.updatedAt ? encodeURIComponent(submission.updatedAt) : '';
+  const targetUrl = `${origin}/shared-view?id=${encodeURIComponent(submission.id)}&kode=${encodeURIComponent(submission.kode || '')}&transaksi=${encodeURIComponent(cleanSlug)}&nominal=${grandTotal}${versionKey ? `&v=${versionKey}` : ''}`;
 
   useEffect(() => {
     let isMounted = true;
@@ -681,6 +682,13 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
   useEffect(() => {
     setDeletedPageIds([]);
   }, [submission.deletedPageIds]);
+
+  // Keep syncedDriveFiles directly in sync when submission prop updates
+  useEffect(() => {
+    if (submission.googleDriveFiles && submission.googleDriveFiles.length > 0) {
+      setSyncedDriveFiles(submission.googleDriveFiles);
+    }
+  }, [submission.id, submission.updatedAt, submission.googleDriveFiles]);
 
   // Sync files from Google Drive in real-time
   useEffect(() => {

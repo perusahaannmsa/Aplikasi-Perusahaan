@@ -299,8 +299,8 @@ export async function generateF1PdfBytes(
   const cleanSlug = (submission.jenisPengajuan || 'transaksi')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '');
-  const shareUrl = `${origin}/shared-view?id=${encodeURIComponent(submission.id || '')}&kode=${encodeURIComponent(submission.kode || '')}&transaksi=${encodeURIComponent(cleanSlug)}&nominal=${grandTotal}`;
+  const versionKey = submission.updatedAt ? encodeURIComponent(submission.updatedAt) : '';
+  const shareUrl = `${origin}/shared-view?id=${encodeURIComponent(submission.id || '')}&kode=${encodeURIComponent(submission.kode || '')}&transaksi=${encodeURIComponent(cleanSlug)}&nominal=${grandTotal}${versionKey ? `&v=${versionKey}` : ''}`;
   
   const qrBytes = await getQrCodePngBytes(shareUrl, 150);
   if (qrBytes) {

@@ -175,12 +175,19 @@ export const googleSignOut = async (): Promise<void> => {
   }
 };
 
+let lastFirestorePermissionDeniedTime = 0;
+
 // Direct, instant sync to Cloud Firebase Firestore for attendance
 export const saveAttendanceToFirestore = async (
   records: any[],
   workersList: any[],
   weeklyReportsList?: any[]
 ): Promise<boolean> => {
+  // If remote Firestore rules recently rejected writes, avoid spamming RPC streams
+  if (Date.now() - lastFirestorePermissionDeniedTime < 180000) {
+    return false;
+  }
+
   try {
     const timestamp = new Date().toISOString();
 
@@ -237,7 +244,13 @@ export const saveAttendanceToFirestore = async (
     }
     return true;
   } catch (err: any) {
-    console.warn("Notice: Failed to save attendance directly to Firestore:", err?.message);
+    const isPermissionDenied = err?.code === 'permission-denied' || String(err?.message).includes('PERMISSION_DENIED');
+    if (isPermissionDenied) {
+      lastFirestorePermissionDeniedTime = Date.now();
+      console.warn("⚠️ [Firestore Attendance] Izin tulis ditolak (PERMISSION_DENIED). Menggunakan penyimpanan lokal & server sementara.");
+    } else {
+      console.warn("Notice: Failed to save attendance directly to Firestore:", err?.message);
+    }
     return false;
   }
 };
@@ -263,6 +276,7 @@ export const loadAttendanceFromFirestore = async (): Promise<{
       try {
         const snap = await getDocs(collection(db, "absen_records"));
         if (!snap.empty) {
+          const workerMap = new Map<string, any>();
           snap.forEach((d) => {
             const data = d.data();
             if (data?.attendanceRecords && Array.isArray(data.attendanceRecords)) {
@@ -270,8 +284,32 @@ export const loadAttendanceFromFirestore = async (): Promise<{
                 recs = data.attendanceRecords;
                 if (data.workers?.length) wrks = data.workers;
               }
+            } else if (data?.workerId && data?.date) {
+              if (!workerMap.has(data.workerId)) {
+                workerMap.set(data.workerId, {
+                  workerId: data.workerId,
+                  attendance: {},
+                  customStatus: {},
+                  reasons: {},
+                  signatures: {}
+                });
+              }
+              const rec = workerMap.get(data.workerId);
+              if (data.status === "Hadir" || data.status === true) {
+                rec.attendance[data.date] = true;
+              } else if (data.status && data.status !== "Absen") {
+                rec.attendance[data.date] = false;
+                rec.customStatus[data.date] = data.status;
+                if (data.reason) rec.reasons[data.date] = data.reason;
+              }
+              if (data.signature) {
+                rec.signatures[data.date] = data.signature;
+              }
             }
           });
+          if (recs.length === 0 && workerMap.size > 0) {
+            recs = Array.from(workerMap.values());
+          }
         }
       } catch (fbErr) {
         console.warn("Fallback absen_records notice:", fbErr);

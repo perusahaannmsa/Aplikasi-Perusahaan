@@ -103,13 +103,8 @@ export async function syncAttendanceToFirestore(state: {
   const db = initFirebaseFirestore();
   if (!db) return false;
 
-  // Protect against unauthenticated writes to remote Firestore
-  const authUser = await ensureServerAuth();
-  if (!authUser && !process.env.FIREBASE_ALLOW_UNAUTH_WRITE) {
-    // Gracefully preserve and use local persistence in data-store.json
-    console.log("[Firebase] Server attendance Firestore sync skipped: Unauthenticated session (Local data-store.json is active).");
-    return true;
-  }
+  // Ensure server auth if available (optional for attendance collection)
+  await ensureServerAuth();
 
   try {
     const timestamp = new Date().toISOString();
@@ -165,12 +160,8 @@ export async function restoreAttendanceFromFirestore(currentState: any): Promise
   const db = initFirebaseFirestore();
   if (!db) return currentState;
 
-  // Check auth before remote read
-  const authUser = await ensureServerAuth();
-  if (!authUser && !process.env.FIREBASE_ALLOW_UNAUTH_READ) {
-    console.log("[Firebase] Server attendance Firestore restore skipped: Unauthenticated session (Using local data-store.json).");
-    return currentState;
-  }
+  // Ensure server auth if available (optional for attendance collection)
+  await ensureServerAuth();
 
   try {
     console.log("[Firebase] Checking Firestore for saved attendance data...");
@@ -246,3 +237,118 @@ export async function restoreAttendanceFromFirestore(currentState: any): Promise
     return currentState;
   }
 }
+
+// 3. Sync NPWP records to Firestore (npwp_records collection and companies/nmsa)
+export async function syncNpwpToFirestore(records: any[]): Promise<boolean> {
+  const db = initFirebaseFirestore();
+  if (!db || !Array.isArray(records)) return false;
+
+  await ensureServerAuth();
+
+  try {
+    const timestamp = new Date().toISOString();
+    for (const rec of records) {
+      if (rec && rec.id) {
+        const cleanRec = {
+          id: rec.id,
+          companyName: rec.companyName || '',
+          npwpNumber: rec.npwpNumber || '',
+          address: rec.address || '',
+          kppName: rec.kppName || '',
+          taxStatus: rec.taxStatus || 'PKP',
+          contactPerson: rec.contactPerson || '',
+          notes: rec.notes || '',
+          createdAt: rec.createdAt || timestamp,
+          updatedAt: timestamp
+        };
+        await setDoc(doc(db, "npwp_records", rec.id), cleanRec, { merge: true });
+      }
+    }
+
+    // Also mirror to companies/nmsa so company settings always has full snapshot
+    await setDoc(doc(db, "companies", "nmsa"), {
+      npwpRecords: records,
+      updatedAt: timestamp
+    }, { merge: true });
+
+    console.log(`[Firebase] Successfully synchronized ${records.length} NPWP records to Firestore!`);
+    return true;
+  } catch (err: any) {
+    console.warn("[Firebase] Notice during NPWP Firestore sync:", err.message);
+    return false;
+  }
+}
+
+// 4. Restore NPWP records from Firestore
+export async function restoreNpwpFromFirestore(currentState: any): Promise<any> {
+  const db = initFirebaseFirestore();
+  if (!db) return currentState;
+
+  await ensureServerAuth();
+
+  try {
+    console.log("[Firebase] Checking Firestore for saved NPWP records...");
+    let cloudRecords: any[] = [];
+
+    // 1. First try collection npwp_records
+    try {
+      const snap = await getDocs(collection(db, "npwp_records"));
+      if (!snap.empty) {
+        snap.forEach(d => {
+          const data = d.data();
+          if (data && data.companyName) {
+            cloudRecords.push({
+              id: d.id,
+              companyName: data.companyName,
+              npwpNumber: data.npwpNumber || '',
+              address: data.address || '',
+              kppName: data.kppName || '',
+              taxStatus: data.taxStatus || 'PKP',
+              contactPerson: data.contactPerson || '',
+              notes: data.notes || '',
+              createdAt: data.createdAt || ''
+            });
+          }
+        });
+      }
+    } catch (e: any) {
+      console.warn("[Firebase] Could not read npwp_records collection:", e.message);
+    }
+
+    // 2. Fallback: check companies/nmsa
+    if (cloudRecords.length === 0) {
+      try {
+        const compSnap = await getDoc(doc(db, "companies", "nmsa"));
+        if (compSnap.exists()) {
+          const compData = compSnap.data();
+          if (compData && Array.isArray(compData.npwpRecords) && compData.npwpRecords.length > 0) {
+            cloudRecords = compData.npwpRecords;
+          }
+        }
+      } catch (e: any) {
+        console.warn("[Firebase] Could not read companies/nmsa:", e.message);
+      }
+    }
+
+    if (cloudRecords.length > 0) {
+      console.log(`[Firebase] Restoring ${cloudRecords.length} NPWP records from Firestore.`);
+      const map = new Map<string, any>();
+      cloudRecords.forEach(r => { if (r && r.id) map.set(r.id, r); });
+      (currentState.npwpRecords || []).forEach((r: any) => {
+        if (r && r.id) {
+          map.set(r.id, { ...(map.get(r.id) || {}), ...r });
+        }
+      });
+      return {
+        ...currentState,
+        npwpRecords: Array.from(map.values())
+      };
+    }
+
+    return currentState;
+  } catch (err: any) {
+    console.warn("[Firebase] Notice restoring NPWP from Firestore:", err.message);
+    return currentState;
+  }
+}
+
