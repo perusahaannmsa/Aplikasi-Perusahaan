@@ -1,5 +1,5 @@
 import { initializeApp, getApps } from "firebase/app";
-import { getFirestore, doc, setDoc, getDoc, collection, getDocs } from "firebase/firestore";
+import { getFirestore, doc, setDoc, getDoc, collection, getDocs, onSnapshot } from "firebase/firestore";
 import { 
   getAuth, 
   signInWithPopup, 
@@ -234,19 +234,6 @@ export const saveAttendanceToFirestore = async (
       totalReports: cleanWeeklyReports.length
     }, { merge: true });
 
-    // Also store individual reports under attendance collection where permissions are active
-    if (cleanWeeklyReports.length > 0) {
-      for (const rep of cleanWeeklyReports) {
-        if (!rep) continue;
-        const repId = rep.id || `rep_${rep.weekStartDate || Date.now()}`;
-        try {
-          await setDoc(doc(db, "attendance", `rep_${repId}`), {
-            ...rep,
-            syncedAt: timestamp
-          }, { merge: true });
-        } catch (_) {}
-      }
-    }
     return true;
 
   } catch (err: any) {
@@ -398,6 +385,122 @@ export const loadAttendanceFromFirestore = async (): Promise<{
   } catch (err: any) {
     console.warn("Notice: Failed to load attendance from Firestore:", err?.message);
     return null;
+  }
+};
+
+// ⚡ Realtime Cloud Listener: Sinkronisasi instan dua arah antara Komputer dan HP tanpa biaya (Gratis Firebase onSnapshot)
+export const subscribeToAttendanceFromFirestore = (
+  onUpdate: (data: {
+    attendanceRecords: any[];
+    workers: any[];
+    weeklyReports: any[];
+    latestActiveDate?: string | null;
+  }) => void
+): (() => void) => {
+  try {
+    const unsub = onSnapshot(doc(db, "attendance", "current_records"), (snapshot) => {
+      if (!snapshot.exists()) return;
+      const data = snapshot.data();
+      if (!data) return;
+
+      const workerMap = new Map<string, any>();
+      const wrks = data.workers || [];
+      const repMap = new Map<string, any>();
+
+      // 1. Process master attendance records
+      if (Array.isArray(data.attendanceRecords)) {
+        data.attendanceRecords.forEach((r: any) => {
+          if (!r || !r.workerId) return;
+          const cleanAtt: Record<string, boolean> = {};
+          if (r.attendance) {
+            Object.entries(r.attendance).forEach(([d, val]) => {
+              if (val === true) cleanAtt[d] = true;
+            });
+          }
+          workerMap.set(r.workerId, {
+            workerId: r.workerId,
+            dailyAllowance: r.dailyAllowance || 25000,
+            attendance: cleanAtt,
+            customStatus: { ...(r.customStatus || {}) },
+            reasons: { ...(r.reasons || {}) },
+            signatures: { ...(r.signatures || {}) }
+          });
+        });
+      }
+
+      // 2. Process records inside weekly reports
+      if (Array.isArray(data.weeklyReports)) {
+        data.weeklyReports.forEach((rep: any) => {
+          if (!rep) return;
+          const repKey = rep.id || `${rep.weekStartDate}_${rep.weekEndDate}`;
+          repMap.set(repKey, rep);
+
+          if (Array.isArray(rep.records)) {
+            rep.records.forEach((rec: any) => {
+              if (!rec || !rec.workerId) return;
+              const existing = workerMap.get(rec.workerId) || {
+                workerId: rec.workerId,
+                dailyAllowance: rec.dailyAllowance || 25000,
+                attendance: {},
+                customStatus: {},
+                reasons: {},
+                signatures: {}
+              };
+              if (rec.attendance) {
+                Object.entries(rec.attendance).forEach(([d, val]) => {
+                  if (val === true) existing.attendance[d] = true;
+                });
+              }
+              if (rec.customStatus) {
+                Object.entries(rec.customStatus).forEach(([d, val]) => {
+                  if (val) existing.customStatus[d] = val;
+                });
+              }
+              if (rec.reasons) {
+                Object.entries(rec.reasons).forEach(([d, val]) => {
+                  if (val) existing.reasons[d] = val;
+                });
+              }
+              workerMap.set(rec.workerId, existing);
+            });
+          }
+        });
+      }
+
+      let latestActiveDate: string | null = null;
+      workerMap.forEach((rec) => {
+        if (rec.attendance) {
+          Object.entries(rec.attendance).forEach(([d, v]) => {
+            if (v === true) {
+              if (!latestActiveDate || d > latestActiveDate) {
+                latestActiveDate = d;
+              }
+            }
+          });
+        }
+      });
+
+      const consolidated = Array.from(workerMap.values());
+      if (consolidated.length > 0) {
+        try {
+          localStorage.setItem("absensi_uang_makan_records", JSON.stringify(consolidated));
+        } catch (_) {}
+      }
+
+      onUpdate({
+        attendanceRecords: consolidated,
+        workers: wrks,
+        weeklyReports: Array.from(repMap.values()),
+        latestActiveDate
+      });
+    }, (err) => {
+      console.warn("[Firestore Attendance Realtime] Snapshot listener notice:", err?.message);
+    });
+
+    return unsub;
+  } catch (err: any) {
+    console.warn("[Firestore Attendance Realtime] Setup notice:", err?.message);
+    return () => {};
   }
 };
 

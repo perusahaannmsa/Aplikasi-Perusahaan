@@ -82,7 +82,7 @@ import { INITIAL_WORKERS, INDONESIAN_DAYS, COMMON_CATEGORIES } from "../constant
 import { triggerExcelDownload } from "../lib/excelGenerator";
 import { triggerAttendanceExcelDownload, printWeeklyReportPDF, generateAttendanceExcelBlob } from "../lib/attendanceSheetGenerator";
 import { getOrCreateFolder, getOrCreateNestedFolder, uploadFileToDrive, exportAttendanceToGoogleSheet } from "../lib/googleWorkspaceAbsen";
-import { initAuth, googleSignIn, googleSignOut, getFreshGoogleToken, saveGoogleToken, saveAttendanceToFirestore, loadAttendanceFromFirestore } from "../lib/firebaseAbsen";
+import { initAuth, googleSignIn, googleSignOut, getFreshGoogleToken, saveGoogleToken, saveAttendanceToFirestore, loadAttendanceFromFirestore, subscribeToAttendanceFromFirestore } from "../lib/firebaseAbsen";
 import { saveSubmissionToFirestore, saveAbsenDataToFirestore, ensureValidDriveToken, getActiveGoogleDriveAccount, getConnectedDrives, executeDriveApiWithAutoRefresh, getOrRenewDriveToken } from "../firebase";
 import { googleDriveAutoBackup, BackupSyncLog, DriveAutoBackupSettings } from "../utils/googleDriveAutoBackup";
 import { SignaturePad } from "./SignaturePad";
@@ -2528,7 +2528,42 @@ export function AbsensiHarianNmsa({
     return () => clearTimeout(fallbackTimer);
   }, []);
 
-  // 1b. Periodic unobtrusive background sync (45s) - never interrupt or flicker on active interaction
+  // 1b. ⚡ REAL-TIME INSTANT SYNC (Komputer ⇄ HP) via Cloud Firestore onSnapshot (100% Gratis)
+  useEffect(() => {
+    const unsub = subscribeToAttendanceFromFirestore((cloudData) => {
+      // Jika pengguna baru saja mengklik di layar ini dalam 400ms, jangan overwrite local touch
+      if (Date.now() - lastUserInteractionTimeRef.current < 400) {
+        return;
+      }
+      if (cloudData.attendanceRecords && cloudData.attendanceRecords.length > 0) {
+        setAttendanceRecords((prevLocal) => {
+          if (JSON.stringify(prevLocal) === JSON.stringify(cloudData.attendanceRecords)) {
+            return prevLocal;
+          }
+          console.log(`⚡ [Realtime Sync] Menerima pembaruan absensi instan dari perangkat lain (${cloudData.attendanceRecords.length} records)`);
+          return cloudData.attendanceRecords;
+        });
+      }
+      if (cloudData.workers && cloudData.workers.length > 0) {
+        setWorkers((prevW) => {
+          if (JSON.stringify(prevW) === JSON.stringify(cloudData.workers)) return prevW;
+          return cloudData.workers;
+        });
+      }
+      if (cloudData.weeklyReports && cloudData.weeklyReports.length > 0) {
+        setWeeklyReports((prevR) => {
+          if (JSON.stringify(prevR) === JSON.stringify(cloudData.weeklyReports)) return prevR;
+          return cloudData.weeklyReports;
+        });
+      }
+    });
+
+    return () => {
+      unsub();
+    };
+  }, []);
+
+  // 1c. Periodic unobtrusive background sync (45s) - fallback if network reconnects
   useEffect(() => {
     if (!initialFetchDone) return;
     const interval = setInterval(() => {
@@ -3291,9 +3326,10 @@ export function AbsensiHarianNmsa({
     try {
       const { db, cleanDataForFirestore } = await import('../lib/firebaseAbsen');
       const { doc, setDoc } = await import('firebase/firestore');
-      await setDoc(doc(db, "weekly_reports", newReport.id), cleanDataForFirestore(newReport));
+      await setDoc(doc(db, "attendance", `rep_${newReport.id}`), cleanDataForFirestore(newReport), { merge: true });
+      await saveAttendanceToFirestore(attendanceRecords, workers, updatedReports);
     } catch (fbErr) {
-      console.warn("Firebase sync warning:", fbErr);
+      console.warn("Firebase sync notice:", fbErr);
     }
 
     const driveInfo = newReport.pdfDriveUrl
@@ -3332,7 +3368,8 @@ export function AbsensiHarianNmsa({
     try {
       const { db } = await import('../lib/firebaseAbsen');
       const { doc, deleteDoc } = await import('firebase/firestore');
-      await deleteDoc(doc(db, "weekly_reports", id));
+      await deleteDoc(doc(db, "attendance", `rep_${id}`));
+      await saveAttendanceToFirestore(attendanceRecords, workers, updated);
     } catch (fbErr) {
       console.warn("Could not remove report from Firebase:", fbErr);
     }
@@ -3456,9 +3493,10 @@ export function AbsensiHarianNmsa({
     try {
       const { db, cleanDataForFirestore } = await import('../lib/firebaseAbsen');
       const { doc, setDoc } = await import('firebase/firestore');
-      await setDoc(doc(db, "weekly_reports", updatedReport.id), cleanDataForFirestore(updatedReport));
+      await setDoc(doc(db, "attendance", `rep_${updatedReport.id}`), cleanDataForFirestore(updatedReport), { merge: true });
+      await saveAttendanceToFirestore(attendanceRecords, workers, updatedList);
     } catch (fbErr) {
-      console.warn("Firebase update failed:", fbErr);
+      console.warn("Firebase update notice:", fbErr);
     }
 
     await syncStateToServer(
@@ -4563,8 +4601,9 @@ export function AbsensiHarianNmsa({
       const { db, cleanDataForFirestore } = await import('../lib/firebaseAbsen');
       const { doc, setDoc } = await import('firebase/firestore');
       if (reconstructedReport) {
-        await setDoc(doc(db, "weekly_reports", reconstructedReport.id), cleanDataForFirestore(reconstructedReport), { merge: true });
+        await setDoc(doc(db, "attendance", `rep_${reconstructedReport.id}`), cleanDataForFirestore(reconstructedReport), { merge: true });
       }
+      await saveAttendanceToFirestore(updatedRecords, workers, updatedReports);
       await saveAbsenDataToFirestore({
         workers,
         records: updatedRecords,
@@ -7950,13 +7989,9 @@ export function AbsensiHarianNmsa({
 
                       // Sinkronkan ke Firebase
                       try {
-                        const { db, cleanDataForFirestore } = await import('../lib/firebaseAbsen');
-                        const { doc, setDoc } = await import('firebase/firestore');
-                        for (const rep of updatedWeeklyReports) {
-                          await setDoc(doc(db, "weekly_reports", rep.id), cleanDataForFirestore(rep), { merge: true });
-                        }
+                        await saveAttendanceToFirestore(attendanceRecords, workers, updatedWeeklyReports);
                       } catch (fbErr) {
-                        console.warn("Firebase sync warning during backup:", fbErr);
+                        console.warn("Firebase sync notice during backup:", fbErr);
                       }
 
                       // 2. Cadangkan database absensi ke Google Drive
@@ -8173,6 +8208,13 @@ export function AbsensiHarianNmsa({
                     <RefreshCw className="w-3.5 h-3.5" />
                     <span>Pulihkan dari Firebase</span>
                   </button>
+                  <div
+                    className="px-2.5 py-1 bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-bold rounded-lg flex items-center gap-1.5 shadow-3xs"
+                    title="Sinkronisasi Instan Dua Arah Aktif: Input absensi di komputer otomatis muncul di HP & sebaliknya secara real-time tanpa biaya"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span>Live Sync (PC ⇄ HP)</span>
+                  </div>
                 </div>
               </div>
 

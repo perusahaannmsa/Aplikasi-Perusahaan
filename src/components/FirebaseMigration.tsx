@@ -557,10 +557,10 @@ export const FirebaseMigration: React.FC<FirebaseMigrationProps> = ({
         setMigrationLogs(prev => [...prev, '⚙️ Menyalin Konfigurasi Sistem & Pemegang Petty Cash...']);
         const rawHolders = localStorage.getItem('petty_cash_holders_v2');
         const holders = rawHolders ? JSON.parse(rawHolders) : [];
-        await setDoc(doc(targetDbInstance, 'company_settings', 'default'), cleanUndefined({
+        await setDoc(doc(targetDbInstance, 'companies', 'nmsa'), cleanUndefined({
           pettyCashHolders: holders,
           updatedAt: new Date().toISOString()
-        }));
+        }), { merge: true });
         totalItemsCopied++;
         setMigrationLogs(prev => [...prev, '✓ Konfigurasi sistem berhasil disalin.']);
       }
