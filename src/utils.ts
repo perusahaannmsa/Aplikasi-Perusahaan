@@ -843,6 +843,435 @@ export async function generateF1PdfBytes(
     });
   }
 
+  // ================= 8. DEDICATED SHEET: LEMBAR RINCIAN PEMBAYARAN BERTAHAP / CICILAN (PAGE 2) =================
+  const isCicilan = submission.status === 'DP / Cicilan' || 
+                    (typeof submission.dpAmount === 'number' && submission.dpAmount > 0) || 
+                    (Array.isArray(submission.riwayatCicilan) && submission.riwayatCicilan.length > 0) ||
+                    (typeof submission.cicilanNotes === 'string' && submission.cicilanNotes.trim().length > 0);
+
+  if (isCicilan) {
+    // 1. Subtle 1-line note on Page 1 (keeps F1 pristine and uncrowded)
+    const f1NoticeY = (submission.notes && submission.notes.trim() !== '') ? (sigTopY - sigBoxH - 52) : (sigTopY - sigBoxH - 24);
+    page.drawText('* Transaksi Pembayaran Bertahap / Cicilan (Rincian pembayaran lengkap pada Lembar ke-2)', {
+      x: margin,
+      y: Math.max(18, f1NoticeY),
+      size: 7.2,
+      font: fontOblique,
+      color: rgb(180 / 255, 83 / 255, 9 / 255),
+    });
+
+    // 2. Add Page 2: LEMBAR RINCIAN PEMBAYARAN BERTAHAP / CICILAN
+    const page2 = pdfDoc.addPage([595.27, 841.89]);
+    
+    // Header
+    await drawCorporateHeader(pdfDoc, page2, fontBold, fontRegular, margin, headerTopY, 230);
+
+    // QR & Code Box
+    if (qrBytes) {
+      try {
+        const qrImg2 = await pdfDoc.embedPng(qrBytes);
+        page2.drawRectangle({
+          x: qrX - 2,
+          y: qrY - 2,
+          width: qrSize + 4,
+          height: qrSize + 4,
+          borderColor: rgb(0, 0, 0),
+          borderWidth: 1.0,
+          color: rgb(1, 1, 1),
+        });
+        page2.drawImage(qrImg2, {
+          x: qrX,
+          y: qrY,
+          width: qrSize,
+          height: qrSize,
+        });
+      } catch (_) {}
+    }
+
+    page2.drawRectangle({
+      x: codeBoxX,
+      y: codeBoxY,
+      width: codeBoxW,
+      height: codeBoxH,
+      borderColor: rgb(0, 0, 0),
+      borderWidth: 1.2,
+      color: rgb(248 / 255, 250 / 255, 252 / 255),
+    });
+
+    page2.drawText(kodeText, {
+      x: codeBoxX + (codeBoxW - kodeW) / 2,
+      y: codeBoxY + 7,
+      size: 10,
+      font: fontMonoBold,
+      color: rgb(0, 0, 0),
+    });
+
+    page2.drawText(tglText, {
+      x: codeBoxX + codeBoxW - tglW,
+      y: codeBoxY - 14,
+      size: 8.5,
+      font: fontRegular,
+      color: rgb(0, 0, 0),
+    });
+
+    const lampTxt = 'Lampiran Lembar Ke-2';
+    const lampW = fontBold.widthOfTextAtSize(lampTxt, 7.5);
+    page2.drawText(lampTxt, {
+      x: codeBoxX + codeBoxW - lampW,
+      y: codeBoxY - 24,
+      size: 7.5,
+      font: fontBold,
+      color: rgb(180 / 255, 83 / 255, 9 / 255),
+    });
+
+    // Title Box
+    page2.drawRectangle({
+      x: margin,
+      y: titleBoxY,
+      width: contentWidth,
+      height: titleBoxH,
+      borderColor: rgb(0, 0, 0),
+      borderWidth: 2.0,
+      color: rgb(245 / 255, 245 / 255, 244 / 255),
+    });
+
+    const title2Text = 'LEMBAR RINCIAN PEMBAYARAN BERTAHAP / CICILAN';
+    const title2W = fontBold.widthOfTextAtSize(title2Text, 10.5);
+    page2.drawText(title2Text, {
+      x: margin + (contentWidth - title2W) / 2,
+      y: titleBoxY + 8,
+      size: 10.5,
+      font: fontBold,
+      color: rgb(0, 0, 0),
+    });
+
+    // Metadata area on Page 2
+    let mY = 705;
+    const mLabelX = margin + 6;
+    const mColonX = margin + 140;
+    const mValX = margin + 152;
+    const mLineH = 15;
+
+    page2.drawText('Dibayarkan Kepada', { x: mLabelX, y: mY, size: 9.0, font: fontBold });
+    page2.drawText(':', { x: mColonX, y: mY, size: 9.0, font: fontBold });
+    page2.drawText(cleanSingleLine(submission.dibayarkanKepada || '-'), { x: mValX, y: mY, size: 9.0, font: fontBold });
+    mY -= mLineH;
+
+    page2.drawText('Jenis Pengajuan', { x: mLabelX, y: mY, size: 8.5, font: fontBold });
+    page2.drawText(':', { x: mColonX, y: mY, size: 8.5, font: fontBold });
+    page2.drawText(cleanSingleLine(submission.jenisPengajuan || '-'), { x: mValX, y: mY, size: 8.5, font: fontRegular });
+    mY -= mLineH;
+
+    page2.drawText('Status Transaksi', { x: mLabelX, y: mY, size: 8.5, font: fontBold });
+    page2.drawText(':', { x: mColonX, y: mY, size: 8.5, font: fontBold });
+    page2.drawText(submission.status === 'Lunas' ? 'LUNAS (100%)' : 'DP / CICILAN BERJALAN', { 
+      x: mValX, 
+      y: mY, 
+      size: 8.5, 
+      font: fontBold,
+      color: submission.status === 'Lunas' ? rgb(6 / 255, 95 / 255, 70 / 255) : rgb(180 / 255, 83 / 255, 9 / 255)
+    });
+
+    if (submission.cicilanNotes) {
+      mY -= mLineH;
+      page2.drawText('Keterangan Termin', { x: mLabelX, y: mY, size: 8.5, font: fontBold });
+      page2.drawText(':', { x: mColonX, y: mY, size: 8.5, font: fontBold });
+      page2.drawText(cleanSingleLine(submission.cicilanNotes), { x: mValX, y: mY, size: 8.5, font: fontOblique });
+    }
+
+    mY -= 12;
+
+    // Financial KPI Summary (3 Cards)
+    const totalVoucher = grandTotal || 0;
+    const rawPaid = submission.status === 'Lunas' 
+      ? totalVoucher 
+      : (typeof submission.dpAmount === 'number' ? submission.dpAmount : 0);
+    
+    const historyPayments: any[] = Array.isArray(submission.riwayatCicilan) && submission.riwayatCicilan.length > 0
+      ? submission.riwayatCicilan
+      : (rawPaid > 0 ? [{
+          id: 'init_pay',
+          tanggal: submission.tanggal,
+          nominal: rawPaid,
+          sisaSetelahBayar: Math.max(0, totalVoucher - rawPaid),
+          keterangan: submission.cicilanNotes || 'Pembayaran DP / Termin Ke-1',
+        }] : []);
+
+    const totalPaid = submission.status === 'Lunas'
+      ? totalVoucher
+      : Math.max(rawPaid, historyPayments.reduce((s: number, r: any) => s + (Number(r.nominal) || 0), 0));
+
+    const remainingBalance = Math.max(0, totalVoucher - totalPaid);
+    const percentPaid = totalVoucher > 0 ? Math.min(100, Math.round((totalPaid / totalVoucher) * 100)) : 100;
+
+    const cardGap = 8;
+    const cardW = (contentWidth - cardGap * 2) / 3;
+    const cardH = 42;
+    const cardY = mY - cardH;
+
+    // Card 1: Total Nilai Tagihan
+    page2.drawRectangle({
+      x: margin,
+      y: cardY,
+      width: cardW,
+      height: cardH,
+      borderColor: rgb(0, 0, 0),
+      borderWidth: 1.0,
+      color: rgb(248 / 255, 250 / 255, 252 / 255),
+    });
+    page2.drawText('TOTAL NILAI TAGIHAN', { x: margin + 8, y: cardY + cardH - 12, size: 7.5, font: fontBold, color: rgb(71 / 255, 85 / 255, 105 / 255) });
+    const totTxt = `Rp ${formatRupiah(totalVoucher)}`;
+    page2.drawText(totTxt, { x: margin + 8, y: cardY + 10, size: 10, font: fontMonoBold, color: rgb(0, 0, 0) });
+
+    // Card 2: Total Terbayar
+    const card2X = margin + cardW + cardGap;
+    page2.drawRectangle({
+      x: card2X,
+      y: cardY,
+      width: cardW,
+      height: cardH,
+      borderColor: rgb(6 / 255, 95 / 255, 70 / 255),
+      borderWidth: 1.0,
+      color: rgb(236 / 255, 253 / 255, 245 / 255),
+    });
+    page2.drawText(`TOTAL TERBAYAR (${percentPaid}%)`, { x: card2X + 8, y: cardY + cardH - 12, size: 7.5, font: fontBold, color: rgb(6 / 255, 95 / 255, 70 / 255) });
+    const paidTxt = `Rp ${formatRupiah(totalPaid)}`;
+    page2.drawText(paidTxt, { x: card2X + 8, y: cardY + 10, size: 10, font: fontMonoBold, color: rgb(6 / 255, 95 / 255, 70 / 255) });
+
+    // Card 3: Sisa Belum Lunas
+    const card3X = card2X + cardW + cardGap;
+    const isLunasClean = remainingBalance === 0;
+    page2.drawRectangle({
+      x: card3X,
+      y: cardY,
+      width: cardW,
+      height: cardH,
+      borderColor: isLunasClean ? rgb(6 / 255, 95 / 255, 70 / 255) : rgb(159 / 255, 18 / 255, 57 / 255),
+      borderWidth: 1.0,
+      color: isLunasClean ? rgb(236 / 255, 253 / 255, 245 / 255) : rgb(255 / 255, 241 / 255, 242 / 255),
+    });
+    page2.drawText('SISA TAGIHAN', { 
+      x: card3X + 8, 
+      y: cardY + cardH - 12, 
+      size: 7.5, 
+      font: fontBold, 
+      color: isLunasClean ? rgb(6 / 255, 95 / 255, 70 / 255) : rgb(159 / 255, 18 / 255, 57 / 255) 
+    });
+    const sisaTxt = `Rp ${formatRupiah(remainingBalance)}`;
+    page2.drawText(sisaTxt, { 
+      x: card3X + 8, 
+      y: cardY + 10, 
+      size: 10, 
+      font: fontMonoBold, 
+      color: isLunasClean ? rgb(6 / 255, 95 / 255, 70 / 255) : rgb(159 / 255, 18 / 255, 57 / 255) 
+    });
+
+    // History Table on Page 2
+    let p2TableY = cardY - 14;
+    const p2HeaderH = 22;
+    page2.drawRectangle({
+      x: margin,
+      y: p2TableY - p2HeaderH,
+      width: contentWidth,
+      height: p2HeaderH,
+      color: rgb(245 / 255, 245 / 255, 244 / 255),
+      borderColor: rgb(0, 0, 0),
+      borderWidth: 1.5,
+    });
+
+    const cNoW = 28;
+    const cTglW = 100;
+    const cNomW = 115;
+    const cSisaW = 115;
+    const cKetW = contentWidth - (cNoW + cTglW + cNomW + cSisaW);
+
+    const xNo = margin;
+    const xTgl = xNo + cNoW;
+    const xKet = xTgl + cTglW;
+    const xNom = xKet + cKetW;
+    const xSisa = xNom + cNomW;
+
+    page2.drawText('NO', { x: xNo + 7, y: p2TableY - 15, size: 8, font: fontBold });
+    page2.drawText('TANGGAL BAYAR', { x: xTgl + 8, y: p2TableY - 15, size: 8, font: fontBold });
+    page2.drawText('TAHAP / TERMIN PEMBAYARAN', { x: xKet + 8, y: p2TableY - 15, size: 8, font: fontBold });
+    page2.drawText('NOMINAL DIBAYAR', { x: xNom + 10, y: p2TableY - 15, size: 8, font: fontBold });
+    page2.drawText('SISA TAGIHAN', { x: xSisa + 10, y: p2TableY - 15, size: 8, font: fontBold });
+
+    // Vertical dividers in header
+    [xTgl, xKet, xNom, xSisa].forEach(divX => {
+      page2.drawLine({
+        start: { x: divX, y: p2TableY },
+        end: { x: divX, y: p2TableY - p2HeaderH },
+        thickness: 1.0,
+        color: rgb(0, 0, 0),
+      });
+    });
+
+    p2TableY -= p2HeaderH;
+    const rowH = 24;
+
+    historyPayments.forEach((pItem: any, idx: number) => {
+      page2.drawRectangle({
+        x: margin,
+        y: p2TableY - rowH,
+        width: contentWidth,
+        height: rowH,
+        color: idx % 2 === 0 ? rgb(1, 1, 1) : rgb(250 / 255, 250 / 255, 250 / 255),
+      });
+
+      page2.drawLine({
+        start: { x: margin, y: p2TableY - rowH },
+        end: { x: margin + contentWidth, y: p2TableY - rowH },
+        thickness: 0.8,
+        color: rgb(0, 0, 0),
+      });
+
+      [xTgl, xKet, xNom, xSisa].forEach(divX => {
+        page2.drawLine({
+          start: { x: divX, y: p2TableY },
+          end: { x: divX, y: p2TableY - rowH },
+          thickness: 0.8,
+          color: rgb(0, 0, 0),
+        });
+      });
+
+      page2.drawText(String(idx + 1), { x: xNo + 10, y: p2TableY - 15, size: 8, font: fontBold });
+      page2.drawText(cleanSingleLine(formatDateIndonesian(pItem.tanggal)), { x: xTgl + 8, y: p2TableY - 15, size: 8, font: fontRegular });
+      page2.drawText(cleanSingleLine(pItem.keterangan || `Pembayaran Ke-${idx + 1}`), { x: xKet + 8, y: p2TableY - 15, size: 8, font: fontBold });
+      
+      const pNomTxt = `Rp ${formatRupiah(pItem.nominal)}`;
+      const pNomW = fontMonoBold.widthOfTextAtSize(pNomTxt, 8.5);
+      page2.drawText(pNomTxt, { x: xNom + cNomW - pNomW - 8, y: p2TableY - 15, size: 8.5, font: fontMonoBold, color: rgb(6 / 255, 95 / 255, 70 / 255) });
+
+      const pSisaTxt = `Rp ${formatRupiah(pItem.sisaSetelahBayar)}`;
+      const pSisaW = fontMonoBold.widthOfTextAtSize(pSisaTxt, 8.5);
+      page2.drawText(pSisaTxt, { x: xSisa + cSisaW - pSisaW - 8, y: p2TableY - 15, size: 8.5, font: fontMonoBold, color: rgb(159 / 255, 18 / 255, 57 / 255) });
+
+      p2TableY -= rowH;
+    });
+
+    // Summary Total row in table
+    const p2TotalRowH = 22;
+    page2.drawRectangle({
+      x: margin,
+      y: p2TableY - p2TotalRowH,
+      width: contentWidth,
+      height: p2TotalRowH,
+      color: rgb(245 / 255, 245 / 255, 244 / 255),
+    });
+
+    page2.drawLine({
+      start: { x: margin, y: p2TableY - p2TotalRowH },
+      end: { x: margin + contentWidth, y: p2TableY - p2TotalRowH },
+      thickness: 1.5,
+      color: rgb(0, 0, 0),
+    });
+
+    [xTgl, xKet, xNom, xSisa].forEach(divX => {
+      page2.drawLine({
+        start: { x: divX, y: p2TableY },
+        end: { x: divX, y: p2TableY - p2TotalRowH },
+        thickness: 1.0,
+        color: rgb(0, 0, 0),
+      });
+    });
+
+    page2.drawText('TOTAL TERBAYAR AKUMULATIF', { x: xTgl + 8, y: p2TableY - 15, size: 8, font: fontBold });
+    
+    const p2GrandPaidTxt = `Rp ${formatRupiah(totalPaid)}`;
+    const p2GrandPaidW = fontMonoBold.widthOfTextAtSize(p2GrandPaidTxt, 8.5);
+    page2.drawText(p2GrandPaidTxt, { x: xNom + cNomW - p2GrandPaidW - 8, y: p2TableY - 15, size: 8.5, font: fontMonoBold, color: rgb(6 / 255, 95 / 255, 70 / 255) });
+
+    const p2GrandSisaTxt = `Rp ${formatRupiah(remainingBalance)}`;
+    const p2GrandSisaW = fontMonoBold.widthOfTextAtSize(p2GrandSisaTxt, 8.5);
+    page2.drawText(p2GrandSisaTxt, { x: xSisa + cSisaW - p2GrandSisaW - 8, y: p2TableY - 15, size: 8.5, font: fontMonoBold, color: rgb(159 / 255, 18 / 255, 57 / 255) });
+
+    // Table outer border
+    page2.drawRectangle({
+      x: margin,
+      y: p2TableY - p2TotalRowH,
+      width: contentWidth,
+      height: (cardY - 14) - (p2TableY - p2TotalRowH),
+      borderColor: rgb(0, 0, 0),
+      borderWidth: 1.5,
+    });
+
+    p2TableY -= p2TotalRowH + 16;
+
+    // Legal / Note Box
+    page2.drawRectangle({
+      x: margin,
+      y: p2TableY - 26,
+      width: contentWidth,
+      height: 26,
+      borderColor: rgb(0, 0, 0),
+      borderWidth: 1.0,
+      color: rgb(250 / 255, 250 / 255, 249 / 255),
+    });
+    page2.drawText('Catatan Validasi Kas: Rincian ini adalah rekaman resmi atas tahapan pembayaran transaksi bertahap.', {
+      x: margin + 8,
+      y: p2TableY - 11,
+      size: 7.5,
+      font: fontBold,
+      color: rgb(30 / 255, 30 / 255, 30 / 255),
+    });
+    page2.drawText('Seluruh mutasi telah diverifikasi dan disahkan sesuai regulasi keuangan kas/bank perusahaan.', {
+      x: margin + 8,
+      y: p2TableY - 21,
+      size: 7.0,
+      font: fontRegular,
+      color: rgb(70 / 255, 70 / 255, 70 / 255),
+    });
+
+    // 4 Signatures Block on Page 2
+    const p2SigTopY = Math.max(120, p2TableY - 45);
+    page2.drawText('PENGESAHAN DOKUMEN RINCIAN PEMBAYARAN :', {
+      x: margin,
+      y: p2SigTopY + 12,
+      size: 8.0,
+      font: fontBold,
+      color: rgb(0, 0, 0),
+    });
+
+    signers.forEach((s: any, idx: number) => {
+      const colX = margin + idx * blockW;
+      const titleW = fontBold.widthOfTextAtSize(s.title, 8.5);
+      page2.drawText(s.title, {
+        x: colX + (blockW - titleW) / 2,
+        y: p2SigTopY,
+        size: 8.5,
+        font: fontBold,
+        color: rgb(0, 0, 0),
+      });
+
+      const sigLineY = p2SigTopY - sigBoxH;
+      const nameW = fontBold.widthOfTextAtSize(s.name, 9.0);
+      page2.drawText(s.name, {
+        x: colX + (blockW - nameW) / 2,
+        y: sigLineY + 3,
+        size: 9.0,
+        font: fontBold,
+        color: rgb(0, 0, 0),
+      });
+
+      page2.drawLine({
+        start: { x: colX + 12, y: sigLineY },
+        end: { x: colX + blockW - 12, y: sigLineY },
+        thickness: 1.0,
+        color: rgb(0, 0, 0),
+      });
+
+      const roleW = fontRegular.widthOfTextAtSize(s.role, 7.5);
+      page2.drawText(s.role, {
+        x: colX + (blockW - roleW) / 2,
+        y: sigLineY - 11,
+        size: 7.5,
+        font: fontRegular,
+        color: rgb(0, 0, 0),
+      });
+    });
+  }
+
   return await pdfDoc.save();
 }
 

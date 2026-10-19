@@ -4,7 +4,7 @@ import { Submission } from '../types';
 import { formatRupiah, formatDateIndonesian, numberToTerbilang, isPettyCashSubmission } from '../utils';
 import { getVoucherShareLink } from '../utils/appLinks';
 import { NusantaraLogo } from './NusantaraLogo';
-import { Printer, ArrowLeft, Layers, FileText, CheckCircle, Cloud, Loader2, Lock, ShieldAlert, RefreshCw, Share2, Copy, Check, Send, Edit2, Trash, Trash2, RotateCw, Coins, ExternalLink, QrCode, Upload, AlertTriangle, FileSpreadsheet } from 'lucide-react';
+import { Printer, ArrowLeft, Layers, FileText, CheckCircle, Cloud, Loader2, Lock, ShieldAlert, RefreshCw, Share2, Copy, Check, Send, Edit2, Trash, Trash2, RotateCw, Coins, ExternalLink, QrCode, Upload, AlertTriangle, FileSpreadsheet, Receipt } from 'lucide-react';
 import { getStoredGoogleDriveToken, ensureValidDriveToken, googleDriveLogin, saveSubmissionToFirestore, getAllConnectedDriveTokens, getConnectedDrives, ensureGoogleDriveFileSharing } from '../firebase';
 import { SppdSheetContent } from './PrintSppdDocument';
 import { SPPDRecord } from './SppdManager';
@@ -127,13 +127,15 @@ export const VoucherOnlineQr: React.FC<{
 };
 
 /**
- * Breakdown of installment / cicilan payment details with dates, amounts, and remaining balances
+ * Compact reference badge displayed on Form F1 / F2.
+ * Keeps F1 completely uncluttered, preventing any overflow or cutoff.
+ * The full payment schedule & history is rendered on its own dedicated sheet (CicilanSheetContent).
  */
 export const CicilanBreakdownBlock: React.FC<{
   submission: Submission;
   grandTotal: number;
   density?: 'normal' | 'compact';
-}> = ({ submission, grandTotal, density = 'normal' }) => {
+}> = ({ submission, grandTotal }) => {
   const isCicilan = submission.status === 'DP / Cicilan' || 
                     (typeof submission.dpAmount === 'number' && submission.dpAmount > 0) || 
                     (Array.isArray(submission.riwayatCicilan) && submission.riwayatCicilan.length > 0) ||
@@ -162,80 +164,20 @@ export const CicilanBreakdownBlock: React.FC<{
     : Math.max(rawPaid, historyPayments.reduce((s, r) => s + (Number(r.nominal) || 0), 0));
 
   const remainingBalance = Math.max(0, totalVoucher - totalPaid);
-  const isCompact = density === 'compact';
 
   return (
-    <div className={`border-[1.5px] border-black ${isCompact ? 'p-1.5 mb-1.5 text-[10px]' : 'p-2 mb-2.5 text-xs'} bg-stone-50/50 font-sans`}>
-      {/* Header bar */}
-      <div className="flex items-center justify-between border-b border-black pb-1 mb-1.5">
-        <div className="flex items-center gap-1.5">
-          <span className="font-bold text-black uppercase tracking-wider text-[11px]">
-            Rincian Pembayaran Bertahap / Cicilan
-          </span>
-          <span className="px-1.5 py-0.5 bg-amber-100 text-amber-900 border border-black font-mono text-[9px] font-bold uppercase rounded-xs">
-            {submission.status === 'Lunas' ? 'LUNAS (100%)' : 'DP / CICILAN BERJALAN'}
-          </span>
-        </div>
-        {submission.cicilanNotes && (
-          <span className="text-[10px] italic font-semibold text-stone-700">
-            {submission.cicilanNotes}
-          </span>
-        )}
+    <div className="flex items-center justify-between px-2.5 py-1 mb-2 bg-amber-50/70 border border-amber-300 rounded text-[9.5px] font-mono print:border-black shrink-0">
+      <div className="flex items-center gap-1.5 overflow-hidden">
+        <span className="font-extrabold text-amber-900 shrink-0">
+          * TRANSAKSI CICILAN:
+        </span>
+        <span className="text-stone-800 truncate font-semibold">
+          Terbayar Rp {formatRupiah(totalPaid)} | Sisa Rp {formatRupiah(remainingBalance)}
+        </span>
       </div>
-
-      {/* Summary 3 columns */}
-      <div className={`grid grid-cols-3 gap-1.5 ${isCompact ? 'py-1 text-[10px]' : 'py-1.5 text-xs'} border border-black px-2 bg-white font-mono mb-1.5`}>
-        <div>
-          <span className="text-[9px] text-stone-500 uppercase block">Total Nilai Tagihan</span>
-          <strong className="text-black">Rp {formatRupiah(totalVoucher)}</strong>
-        </div>
-        <div className="border-x border-black px-2">
-          <span className="text-[9px] text-stone-500 uppercase block">Total Terbayar</span>
-          <strong className="text-emerald-800">Rp {formatRupiah(totalPaid)}</strong>
-        </div>
-        <div className="text-right">
-          <span className="text-[9px] text-stone-500 uppercase block">Sisa Belum Lunas</span>
-          <strong className={remainingBalance === 0 ? 'text-emerald-800' : 'text-rose-800'}>
-            Rp {formatRupiah(remainingBalance)}
-          </strong>
-        </div>
-      </div>
-
-      {/* Table of payment records with dates */}
-      {historyPayments.length > 0 && (
-        <div className="border border-black overflow-hidden bg-white">
-          <table className="w-full text-[9px] sm:text-[10px] font-mono border-collapse">
-            <thead>
-              <tr className="bg-stone-100 border-b border-black text-black font-bold">
-                <th className="py-0.5 px-1 text-center w-7 border-r border-black">NO</th>
-                <th className="py-0.5 px-1.5 text-left border-r border-black">TANGGAL BAYAR</th>
-                <th className="py-0.5 px-1.5 text-left border-r border-black">TAHAP / TERMIN</th>
-                <th className="py-0.5 px-1.5 text-right border-r border-black">NOMINAL DIBAYAR</th>
-                <th className="py-0.5 px-1.5 text-right">SISA TAGIHAN</th>
-              </tr>
-            </thead>
-            <tbody>
-              {historyPayments.map((item, idx) => (
-                <tr key={item.id || idx} className="border-b border-stone-200 last:border-b-0">
-                  <td className="py-0.5 px-1 text-center border-r border-black">{idx + 1}</td>
-                  <td className="py-0.5 px-1.5 font-semibold text-black border-r border-black">
-                    {formatDateIndonesian(item.tanggal)}
-                  </td>
-                  <td className="py-0.5 px-1.5 text-stone-800 border-r border-black">
-                    {item.keterangan || `Pembayaran Ke-${idx + 1}`}
-                  </td>
-                  <td className="py-0.5 px-1.5 text-right font-bold text-emerald-800 border-r border-black">
-                    Rp {formatRupiah(item.nominal)}
-                  </td>
-                  <td className="py-0.5 px-1.5 text-right font-bold text-rose-800">
-                    Rp {formatRupiah(item.sisaSetelahBayar)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <span className="text-[9px] font-sans font-bold text-stone-600 italic shrink-0 ml-2">
+        (Rincian lengkap pada Lembar Rincian Pembayaran Terpisah)
+      </span>
     </div>
   );
 };
@@ -247,7 +189,7 @@ interface PrintDocumentProps {
   onOpenSppdEditor?: () => void;
   onNavigateToPettyCashMapping?: (submission: Submission) => void;
   userProfile?: any;
-  initialTab?: 'both' | 'pengajuan' | 'pengeluaran' | 'lampiran' | 'slip_gaji' | 'sppd_sheet' | 'only_invoice_payment';
+  initialTab?: 'both' | 'pengajuan' | 'pengeluaran' | 'lampiran' | 'slip_gaji' | 'sppd_sheet' | 'only_invoice_payment' | 'lembar_cicilan';
   onUpdateSubmission?: (updated: Submission) => void;
   isSharedView?: boolean;
 }
@@ -624,6 +566,283 @@ const PageScaleWrapper: React.FC<{ children: React.ReactNode; isLandscape?: bool
   );
 };
 
+/**
+ * Dedicated Sheet / Page: LEMBAR RINCIAN PEMBAYARAN BERTAHAP / CICILAN
+ * Rendered as an official standalone A4 document page so Form F1 remains clean and un-truncated.
+ */
+export const CicilanSheetContent: React.FC<{
+  submission: Submission;
+  grandTotal: number;
+  f1Signers: SignerConfigItem[];
+  signatureTableStyle?: string;
+  userProfile?: any;
+  effectiveLogoUrl?: string;
+  isLastPage?: boolean;
+}> = ({
+  submission,
+  grandTotal,
+  f1Signers,
+  signatureTableStyle = 'classic_border',
+  userProfile,
+  effectiveLogoUrl,
+  isLastPage = false,
+}) => {
+  const totalVoucher = grandTotal || 0;
+  const rawPaid = submission.status === 'Lunas' 
+    ? totalVoucher 
+    : (typeof submission.dpAmount === 'number' ? submission.dpAmount : 0);
+  
+  const historyPayments = Array.isArray(submission.riwayatCicilan) && submission.riwayatCicilan.length > 0
+    ? submission.riwayatCicilan
+    : (rawPaid > 0 ? [{
+        id: 'init_pay',
+        tanggal: submission.tanggal,
+        nominal: rawPaid,
+        sisaSetelahBayar: Math.max(0, totalVoucher - rawPaid),
+        keterangan: submission.cicilanNotes || 'Pembayaran DP / Termin Ke-1',
+        createdAt: submission.createdAt
+      }] : []);
+
+  const totalPaid = submission.status === 'Lunas'
+    ? totalVoucher
+    : Math.max(rawPaid, historyPayments.reduce((s, r) => s + (Number(r.nominal) || 0), 0));
+
+  const remainingBalance = Math.max(0, totalVoucher - totalPaid);
+  const percentPaid = totalVoucher > 0 ? Math.min(100, Math.round((totalPaid / totalVoucher) * 100)) : 100;
+  const isLunas = submission.status === 'Lunas' || remainingBalance === 0;
+
+  return (
+    <PageScaleWrapper isLandscape={false} isLastPage={isLastPage}>
+      <div className="w-[210mm] max-w-full print:!w-full print:!max-w-full min-h-[297mm] print:h-[297mm] bg-white p-[12mm] border border-stone-250 shadow-md rounded-xl print:shadow-none print:border-none print:rounded-none print:!p-0 print:!m-0 page-break flex flex-col justify-between box-border overflow-hidden">
+        
+        {/* Main Content Area */}
+        <div className="space-y-4">
+          
+          {/* 1. Header (Corporate Logo + Code + Date + QR) */}
+          <div className="flex justify-between items-start border-b-[2px] border-black pb-3">
+            <NusantaraLogo size="md" className="items-start text-left" companyName={userProfile?.companyName} logoUrl={effectiveLogoUrl} />
+            <div className="flex items-start gap-3">
+              <div className="text-right">
+                <div className="inline-block border-[1.5px] border-black px-3 py-1 bg-stone-50 text-xs font-mono font-bold text-stone-900 rounded-xs">
+                  {submission.kode || '-'}
+                </div>
+                <div className="text-[11px] font-sans font-semibold text-stone-700 mt-1">
+                  Tanggal: {formatDateIndonesian(submission.tanggal)}
+                </div>
+                <div className="text-[9.5px] font-mono text-amber-800 font-bold uppercase tracking-wider mt-0.5">
+                  Lampiran Khusus Formulir F1
+                </div>
+              </div>
+              <QrCodeWrapper submission={submission} grandTotal={grandTotal} size={48} />
+            </div>
+          </div>
+
+          {/* 2. Document Title Banner */}
+          <div className="border-[2px] border-black bg-stone-100 py-2.5 px-4 text-center">
+            <h1 className="text-base font-bold text-black uppercase tracking-wider font-sans">
+              LEMBAR RINCIAN PEMBAYARAN BERTAHAP / CICILAN
+            </h1>
+            <p className="text-[10px] font-medium text-stone-600 uppercase tracking-widest mt-0.5">
+              Lampiran Resmi Bukti Pengeluaran Kas / Bank (Voucher Ref: {submission.kode})
+            </p>
+          </div>
+
+          {/* 3. Transaction & Beneficiary Information */}
+          <div className="border border-black p-3 bg-stone-50/40 text-xs font-sans">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+              <div className="flex items-start">
+                <span className="w-36 font-bold text-stone-700 shrink-0">Dibayarkan Kepada</span>
+                <span className="mr-2 font-bold">:</span>
+                <span className="font-extrabold text-black">{submission.dibayarkanKepada || '-'}</span>
+              </div>
+              <div className="flex items-start">
+                <span className="w-36 font-bold text-stone-700 shrink-0">Status Pembayaran</span>
+                <span className="mr-2 font-bold">:</span>
+                <span className={`inline-block px-2 py-0.5 text-[10px] font-mono font-extrabold uppercase border rounded-xs ${
+                  isLunas 
+                    ? 'bg-emerald-100 text-emerald-900 border-emerald-500' 
+                    : 'bg-amber-100 text-amber-900 border-amber-500'
+                }`}>
+                  {isLunas ? 'LUNAS (100%)' : 'DP / CICILAN BERJALAN'}
+                </span>
+              </div>
+              <div className="flex items-start">
+                <span className="w-36 font-bold text-stone-700 shrink-0">Jenis Pengajuan</span>
+                <span className="mr-2 font-bold">:</span>
+                <span className="font-medium text-stone-800">{submission.jenisPengajuan || '-'}</span>
+              </div>
+              <div className="flex items-start">
+                <span className="w-36 font-bold text-stone-700 shrink-0">Metode & Rekening</span>
+                <span className="mr-2 font-bold">:</span>
+                <span className="font-mono text-stone-800">
+                  {submission.dibayarkanDengan || 'Transfer'} 
+                  {submission.rekeningTujuan ? ` • ${submission.rekeningTujuan}` : ''}
+                </span>
+              </div>
+              {submission.cicilanNotes && (
+                <div className="flex items-start col-span-2 border-t border-stone-200 pt-1.5 mt-0.5">
+                  <span className="w-36 font-bold text-stone-700 shrink-0">Keterangan Termin</span>
+                  <span className="mr-2 font-bold">:</span>
+                  <span className="font-semibold text-amber-950 italic">{submission.cicilanNotes}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* 4. Financial Summary Cards (3 KPI Boxes) */}
+          <div className="grid grid-cols-3 gap-3 font-mono">
+            {/* Box 1: Total Nilai Tagihan */}
+            <div className="border-[1.5px] border-black p-2.5 bg-stone-50 rounded-xs text-left">
+              <span className="text-[9px] uppercase tracking-wider font-sans font-bold text-stone-500 block">
+                Total Nilai Tagihan
+              </span>
+              <div className="text-base font-black text-black mt-0.5">
+                Rp {formatRupiah(totalVoucher)}
+              </div>
+              <div className="text-[8.5px] italic font-sans text-stone-600 line-clamp-1 mt-1">
+                "{numberToTerbilang(totalVoucher)}"
+              </div>
+            </div>
+
+            {/* Box 2: Total Realisasi Pembayaran */}
+            <div className="border-[1.5px] border-emerald-800 p-2.5 bg-emerald-50/60 rounded-xs text-left">
+              <div className="flex justify-between items-center">
+                <span className="text-[9px] uppercase tracking-wider font-sans font-bold text-emerald-800 block">
+                  Total Terbayar
+                </span>
+                <span className="text-[9px] font-bold text-emerald-900 bg-emerald-200/80 px-1 rounded">
+                  {percentPaid}%
+                </span>
+              </div>
+              <div className="text-base font-black text-emerald-900 mt-0.5">
+                Rp {formatRupiah(totalPaid)}
+              </div>
+              <div className="text-[8.5px] font-sans font-semibold text-emerald-800 mt-1">
+                {historyPayments.length} kali pencairan termin
+              </div>
+            </div>
+
+            {/* Box 3: Sisa Belum Lunas */}
+            <div className={`border-[1.5px] p-2.5 rounded-xs text-left ${
+              remainingBalance === 0 
+                ? 'border-emerald-800 bg-emerald-50/60' 
+                : 'border-rose-800 bg-rose-50/60'
+            }`}>
+              <div className="flex justify-between items-center">
+                <span className={`text-[9px] uppercase tracking-wider font-sans font-bold block ${
+                  remainingBalance === 0 ? 'text-emerald-800' : 'text-rose-800'
+                }`}>
+                  Sisa Tagihan
+                </span>
+                <span className={`text-[9px] font-bold px-1 rounded ${
+                  remainingBalance === 0 ? 'text-emerald-900 bg-emerald-200/80' : 'text-rose-900 bg-rose-200/80'
+                }`}>
+                  {remainingBalance === 0 ? '0%' : `${100 - percentPaid}%`}
+                </span>
+              </div>
+              <div className={`text-base font-black mt-0.5 ${
+                remainingBalance === 0 ? 'text-emerald-900' : 'text-rose-900'
+              }`}>
+                Rp {formatRupiah(remainingBalance)}
+              </div>
+              <div className={`text-[8.5px] font-sans font-semibold mt-1 ${
+                remainingBalance === 0 ? 'text-emerald-800' : 'text-rose-800'
+              }`}>
+                {remainingBalance === 0 ? 'Lunas Sepenuhnya' : 'Menunggu Pelunasan'}
+              </div>
+            </div>
+          </div>
+
+          {/* 5. Detailed Payment Schedule & Realization Table */}
+          <div className="border-[1.5px] border-black overflow-hidden bg-white">
+            <div className="bg-stone-200 px-3 py-1.5 border-b-[1.5px] border-black flex justify-between items-center">
+              <span className="text-xs font-bold text-black uppercase tracking-wider font-sans">
+                Rincian Riwayat Pembayaran & Pelunasan Bertahap
+              </span>
+              <span className="text-[10px] font-mono text-stone-700">
+                Total: {historyPayments.length} Tahapan
+              </span>
+            </div>
+
+            <table className="w-full text-xs font-mono border-collapse">
+              <thead>
+                <tr className="bg-stone-100 border-b border-black text-black font-bold text-[10.5px]">
+                  <th className="py-2 px-2 text-center w-10 border-r border-black">NO</th>
+                  <th className="py-2 px-3 text-left w-36 border-r border-black">TANGGAL BAYAR</th>
+                  <th className="py-2 px-3 text-left border-r border-black">TAHAP / TERMIN PEMBAYARAN</th>
+                  <th className="py-2 px-3 text-right w-44 border-r border-black">NOMINAL DIBAYAR</th>
+                  <th className="py-2 px-3 text-right w-44">SISA TAGIHAN</th>
+                </tr>
+              </thead>
+              <tbody>
+                {historyPayments.map((item, idx) => (
+                  <tr key={item.id || idx} className="border-b border-stone-300 last:border-b-0 hover:bg-stone-50">
+                    <td className="py-2 px-2 text-center border-r border-black font-bold text-stone-600">
+                      {idx + 1}
+                    </td>
+                    <td className="py-2 px-3 font-semibold text-black border-r border-black">
+                      {formatDateIndonesian(item.tanggal)}
+                    </td>
+                    <td className="py-2 px-3 text-stone-900 border-r border-black font-sans">
+                      <div className="font-bold">{item.keterangan || `Pembayaran Termin Ke-${idx + 1}`}</div>
+                      {item.buktiPembayaran?.name && (
+                        <div className="text-[9px] text-stone-500 font-mono flex items-center gap-1 mt-0.5">
+                          <span>📎 Bukti: {item.buktiPembayaran.name}</span>
+                        </div>
+                      )}
+                    </td>
+                    <td className="py-2 px-3 text-right font-mono font-bold text-emerald-800 border-r border-black">
+                      Rp {formatRupiah(item.nominal)}
+                    </td>
+                    <td className="py-2 px-3 text-right font-mono font-bold text-rose-800">
+                      Rp {formatRupiah(item.sisaSetelahBayar)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="bg-stone-100 border-t-[1.5px] border-black font-bold">
+                  <td colSpan={3} className="py-2 px-3 text-center border-r border-black uppercase tracking-wider text-[11px] font-sans">
+                    TOTAL AKUMULASI TERBAYAR
+                  </td>
+                  <td className="py-2 px-3 text-right font-mono text-emerald-900 text-sm border-r border-black">
+                    Rp {formatRupiah(totalPaid)}
+                  </td>
+                  <td className={`py-2 px-3 text-right font-mono text-sm ${remainingBalance === 0 ? 'text-emerald-900' : 'text-rose-900'}`}>
+                    Rp {formatRupiah(remainingBalance)}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          {/* 6. Legal / Audit Notes Box */}
+          <div className="border border-black p-2.5 bg-stone-50/50 rounded-xs text-[10px] font-sans text-stone-700 leading-snug">
+            <span className="font-bold text-black uppercase block mb-0.5">Catatan Validasi Kas & Verifikasi Bank:</span>
+            <p>
+              Dokumen ini merupakan lampiran rincian resmi pembayaran transaksi bertahap/cicilan yang terhubung secara sah dengan Voucher Pengeluaran Kas/Bank ({submission.kode}). Seluruh mutasi pembayaran telah dicocokkan dengan rekening koran, bukti transfer perbankan, dan disahkan oleh pihak yang berwenang.
+            </p>
+          </div>
+
+        </div>
+
+        {/* 7. Bottom Signatures Block (4 Signers matching F1) */}
+        <div className="mt-auto pt-4">
+          <div className="text-[10px] font-bold text-black uppercase tracking-wider mb-1 font-sans text-left">
+            PENGESAHAN DOKUMEN PEMBAYARAN BERTAHAP :
+          </div>
+          <F1SignaturesBlock
+            signers={f1Signers}
+            style={signatureTableStyle}
+            density="normal"
+          />
+        </div>
+
+      </div>
+    </PageScaleWrapper>
+  );
+};
+
 export const PrintDocument: React.FC<PrintDocumentProps> = ({ 
   submission, 
   onBack, 
@@ -635,8 +854,8 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
   onUpdateSubmission, 
   isSharedView 
 }) => {
-  const [activeTab, setActiveTab] = useState<'both' | 'pengajuan' | 'pengeluaran' | 'slip_gaji' | 'lampiran' | 'sppd_sheet' | 'only_invoice_payment'>(
-    initialTab || 'both'
+  const [activeTab, setActiveTab] = useState<'both' | 'pengajuan' | 'pengeluaran' | 'slip_gaji' | 'lampiran' | 'sppd_sheet' | 'only_invoice_payment' | 'lembar_cicilan'>(
+    (initialTab as any) || 'both'
   );
 
   const isPettyCash = useMemo(() => {
@@ -1704,6 +1923,11 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
   const isSalarySubmission = (submission.jenisPengajuan || '').toLowerCase().includes('gaji') || !!submission.salaryDetails;
   const salarySlipPagesCount = isSalarySubmission ? 1 : 0;
   const sppdPagesCount = effectiveSppdRecord ? 2 : 0;
+  const isCicilan = submission.status === 'DP / Cicilan' || 
+                    (typeof submission.dpAmount === 'number' && submission.dpAmount > 0) || 
+                    (Array.isArray(submission.riwayatCicilan) && submission.riwayatCicilan.length > 0) ||
+                    (typeof submission.cicilanNotes === 'string' && submission.cicilanNotes.trim().length > 0);
+  const cicilanPagesCount = isCicilan ? 1 : 0;
   const basePagesCount = showF2 ? (printLayoutMode === 'eco_1page' ? 1 : 2) : 1;
   const totalPagesCount = activeTab === 'pengajuan'
     ? basePagesCount
@@ -1711,12 +1935,15 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
     ? salarySlipPagesCount
     : activeTab === 'sppd_sheet'
     ? sppdPagesCount
+    : activeTab === 'lembar_cicilan'
+    ? cicilanPagesCount
     : (activeTab === 'pengeluaran' || activeTab === 'lampiran' 
         ? visiblePages.length 
-        : basePagesCount + (isSalarySubmission ? salarySlipPagesCount : 0) + (effectiveSppdRecord ? sppdPagesCount : 0) + visiblePages.length);
+        : basePagesCount + (isCicilan ? cicilanPagesCount : 0) + (isSalarySubmission ? salarySlipPagesCount : 0) + (effectiveSppdRecord ? sppdPagesCount : 0) + visiblePages.length);
 
-  const hasMoreAfterF1 = (activeTab === 'both' && (showF2 || isSalarySubmission || !!effectiveSppdRecord || visiblePages.length > 0)) || (activeTab === 'pengajuan' && showF2);
-  const hasMoreAfterF2 = (activeTab === 'both' && (isSalarySubmission || !!effectiveSppdRecord || visiblePages.length > 0));
+  const hasMoreAfterF1 = (activeTab === 'both' && (showF2 || isCicilan || isSalarySubmission || !!effectiveSppdRecord || visiblePages.length > 0)) || (activeTab === 'pengajuan' && showF2);
+  const hasMoreAfterF2 = (activeTab === 'both' && (isCicilan || isSalarySubmission || !!effectiveSppdRecord || visiblePages.length > 0));
+  const hasMoreAfterCicilan = (activeTab === 'both' && (isSalarySubmission || !!effectiveSppdRecord || visiblePages.length > 0));
   const hasMoreAfterSalarySlip = (activeTab === 'both' && (!!effectiveSppdRecord || visiblePages.length > 0));
   const hasMoreAfterSppd = (activeTab === 'both' && visiblePages.length > 0);
 
@@ -1831,6 +2058,18 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
                 <FileText size={13} />
                 Hanya Pengajuan ( F1 & F2 )
               </button>
+              {isCicilan && (
+                <button
+                  onClick={() => setActiveTab('lembar_cicilan')}
+                  className={`flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg transition ${
+                    activeTab === 'lembar_cicilan' ? 'bg-amber-600 text-white shadow-xs' : 'text-stone-550 hover:text-stone-955'
+                  }`}
+                  title="Cetak Khusus Lembar Rincian Pembayaran Bertahap / Cicilan"
+                >
+                  <Receipt size={13} />
+                  Lembar Cicilan
+                </button>
+              )}
               {effectiveSppdRecord && (
                 <button
                   onClick={() => setActiveTab('sppd_sheet')}
@@ -3271,6 +3510,28 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
               )}
             </div>
           </PageScaleWrapper>
+        )}
+
+        {/* ================= PAGE: LEMBAR RINCIAN PEMBAYARAN BERTAHAP / CICILAN ================= */}
+        {(activeTab === 'both' || activeTab === 'lembar_cicilan') && isCicilan && (
+          <>
+            {activeTab === 'both' && (
+              <div className="w-[210mm] border-t-2 border-dashed border-amber-300 py-2 print:hidden flex justify-center">
+                <span className="text-xs bg-amber-50 text-amber-800 px-3 py-1 rounded-full font-bold">
+                  LEMBAR RINCIAN PEMBAYARAN BERTAHAP / CICILAN
+                </span>
+              </div>
+            )}
+            <CicilanSheetContent
+              submission={submission}
+              grandTotal={grandTotal}
+              f1Signers={f1Signers}
+              signatureTableStyle={signatureTableStyle}
+              userProfile={userProfile}
+              effectiveLogoUrl={effectiveLogoUrl}
+              isLastPage={activeTab === 'lembar_cicilan' || !hasMoreAfterCicilan}
+            />
+          </>
         )}
 
         {/* ================= PAGE: SLIP GAJI KARYAWAN ================= */}

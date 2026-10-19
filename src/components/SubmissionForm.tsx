@@ -1983,13 +1983,13 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         ? normalizedPenerima 
         : (matchedHolderForCustodian || (rawCustodian ? toTitleCase(rawCustodian) : (effectiveHolders[0] || 'Suryo Pranoto')));
 
-      const finalStatus: 'Lunas' | 'Belum Lunas' | 'DP / Cicilan' = status === 'DP / Cicilan'
-        ? 'DP / Cicilan'
-        : (status === 'Lunas' || isLunas ? 'Lunas' : 'Belum Lunas');
-
       const numDp = dpAmount !== '' && !isNaN(Number(dpAmount)) ? Number(dpAmount) : 0;
+      const finalStatus: 'Lunas' | 'Belum Lunas' | 'DP / Cicilan' = (status === 'DP / Cicilan' || (numDp > 0 && numDp < calculatedGrandTotal))
+        ? 'DP / Cicilan'
+        : (status === 'Lunas' || isLunas || (numDp > 0 && numDp >= calculatedGrandTotal) ? 'Lunas' : 'Belum Lunas');
+
       let effectiveRiwayatCicilan = initialSubmission?.riwayatCicilan ? [...initialSubmission.riwayatCicilan] : [];
-      if (finalStatus === 'DP / Cicilan' && numDp > 0 && effectiveRiwayatCicilan.length === 0) {
+      if ((finalStatus === 'DP / Cicilan' || numDp > 0) && numDp > 0 && effectiveRiwayatCicilan.length === 0) {
         effectiveRiwayatCicilan = [{
           id: `pay_initial_${Date.now()}`,
           tanggal: tanggal || new Date().toISOString().split('T')[0],
@@ -2009,8 +2009,8 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         dibayarkanKepada: normalizedPenerima,
         dibayarkanDengan: 'Cek/Transfer',
         status: finalStatus,
-        dpAmount: finalStatus === 'DP / Cicilan' ? numDp : undefined,
-        cicilanNotes: finalStatus === 'DP / Cicilan' ? cicilanNotes : undefined,
+        dpAmount: (finalStatus === 'DP / Cicilan' || numDp > 0) ? numDp : undefined,
+        cicilanNotes: (finalStatus === 'DP / Cicilan' || numDp > 0) ? (cicilanNotes || undefined) : undefined,
         riwayatCicilan: effectiveRiwayatCicilan.length > 0 ? effectiveRiwayatCicilan : undefined,
         rekeningTujuan: rekeningTujuan || undefined,
         notes,

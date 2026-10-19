@@ -1095,7 +1095,7 @@ export default function App() {
     }
     setView('sppd');
   };
-  const [printInitialTab, setPrintInitialTab] = useState<'both' | 'pengajuan' | 'pengeluaran' | 'lampiran' | 'only_invoice_payment'>('both');
+  const [printInitialTab, setPrintInitialTab] = useState<'both' | 'pengajuan' | 'pengeluaran' | 'lampiran' | 'slip_gaji' | 'sppd_sheet' | 'only_invoice_payment' | 'lembar_cicilan'>('both');
   const [editingSubmission, setEditingSubmission] = useState<Submission | null>(null);
   const [authUser, setAuthUser] = useState<any>(null);
   const [userProfile, setUserProfile] = useState<any>(null);
