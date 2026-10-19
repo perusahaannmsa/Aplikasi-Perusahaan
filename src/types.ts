@@ -34,6 +34,16 @@ export interface SalaryDetails {
   totalGajiBersih?: number;
 }
 
+export interface CicilanPaymentRecord {
+  id: string;
+  tanggal: string; // YYYY-MM-DD
+  nominal: number; // Nominal yang dibayarkan kali ini
+  sisaSetelahBayar: number; // Sisa yang belum dibayar setelah pembayaran ini
+  keterangan?: string; // e.g. "Termin 1", "Cicilan ke-2"
+  buktiPembayaran?: { url: string; name: string };
+  createdAt?: string; // ISO timestamp
+}
+
 export interface Submission {
   id: string;
   lokasi: string;
@@ -45,6 +55,7 @@ export interface Submission {
   status?: 'Lunas' | 'Belum Lunas' | 'DP / Cicilan';
   dpAmount?: number; // Nominal DP atau Cicilan yang sudah dibayarkan
   cicilanNotes?: string; // Catatan termin / cicilan (contoh: "DP 50%", "Termin 1")
+  riwayatCicilan?: CicilanPaymentRecord[]; // Riwayat seluruh pembayaran bertahap/cicilan
   driveArchived?: boolean; // Penanda pengarsipan Google Drive selesai
   notes: string;
   

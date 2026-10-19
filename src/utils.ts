@@ -1755,53 +1755,117 @@ export async function convertImageToPdf(imageBytes: Uint8Array, mimeType: string
   return await pdfDoc.save();
 }
 
-export async function mergeFilesToSinglePdf(files: File[]): Promise<{ bytes: Uint8Array; name: string; mime: string }> {
+export async function mergeFilesToSinglePdf(
+  files: (File | { name: string; bytes?: Uint8Array; base64?: string; type?: string })[],
+  customFileName?: string
+): Promise<{ bytes: Uint8Array; name: string; mime: string }> {
   if (!files || files.length === 0) {
     throw new Error('Tidak ada berkas yang dipilih.');
   }
+
+  const helperGetBytes = async (item: File | { name: string; bytes?: Uint8Array; base64?: string; type?: string }): Promise<{ bytes: Uint8Array; name: string; mime: string }> => {
+    let name = item.name || 'file';
+    let mime = (item as any).type || '';
+    let bytes: Uint8Array;
+
+    if (item instanceof File) {
+      bytes = new Uint8Array(await item.arrayBuffer());
+      mime = item.type || '';
+    } else if (item.bytes) {
+      bytes = item.bytes;
+    } else if (item.base64) {
+      const base64Data = item.base64.includes(',') ? item.base64.split(',')[1] : item.base64;
+      const binaryStr = window.atob(base64Data);
+      bytes = new Uint8Array(binaryStr.length);
+      for (let i = 0; i < binaryStr.length; i++) {
+        bytes[i] = binaryStr.charCodeAt(i);
+      }
+      if (item.base64.startsWith('data:')) {
+        mime = item.base64.split(';')[0].split(':')[1] || mime;
+      }
+    } else {
+      throw new Error(`Data berkas ${name} tidak valid.`);
+    }
+
+    if (!mime) {
+      const lower = name.toLowerCase();
+      if (lower.endsWith('.pdf')) mime = 'application/pdf';
+      else if (lower.endsWith('.png')) mime = 'image/png';
+      else if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) mime = 'image/jpeg';
+      else if (lower.endsWith('.webp')) mime = 'image/webp';
+    }
+
+    return { bytes, name, mime };
+  };
+
+  const cleanOutputName = (name: string): string => {
+    const raw = (name || 'BuktiPembayaran_Gabungan').trim();
+    return raw.toLowerCase().endsWith('.pdf') ? raw : `${raw}.pdf`;
+  };
+
+  // If single file, convert to PDF if image or return PDF bytes
   if (files.length === 1) {
-    const f = files[0];
-    const bytes = new Uint8Array(await f.arrayBuffer());
-    let mime = f.type || 'application/octet-stream';
-    let name = f.name;
+    const { bytes, name, mime } = await helperGetBytes(files[0]);
+    const outName = customFileName ? cleanOutputName(customFileName) : cleanOutputName(name.replace(/\.[^/.]+$/, ''));
     if (mime.startsWith('image/') || /\.(jpe?g|png|webp|bmp)$/i.test(name)) {
       const pdfBytes = await convertImageToPdf(bytes, mime);
-      return { bytes: pdfBytes, name: name.replace(/\.[^/.]+$/, '') + '.pdf', mime: 'application/pdf' };
+      return { bytes: pdfBytes, name: outName, mime: 'application/pdf' };
     }
-    return { bytes, name, mime };
+    // If it's already a PDF, return it as application/pdf
+    return { bytes, name: outName, mime: 'application/pdf' };
   }
 
+  // Multiple files -> merge all into a single unified PDF
   const mergedPdf = await PDFDocument.create();
-  let baseName = 'BuktiPembayaran_Gabungan';
+  let addedPagesCount = 0;
 
   for (const file of files) {
-    const fileBytes = new Uint8Array(await file.arrayBuffer());
-    const mime = file.type || '';
-    const name = file.name || '';
-    if (mime.includes('pdf') || name.toLowerCase().endsWith('.pdf')) {
-      try {
-        const srcPdf = await PDFDocument.load(fileBytes);
-        const copiedPages = await mergedPdf.copyPages(srcPdf, srcPdf.getPageIndices());
-        copiedPages.forEach((page) => mergedPdf.addPage(page));
-      } catch (e) {
-        console.warn('Failed to parse PDF during merge:', e);
+    try {
+      const { bytes, name, mime } = await helperGetBytes(file);
+      if (mime.includes('pdf') || name.toLowerCase().endsWith('.pdf')) {
+        try {
+          const srcPdf = await PDFDocument.load(bytes, { ignoreEncryption: true });
+          const pageIndices = srcPdf.getPageIndices();
+          if (pageIndices.length > 0) {
+            const copiedPages = await mergedPdf.copyPages(srcPdf, pageIndices);
+            copiedPages.forEach((page) => {
+              mergedPdf.addPage(page);
+              addedPagesCount++;
+            });
+          }
+        } catch (pdfErr) {
+          console.warn(`[Merge PDF] Gagal membaca halaman PDF ${name}:`, pdfErr);
+        }
+      } else if (mime.startsWith('image/') || /\.(jpe?g|png|webp|bmp)$/i.test(name)) {
+        try {
+          const pdfBytesFromImg = await convertImageToPdf(bytes, mime || 'image/jpeg');
+          const srcPdf = await PDFDocument.load(pdfBytesFromImg);
+          const copiedPages = await mergedPdf.copyPages(srcPdf, srcPdf.getPageIndices());
+          copiedPages.forEach((page) => {
+            mergedPdf.addPage(page);
+            addedPagesCount++;
+          });
+        } catch (imgErr) {
+          console.warn(`[Merge PDF] Gagal mengonversi gambar ${name} ke PDF:`, imgErr);
+        }
       }
-    } else if (mime.startsWith('image/') || /\.(jpe?g|png|webp|bmp)$/i.test(name)) {
-      try {
-        const pdfBytesFromImg = await convertImageToPdf(fileBytes, mime || 'image/jpeg');
-        const srcPdf = await PDFDocument.load(pdfBytesFromImg);
-        const copiedPages = await mergedPdf.copyPages(srcPdf, srcPdf.getPageIndices());
-        copiedPages.forEach((page) => mergedPdf.addPage(page));
-      } catch (imgErr) {
-        console.warn('Failed to convert image to PDF during merge:', imgErr);
-      }
+    } catch (itemErr) {
+      console.warn('[Merge PDF] Gagal memproses berkas:', itemErr);
     }
   }
 
-  const pdfBytes = await mergedPdf.save();
+  if (addedPagesCount === 0) {
+    // If no pages were added (e.g. invalid formats), create a blank page with error notice
+    const page = mergedPdf.addPage([595.27, 841.89]);
+    console.warn('[Merge PDF] Tidak ada halaman yang berhasil digabungkan, membuat dokumen fallback.');
+  }
+
+  const finalPdfBytes = await mergedPdf.save();
+  const outName = customFileName ? cleanOutputName(customFileName) : cleanOutputName(`BuktiPembayaran_Gabungan_${Date.now()}`);
+
   return {
-    bytes: pdfBytes,
-    name: `${baseName}_${Date.now()}.pdf`,
+    bytes: finalPdfBytes,
+    name: outName,
     mime: 'application/pdf',
   };
 }

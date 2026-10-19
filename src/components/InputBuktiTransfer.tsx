@@ -1,12 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Submission } from '../types';
+import { Submission, CicilanPaymentRecord } from '../types';
 import { 
   loadSubmissionsFromFirestore, 
   saveSubmissionToFirestore, 
   isFirebaseConfigured,
   googleDriveLogin,
   getStoredGoogleDriveToken,
-  setGoogleDriveToken,
   getConnectedDrives,
   saveActivityLogToFirestore,
   ensureValidDriveToken,
@@ -16,7 +15,13 @@ import {
   ensureGoogleDriveFileSharing
 } from '../firebase';
 import { DriveAccountsManager } from './DriveAccountsManager';
-import { formatRupiah, formatDateIndonesian, convertImageToPdf, compressImage } from '../utils';
+import { 
+  formatRupiah, 
+  formatDateIndonesian, 
+  convertImageToPdf, 
+  compressImage, 
+  mergeFilesToSinglePdf 
+} from '../utils';
 import { 
   ArrowLeft, 
   UploadCloud, 
@@ -43,7 +48,16 @@ import {
   SlidersHorizontal,
   Cloud,
   CheckSquare,
-  Link
+  Link,
+  Plus,
+  Trash2,
+  DollarSign,
+  Calculator,
+  History,
+  ExternalLink,
+  Layers,
+  ChevronRight,
+  Receipt
 } from 'lucide-react';
 
 interface InputBuktiTransferProps {
@@ -51,6 +65,16 @@ interface InputBuktiTransferProps {
   submissions: Submission[];
   onUpdateSubmissions: (updatedSubmissions: Submission[]) => void;
   userProfile?: any;
+}
+
+export interface UploadedReceiptItem {
+  id: string;
+  name: string;
+  size: number;
+  mimeType: string;
+  base64: string;
+  fileObject: File;
+  previewUrl?: string;
 }
 
 export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({ 
@@ -63,7 +87,7 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   
   // Advanced Filter state variables
-  const [filterStatus, setFilterStatus] = useState<'All' | 'Lunas' | 'Belum Lunas'>('Belum Lunas');
+  const [filterStatus, setFilterStatus] = useState<'All' | 'Belum Lunas' | 'DP / Cicilan' | 'Lunas'>('Belum Lunas');
   const [filterLocation, setFilterLocation] = useState<string>('All');
   const [filterJenis, setFilterJenis] = useState<string>('All');
   const [sortBy, setSortBy] = useState<'tanggal-desc' | 'tanggal-asc' | 'nominal-desc' | 'nominal-asc'>('tanggal-desc');
@@ -71,10 +95,27 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
   const [selectedSubmission, setSelectedSubmission] = useState<Submission | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
-  const [uploadedFile, setUploadedFile] = useState<{ name: string; base64: string; fileObject?: File } | null>(null);
+  
+  // Multiple files upload state
+  const [uploadedFiles, setUploadedFiles] = useState<UploadedReceiptItem[]>([]);
+  
+  // Cicilan & Payment Amount state
+  const [paymentMode, setPaymentMode] = useState<'lunas' | 'cicilan'>('lunas');
+  const [nominalBayar, setNominalBayar] = useState<number | ''>('');
+  const [keteranganCicilan, setKeteranganCicilan] = useState<string>('');
+  const [showHistory, setShowHistory] = useState<boolean>(false);
+
   const [isSuccess, setIsSuccess] = useState(false);
   const [errorText, setErrorText] = useState('');
-  const [successCode, setSuccessCode] = useState('');
+  const [successDetails, setSuccessDetails] = useState<{
+    kode: string;
+    nominalBayar: number;
+    sisa: number;
+    status: string;
+    fileCount: number;
+    pdfUrl?: string;
+    pdfName?: string;
+  } | null>(null);
 
   // Google Drive state variables
   const [isDriveConnected, setIsDriveConnected] = useState(false);
@@ -103,18 +144,6 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
       window.removeEventListener('nusantara-drive-updated', onDriveUpdated);
     };
   }, []);
-
-  const handleConnectDrive = async () => {
-    setErrorText('');
-    try {
-      const result = await googleDriveLogin();
-      if (result.accessToken) {
-        setIsDriveConnected(true);
-      }
-    } catch (err: any) {
-      setErrorText(`Gagal menghubungkan Google Drive Anda: ${err.message || err}`);
-    }
-  };
 
   // Fetch newest submissions on startup
   useEffect(() => {
@@ -159,6 +188,49 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
     return sub.items?.reduce((sum, item) => sum + (Number(item.total) || 0), 0) || 0;
   };
 
+  // Helper to calculate cumulative already paid amount for a submission
+  const getSubmissionPaid = (sub: Submission): number => {
+    if (sub.status === 'Lunas') {
+      return getSubmissionTotal(sub);
+    }
+    return sub.dpAmount || 0;
+  };
+
+  // Helper to calculate remaining unpaid balance for a submission
+  const getSubmissionRemaining = (sub: Submission): number => {
+    const total = getSubmissionTotal(sub);
+    const paid = getSubmissionPaid(sub);
+    return Math.max(0, total - paid);
+  };
+
+  // Handle selecting a submission from the list
+  const handleSelectSubmission = (sub: Submission) => {
+    setSelectedSubmission(sub);
+    setErrorText('');
+    setIsSuccess(false);
+    setUploadedFiles([]);
+    setShowHistory(false);
+
+    const total = getSubmissionTotal(sub);
+    const paid = getSubmissionPaid(sub);
+    const remaining = Math.max(0, total - paid);
+
+    if (sub.status === 'DP / Cicilan') {
+      setPaymentMode('cicilan');
+      setNominalBayar(remaining > 0 ? remaining : '');
+      setKeteranganCicilan(sub.cicilanNotes ? `Cicilan Lanjutan` : 'Termin Pembayaran');
+    } else if (sub.status === 'Lunas') {
+      setPaymentMode('lunas');
+      setNominalBayar(total);
+      setKeteranganCicilan('');
+    } else {
+      // Belum Lunas
+      setPaymentMode('lunas');
+      setNominalBayar(total);
+      setKeteranganCicilan('');
+    }
+  };
+
   // ═════════ GOOGLE DRIVE DIR HIERARCHY HELPER ACTIONS ═════════
   const getOrCreateFolder = async (_initialToken: string, name: string, parentId: string): Promise<string> => {
     const cleanName = name.trim();
@@ -166,7 +238,6 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
     const query = `name = '${cleanSearchName}' and mimeType = 'application/vnd.google-apps.folder' and '${parentId}' in parents and trashed = false`;
     
     return executeDriveApiWithAutoRefresh(async (token) => {
-      console.log(`[Drive API] Searching folder: "${cleanName}" under parent "${parentId}"`);
       const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType)`, {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -183,11 +254,8 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
 
       const data = await searchRes.json();
       if (data.files && data.files.length > 0) {
-        console.log(`[Drive API] Folder found: "${cleanName}" with ID: ${data.files[0].id}`);
         return data.files[0].id;
       }
-
-      console.log(`[Drive API] Folder NOT found. Creating folder: "${cleanName}" under parent "${parentId}"`);
 
       const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
         method: 'POST',
@@ -212,74 +280,8 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
       }
 
       const createdData = await createRes.json();
-      console.log(`[Drive API] Folder created: "${cleanName}" with ID: ${createdData.id}`);
       return createdData.id;
     }, { actionName: `getOrCreateFolder(${cleanName})` });
-  };
-
-  const parseCompanyAndSequence = (kodeStr: string): { company: string; customFolderKode: string } => {
-    const clean = (kodeStr || '').trim();
-    const upperClean = clean.toUpperCase();
-    
-    let company = 'nmsa'; // Default company
-    
-    // 1. If it explicitly contains "NMSA" anywhere, company is "nmsa"
-    if (upperClean.includes('NMSA')) {
-      company = 'nmsa';
-    } else {
-      const parts = clean.split(/[\s/\\_-]+/);
-      if (parts.length > 0) {
-        const p0 = parts[0].toUpperCase();
-        const isPrefix = ['BKK', 'BKM', 'INV', 'T', 'VOUCHER', 'LPJ'].includes(p0);
-        if (isPrefix && parts.length >= 2) {
-          const potentialComp = parts[1].toLowerCase();
-          const isNumeric = /^\d+$/.test(potentialComp);
-          const isMonthNumeral = ['i','ii','iii','iv','v','vi','vii','viii','ix','x','xi','xii'].includes(potentialComp);
-          const isTooShortOrLong = potentialComp.length < 2 || potentialComp.length > 15;
-          if (!isNumeric && !isMonthNumeral && !isTooShortOrLong) {
-            company = potentialComp;
-          } else {
-            company = 'nmsa';
-          }
-        } else if (!isPrefix) {
-          const p0Lower = parts[0].toLowerCase();
-          const isNumeric = /^\d+$/.test(p0Lower);
-          const isTooShortOrLong = p0Lower.length < 2 || p0Lower.length > 15;
-          if (!isNumeric && !isTooShortOrLong) {
-            company = p0Lower;
-          } else {
-            company = 'nmsa';
-          }
-        }
-      }
-    }
-
-    company = company.replace(/[^a-z0-9]/gi, '').toLowerCase();
-    if (!company || /^\d+$/.test(company)) {
-      company = 'nmsa';
-    }
-
-    // To build customFolderKode:
-    const partsForFolder = clean.split(/[\s/\\_-]+/);
-    let prefix = 'BKK';
-    let seq = '';
-    if (partsForFolder.length > 0) {
-      const p0 = partsForFolder[0].toUpperCase();
-      if (['BKK', 'BKM', 'INV', 'T', 'VOUCHER', 'LPJ'].includes(p0)) {
-        prefix = p0;
-        seq = partsForFolder[partsForFolder.length - 1] || '';
-      } else {
-        prefix = 'BKK';
-        seq = partsForFolder[partsForFolder.length - 1] || '';
-      }
-    }
-    const cleanSeq = (seq || '').toUpperCase();
-    const customFolderKode = `${prefix}-${company.toUpperCase()}-${cleanSeq}`;
-
-    return {
-      company,
-      customFolderKode
-    };
   };
 
   const uploadFileToFolder = async (
@@ -351,7 +353,7 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
       );
 
       if (res.status === 401) {
-        throw new Error('UNAUTHORIZED_401'); // Triggers auto-renewal in wrapper
+        throw new Error('UNAUTHORIZED_401');
       }
 
       if (!res.ok) {
@@ -361,7 +363,6 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
 
       const fileData = await res.json();
 
-      // Set resilient multi-account & public permissions
       try {
         await ensureGoogleDriveFileSharing(fileData.id, driveToken);
       } catch (perErr) {
@@ -375,7 +376,77 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
     }, { actionName: `upload ${fileName}` });
   };
 
-  // Drag and drop events
+  // ═════════ MULTI-FILE PROCESSING ACTIONS ═════════
+  const processFiles = async (fileList: FileList | File[]) => {
+    if (!fileList || fileList.length === 0) return;
+    setErrorText('');
+    setIsLoading(true);
+    setSaveProgress(`Menyiapkan ${fileList.length} berkas bukti transfer...`);
+
+    const newItems: UploadedReceiptItem[] = [];
+
+    for (let i = 0; i < fileList.length; i++) {
+      const file = fileList[i];
+      try {
+        const mimeType = file.type || '';
+        const isImage = mimeType.startsWith('image/') || /\.(jpe?g|png|webp|bmp)$/i.test(file.name);
+
+        if (isImage) {
+          setSaveProgress(`Mengompresi gambar ${i + 1}/${fileList.length}: ${file.name}...`);
+          const arrayBuffer = await file.arrayBuffer();
+          const bytes = new Uint8Array(arrayBuffer);
+          const compressed = await compressImage(bytes, mimeType, 1200, 0.7);
+          const blob = new Blob([compressed.bytes], { type: compressed.mimeType });
+          const compressedFile = new File([blob], file.name, { type: compressed.mimeType });
+
+          const base64Data = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => resolve(e.target?.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(compressedFile);
+          });
+
+          newItems.push({
+            id: `file_${Date.now()}_${Math.random().toString(36).substring(2, 7)}_${i}`,
+            name: compressedFile.name,
+            size: compressedFile.size,
+            mimeType: compressed.mimeType,
+            base64: base64Data,
+            fileObject: compressedFile,
+            previewUrl: base64Data
+          });
+        } else {
+          if (file.size > 25 * 1024 * 1024) {
+            setErrorText(`Berkas ${file.name} terlalu besar (maksimal 25 MB).`);
+            continue;
+          }
+          setSaveProgress(`Membaca dokumen ${i + 1}/${fileList.length}: ${file.name}...`);
+          const base64Data = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => resolve(e.target?.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          });
+
+          newItems.push({
+            id: `file_${Date.now()}_${Math.random().toString(36).substring(2, 7)}_${i}`,
+            name: file.name,
+            size: file.size,
+            mimeType: mimeType || 'application/pdf',
+            base64: base64Data,
+            fileObject: file
+          });
+        }
+      } catch (err: any) {
+        console.warn('Gagal memproses berkas:', file.name, err);
+      }
+    }
+
+    setUploadedFiles(prev => [...prev, ...newItems]);
+    setIsLoading(false);
+    setSaveProgress('');
+  };
+
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -386,123 +457,95 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
     }
   };
 
-  const processFile = async (file: File) => {
-    if (!file) return;
-
-    setErrorText('');
-    
-    try {
-      const mimeType = file.type || '';
-      const isImage = mimeType.startsWith('image/') || /\.jpe?g|\.png/i.test(file.name);
-      
-      if (isImage) {
-        setIsLoading(true);
-        setSaveProgress('Mengompresi gambar bukti transfer secara otomatis...');
-        
-        const arrayBuffer = await file.arrayBuffer();
-        const bytes = new Uint8Array(arrayBuffer);
-        
-        const compressed = await compressImage(bytes, mimeType, 1200, 0.7);
-        
-        // Convert back to compressed File object
-        const blob = new Blob([compressed.bytes], { type: compressed.mimeType });
-        const compressedFile = new File([blob], file.name, { type: compressed.mimeType });
-        
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          const base64Data = e.target?.result as string;
-          if (base64Data) {
-            setUploadedFile({
-              name: compressedFile.name,
-              base64: base64Data,
-              fileObject: compressedFile
-            });
-            setErrorText('');
-          }
-          setIsLoading(false);
-          setSaveProgress('');
-        };
-        reader.onerror = () => {
-          setErrorText('Gagal membaca file hasil kompresi.');
-          setIsLoading(false);
-          setSaveProgress('');
-        };
-        reader.readAsDataURL(compressedFile);
-      } else {
-        // Standard non-image file path (e.g. PDF) or when compression skipped
-        if (file.size > 10 * 1024 * 1024) {
-          setErrorText('File terlalu besar. Batas ukuran maksimal dokumen PDF adalah 10 MB.');
-          return;
-        }
-        
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          const base64Data = e.target?.result as string;
-          if (base64Data) {
-            setUploadedFile({
-              name: file.name,
-              base64: base64Data,
-              fileObject: file
-            });
-            setErrorText('');
-          }
-        };
-        reader.readAsDataURL(file);
-      }
-    } catch (err: any) {
-      console.error('File treatment/compression failure:', err);
-      setErrorText('Terjadi kesalahan saat memproses file bukti transfer.');
-      setIsLoading(false);
-      setSaveProgress('');
-    }
-  };
-
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
 
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      processFile(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      processFiles(e.dataTransfer.files);
     }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      processFile(e.target.files[0]);
+    if (e.target.files && e.target.files.length > 0) {
+      processFiles(e.target.files);
+      e.target.value = ''; // Reset input to allow adding the same files or new ones
     }
   };
 
-  const handleRemoveFile = () => {
-    setUploadedFile(null);
+  const handleRemoveFile = (id: string) => {
+    setUploadedFiles(prev => prev.filter(f => f.id !== id));
   };
 
-  // Submit and upload the receipt
+  const handleClearAllFiles = () => {
+    setUploadedFiles([]);
+  };
+
+  // Calculations for current selected voucher
+  const totalVoucher = selectedSubmission ? getSubmissionTotal(selectedSubmission) : 0;
+  const alreadyPaid = selectedSubmission ? getSubmissionPaid(selectedSubmission) : 0;
+  const sisaSebelumBayar = Math.max(0, totalVoucher - alreadyPaid);
+  
+  const currentPaymentNominal = paymentMode === 'lunas' 
+    ? sisaSebelumBayar 
+    : (typeof nominalBayar === 'number' ? nominalBayar : 0);
+
+  const accumulatedPaid = alreadyPaid + currentPaymentNominal;
+  const remainingDebt = Math.max(0, totalVoucher - accumulatedPaid);
+  const willBeLunas = (accumulatedPaid >= totalVoucher && totalVoucher > 0) || (paymentMode === 'lunas' && sisaSebelumBayar > 0);
+
+  // Shortcut percentage button click
+  const handleSetPercentage = (percent: number) => {
+    if (sisaSebelumBayar <= 0) return;
+    const calculated = Math.round((sisaSebelumBayar * percent) / 100);
+    setNominalBayar(calculated);
+    setKeteranganCicilan(percent === 100 ? 'Pelunasan Sisa' : `Cicilan ${percent}%`);
+  };
+
+  // ═════════ SUBMIT PAYMENT & MERGE TO 1 PDF ═════════
   const handleSubmitReceipt = async () => {
     if (!selectedSubmission) {
       setErrorText('Harap pilih salah satu pengajuan voucher terlebih dahulu.');
       return;
     }
-    if (!uploadedFile) {
-      setErrorText('Harap sertakan file/foto bukti transfer terlebih dahulu.');
+    if (uploadedFiles.length === 0) {
+      setErrorText('Harap sertakan minimal 1 file/foto bukti transfer.');
+      return;
+    }
+    if (currentPaymentNominal <= 0) {
+      setErrorText('Nominal pembayaran dari bukti transfer harus lebih besar dari Rp 0.');
       return;
     }
 
     setIsLoading(true);
     setErrorText('');
-    setSaveProgress('Memulai validasi lunas...');
+    setSaveProgress(`1/6. Menggabungkan ${uploadedFiles.length} berkas bukti transfer menjadi 1 file PDF pembayaran...`);
 
     try {
       const cleanJenis = (selectedSubmission.jenisPengajuan || 'Non-Kategori').replace(/[^a-zA-Z0-9\s_-]/g, '').trim();
       const cleanPenerima = (selectedSubmission.dibayarkanKepada || 'Penerima').replace(/[^a-zA-Z0-9\s_-]/g, '').trim();
-      
-      const extIndex = uploadedFile.name.lastIndexOf('.');
-      const rawExt = extIndex !== -1 ? uploadedFile.name.substring(extIndex).toLowerCase() : '.pdf';
-      const ext = rawExt.startsWith('.') ? rawExt : `.${rawExt}`;
-      const formattedFileName = `Bukti Pembayaran - (${cleanJenis} - ${cleanPenerima})${ext}`;
+      const baseMergedName = `Bukti Pembayaran - (${cleanJenis} - ${cleanPenerima})`;
+
+      // 1. Merge all uploaded files into ONE single PDF!
+      const mergeResult = await mergeFilesToSinglePdf(
+        uploadedFiles.map(u => u.fileObject),
+        baseMergedName
+      );
+
+      const pdfBytes = mergeResult.bytes;
+      const formattedFileName = mergeResult.name;
+
+      // Convert Uint8Array to base64 data URL
+      let binary = '';
+      const len = pdfBytes.byteLength;
+      for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(pdfBytes[i]);
+      }
+      const pdfBase64 = `data:application/pdf;base64,${window.btoa(binary)}`;
 
       let finalBuktiPembayaran = {
-        url: uploadedFile.base64,
+        url: pdfBase64,
         name: formattedFileName
       };
 
@@ -512,13 +555,14 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
         )
       ];
 
+      // 2. Google Drive upload
       let token: string | null = null;
       const activeAccount = getActiveGoogleDriveAccount();
       const connectedDrives = getConnectedDrives();
       const hasDriveSetup = connectedDrives.length > 0 || !!activeAccount?.email || isDriveConnected;
 
       if (hasDriveSetup) {
-        setSaveProgress(`Menghubungkan akun Google Drive (${activeAccount?.email || 'NMSA'})...`);
+        setSaveProgress(`2/6. Menghubungkan akun Google Drive resmi (${activeAccount?.email || 'akuncoding211@gmail.com'})...`);
         try {
           token = await getOrRenewDriveToken(activeAccount?.email, true);
           if (token) {
@@ -530,8 +574,7 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
       }
 
       if (token) {
-        setSaveProgress('Menghubungkan ke layanan Google Drive...');
-        
+        setSaveProgress('3/6. Menyusun struktur folder arsip di Google Drive...');
         let yearStr = '';
         let monthStr = '';
         let dayStr = '';
@@ -564,89 +607,26 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
         const folderCompanyUpper = 'NMSA';
 
         try {
-          // 1. Get or create 'Voucher-APP' under 'root'
           const rootId = 'root';
-          setSaveProgress('1/7. Menghubungkan folder utama "Voucher-APP"...');
           const voucherAppId = await getOrCreateFolder(token, 'Voucher-APP', rootId);
-
-          // 2. Get or create company folder under 'Voucher-APP'
-          setSaveProgress(`2/7. Menyusun folder perusahaan "${folderCompanyUpper}"...`);
           const companyFolderId = await getOrCreateFolder(token, folderCompanyUpper, voucherAppId);
-
-          // 3. Get or create year folder under company folder
-          setSaveProgress(`3/7. Menyusun folder tahun "${yearStr}"...`);
           const yearId = await getOrCreateFolder(token, yearStr, companyFolderId);
-
-          // 4. Get or create month folder under year folder
-          setSaveProgress(`4/7. Menyusun folder bulan "${monthStr}"...`);
           const monthId = await getOrCreateFolder(token, monthStr, yearId);
-
-          // 5. Get or create day folder under month folder
-          setSaveProgress(`5/7. Menyusun folder tanggal "${dayStr}"...`);
           const dayId = await getOrCreateFolder(token, dayStr, monthId);
 
-          // 6. Get or create custom transaction folder under day folder named (Jenis_Pengajuan - Dibayarkan_Kepada)
           const cleanJenisFolder = (selectedSubmission.jenisPengajuan || 'Non-Kategori').trim().replace(/[\/\\?%*:|"<>.]/g, '');
           const cleanPenerimaFolder = (selectedSubmission.dibayarkanKepada || 'Penerima').trim().replace(/[\/\\?%*:|"<>.]/g, '');
           const txFolderName = `${cleanJenisFolder} - ${cleanPenerimaFolder}`;
-
-          setSaveProgress(`6/7. Membuka folder transaksi "${txFolderName}"...`);
           const targetFolderId = await getOrCreateFolder(token, txFolderName, dayId);
 
-          // 7. Get or create folder "Bukti Pembayaran" inside targetFolderId
-          setSaveProgress('7/7. Membuka folder khusus "Bukti Pembayaran"...');
           const folderBuktiBayarId = await getOrCreateFolder(token, 'Bukti Pembayaran', targetFolderId);
 
-          // Convert bytes and handle image to pdf transformation
-          setSaveProgress('Menyiapkan file bukti pembayaran...');
-          let fileBytes: Uint8Array;
-          let mime = 'application/octet-stream';
-
-          if (uploadedFile.fileObject) {
-            fileBytes = new Uint8Array(await uploadedFile.fileObject.arrayBuffer());
-            mime = uploadedFile.fileObject.type || 'application/octet-stream';
-          } else {
-            // Parse base64 fallback
-            const base64Content = uploadedFile.base64.split(',')[1];
-            const binaryString = window.atob(base64Content);
-            fileBytes = new Uint8Array(binaryString.length);
-            for (let i = 0; i < binaryString.length; i++) {
-              fileBytes[i] = binaryString.charCodeAt(i);
-            }
-            if (uploadedFile.base64.startsWith('data:')) {
-              mime = uploadedFile.base64.split(';')[0].split(':')[1];
-            }
-          }
-
-          let paymentExt = ext;
-          const originalName = uploadedFile.name;
-          
-          if (mime.startsWith('image/') || /\.jpe?g|\.png/i.test(originalName)) {
-            try {
-              setSaveProgress('Mengonversi gambar bukti transfer ke dokumen PDF...');
-              fileBytes = await convertImageToPdf(fileBytes, mime);
-              mime = 'application/pdf';
-              paymentExt = '.pdf';
-            } catch (convErr) {
-              console.warn('Gagal merubah gambar bukti pembayaran ke PDF:', convErr);
-            }
-          }
-
-          // Strip system prepends to keep original clean name
-          let cleanOriginalName = originalName || 'Bukti Pembayaran';
-          cleanOriginalName = cleanOriginalName.replace(/^Bukti Pembayaran - \([^-]+\s*-\s*[^)]+\)\s*-\s*/i, '');
-          cleanOriginalName = cleanOriginalName.replace(/^Bukti Pembayaran - /i, '');
-          
-          const lastDotPay = cleanOriginalName.lastIndexOf('.');
-          const baseNamePay = lastDotPay !== -1 ? cleanOriginalName.substring(0, lastDotPay) : cleanOriginalName;
-          const driveFileName = `${baseNamePay.trim()}${paymentExt}`;
-          
-          setSaveProgress('Mengunggah berkas bukti pembayaran langsung ke Google Drive...');
+          setSaveProgress('4/6. Mengunggah 1 file PDF Bukti Pembayaran gabungan ke Google Drive...');
           const uploadResult = await uploadFileToFolder(
             token,
-            driveFileName,
-            mime,
-            fileBytes,
+            formattedFileName,
+            'application/pdf',
+            pdfBytes,
             folderBuktiBayarId
           );
 
@@ -661,33 +641,67 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
             isBuktiPembayaran: true
           });
 
-          console.log('[Drive Upload] Upload Bukti Pembayaran berhasil:', uploadResult);
+          console.log('[Drive Upload] Upload Bukti Pembayaran PDF berhasil:', uploadResult);
         } catch (driveErr: any) {
-          console.warn('[Drive Upload] Error syncing to Google Drive, using local attachment fallback:', driveErr);
-          // Soft failure, add local fallback and log
+          console.warn('[Drive Upload] Gagal upload ke Drive, fallback ke lampiran lokal:', driveErr);
           finalDriveFiles.push({
-            url: uploadedFile.base64,
+            url: pdfBase64,
             name: formattedFileName,
             isBuktiPembayaran: true
           });
         }
       } else {
-        // Fallback or upload without Drive synced
         finalDriveFiles.push({
-          url: uploadedFile.base64,
+          url: pdfBase64,
           name: formattedFileName,
           isBuktiPembayaran: true
         });
       }
 
+      setSaveProgress('5/6. Memperbarui status & riwayat pembayaran transaksi...');
+
+      const finalStatus: 'Lunas' | 'DP / Cicilan' = willBeLunas ? 'Lunas' : 'DP / Cicilan';
+      const finalDpAmount: number = willBeLunas ? totalVoucher : accumulatedPaid;
+
+      let finalCicilanNotes = selectedSubmission.cicilanNotes || '';
+      if (willBeLunas) {
+        if (keteranganCicilan) {
+          finalCicilanNotes = `${keteranganCicilan} (LUNAS 100%)`;
+        } else if (selectedSubmission.status === 'DP / Cicilan') {
+          finalCicilanNotes = `${selectedSubmission.cicilanNotes ? selectedSubmission.cicilanNotes + ' - ' : ''}LUNAS (100%)`;
+        } else {
+          finalCicilanNotes = 'Lunas';
+        }
+      } else {
+        finalCicilanNotes = keteranganCicilan || `Cicilan Rp ${formatRupiah(currentPaymentNominal)} (Sisa Rp ${formatRupiah(remainingDebt)})`;
+      }
+
+      const newInstallment: CicilanPaymentRecord = {
+        id: `pay_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        tanggal: new Date().toISOString().split('T')[0],
+        nominal: currentPaymentNominal,
+        sisaSetelahBayar: remainingDebt,
+        keterangan: keteranganCicilan || (willBeLunas ? 'Pelunasan Penuh' : 'Pembayaran Cicilan'),
+        buktiPembayaran: finalBuktiPembayaran,
+        createdAt: new Date().toISOString()
+      };
+
+      const updatedRiwayat: CicilanPaymentRecord[] = [
+        ...(selectedSubmission.riwayatCicilan || []),
+        newInstallment
+      ];
+
       const updatedSubmission: Submission = {
         ...selectedSubmission,
-        status: 'Lunas',
+        status: finalStatus,
+        dpAmount: finalDpAmount,
+        cicilanNotes: finalCicilanNotes,
+        riwayatCicilan: updatedRiwayat,
         buktiPembayaran: finalBuktiPembayaran,
         googleDriveFiles: finalDriveFiles
       };
 
-      setSaveProgress('Memperbarui data status transaksi di Firestore...');
+      setSaveProgress('6/6. Menyimpan data ke Firebase Firestore & backup lokal...');
 
       // Push to Firestore
       if (isFirebaseConfigured()) {
@@ -703,7 +717,7 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
 
       setLocalSubmissions(nextList);
       onUpdateSubmissions(nextList);
-      
+
       // Save directly to localStorage as backup
       try {
         localStorage.setItem('NUSANTARA_HO_SUBMISSIONS', JSON.stringify(nextList));
@@ -711,12 +725,15 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
         console.warn('LocalStorage save failure:', localSaveErr);
       }
 
-      // Log the event for the Audit log
+      // Audit Log
       try {
-        const totalVal = selectedSubmission.items.reduce((sum, item) => sum + item.total, 0);
+        const actionText = finalStatus === 'Lunas'
+          ? `Melunasi voucher ${selectedSubmission.kode} (${selectedSubmission.dibayarkanKepada}) dengan pembayaran senilai Rp ${formatRupiah(currentPaymentNominal)}. Menggabungkan ${uploadedFiles.length} berkas bukti transfer menjadi 1 file PDF resmi.`
+          : `Mencatat pembayaran cicilan voucher ${selectedSubmission.kode} (${selectedSubmission.dibayarkanKepada}) senilai Rp ${formatRupiah(currentPaymentNominal)}. Sisa tagihan: Rp ${formatRupiah(remainingDebt)}. Menggabungkan ${uploadedFiles.length} berkas bukti transfer menjadi 1 file PDF resmi.`;
+
         await saveActivityLogToFirestore(
           'pay_submission',
-          `Mengunggah bukti transfer untuk voucher ${selectedSubmission.kode} kepada ${selectedSubmission.dibayarkanKepada} senilai Rp ${formatRupiah(totalVal)}. Status transaksi diubah menjadi Lunas.`,
+          actionText,
           'success',
           selectedSubmission.id,
           selectedSubmission.kode
@@ -725,9 +742,18 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
         console.warn('Gagal mencatat log aktivitas:', logErr);
       }
 
-      setSuccessCode(selectedSubmission.kode || 'BKK-VOUCHER');
+      setSuccessDetails({
+        kode: selectedSubmission.kode || 'BKK-VOUCHER',
+        nominalBayar: currentPaymentNominal,
+        sisa: remainingDebt,
+        status: finalStatus,
+        fileCount: uploadedFiles.length,
+        pdfUrl: finalBuktiPembayaran.url,
+        pdfName: finalBuktiPembayaran.name
+      });
+
       setIsSuccess(true);
-      setUploadedFile(null);
+      setUploadedFiles([]);
       setSelectedSubmission(null);
     } catch (err: any) {
       console.error(err);
@@ -759,10 +785,14 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
     const matchesSearch = matchesCode || matchesRecipient || matchesType || matchesItems || q === '';
 
     // 2. Status Filter
-    const matchesStatus = 
-      filterStatus === 'All' ? true :
-      filterStatus === 'Lunas' ? sub.status === 'Lunas' :
-      sub.status !== 'Lunas';
+    let matchesStatus = true;
+    if (filterStatus === 'Lunas') {
+      matchesStatus = sub.status === 'Lunas';
+    } else if (filterStatus === 'DP / Cicilan') {
+      matchesStatus = sub.status === 'DP / Cicilan';
+    } else if (filterStatus === 'Belum Lunas') {
+      matchesStatus = sub.status !== 'Lunas';
+    }
 
     // 3. Location Filter
     const matchesLocation = 
@@ -780,27 +810,26 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
   // Sort submissions based on dropdown choice
   const sortedSubmissions = [...filteredSubmissions].sort((a, b) => {
     if (sortBy === 'tanggal-desc') {
-      return new Date(b.tanggal).getTime() - new Date(a.tanggal).getTime();
-    }
-    if (sortBy === 'tanggal-asc') {
-      return new Date(a.tanggal).getTime() - new Date(b.tanggal).getTime();
-    }
-    if (sortBy === 'nominal-desc') {
+      return (b.tanggal || '').localeCompare(a.tanggal || '');
+    } else if (sortBy === 'tanggal-asc') {
+      return (a.tanggal || '').localeCompare(b.tanggal || '');
+    } else if (sortBy === 'nominal-desc') {
       return getSubmissionTotal(b) - getSubmissionTotal(a);
-    }
-    if (sortBy === 'nominal-asc') {
+    } else if (sortBy === 'nominal-asc') {
       return getSubmissionTotal(a) - getSubmissionTotal(b);
     }
     return 0;
   });
 
-  // Calculate high level KPI totals for the finance dashboard view
+  // KPI calculations
   const totalSubmissionsCount = localSubmissions.length;
-  const unpaidCount = localSubmissions.filter(s => s.status !== 'Lunas').length;
   const paidCount = localSubmissions.filter(s => s.status === 'Lunas').length;
-  const outstandingDebtValue = localSubmissions
-    .filter(s => s.status !== 'Lunas')
-    .reduce((sum, s) => sum + getSubmissionTotal(s), 0);
+  const cicilanCount = localSubmissions.filter(s => s.status === 'DP / Cicilan').length;
+  const unpaidCount = localSubmissions.filter(s => (s.status || 'Belum Lunas') === 'Belum Lunas').length;
+
+  const totalOutstandingDebt = localSubmissions.reduce((sum, s) => {
+    return sum + getSubmissionRemaining(s);
+  }, 0);
 
   return (
     <div className="max-w-7xl mx-auto py-2 px-1 sm:px-3">
@@ -820,17 +849,17 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
               </span>
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
             </div>
-            <h1 className="text-xl sm:text-2xl font-black text-stone-900 tracking-tight font-sans">
-              Dashboard Verifikasi Bukti Transfer HO
+            <h1 className="text-xl sm:text-2xl font-black text-stone-900 tracking-tight font-sans flex items-center gap-2.5">
+              <span>Input Pembayaran & Cicilan Bukti Transfer</span>
             </h1>
             <p className="text-xs sm:text-sm text-stone-500 font-medium">
-              Manajemen kompilasi voucher transaksi Nusantara Mineral. Unggah tanda bukti/struk untuk menyelesaikan pelunasan.
+              Upload tanda bukti transfer (bisa lebih dari 1 file & digabungkan otomatis jadi 1 PDF), input nominal pembayaran cicilan, dan deteksi sisa tagihan secara real-time.
             </p>
           </div>
           
           <button
             onClick={onBack}
-            className="flex items-center justify-center gap-1.5 px-4.5 py-2.5 border border-stone-200 hover:border-stone-350 bg-white hover:bg-stone-50 text-stone-700 text-xs font-bold rounded-xl transition cursor-pointer font-mono"
+            className="flex items-center justify-center gap-1.5 px-4.5 py-2.5 border border-stone-200 hover:border-stone-350 bg-white hover:bg-stone-50 text-stone-700 text-xs font-bold rounded-xl transition cursor-pointer font-mono shrink-0 shadow-3xs"
           >
             <ArrowLeft size={13} />
             <span>KEMBALI KE PORTAL UTAMA</span>
@@ -841,85 +870,98 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
         <div className="p-4 sm:p-6 space-y-6">
           
           {/* KPI BLOCKS: QUICK REVIEW STATS */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
             
-            <div className="bg-stone-50 rounded-xl p-4 border border-stone-200 flex items-center justify-between shadow-2xs">
+            <div className="bg-stone-50 rounded-xl p-3.5 border border-stone-200 flex items-center justify-between shadow-2xs">
               <div className="space-y-1">
-                <span className="text-[10px] font-mono text-stone-400 font-bold uppercase tracking-wider block">Total Transaksi</span>
-                <span className="text-xl font-black text-stone-900">{totalSubmissionsCount} Voucher</span>
+                <span className="text-[10px] font-mono text-stone-400 font-bold uppercase tracking-wider block">Total Voucher</span>
+                <span className="text-lg font-black text-stone-900">{totalSubmissionsCount}</span>
               </div>
-              <div className="p-2.5 bg-stone-100 rounded-lg text-stone-600">
-                <SlidersHorizontal size={16} />
+              <div className="p-2 bg-stone-100 rounded-lg text-stone-600">
+                <SlidersHorizontal size={15} />
               </div>
             </div>
 
-            <div className="bg-amber-50/40 rounded-xl p-4 border border-amber-200 flex items-center justify-between shadow-2xs">
+            <div className="bg-rose-50/40 rounded-xl p-3.5 border border-rose-200/80 flex items-center justify-between shadow-2xs">
               <div className="space-y-1">
-                <span className="text-[10px] font-mono text-[#a58421] font-bold uppercase tracking-wider block">Belum Lunas (Pending)</span>
-                <span className="text-xl font-black text-amber-700">{unpaidCount} Voucher</span>
+                <span className="text-[10px] font-mono text-rose-600 font-bold uppercase tracking-wider block">Belum Lunas</span>
+                <span className="text-lg font-black text-rose-700">{unpaidCount}</span>
               </div>
-              <div className="p-2.5 bg-amber-50 rounded-lg text-[#a58421]">
-                <Clock size={16} />
+              <div className="p-2 bg-rose-50 rounded-lg text-rose-600">
+                <Clock size={15} />
               </div>
             </div>
 
-            <div className="bg-emerald-50/30 rounded-xl p-4 border border-emerald-150 flex items-center justify-between shadow-2xs">
+            <div className="bg-amber-50/50 rounded-xl p-3.5 border border-amber-200 flex items-center justify-between shadow-2xs">
+              <div className="space-y-1">
+                <span className="text-[10px] font-mono text-amber-700 font-bold uppercase tracking-wider block">DP / Cicilan</span>
+                <span className="text-lg font-black text-amber-800">{cicilanCount}</span>
+              </div>
+              <div className="p-2 bg-amber-50 rounded-lg text-amber-600">
+                <Coins size={15} />
+              </div>
+            </div>
+
+            <div className="bg-emerald-50/30 rounded-xl p-3.5 border border-emerald-200/80 flex items-center justify-between shadow-2xs">
               <div className="space-y-1">
                 <span className="text-[10px] font-mono text-emerald-700 font-bold uppercase tracking-wider block">Lunas (Paid)</span>
-                <span className="text-xl font-black text-emerald-800">{paidCount} Voucher</span>
+                <span className="text-lg font-black text-emerald-800">{paidCount}</span>
               </div>
-              <div className="p-2.5 bg-emerald-50 rounded-lg text-emerald-700">
-                <CheckCircle size={16} />
+              <div className="p-2 bg-emerald-50 rounded-lg text-emerald-700">
+                <CheckCircle size={15} />
               </div>
             </div>
 
-            <div className="bg-stone-905 bg-stone-900 text-stone-100 rounded-xl p-4 border border-stone-850 flex items-center justify-between shadow-2xs">
+            <div className="col-span-2 sm:col-span-1 bg-stone-900 text-stone-100 rounded-xl p-3.5 border border-stone-850 flex items-center justify-between shadow-2xs">
               <div className="space-y-1">
-                <span className="text-[10px] font-mono text-stone-400 font-bold uppercase tracking-wider block">Total Tagihan Pending</span>
-                <span className="text-lg font-black text-amber-400 font-mono tracking-tight">{formatRupiah(outstandingDebtValue)}</span>
+                <span className="text-[9px] font-mono text-stone-400 font-bold uppercase tracking-wider block">Sisa Tagihan Belum Lunas</span>
+                <span className="text-sm sm:text-base font-black text-amber-400 font-mono tracking-tight truncate block">
+                  Rp {formatRupiah(totalOutstandingDebt)}
+                </span>
               </div>
-              <div className="p-2.5 bg-stone-800 rounded-lg text-amber-400">
-                <Check size={16} />
+              <div className="p-2 bg-stone-800 rounded-lg text-amber-400 shrink-0">
+                <DollarSign size={15} />
               </div>
             </div>
 
           </div>
 
           {/* ADVANCED FILTER TOOLBAR */}
-          <div className="p-5 bg-stone-50 rounded-2xl border border-stone-200 space-y-4">
+          <div className="p-4 bg-stone-50 rounded-2xl border border-stone-200 space-y-3.5">
             <div className="flex items-center gap-2 border-b border-stone-200 pb-2">
               <Filter size={14} className="text-amber-500" />
-              <h2 className="text-xs font-mono font-black text-stone-800 uppercase tracking-widest">Piringan Filter & Penyortiran Rinci</h2>
+              <h2 className="text-xs font-mono font-black text-stone-800 uppercase tracking-widest">Filter & Pencarian Voucher Transaksi</h2>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-3.5">
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
               
               {/* Search String */}
               <div className="md:col-span-4 space-y-1">
-                <label className="block text-[10px] font-mono font-bold text-stone-500 uppercase">Kata Kunci / Pencarian Cepat</label>
+                <label className="block text-[10px] font-mono font-bold text-stone-500 uppercase">Cari Kode, Penerima, atau Item</label>
                 <div className="relative">
                   <Search size={14} className="absolute left-3 top-2.5 text-stone-400" />
                   <input
                     type="text"
-                    placeholder="Kode, penerima, atau keterangan..."
+                    placeholder="Contoh: HO-01, Vendor, Bahan Bakar..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pl-9 pr-3.5 py-1.5 bg-white text-xs text-stone-900 border border-stone-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-stone-400"
+                    className="w-full pl-9 pr-3.5 py-1.5 bg-white text-xs text-stone-900 border border-stone-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500"
                   />
                 </div>
               </div>
 
               {/* Status */}
-              <div className="md:col-span-2 space-y-1">
+              <div className="md:col-span-3 space-y-1">
                 <label className="block text-[10px] font-mono font-bold text-stone-500 uppercase">Status Pembayaran</label>
                 <select
                   value={filterStatus}
                   onChange={(e) => setFilterStatus(e.target.value as any)}
-                  className="w-full bg-white border border-stone-200 rounded-lg py-1.5 px-2.5 text-xs focus:outline-none"
+                  className="w-full bg-white border border-stone-200 rounded-lg py-1.5 px-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500 font-medium"
                 >
-                  <option value="All">Semua Transaksi</option>
-                  <option value="Belum Lunas">Belum Lunas (Pending)</option>
-                  <option value="Lunas">Lunas (Paid)</option>
+                  <option value="Belum Lunas">⏳ Belum Lunas (Termasuk DP / Cicilan)</option>
+                  <option value="DP / Cicilan">🪙 Sedang Cicilan / Bertahap</option>
+                  <option value="Lunas">✅ Lunas Penuh (100%)</option>
+                  <option value="All">📂 Semua Transaksi</option>
                 </select>
               </div>
 
@@ -939,27 +981,12 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
               </div>
 
               {/* Category */}
-              <div className="md:col-span-2 space-y-1">
-                <label className="block text-[10px] font-mono font-bold text-stone-500 uppercase">Kategori / Jenis</label>
-                <select
-                  value={filterJenis}
-                  onChange={(e) => setFilterJenis(e.target.value)}
-                  className="w-full bg-white border border-stone-200 rounded-lg py-1.5 px-2.5 text-xs focus:outline-none"
-                >
-                  <option value="All">Semua Kategori</option>
-                  {uniqueJenis.map(j => (
-                    <option key={j} value={j}>{j}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Order Sort */}
-              <div className="md:col-span-2 space-y-1">
-                <label className="block text-[10px] font-mono font-bold text-stone-500 uppercase">Sortir Urutan</label>
+              <div className="md:col-span-3 space-y-1">
+                <label className="block text-[10px] font-mono font-bold text-stone-500 uppercase">Kategori / Sortir</label>
                 <select
                   value={sortBy}
                   onChange={(e) => setSortBy(e.target.value as any)}
-                  className="w-full bg-white border border-stone-200 rounded-lg py-1.5 px-2.5 text-xs focus:outline-none"
+                  className="w-full bg-white border border-stone-200 rounded-lg py-1.5 px-2.5 text-xs focus:outline-none font-mono"
                 >
                   <option value="tanggal-desc">📆 Tanggal Terbaru</option>
                   <option value="tanggal-asc">📆 Tanggal Terlama</option>
@@ -972,23 +999,23 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
           </div>
 
           {/* DUAL COLUMN SPLIT BOARD */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             
-            {/* LEFT SIDE: FILTERED MASTER LIST OF COPIES (2 COLUMNS) */}
-            <div className="lg:col-span-2 space-y-3">
+            {/* LEFT SIDE: LIST OF VOUCHERS (7 COLS) */}
+            <div className="lg:col-span-7 space-y-3">
               <div className="flex items-center justify-between pb-1">
                 <h3 className="text-xs font-mono font-black text-stone-400 uppercase tracking-widest block">
-                  Daftar Voucher Ditemukan ({sortedSubmissions.length})
+                  Daftar Voucher Transaksi ({sortedSubmissions.length})
                 </h3>
-                <span className="text-[10px] text-stone-400 bg-stone-100 px-2.5 py-0.5 rounded-full font-bold">
-                  Klik item untuk mengunggah bukti bayar
+                <span className="text-[10px] text-stone-500 bg-stone-100 px-2.5 py-0.5 rounded-full font-bold">
+                  Klik item untuk input pembayaran & cicilan
                 </span>
               </div>
 
               {isLoading ? (
                 <div className="p-16 border rounded-xl bg-white text-center text-stone-400 text-xs">
                   <span className="inline-block w-6 h-6 border-2 border-amber-400 border-t-transparent rounded-full animate-spin mb-3"></span>
-                  <p className="font-mono">Menyelaraskan data real-time dengan server cloud...</p>
+                  <p className="font-mono">Menyelaraskan data real-time dengan database...</p>
                 </div>
               ) : sortedSubmissions.length === 0 ? (
                 <div className="p-16 border-2 border-dashed border-stone-200 rounded-xl bg-white text-center text-stone-450 text-xs space-y-2">
@@ -997,28 +1024,27 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
                   <p className="text-[11px] text-stone-400">Silakan sesuaikan filter pencarian, status, atau kategori di atas.</p>
                 </div>
               ) : (
-                <div className="space-y-2.5 max-h-[580px] overflow-y-auto pr-1">
+                <div className="space-y-2.5 max-h-[680px] overflow-y-auto pr-1">
                   {sortedSubmissions.map((sub) => {
                     const totalVoucher = getSubmissionTotal(sub);
+                    const paidVoucher = getSubmissionPaid(sub);
+                    const remainingVoucher = getSubmissionRemaining(sub);
                     const isSelected = selectedSubmission?.id === sub.id;
                     const isLunas = sub.status === 'Lunas';
+                    const isCicilan = sub.status === 'DP / Cicilan';
 
                     return (
                       <div
                         key={sub.id}
-                        onClick={() => {
-                          setSelectedSubmission(sub);
-                          setErrorText('');
-                          setIsSuccess(false);
-                        }}
-                        className={`p-4 border rounded-xl bg-white transition shadow-3xs cursor-pointer flex flex-col sm:flex-row gap-3 sm:items-center justify-between group text-xs text-stone-600 ${
+                        onClick={() => handleSelectSubmission(sub)}
+                        className={`p-3.5 border rounded-xl bg-white transition shadow-3xs cursor-pointer flex flex-col sm:flex-row gap-3 sm:items-center justify-between group text-xs text-stone-600 ${
                           isSelected 
-                            ? 'border-amber-450 ring-2 ring-amber-100 bg-amber-50/10' 
-                            : 'border-stone-200 hover:border-stone-350 hover:bg-stone-50/40'
+                            ? 'border-amber-450 ring-2 ring-amber-200 bg-amber-50/15' 
+                            : 'border-stone-200 hover:border-amber-300 hover:bg-stone-50/50'
                         }`}
                       >
                         <div className="space-y-1.5 flex-1 min-w-0 pr-2">
-                          <div className="flex flex-wrap items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-1.5">
                             <span 
                               className="font-sans text-stone-900 font-extrabold text-sm tracking-tight group-hover:text-amber-700 transition block truncate max-w-full"
                               title={sub.items && sub.items.length > 0 ? sub.items.map(i => i.item).filter(Boolean).join(', ') : sub.jenisPengajuan}
@@ -1028,7 +1054,7 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
                                 : sub.jenisPengajuan || 'Non-Kategori'}
                             </span>
                             
-                            <span className="text-[10px] bg-amber-50 text-[#a58421] border border-amber-250 px-1.5 py-0.5 rounded font-mono font-bold whitespace-nowrap">
+                            <span className="text-[10px] bg-amber-50 text-[#a58421] border border-amber-200 px-1.5 py-0.5 rounded font-mono font-bold whitespace-nowrap">
                               {sub.kode || 'BKK-VOUCHER'}
                             </span>
                             
@@ -1036,42 +1062,69 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
                               {sub.lokasi || 'N/A'}
                             </span>
 
-                            <span className="text-[10px] bg-stone-100/80 text-stone-500 px-1.5 py-0.5 rounded font-mono truncate max-w-[140px]">
-                              {sub.jenisPengajuan || 'Non-Kategori'}
-                            </span>
-
-                            {/* Clear indicator badges requested by client */}
-                            {isLunas ? (
-                              <span className="ml-auto sm:ml-0 inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[10px] font-black font-mono rounded uppercase border border-emerald-250">
+                            {/* Status Badges */}
+                            {isLunas && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[10px] font-black font-mono rounded uppercase border border-emerald-250">
                                 <CheckCircle size={10} className="fill-emerald-50" />
                                 LUNAS
                               </span>
-                            ) : (
-                              <span className="ml-auto sm:ml-0 inline-flex items-center gap-1 px-2 py-0.5 bg-amber-55 bg-amber-50 text-[#a58421] text-[10px] font-black font-mono rounded uppercase border border-amber-250 animate-pulse">
+                            )}
+                            {isCicilan && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-800 text-[10px] font-black font-mono rounded uppercase border border-amber-300">
+                                <Coins size={10} />
+                                DP / CICILAN
+                              </span>
+                            )}
+                            {!isLunas && !isCicilan && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-rose-50 text-rose-700 text-[10px] font-black font-mono rounded uppercase border border-rose-200">
                                 <Clock size={10} />
                                 BELUM LUNAS
                               </span>
                             )}
                           </div>
 
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-stone-500 font-sans mt-1">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-0.5 text-stone-500 font-sans text-[11px]">
                             <div className="flex items-center gap-1.5 min-w-0">
-                              <User size={12} className="text-stone-400 shrink-0" />
-                              <span className="truncate">Kepada: <strong className="text-stone-750 font-medium">{sub.dibayarkanKepada || '-'}</strong></span>
+                              <User size={11} className="text-stone-400 shrink-0" />
+                              <span className="truncate">Kepada: <strong className="text-stone-800 font-medium">{sub.dibayarkanKepada || '-'}</strong></span>
                             </div>
                             <div className="flex items-center gap-1.5 min-w-0">
-                              <CalendarDays size={12} className="text-stone-400 shrink-0" />
-                              <span>Tanggal: {formatDateIndonesian(sub.tanggal)}</span>
+                              <CalendarDays size={11} className="text-stone-400 shrink-0" />
+                              <span>{formatDateIndonesian(sub.tanggal)}</span>
                             </div>
                           </div>
+
+                          {/* Cicilan Details on Card if available */}
+                          {isCicilan && (
+                            <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono pt-0.5">
+                              <span className="text-emerald-700 font-semibold bg-emerald-50/80 px-1.5 py-0.5 rounded border border-emerald-200">
+                                Terbayar: Rp {formatRupiah(paidVoucher)}
+                              </span>
+                              <span className="text-rose-700 font-bold bg-rose-50/80 px-1.5 py-0.5 rounded border border-rose-200">
+                                Sisa: Rp {formatRupiah(remainingVoucher)}
+                              </span>
+                              {sub.riwayatCicilan && sub.riwayatCicilan.length > 0 && (
+                                <span className="text-stone-400 text-[9px]">
+                                  ({sub.riwayatCicilan.length}x pembayaran)
+                                </span>
+                              )}
+                            </div>
+                          )}
                         </div>
 
                         {/* Nominal right box */}
                         <div className="text-left sm:text-right font-mono shrink-0 sm:pl-3 border-t sm:border-t-0 sm:border-l border-stone-100 pt-2 sm:pt-0">
-                          <span className="text-[9px] text-stone-400 font-bold block">NOMINAL VOUCHER</span>
-                          <span className={`text-sm sm:text-md font-black tracking-tight ${isLunas ? 'text-stone-800' : 'text-stone-900'}`}>
-                            {formatRupiah(totalVoucher)}
+                          <span className="text-[9px] text-stone-400 font-bold block uppercase">
+                            {isCicilan ? 'TOTAL TAGIHAN' : 'NOMINAL VOUCHER'}
                           </span>
+                          <span className={`text-sm sm:text-base font-black tracking-tight ${isLunas ? 'text-stone-700' : 'text-stone-900'}`}>
+                            Rp {formatRupiah(totalVoucher)}
+                          </span>
+                          {isCicilan && (
+                            <span className="block text-[10px] text-rose-600 font-bold mt-0.5">
+                              Sisa: Rp {formatRupiah(remainingVoucher)}
+                            </span>
+                          )}
                         </div>
                       </div>
                     );
@@ -1080,59 +1133,111 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
               )}
             </div>
 
-            {/* RIGHT SIDE: SELECTED CONTEXT WORKSPACE & DRAG-DROP UPLOADER */}
-            <div className="lg:col-span-1 space-y-4">
+            {/* RIGHT SIDE: SELECTED CONTEXT WORKSPACE & MULTI-FILE UPLOADER & CICILAN (5 COLS) */}
+            <div className="lg:col-span-5 space-y-4">
               <h3 className="text-xs font-mono font-black text-stone-400 uppercase tracking-widest block">
-                Workspace Bukti Pembayaran
+                Form Input Pembayaran & Bukti Transfer
               </h3>
 
               {/* GOOGLE DRIVE INTEGRATION STATUS */}
               <DriveAccountsManager onConnectionChange={setIsDriveConnected} />
 
-              {isSuccess && (
-                <div className="p-5 border border-emerald-200 bg-emerald-50/40 rounded-2xl text-center space-y-4 animate-fade-in shadow-2xs">
-                  <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center mx-auto border border-emerald-200">
-                    <CheckCircle size={20} className="stroke-[2.5]" />
+              {/* SUCCESS BANNER */}
+              {isSuccess && successDetails && (
+                <div className="p-5 border border-emerald-200 bg-emerald-50/50 rounded-2xl text-center space-y-3.5 animate-fade-in shadow-2xs">
+                  <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto border border-emerald-300 shadow-3xs">
+                    <CheckCircle size={24} className="stroke-[2.5]" />
                   </div>
-                  <div className="space-y-1.5">
-                    <h4 className="text-xs font-black text-stone-900 uppercase tracking-wider font-mono">SIMPAN SUKSES!</h4>
-                    <p className="text-stone-600 text-[11px] leading-relaxed">
-                      Bukti transfer untuk voucher <strong className="font-mono text-stone-850">{successCode}</strong> telah diunggah & dicatat ke cloud server.
+                  <div className="space-y-1">
+                    <h4 className="text-sm font-black text-stone-900 uppercase tracking-wider font-mono">
+                      PEMBAYARAN BERHASIL DISIMPAN!
+                    </h4>
+                    <p className="text-stone-600 text-xs leading-relaxed">
+                      Bukti transfer untuk voucher <strong className="font-mono text-stone-900">{successDetails.kode}</strong> telah berhasil diproses.
                     </p>
                   </div>
+
+                  <div className="p-3 bg-white rounded-xl border border-emerald-200 text-left font-mono text-xs space-y-1.5">
+                    <div className="flex justify-between">
+                      <span className="text-stone-500">Nominal Dibayar:</span>
+                      <strong className="text-emerald-700 font-bold">Rp {formatRupiah(successDetails.nominalBayar)}</strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-stone-500">Status Transaksi:</span>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${
+                        successDetails.status === 'Lunas' 
+                          ? 'bg-emerald-100 text-emerald-800' 
+                          : 'bg-amber-100 text-amber-800'
+                      }`}>
+                        {successDetails.status}
+                      </span>
+                    </div>
+                    {successDetails.sisa > 0 && (
+                      <div className="flex justify-between text-rose-700">
+                        <span>Sisa Belum Lunas:</span>
+                        <strong className="font-black">Rp {formatRupiah(successDetails.sisa)}</strong>
+                      </div>
+                    )}
+                    <div className="flex justify-between text-stone-500 pt-1 border-t border-stone-100">
+                      <span>Dokumen Bukti:</span>
+                      <span className="text-stone-800 font-semibold">{successDetails.fileCount} file ➔ 1 PDF Gabungan</span>
+                    </div>
+                  </div>
+
+                  {successDetails.pdfUrl && (
+                    <a
+                      href={successDetails.pdfUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center justify-center gap-1.5 w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-mono text-[11px] font-bold uppercase tracking-wider rounded-xl transition shadow-3xs"
+                    >
+                      <ExternalLink size={13} />
+                      <span>Buka File PDF Bukti Pembayaran</span>
+                    </a>
+                  )}
+
                   <button
-                    onClick={() => setIsSuccess(false)}
-                    className="w-full py-2 bg-stone-900 hover:bg-stone-850 text-white font-mono text-[10px] font-bold uppercase tracking-wider rounded-lg transition"
+                    onClick={() => {
+                      setIsSuccess(false);
+                      setSuccessDetails(null);
+                    }}
+                    className="w-full py-2 bg-stone-900 hover:bg-stone-850 text-white font-mono text-[10px] font-bold uppercase tracking-wider rounded-xl transition"
                   >
-                    Unggah Bukti Pembayaran Lain
+                    Input Pembayaran Transaksi Lain
                   </button>
                 </div>
               )}
 
+              {/* EMPTY PLACEHOLDER WHEN NOTHING SELECTED */}
               {!isSuccess && !selectedSubmission && (
-                <div className="p-8 border-2 border-dashed border-stone-200 rounded-2xl bg-stone-50/50 text-center text-stone-400 text-xs flex flex-col items-center justify-center min-h-[340px] space-y-3">
+                <div className="p-8 border-2 border-dashed border-stone-200 rounded-2xl bg-stone-50/50 text-center text-stone-400 text-xs flex flex-col items-center justify-center min-h-[360px] space-y-3">
                   <div className="p-3 bg-white rounded-xl shadow-3xs border border-stone-150">
-                    <ListFilter size={20} className="text-[#D4AF37]" />
+                    <ListFilter size={24} className="text-[#D4AF37]" />
                   </div>
                   <div className="space-y-1">
-                    <p className="font-bold text-stone-700">Tidak Ada Item Terpilih</p>
-                    <p className="text-[10px] text-stone-400 px-3">
-                      Silakan pilih salah satu data transaksi dari kompilasi menu di sebelah kiri untuk melihat rincian pengajuan dan modul input bukti bayar.
+                    <p className="font-bold text-stone-700 text-sm">Pilih Voucher yang Ingin Dibayar</p>
+                    <p className="text-[11px] text-stone-400 px-4 leading-relaxed">
+                      Silakan pilih salah satu data transaksi dari daftar sebelah kiri. Anda dapat mengunggah beberapa bukti transfer (otomatis digabung menjadi 1 PDF) dan mencatat nominal cicilan.
                     </p>
                   </div>
                 </div>
               )}
 
+              {/* ACTIVE WORKSPACE WHEN SUBMISSION IS SELECTED */}
               {!isSuccess && selectedSubmission && (
-                <div className="border border-stone-200 rounded-2xl bg-white p-4.5 space-y-4 shadow-sm animate-fade-in">
+                <div className="border border-stone-200 rounded-2xl bg-white p-4 sm:p-5 space-y-4 shadow-sm animate-fade-in">
                   
                   {/* Miniature Detail card */}
-                  <div className="bg-stone-50/80 p-3.5 rounded-xl border border-stone-200 space-y-2.5">
+                  <div className="bg-stone-50 p-3.5 rounded-xl border border-stone-200 space-y-2.5">
                     <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-mono text-stone-400 font-bold uppercase tracking-wider">RINCIAN TRANS-VOUCHER</span>
+                      <span className="text-[10px] font-mono text-stone-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                        <Receipt size={12} className="text-[#a58421]" />
+                        <span>RINCIAN TRANSAKSI</span>
+                      </span>
                       <button 
                         onClick={() => setSelectedSubmission(null)}
                         className="text-stone-400 hover:text-stone-600 p-0.5 rounded transition"
+                        title="Tutup pilihan"
                       >
                         <X size={14} />
                       </button>
@@ -1142,11 +1247,15 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
                       <div className="flex items-center gap-1.5 text-stone-900 font-bold font-mono text-sm">
                         <span>{selectedSubmission.kode}</span>
                         {selectedSubmission.status === 'Lunas' ? (
-                          <span className="px-1.5 py-0.5 bg-emerald-50 text-emerald-700 text-[9px] font-bold uppercase rounded font-mono">
+                          <span className="px-1.5 py-0.5 bg-emerald-50 text-emerald-700 text-[9px] font-bold uppercase rounded font-mono border border-emerald-200">
                             Lunas
                           </span>
+                        ) : selectedSubmission.status === 'DP / Cicilan' ? (
+                          <span className="px-1.5 py-0.5 bg-amber-50 text-amber-800 text-[9px] font-bold uppercase rounded font-mono border border-amber-300">
+                            DP / Cicilan
+                          </span>
                         ) : (
-                          <span className="px-1.5 py-0.5 bg-amber-50 text-[#a58421] text-[9px] font-bold uppercase rounded font-mono animate-pulse">
+                          <span className="px-1.5 py-0.5 bg-rose-50 text-rose-700 text-[9px] font-bold uppercase rounded font-mono border border-rose-200">
                             Belum Lunas
                           </span>
                         )}
@@ -1156,149 +1265,424 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
 
                     <div className="h-px bg-stone-200" />
 
-                    <div className="space-y-1.5 text-[11px] text-stone-600">
+                    <div className="space-y-1 text-[11px] text-stone-600">
                       <div className="flex justify-between">
                         <span className="text-stone-400 font-medium">Dibayarkan Kepada:</span>
-                        <strong className="text-stone-800">{selectedSubmission.dibayarkanKepada || '-'}</strong>
+                        <strong className="text-stone-800 font-bold">{selectedSubmission.dibayarkanKepada || '-'}</strong>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-stone-400 font-medium">Kategori:</span>
-                        <strong className="text-stone-800">{selectedSubmission.jenisPengajuan || '-'}</strong>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-stone-400 font-medium">Lokasi:</span>
-                        <strong className="text-stone-800">{selectedSubmission.lokasi || '-'}</strong>
+                        <span className="text-stone-400 font-medium">Kategori / Lokasi:</span>
+                        <span className="text-stone-800">{selectedSubmission.jenisPengajuan || '-'} • {selectedSubmission.lokasi || '-'}</span>
                       </div>
                       {selectedSubmission.rekeningTujuan && (
                         <div className="flex justify-between">
-                          <span className="text-stone-400 font-medium">Rekening:</span>
-                          <strong className="text-stone-800 tracking-tight font-mono text-[10px]">{selectedSubmission.rekeningTujuan}</strong>
+                          <span className="text-stone-400 font-medium">Rekening Tujuan:</span>
+                          <strong className="text-stone-800 font-mono text-[10px]">{selectedSubmission.rekeningTujuan}</strong>
                         </div>
                       )}
-                      <div className="pt-1.5 flex justify-between items-baseline border-t border-stone-200/55">
+                      <div className="pt-1.5 flex justify-between items-baseline border-t border-stone-200">
                         <span className="text-stone-400 text-[10px] font-black uppercase tracking-wider font-mono">TOTAL NILAI:</span>
                         <strong className="text-sm font-black text-stone-900 font-mono">
-                          {formatRupiah(getSubmissionTotal(selectedSubmission))}
+                          Rp {formatRupiah(totalVoucher)}
                         </strong>
                       </div>
                     </div>
                   </div>
 
-                  {/* Drag drop zone for uploaded Receipt */}
-                  <div className="space-y-2">
-                    <label className="block text-[10px] font-mono font-bold text-stone-400 uppercase tracking-widest">
-                      UPLOAD BUKTI TRANSFER (KEUANGAN)
-                    </label>
-
-                    {uploadedFile ? (
-                      <div className="border border-stone-200 rounded-xl overflow-hidden bg-stone-50">
-                        <div className="p-2 bg-stone-150/75 border-b border-stone-200 flex items-center justify-between text-[11px] text-stone-700">
-                          <div className="flex items-center gap-1.5 font-mono truncate max-w-[190px]">
-                            <FileText size={13} className="text-amber-500 shrink-0" />
-                            <span className="font-bold truncate">{uploadedFile.name}</span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={handleRemoveFile}
-                            className="p-1 text-stone-400 hover:text-rose-600 hover:bg-stone-200 rounded transition cursor-pointer"
-                          >
-                            <X size={13} />
-                          </button>
-                        </div>
-                        <div className="p-3 flex items-center justify-center min-h-32 max-h-48 overflow-hidden bg-stone-50">
-                          {uploadedFile.base64.startsWith('data:image/') ? (
-                            <img
-                              src={uploadedFile.base64}
-                              alt="Bukti Bayar Preview"
-                              className="max-h-36 object-contain rounded border border-stone-200 shadow-3xs"
-                            />
-                          ) : (
-                            <div className="text-center p-2 space-y-1">
-                              <FileText size={24} className="text-stone-300 mx-auto" />
-                              <p className="text-stone-500 font-mono text-[10px] font-bold truncate max-w-[160px]">{uploadedFile.name}</p>
-                              <p className="text-[9px] text-stone-400">PDF Dokumentasi</p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ) : (
-                      <div
-                        onDragEnter={handleDrag}
-                        onDragOver={handleDrag}
-                        onDragLeave={handleDrag}
-                        onDrop={handleDrop}
-                        className={`border-2 border-dashed rounded-xl p-6 text-center flex flex-col items-center justify-center gap-2.5 transition min-h-36 cursor-pointer ${
-                          dragActive 
-                            ? 'border-[#D4AF37] bg-amber-50/5' 
-                            : 'border-stone-200 hover:border-stone-350 bg-stone-50/50'
-                        }`}
-                        onClick={() => document.getElementById('bukti_transfer_upload_file')?.click()}
+                  {/* PAST INSTALLMENT HISTORY COLLAPSIBLE IF ANY */}
+                  {selectedSubmission.riwayatCicilan && selectedSubmission.riwayatCicilan.length > 0 && (
+                    <div className="border border-stone-200 rounded-xl overflow-hidden bg-stone-50/70 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setShowHistory(!showHistory)}
+                        className="w-full p-2.5 bg-stone-100 hover:bg-stone-200/70 flex items-center justify-between text-stone-700 font-mono font-bold text-[11px] transition"
                       >
-                        <input
-                          id="bukti_transfer_upload_file"
-                          type="file"
-                          accept="image/*,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/csv,.xlsx,.xls,.doc,.docx,.csv,.txt"
-                          className="hidden"
-                          onChange={handleFileChange}
-                        />
-                        <div className="w-10 h-10 bg-amber-500/5 text-[#D4AF37] border border-amber-500/10 rounded-xl flex items-center justify-center shadow-3xs">
-                          <UploadCloud size={18} />
+                        <span className="flex items-center gap-1.5">
+                          <History size={13} className="text-amber-600" />
+                          <span>Riwayat Pembayaran Cicilan ({selectedSubmission.riwayatCicilan.length})</span>
+                        </span>
+                        <span className="text-stone-400 text-[10px]">
+                          {showHistory ? 'Tutup ▲' : 'Buka ▼'}
+                        </span>
+                      </button>
+                      
+                      {showHistory && (
+                        <div className="p-3 space-y-2 border-t border-stone-200 max-h-48 overflow-y-auto">
+                          {selectedSubmission.riwayatCicilan.map((rec, idx) => (
+                            <div key={rec.id || idx} className="p-2 bg-white rounded-lg border border-stone-200 flex items-center justify-between font-mono text-[10px]">
+                              <div>
+                                <span className="text-stone-400 block">{formatDateIndonesian(rec.tanggal)}</span>
+                                <span className="font-bold text-stone-800">{rec.keterangan || `Pembayaran ke-${idx + 1}`}</span>
+                              </div>
+                              <div className="text-right">
+                                <span className="font-black text-emerald-700 block">Rp {formatRupiah(rec.nominal)}</span>
+                                <span className="text-stone-400 text-[9px]">Sisa: Rp {formatRupiah(rec.sisaSetelahBayar)}</span>
+                              </div>
+                            </div>
+                          ))}
                         </div>
-                        <div className="space-y-0.5">
-                          <p className="text-[11px] font-bold text-stone-750">
-                            Drop bukti pembayaran di sini, atau <span className="text-[#a58421] hover:underline">pilih file</span>
-                          </p>
-                          <p className="text-[9px] text-stone-400">
-                            Format PDF / Gambar Maks. 5 MB
-                          </p>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Progress Indicator */}
-                  {isLoading && saveProgress && (
-                    <div className="p-3 bg-amber-50/50 border border-amber-200 rounded-xl text-stone-800 text-[11px] flex items-center gap-2.5 animate-pulse">
-                      <span className="inline-block w-4 h-4 border-2 border-[#a58421] border-t-transparent rounded-full animate-spin shrink-0"></span>
-                      <span className="font-mono font-medium">{saveProgress}</span>
+                      )}
                     </div>
                   )}
 
-                  {/* Errors inside card */}
+                  {/* PEMBAYARAN CICILAN / LUNAS SECTION */}
+                  <div className="p-3.5 bg-amber-50/40 rounded-xl border border-amber-200/80 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-mono font-black text-stone-800 uppercase tracking-widest flex items-center gap-1.5">
+                        <Calculator size={13} className="text-[#a58421]" />
+                        <span>METODE & NOMINAL PEMBAYARAN</span>
+                      </span>
+                      <span className="text-[10px] font-mono text-amber-700 font-bold bg-amber-100/80 px-2 py-0.5 rounded">
+                        {paymentMode === 'lunas' ? 'Lunas 100%' : 'Cicilan Bertahap'}
+                      </span>
+                    </div>
+
+                    {/* Mode Toggle Switch */}
+                    <div className="grid grid-cols-2 gap-2 bg-white p-1 rounded-xl border border-amber-200 text-xs font-mono font-bold">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPaymentMode('lunas');
+                          setNominalBayar(sisaSebelumBayar);
+                          setKeteranganCicilan('');
+                        }}
+                        className={`py-1.5 px-2 rounded-lg transition text-center flex items-center justify-center gap-1.5 ${
+                          paymentMode === 'lunas'
+                            ? 'bg-emerald-600 text-white shadow-3xs'
+                            : 'text-stone-600 hover:bg-stone-50'
+                        }`}
+                      >
+                        <CheckCircle size={12} />
+                        <span>Pelunasan Penuh</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPaymentMode('cicilan');
+                          if (nominalBayar === '' || nominalBayar === totalVoucher) {
+                            setNominalBayar(sisaSebelumBayar > 0 ? sisaSebelumBayar : '');
+                          }
+                          if (!keteranganCicilan) {
+                            setKeteranganCicilan(alreadyPaid > 0 ? 'Cicilan Lanjutan' : 'DP Pembayaran');
+                          }
+                        }}
+                        className={`py-1.5 px-2 rounded-lg transition text-center flex items-center justify-center gap-1.5 ${
+                          paymentMode === 'cicilan'
+                            ? 'bg-amber-600 text-white shadow-3xs'
+                            : 'text-stone-600 hover:bg-stone-50'
+                        }`}
+                      >
+                        <Coins size={12} />
+                        <span>Cicilan / Bertahap</span>
+                      </button>
+                    </div>
+
+                    {/* Input Nominal Transfer */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[11px] font-bold text-stone-700">
+                          {paymentMode === 'lunas' 
+                            ? 'Nominal Pelunasan (Rp)' 
+                            : 'Nominal dari Bukti Transfer Kali Ini (Rp) *'}
+                        </label>
+                        {paymentMode === 'cicilan' && (
+                          <span className="text-[10px] text-stone-500 font-mono">
+                            Maks: Rp {formatRupiah(sisaSebelumBayar)}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-black text-stone-400 font-mono">
+                          Rp
+                        </span>
+                        <input
+                          type="text"
+                          disabled={paymentMode === 'lunas'}
+                          placeholder="0"
+                          value={
+                            paymentMode === 'lunas' 
+                              ? formatRupiah(sisaSebelumBayar) 
+                              : (nominalBayar !== '' ? formatRupiah(Number(nominalBayar) || 0) : '')
+                          }
+                          onChange={(e) => {
+                            const raw = e.target.value.replace(/\D/g, '');
+                            const val = raw ? Number(raw) : '';
+                            setNominalBayar(val);
+                          }}
+                          className={`w-full pl-9 pr-3 py-2 bg-white border rounded-xl text-sm font-mono font-bold text-stone-900 focus:outline-none focus:ring-2 focus:ring-amber-500 ${
+                            paymentMode === 'lunas' 
+                              ? 'bg-stone-50 border-stone-200 text-stone-700 cursor-not-allowed' 
+                              : 'border-amber-300'
+                          }`}
+                        />
+                      </div>
+
+                      {/* Quick percentage helper buttons for Cicilan */}
+                      {paymentMode === 'cicilan' && sisaSebelumBayar > 0 && (
+                        <div className="flex items-center gap-1.5 pt-1">
+                          <span className="text-[10px] font-mono text-stone-400 font-semibold mr-1">Isi Cepat:</span>
+                          <button
+                            type="button"
+                            onClick={() => handleSetPercentage(25)}
+                            className="px-2 py-0.5 bg-white hover:bg-amber-100 text-stone-700 border border-stone-200 hover:border-amber-300 rounded font-mono text-[10px] font-bold transition"
+                          >
+                            25%
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSetPercentage(50)}
+                            className="px-2 py-0.5 bg-white hover:bg-amber-100 text-stone-700 border border-stone-200 hover:border-amber-300 rounded font-mono text-[10px] font-bold transition"
+                          >
+                            50%
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSetPercentage(75)}
+                            className="px-2 py-0.5 bg-white hover:bg-amber-100 text-stone-700 border border-stone-200 hover:border-amber-300 rounded font-mono text-[10px] font-bold transition"
+                          >
+                            75%
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSetPercentage(100)}
+                            className="px-2 py-0.5 bg-amber-500 hover:bg-amber-600 text-white rounded font-mono text-[10px] font-bold transition"
+                          >
+                            Lunasi Sisa (100%)
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Keterangan Termin / Cicilan */}
+                    {paymentMode === 'cicilan' && (
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-bold text-stone-700 block">
+                          Keterangan Termin / Tahapan Pembayaran
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="Contoh: DP 50%, Termin ke-2, Cicilan Pelunasan..."
+                          value={keteranganCicilan}
+                          onChange={(e) => setKeteranganCicilan(e.target.value)}
+                          className="w-full px-3 py-1.5 bg-white border border-amber-300 rounded-xl text-xs text-stone-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                        />
+                      </div>
+                    )}
+
+                    {/* LIVE CALCULATION SISA TAGIHAN CARD */}
+                    <div className="p-3 bg-white rounded-xl border border-amber-200/80 space-y-2 font-mono text-xs shadow-3xs">
+                      <div className="flex justify-between text-stone-500">
+                        <span>Total Nilai Voucher:</span>
+                        <strong className="text-stone-800">Rp {formatRupiah(totalVoucher)}</strong>
+                      </div>
+                      {alreadyPaid > 0 && (
+                        <div className="flex justify-between text-emerald-700">
+                          <span>Sudah Terbayar Sebelumnya:</span>
+                          <strong className="font-bold">Rp {formatRupiah(alreadyPaid)}</strong>
+                        </div>
+                      )}
+                      <div className="flex justify-between text-amber-700 font-semibold border-t border-stone-100 pt-1.5">
+                        <span>Pembayaran Bukti Transfer Ini:</span>
+                        <strong className="font-black">+ Rp {formatRupiah(currentPaymentNominal)}</strong>
+                      </div>
+                      <div className="flex justify-between items-center text-stone-800 border-t border-stone-200 pt-1.5">
+                        <span className="font-black uppercase text-[11px]">SISA YANG HARUS DIBAYARKAN:</span>
+                        <span className={`text-sm font-black ${remainingDebt === 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                          Rp {formatRupiah(remainingDebt)}
+                        </span>
+                      </div>
+
+                      {/* Status Target Indicator */}
+                      <div className="pt-1">
+                        {willBeLunas ? (
+                          <div className="p-1.5 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-800 text-[10px] font-sans flex items-center gap-1.5 font-bold">
+                            <CheckCircle size={12} className="text-emerald-600 shrink-0" />
+                            <span>Pembayaran ini akan melunasi voucher! Status berubah menjadi <strong>LUNAS</strong>.</span>
+                          </div>
+                        ) : (
+                          <div className="p-1.5 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 text-[10px] font-sans flex items-center gap-1.5 font-medium">
+                            <Coins size={12} className="text-amber-600 shrink-0" />
+                            <span>Masih ada sisa Rp {formatRupiah(remainingDebt)}. Status voucher akan menjadi <strong>DP / CICILAN</strong>.</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* MULTI-FILE UPLOAD ZONE (BUKTI TRANSFER BISA LEBIH DARI 1) */}
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-[10px] font-mono font-bold text-stone-500 uppercase tracking-widest flex items-center gap-1.5">
+                        <Layers size={13} className="text-amber-500" />
+                        <span>UNGGAH BUKTI TRANSFER (BISA &gt; 1 BERKAS)</span>
+                      </label>
+                      {uploadedFiles.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleClearAllFiles}
+                          className="text-[10px] font-mono text-rose-600 hover:underline"
+                        >
+                          Hapus Semua ({uploadedFiles.length})
+                        </button>
+                      )}
+                    </div>
+
+                    {/* UPLOADED FILES LIST IF ANY */}
+                    {uploadedFiles.length > 0 && (
+                      <div className="space-y-2">
+                        <div className="p-2.5 bg-amber-500/10 border border-amber-300 rounded-xl flex items-center justify-between text-xs font-mono">
+                          <span className="font-bold text-amber-900 flex items-center gap-1.5">
+                            <Layers size={14} className="text-[#a58421]" />
+                            <span>{uploadedFiles.length} Berkas Bukti Transfer Terpilih</span>
+                          </span>
+                          <span className="text-[10px] text-amber-700 bg-amber-100 px-2 py-0.5 rounded font-bold">
+                            Digabung Jadi 1 PDF
+                          </span>
+                        </div>
+
+                        <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                          {uploadedFiles.map((fileItem, idx) => (
+                            <div 
+                              key={fileItem.id} 
+                              className="p-2 bg-stone-50 border border-stone-200 rounded-xl flex items-center justify-between gap-2 text-xs"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                {fileItem.mimeType.startsWith('image/') && fileItem.previewUrl ? (
+                                  <img 
+                                    src={fileItem.previewUrl} 
+                                    alt="Preview" 
+                                    className="w-8 h-8 object-cover rounded border border-stone-200 shrink-0"
+                                  />
+                                ) : (
+                                  <div className="w-8 h-8 rounded bg-stone-200 flex items-center justify-center text-stone-600 shrink-0">
+                                    <FileText size={16} />
+                                  </div>
+                                )}
+                                <div className="min-w-0">
+                                  <p className="font-mono font-bold text-stone-850 truncate text-[11px] max-w-[200px]" title={fileItem.name}>
+                                    {idx + 1}. {fileItem.name}
+                                  </p>
+                                  <p className="text-[9px] text-stone-400 font-mono">
+                                    {(fileItem.size / 1024).toFixed(1)} KB • {fileItem.mimeType.includes('pdf') ? 'Dokumen PDF' : 'Gambar'}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveFile(fileItem.id)}
+                                className="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-stone-200/70 rounded-lg transition"
+                                title="Hapus berkas ini"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* DROPZONE / ADD BUTTON */}
+                    <div
+                      onDragEnter={handleDrag}
+                      onDragOver={handleDrag}
+                      onDragLeave={handleDrag}
+                      onDrop={handleDrop}
+                      className={`border-2 border-dashed rounded-xl p-5 text-center flex flex-col items-center justify-center gap-2 transition cursor-pointer ${
+                        dragActive 
+                          ? 'border-[#D4AF37] bg-amber-50/10' 
+                          : 'border-stone-200 hover:border-amber-300 bg-stone-50/50'
+                      }`}
+                      onClick={() => document.getElementById('bukti_transfer_multi_upload')?.click()}
+                    >
+                      <input
+                        id="bukti_transfer_multi_upload"
+                        type="file"
+                        multiple
+                        accept="image/*,application/pdf"
+                        className="hidden"
+                        onChange={handleFileChange}
+                      />
+                      <div className="w-10 h-10 bg-amber-500/10 text-[#D4AF37] border border-amber-500/20 rounded-xl flex items-center justify-center shadow-3xs">
+                        <UploadCloud size={20} />
+                      </div>
+                      <div className="space-y-0.5">
+                        <p className="text-xs font-bold text-stone-800">
+                          {uploadedFiles.length > 0 
+                            ? '+ Tambah berkas bukti transfer lainnya' 
+                            : 'Drop bukti transfer di sini, atau pilih berkas'}
+                        </p>
+                        <p className="text-[10px] text-stone-400">
+                          Mendukung banyak gambar (JPG, PNG) & PDF. Otomatis digabungkan jadi 1 PDF pembayaran.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* PROGRESS INDICATOR */}
+                  {isLoading && saveProgress && (
+                    <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-stone-800 text-[11px] flex items-center gap-2.5 animate-pulse font-mono">
+                      <span className="inline-block w-4 h-4 border-2 border-[#a58421] border-t-transparent rounded-full animate-spin shrink-0"></span>
+                      <span>{saveProgress}</span>
+                    </div>
+                  )}
+
+                  {/* ERROR NOTIFICATION */}
                   {errorText && (
-                    <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-[11px] flex items-center gap-2">
-                      <AlertCircle size={13} className="shrink-0" />
+                    <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs flex items-center gap-2">
+                      <AlertCircle size={14} className="shrink-0" />
                       <span>{errorText}</span>
                     </div>
                   )}
 
-                  {/* Actions inside card */}
-                  <div className="flex gap-2 justify-end pt-2">
+                  {/* ACTION BUTTONS */}
+                  <div className="flex gap-2 justify-end pt-2 border-t border-stone-200">
                     <button
                       type="button"
                       onClick={() => setSelectedSubmission(null)}
-                      className="px-3.5 py-2 border border-stone-200 hover:bg-stone-50 text-stone-600 rounded-lg text-xs font-bold transition font-mono uppercase text-[10px]"
+                      className="px-3.5 py-2 border border-stone-200 hover:bg-stone-50 text-stone-600 rounded-xl text-xs font-bold transition font-mono uppercase"
                     >
                       Batal
                     </button>
                     <button
                       type="button"
                       onClick={handleSubmitReceipt}
-                      disabled={isLoading || !uploadedFile}
-                      className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 transition font-mono uppercase text-[10px] ${
-                        isLoading || !uploadedFile
+                      disabled={isLoading || uploadedFiles.length === 0 || currentPaymentNominal <= 0}
+                      className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition font-mono uppercase shadow-3xs ${
+                        isLoading || uploadedFiles.length === 0 || currentPaymentNominal <= 0
                           ? 'bg-stone-200 text-stone-400 border border-stone-200 cursor-not-allowed'
-                          : 'bg-[#D4AF37] border border-[#a58421] hover:bg-[#bfa035] text-white shadow-3xs hover:shadow-2xs cursor-pointer'
+                          : 'bg-[#D4AF37] border border-[#a58421] hover:bg-[#bfa035] text-white shadow-2xs hover:shadow cursor-pointer'
                       }`}
                     >
-                      {isLoading ? 'Menyimpan...' : 'Validasi Lunas ➔'}
+                      {isLoading ? (
+                        <>
+                          <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                          <span>Memproses PDF...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Check size={14} />
+                          <span>
+                            {willBeLunas 
+                              ? 'Simpan & Lunasi Voucher ➔' 
+                              : `Simpan Cicilan (Sisa Rp ${formatRupiah(remainingDebt)}) ➔`}
+                          </span>
+                        </>
+                      )}
                     </button>
                   </div>
 
-                  {/* Friendly prompt line */}
-                  <div className="flex gap-1.5 p-2.5 bg-blue-50/50 text-blue-800 text-[10px] rounded-lg border border-blue-150 leading-relaxed font-sans">
-                    <Info size={11} className="shrink-0 mt-0.5 text-blue-500" />
-                    <span>Mengunggah bukti pembayaran di sini akan mengubah status voucher secara real-time menjadi <strong>LUNAS</strong> dan menghasilkan pratinjau bukti bayar otomatis di folder lampiran.</span>
+                  {/* HELPFUL SUMMARY FOOTER */}
+                  <div className="flex gap-2 p-2.5 bg-blue-50/60 text-blue-900 text-[10px] rounded-xl border border-blue-200/80 leading-relaxed font-sans">
+                    <Info size={13} className="shrink-0 mt-0.5 text-blue-600" />
+                    <span>
+                      {uploadedFiles.length > 1 ? (
+                        <>Seluruh <strong>{uploadedFiles.length} berkas bukti transfer</strong> akan otomatis dikompilasi menjadi <strong>1 file PDF resmi</strong> bernama <em>&quot;Bukti Pembayaran - ({selectedSubmission.jenisPengajuan || 'Non-Kategori'} - {selectedSubmission.dibayarkanKepada || 'Penerima'}).pdf&quot;</em> dan diunggah ke Google Drive.</>
+                      ) : (
+                        <>Bukti transfer akan otomatis dikonversi menjadi dokumen PDF resmi dan diarsipkan rapi di Google Drive.</>
+                      )}
+                    </span>
                   </div>
 
                 </div>
