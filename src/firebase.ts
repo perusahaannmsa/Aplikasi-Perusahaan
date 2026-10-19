@@ -194,8 +194,18 @@ export const mapFirestoreToSubmission = (docId: string, data: any): Submission =
   }
 
   const firstItem = firestoreItems[0] || {};
-  const isDocLunas = data.status === 'Lunas' || firstItem.status === 'Lunas' || data.dibayarkanDengan === 'Cek/Transfer' || data.dibayarkan_dengan === 'Cek/Transfer';
-  const finalStatus = data.status || firstItem.status || (isDocLunas ? 'Lunas' : 'Belum Lunas');
+  const rawStatus = data.status || firstItem.status;
+  const isDocLunas = rawStatus === 'Lunas' || (!rawStatus && (data.dibayarkanDengan === 'Cek/Transfer' || data.dibayarkan_dengan === 'Cek/Transfer'));
+  const finalStatus: 'Lunas' | 'Belum Lunas' | 'DP / Cicilan' = rawStatus === 'DP / Cicilan'
+    ? 'DP / Cicilan'
+    : (rawStatus || (isDocLunas ? 'Lunas' : 'Belum Lunas'));
+
+  // Parse DP / Cicilan amount and history
+  const rawDp = data.dpAmount !== undefined ? data.dpAmount : (data.dp_amount !== undefined ? data.dp_amount : undefined);
+  const parsedDpAmount = typeof rawDp === 'number' ? rawDp : (rawDp && !isNaN(Number(rawDp)) ? Number(rawDp) : undefined);
+  const rawCicilanNotes = data.cicilanNotes || data.cicilan_notes || undefined;
+  const rawRiwayatCicilan = Array.isArray(data.riwayatCicilan) ? data.riwayatCicilan : (Array.isArray(data.riwayat_cicilan) ? data.riwayat_cicilan : undefined);
+  const rawRekeningTujuan = data.rekeningTujuan || data.rekening_tujuan || undefined;
 
   return {
     id: docId,
@@ -205,7 +215,11 @@ export const mapFirestoreToSubmission = (docId: string, data: any): Submission =
     kode: docCode,
     dibayarkanKepada: data.dibayarkanKepada || data.dibayarkan_kepada || 'Penerima',
     dibayarkanDengan: data.dibayarkanDengan || data.dibayarkan_dengan || (finalStatus === 'Lunas' ? 'Cek/Transfer' : 'Tunai'),
-    status: finalStatus as 'Lunas' | 'Belum Lunas',
+    status: finalStatus,
+    dpAmount: parsedDpAmount,
+    cicilanNotes: rawCicilanNotes,
+    riwayatCicilan: rawRiwayatCicilan,
+    rekeningTujuan: rawRekeningTujuan,
     notes: data.notes || data.catatan || data.catatan_tambahan || data.catatanTambahan || '',
     
     // Corporate signatures support
@@ -374,6 +388,17 @@ export const mapSubmissionToFirestore = (
     
     // Double save native fields so pulling it back preserves signatures
     id: sub.id,
+    
+    // DP & Cicilan Bertahap synchronization
+    dpAmount: typeof sub.dpAmount === 'number' ? sub.dpAmount : (sub.dpAmount && !isNaN(Number(sub.dpAmount)) ? Number(sub.dpAmount) : null),
+    dp_amount: typeof sub.dpAmount === 'number' ? sub.dpAmount : (sub.dpAmount && !isNaN(Number(sub.dpAmount)) ? Number(sub.dpAmount) : null),
+    cicilanNotes: sub.cicilanNotes || null,
+    cicilan_notes: sub.cicilanNotes || null,
+    riwayatCicilan: Array.isArray(sub.riwayatCicilan) ? sub.riwayatCicilan : null,
+    riwayat_cicilan: Array.isArray(sub.riwayatCicilan) ? sub.riwayatCicilan : null,
+    rekeningTujuan: sub.rekeningTujuan || null,
+    rekening_tujuan: sub.rekeningTujuan || null,
+
     isInvoice: isInvoiceSubmission(sub),
     invoiceNumber: sub.invoiceNumber || '',
     invoiceDate: sub.invoiceDate || '',
@@ -2134,6 +2159,27 @@ export const loadSubmissionsFromFirestore = async (companyId?: string): Promise<
         list.push(mapped);
       }
     });
+
+    // Self-healing: if status is 'DP / Cicilan' and dpAmount is missing, recover from local cache if present
+    try {
+      const localSubsRaw = localStorage.getItem('NUSANTARA_HO_SUBMISSIONS') || localStorage.getItem('voucher_submissions');
+      if (localSubsRaw) {
+        const localSubs = JSON.parse(localSubsRaw);
+        if (Array.isArray(localSubs)) {
+          list.forEach(item => {
+            if (item.status === 'DP / Cicilan' && (!item.dpAmount || item.dpAmount === 0)) {
+              const matchedLocal = localSubs.find((ls: any) => ls.id === item.id || (ls.kode && ls.kode === item.kode));
+              if (matchedLocal && matchedLocal.dpAmount) {
+                item.dpAmount = Number(matchedLocal.dpAmount);
+                item.cicilanNotes = item.cicilanNotes || matchedLocal.cicilanNotes;
+                item.riwayatCicilan = item.riwayatCicilan || matchedLocal.riwayatCicilan;
+                saveSubmissionToFirestore(item, targetComp || 'nmsa').catch(() => {});
+              }
+            }
+          });
+        }
+      }
+    } catch (_) {}
     
     return list;
   } catch (error) {

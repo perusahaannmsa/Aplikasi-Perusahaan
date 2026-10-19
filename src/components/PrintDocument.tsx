@@ -126,6 +126,120 @@ export const VoucherOnlineQr: React.FC<{
   );
 };
 
+/**
+ * Breakdown of installment / cicilan payment details with dates, amounts, and remaining balances
+ */
+export const CicilanBreakdownBlock: React.FC<{
+  submission: Submission;
+  grandTotal: number;
+  density?: 'normal' | 'compact';
+}> = ({ submission, grandTotal, density = 'normal' }) => {
+  const isCicilan = submission.status === 'DP / Cicilan' || 
+                    (typeof submission.dpAmount === 'number' && submission.dpAmount > 0) || 
+                    (Array.isArray(submission.riwayatCicilan) && submission.riwayatCicilan.length > 0) ||
+                    (typeof submission.cicilanNotes === 'string' && submission.cicilanNotes.trim().length > 0);
+
+  if (!isCicilan) return null;
+
+  const totalVoucher = grandTotal || 0;
+  const rawPaid = submission.status === 'Lunas' 
+    ? totalVoucher 
+    : (typeof submission.dpAmount === 'number' ? submission.dpAmount : 0);
+  
+  const historyPayments = Array.isArray(submission.riwayatCicilan) && submission.riwayatCicilan.length > 0
+    ? submission.riwayatCicilan
+    : (rawPaid > 0 ? [{
+        id: 'init_pay',
+        tanggal: submission.tanggal,
+        nominal: rawPaid,
+        sisaSetelahBayar: Math.max(0, totalVoucher - rawPaid),
+        keterangan: submission.cicilanNotes || 'Pembayaran DP / Termin Ke-1',
+        createdAt: submission.createdAt
+      }] : []);
+
+  const totalPaid = submission.status === 'Lunas'
+    ? totalVoucher
+    : Math.max(rawPaid, historyPayments.reduce((s, r) => s + (Number(r.nominal) || 0), 0));
+
+  const remainingBalance = Math.max(0, totalVoucher - totalPaid);
+  const isCompact = density === 'compact';
+
+  return (
+    <div className={`border-[1.5px] border-black ${isCompact ? 'p-1.5 mb-1.5 text-[10px]' : 'p-2 mb-2.5 text-xs'} bg-stone-50/50 font-sans`}>
+      {/* Header bar */}
+      <div className="flex items-center justify-between border-b border-black pb-1 mb-1.5">
+        <div className="flex items-center gap-1.5">
+          <span className="font-bold text-black uppercase tracking-wider text-[11px]">
+            Rincian Pembayaran Bertahap / Cicilan
+          </span>
+          <span className="px-1.5 py-0.5 bg-amber-100 text-amber-900 border border-black font-mono text-[9px] font-bold uppercase rounded-xs">
+            {submission.status === 'Lunas' ? 'LUNAS (100%)' : 'DP / CICILAN BERJALAN'}
+          </span>
+        </div>
+        {submission.cicilanNotes && (
+          <span className="text-[10px] italic font-semibold text-stone-700">
+            {submission.cicilanNotes}
+          </span>
+        )}
+      </div>
+
+      {/* Summary 3 columns */}
+      <div className={`grid grid-cols-3 gap-1.5 ${isCompact ? 'py-1 text-[10px]' : 'py-1.5 text-xs'} border border-black px-2 bg-white font-mono mb-1.5`}>
+        <div>
+          <span className="text-[9px] text-stone-500 uppercase block">Total Nilai Tagihan</span>
+          <strong className="text-black">Rp {formatRupiah(totalVoucher)}</strong>
+        </div>
+        <div className="border-x border-black px-2">
+          <span className="text-[9px] text-stone-500 uppercase block">Total Terbayar</span>
+          <strong className="text-emerald-800">Rp {formatRupiah(totalPaid)}</strong>
+        </div>
+        <div className="text-right">
+          <span className="text-[9px] text-stone-500 uppercase block">Sisa Belum Lunas</span>
+          <strong className={remainingBalance === 0 ? 'text-emerald-800' : 'text-rose-800'}>
+            Rp {formatRupiah(remainingBalance)}
+          </strong>
+        </div>
+      </div>
+
+      {/* Table of payment records with dates */}
+      {historyPayments.length > 0 && (
+        <div className="border border-black overflow-hidden bg-white">
+          <table className="w-full text-[9px] sm:text-[10px] font-mono border-collapse">
+            <thead>
+              <tr className="bg-stone-100 border-b border-black text-black font-bold">
+                <th className="py-0.5 px-1 text-center w-7 border-r border-black">NO</th>
+                <th className="py-0.5 px-1.5 text-left border-r border-black">TANGGAL BAYAR</th>
+                <th className="py-0.5 px-1.5 text-left border-r border-black">TAHAP / TERMIN</th>
+                <th className="py-0.5 px-1.5 text-right border-r border-black">NOMINAL DIBAYAR</th>
+                <th className="py-0.5 px-1.5 text-right">SISA TAGIHAN</th>
+              </tr>
+            </thead>
+            <tbody>
+              {historyPayments.map((item, idx) => (
+                <tr key={item.id || idx} className="border-b border-stone-200 last:border-b-0">
+                  <td className="py-0.5 px-1 text-center border-r border-black">{idx + 1}</td>
+                  <td className="py-0.5 px-1.5 font-semibold text-black border-r border-black">
+                    {formatDateIndonesian(item.tanggal)}
+                  </td>
+                  <td className="py-0.5 px-1.5 text-stone-800 border-r border-black">
+                    {item.keterangan || `Pembayaran Ke-${idx + 1}`}
+                  </td>
+                  <td className="py-0.5 px-1.5 text-right font-bold text-emerald-800 border-r border-black">
+                    Rp {formatRupiah(item.nominal)}
+                  </td>
+                  <td className="py-0.5 px-1.5 text-right font-bold text-rose-800">
+                    Rp {formatRupiah(item.sisaSetelahBayar)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+};
+
 interface PrintDocumentProps {
   submission: Submission;
   onBack: () => void;
@@ -2574,6 +2688,9 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
                         "{numberToTerbilang(grandTotal)}"
                       </span>
                     </div>
+
+                    {/* Cicilan / Pembayaran Bertahap Block (if applicable) */}
+                    <CicilanBreakdownBlock submission={submission} grandTotal={grandTotal} density={isUltraDenseF1 ? 'compact' : 'normal'} />
                   </div>
 
                   {/* Bottom Content: Spacious Signatures and Note */}
@@ -2682,6 +2799,9 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
                     <span className="font-bold">Terbilang :</span>
                     <span className="italic font-medium">"{numberToTerbilang(grandTotal)}"</span>
                   </div>
+
+                  {/* Cicilan / Pembayaran Bertahap Block (if applicable) */}
+                  <CicilanBreakdownBlock submission={submission} grandTotal={grandTotal} density="compact" />
                 </div>
 
                 <div>
@@ -2806,6 +2926,9 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
                       </tbody>
                     </table>
                   </div>
+
+                  {/* Cicilan / Pembayaran Bertahap Block (if applicable) */}
+                  <CicilanBreakdownBlock submission={submission} grandTotal={grandTotal} density={isUltraDenseF2 ? 'compact' : 'normal'} />
                 </div>
 
                 {/* Bottom Content: Spacious Signatures & Notes */}
@@ -3023,6 +3146,9 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
                     <span className="font-bold">Terbilang :</span>
                     <span className="italic font-medium">"{numberToTerbilang(grandTotal)}"</span>
                   </div>
+
+                  {/* Cicilan / Pembayaran Bertahap Block (if applicable) */}
+                  <CicilanBreakdownBlock submission={submission} grandTotal={grandTotal} density="compact" />
                 </div>
 
                 <div>

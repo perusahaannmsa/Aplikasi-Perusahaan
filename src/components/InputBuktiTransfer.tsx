@@ -193,6 +193,26 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
     if (sub.status === 'Lunas') {
       return getSubmissionTotal(sub);
     }
+    if (typeof sub.dpAmount === 'number' && sub.dpAmount > 0) {
+      return sub.dpAmount;
+    }
+    if (sub.riwayatCicilan && sub.riwayatCicilan.length > 0) {
+      const sumHist = sub.riwayatCicilan.reduce((sum, r) => sum + (Number(r.nominal) || 0), 0);
+      if (sumHist > 0) return sumHist;
+    }
+    // Also check local cache for recovery
+    try {
+      const localStored = localStorage.getItem('NUSANTARA_HO_SUBMISSIONS') || localStorage.getItem('voucher_submissions');
+      if (localStored) {
+        const parsed = JSON.parse(localStored);
+        if (Array.isArray(parsed)) {
+          const match = parsed.find((p: any) => p.id === sub.id || (p.kode && p.kode === sub.kode));
+          if (match && typeof match.dpAmount === 'number' && match.dpAmount > 0) {
+            return match.dpAmount;
+          }
+        }
+      }
+    } catch (_) {}
     return sub.dpAmount || 0;
   };
 
@@ -1290,40 +1310,55 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
                   </div>
 
                   {/* PAST INSTALLMENT HISTORY COLLAPSIBLE IF ANY */}
-                  {selectedSubmission.riwayatCicilan && selectedSubmission.riwayatCicilan.length > 0 && (
-                    <div className="border border-stone-200 rounded-xl overflow-hidden bg-stone-50/70 text-xs">
-                      <button
-                        type="button"
-                        onClick={() => setShowHistory(!showHistory)}
-                        className="w-full p-2.5 bg-stone-100 hover:bg-stone-200/70 flex items-center justify-between text-stone-700 font-mono font-bold text-[11px] transition"
-                      >
-                        <span className="flex items-center gap-1.5">
-                          <History size={13} className="text-amber-600" />
-                          <span>Riwayat Pembayaran Cicilan ({selectedSubmission.riwayatCicilan.length})</span>
-                        </span>
-                        <span className="text-stone-400 text-[10px]">
-                          {showHistory ? 'Tutup ▲' : 'Buka ▼'}
-                        </span>
-                      </button>
-                      
-                      {showHistory && (
-                        <div className="p-3 space-y-2 border-t border-stone-200 max-h-48 overflow-y-auto">
-                          {selectedSubmission.riwayatCicilan.map((rec, idx) => (
-                            <div key={rec.id || idx} className="p-2 bg-white rounded-lg border border-stone-200 flex items-center justify-between font-mono text-[10px]">
-                              <div>
-                                <span className="text-stone-400 block">{formatDateIndonesian(rec.tanggal)}</span>
-                                <span className="font-bold text-stone-800">{rec.keterangan || `Pembayaran ke-${idx + 1}`}</span>
+                  {(() => {
+                    const displayHistory: CicilanPaymentRecord[] = (selectedSubmission.riwayatCicilan && selectedSubmission.riwayatCicilan.length > 0)
+                      ? selectedSubmission.riwayatCicilan
+                      : (alreadyPaid > 0 ? [{
+                          id: 'init_rec',
+                          tanggal: selectedSubmission.tanggal,
+                          nominal: alreadyPaid,
+                          sisaSetelahBayar: Math.max(0, totalVoucher - alreadyPaid),
+                          keterangan: selectedSubmission.cicilanNotes || 'Pembayaran DP / Termin Awal',
+                          createdAt: selectedSubmission.createdAt
+                        }] : []);
+
+                    if (displayHistory.length === 0) return null;
+
+                    return (
+                      <div className="border border-stone-200 rounded-xl overflow-hidden bg-stone-50/70 text-xs">
+                        <button
+                          type="button"
+                          onClick={() => setShowHistory(!showHistory)}
+                          className="w-full p-2.5 bg-stone-100 hover:bg-stone-200/70 flex items-center justify-between text-stone-700 font-mono font-bold text-[11px] transition"
+                        >
+                          <span className="flex items-center gap-1.5">
+                            <History size={13} className="text-amber-600" />
+                            <span>Riwayat Pembayaran Cicilan ({displayHistory.length})</span>
+                          </span>
+                          <span className="text-stone-400 text-[10px]">
+                            {showHistory ? 'Tutup ▲' : 'Buka ▼'}
+                          </span>
+                        </button>
+                        
+                        {showHistory && (
+                          <div className="p-3 space-y-2 border-t border-stone-200 max-h-48 overflow-y-auto">
+                            {displayHistory.map((rec, idx) => (
+                              <div key={rec.id || idx} className="p-2 bg-white rounded-lg border border-stone-200 flex items-center justify-between font-mono text-[10px]">
+                                <div>
+                                  <span className="text-stone-400 block">{formatDateIndonesian(rec.tanggal)}</span>
+                                  <span className="font-bold text-stone-800">{rec.keterangan || `Pembayaran ke-${idx + 1}`}</span>
+                                </div>
+                                <div className="text-right">
+                                  <span className="font-black text-emerald-700 block">Rp {formatRupiah(rec.nominal)}</span>
+                                  <span className="text-stone-400 text-[9px]">Sisa: Rp {formatRupiah(rec.sisaSetelahBayar)}</span>
+                                </div>
                               </div>
-                              <div className="text-right">
-                                <span className="font-black text-emerald-700 block">Rp {formatRupiah(rec.nominal)}</span>
-                                <span className="text-stone-400 text-[9px]">Sisa: Rp {formatRupiah(rec.sisaSetelahBayar)}</span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {/* PEMBAYARAN CICILAN / LUNAS SECTION */}
                   <div className="p-3.5 bg-amber-50/40 rounded-xl border border-amber-200/80 space-y-3">

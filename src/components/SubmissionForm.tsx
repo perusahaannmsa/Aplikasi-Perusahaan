@@ -1987,6 +1987,19 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         ? 'DP / Cicilan'
         : (status === 'Lunas' || isLunas ? 'Lunas' : 'Belum Lunas');
 
+      const numDp = dpAmount !== '' && !isNaN(Number(dpAmount)) ? Number(dpAmount) : 0;
+      let effectiveRiwayatCicilan = initialSubmission?.riwayatCicilan ? [...initialSubmission.riwayatCicilan] : [];
+      if (finalStatus === 'DP / Cicilan' && numDp > 0 && effectiveRiwayatCicilan.length === 0) {
+        effectiveRiwayatCicilan = [{
+          id: `pay_initial_${Date.now()}`,
+          tanggal: tanggal || new Date().toISOString().split('T')[0],
+          nominal: numDp,
+          sisaSetelahBayar: Math.max(0, calculatedGrandTotal - numDp),
+          keterangan: cicilanNotes || 'Pembayaran DP / Termin Ke-1',
+          createdAt: new Date().toISOString()
+        }];
+      }
+
       const payload: Submission = {
         id: id || `sub-${Date.now()}`,
         lokasi,
@@ -1996,8 +2009,10 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         dibayarkanKepada: normalizedPenerima,
         dibayarkanDengan: 'Cek/Transfer',
         status: finalStatus,
-        dpAmount: finalStatus === 'DP / Cicilan' ? (dpAmount !== '' ? Number(dpAmount) : 0) : undefined,
+        dpAmount: finalStatus === 'DP / Cicilan' ? numDp : undefined,
         cicilanNotes: finalStatus === 'DP / Cicilan' ? cicilanNotes : undefined,
+        riwayatCicilan: effectiveRiwayatCicilan.length > 0 ? effectiveRiwayatCicilan : undefined,
+        rekeningTujuan: rekeningTujuan || undefined,
         notes,
         
         // Save Invoice properties
