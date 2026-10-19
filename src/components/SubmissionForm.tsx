@@ -347,6 +347,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
   const [status, setStatus] = useState<'Lunas' | 'Belum Lunas' | 'DP / Cicilan'>('Belum Lunas');
   const [dpAmount, setDpAmount] = useState<number | string>('');
   const [cicilanNotes, setCicilanNotes] = useState('');
+  const [rekeningTujuan, setRekeningTujuan] = useState(initialSubmission?.rekeningTujuan || '');
   const [notes, setNotes] = useState('');
 
   // Effective petty cash holders master list
@@ -1093,6 +1094,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
       setStatus(initialSubmission.status || 'Belum Lunas');
       setDpAmount(initialSubmission.dpAmount !== undefined ? initialSubmission.dpAmount : '');
       setCicilanNotes(initialSubmission.cicilanNotes || '');
+      setRekeningTujuan(initialSubmission.rekeningTujuan || '');
       setNotes(initialSubmission.notes);
       const initIsInv = initialSubmission.isInvoice || false;
       setIsInvoice(initIsInv);
@@ -1208,6 +1210,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
       setStatus('Belum Lunas');
       setDpAmount('');
       setCicilanNotes('');
+      setRekeningTujuan('');
       setNotes('');
       setProjectId('');
       setProjectName('');
@@ -2507,6 +2510,20 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                 Transfer
               </span>
             </div>
+          </div>
+
+          {/* Rekening Tujuan / Bank Penerima */}
+          <div>
+            <label className="block text-xs font-medium text-stone-500 mb-1">
+              Rekening / Bank Tujuan <span className="text-stone-400 font-normal">(Opsional)</span>
+            </label>
+            <input
+              type="text"
+              placeholder="Contoh: BCA 1234567890 a.n. Penerima"
+              className="w-full bg-white border border-stone-200 rounded-lg py-2 px-3 text-sm focus:outline-none focus:ring-1 focus:ring-stone-400 font-medium text-stone-800 placeholder:text-stone-400"
+              value={rekeningTujuan}
+              onChange={(e) => setRekeningTujuan(e.target.value)}
+            />
           </div>
 
           {/* Status Pembayaran (Belum Lunas, DP / Cicilan, Lunas) */}
