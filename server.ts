@@ -5013,11 +5013,16 @@ async function bootstrap() {
 
   serverInstance.on("error", (err: any) => {
     console.error("Server listen error:", err);
-    if (err.code === "EADDRINUSE" && PORT !== 3000) {
-      console.log("Port in use, falling back to 3000...");
-      app.listen(3000, "0.0.0.0", () => {
-        console.log("Server fallback running at http://localhost:3000");
-      });
+    if (err.code === "EADDRINUSE") {
+      console.warn(`[Server] Port ${PORT} sedang digunakan. Menghubungkan ulang ke port 3000 dalam 1 detik...`);
+      setTimeout(() => {
+        try {
+          serverInstance.close();
+        } catch (_) {}
+        app.listen(3000, "0.0.0.0", () => {
+          console.log("Server berhasil berjalan normal di http://localhost:3000");
+        });
+      }, 1000);
     }
   });
 }

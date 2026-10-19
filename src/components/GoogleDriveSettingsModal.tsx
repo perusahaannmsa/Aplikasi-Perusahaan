@@ -11,7 +11,8 @@ import {
   setMasterDriveEmail,
   getActiveGoogleDriveAccount,
   ensureValidDriveToken,
-  loadConnectedDrivesFromFirestore
+  loadConnectedDrivesFromFirestore,
+  LOCKED_MASTER_DRIVE_EMAIL
 } from '../firebase';
 import { 
   Cloud, 
@@ -44,9 +45,9 @@ interface GoogleDriveSettingsModalProps {
 
 export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> = ({ isOpen, onClose }) => {
   const [drives, setDrives] = useState<ConnectedDrive[]>([]);
-  const [authorizedEmails, setAuthorizedEmails] = useState<string[]>([]);
+  const [authorizedEmails, setAuthorizedEmails] = useState<string[]>([LOCKED_MASTER_DRIVE_EMAIL]);
   const [newEmailInput, setNewEmailInput] = useState('');
-  const [masterEmail, setMasterEmail] = useState<string>('penyimpanandrivenmsa1@gmail.com');
+  const [masterEmail, setMasterEmail] = useState<string>(LOCKED_MASTER_DRIVE_EMAIL);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -141,7 +142,7 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
   const handleConnectDriveAccount = async (emailHint?: string) => {
     setIsConnecting(true);
     try {
-      const targetEmail = emailHint || masterEmail || authorizedEmails[0] || 'penyimpanandrivenmsa1@gmail.com';
+      const targetEmail = LOCKED_MASTER_DRIVE_EMAIL;
       const result = await googleDriveLogin(targetEmail, false);
       if (result.accessToken) {
         await loadData();

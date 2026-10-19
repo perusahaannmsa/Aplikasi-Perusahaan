@@ -3471,31 +3471,34 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
                         height: '100%'
                       }}
                     >
-                      {/* Top Warning Ribbon for cross-account or restricted files */}
-                      <div className="absolute top-0 left-0 right-0 bg-amber-500/95 text-stone-950 px-4 py-2 text-xs font-sans font-bold flex items-center justify-between gap-2 z-20 print:hidden shadow-sm">
+                      {/* Top Warning Ribbon with Direct Access & Account Lock */}
+                      <div className="absolute top-0 left-0 right-0 bg-stone-900/90 text-white px-4 py-2 text-xs font-sans font-bold flex items-center justify-between gap-2 z-20 print:hidden shadow-sm backdrop-blur-xs">
                         <div className="flex items-center gap-2 truncate">
-                          <AlertTriangle size={15} className="text-stone-950 shrink-0" />
-                          <span className="truncate">
-                            Jika pratinjau di bawah tidak muncul, berkas berada di Google Drive akun lain.
+                          <Lock size={14} className="text-[#D4AF37] shrink-0" />
+                          <span className="truncate text-[11px] text-stone-200">
+                            Google Drive Resmi: <strong className="text-amber-400">akuncoding211@gmail.com</strong>
                           </span>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
+                          <a
+                            href={`https://drive.google.com/file/d/${page.fileId}/view?usp=sharing`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded-lg text-[11px] font-bold transition flex items-center gap-1 cursor-pointer shadow-xs"
+                            title="Buka atau unduh berkas lampiran langsung di Google Drive"
+                          >
+                            <ExternalLink size={12} />
+                            <span>Buka / Unduh Berkas</span>
+                          </a>
                           <button
                             type="button"
                             onClick={() => triggerReplaceFile(page.fileIndex)}
                             disabled={page.fileId ? isReplacingFile[page.fileId] : false}
                             className="bg-emerald-700 hover:bg-emerald-800 text-white px-2.5 py-1 rounded-lg text-[11px] font-bold transition flex items-center gap-1 cursor-pointer shadow-xs"
+                            title="Unggah ulang berkas baru ke akun akuncoding211@gmail.com"
                           >
                             <Upload size={12} />
-                            <span>Ganti / Unggah Berkas</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleConnectDriveFromWarning}
-                            className="bg-white hover:bg-stone-100 text-stone-900 px-2 py-1 rounded-lg text-[11px] font-bold transition flex items-center gap-1 cursor-pointer shadow-xs"
-                          >
-                            <RefreshCw size={12} />
-                            <span>Ganti Akun</span>
+                            <span>Unggah Ulang</span>
                           </button>
                         </div>
                       </div>

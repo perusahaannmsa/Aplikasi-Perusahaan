@@ -330,9 +330,9 @@ export async function syncNpwpToFirestore(npwpRecords: any[]): Promise<boolean> 
       updatedAt: timestamp
     }, { merge: true });
 
-    // 2. Also save to app_settings general doc for settings sync
+    // 2. Mirror to companies/nmsa for settings & company-wide sync
     try {
-      await setDoc(doc(db, "app_settings", "general"), {
+      await setDoc(doc(db, "companies", "nmsa"), {
         npwpRecords: list,
         updatedAt: timestamp
       }, { merge: true });

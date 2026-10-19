@@ -9,7 +9,8 @@ import {
   setMasterDriveEmail,
   getAuthorizedDriveEmails,
   isDriveTokenValid,
-  getDriveRemainingMinutes
+  getDriveRemainingMinutes,
+  LOCKED_MASTER_DRIVE_EMAIL
 } from '../firebase';
 import { Cloud, Plus, Trash2, ShieldCheck, RefreshCw, AlertTriangle, HardDrive, Star, Settings } from 'lucide-react';
 import { GoogleDriveSettingsModal } from './GoogleDriveSettingsModal';
@@ -24,7 +25,7 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({
   hideMasterSettings = false
 }) => {
   const [drives, setDrives] = useState<ConnectedDrive[]>([]);
-  const [masterEmail, setMasterEmail] = useState<string>('penyimpanandrivenmsa1@gmail.com');
+  const [masterEmail, setMasterEmail] = useState<string>(LOCKED_MASTER_DRIVE_EMAIL);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [errorText, setErrorText] = useState('');
