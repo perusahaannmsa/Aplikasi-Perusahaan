@@ -645,77 +645,15 @@ export const switchUserCompany = async (
 };
 
 export const registerUserToFirebase = async (
-  email: string, 
-  password: string, 
-  fullName: string, 
-  role: string,
-  companyId: string = 'nmsa',
-  companyName: string = 'PT Nusantara Mineral Sukses Abadi',
-  logoUrl: string = ''
+  _email: string, 
+  _password: string, 
+  _fullName: string, 
+  _role: string,
+  _companyId: string = 'nmsa',
+  _companyName: string = 'PT Nusantara Mineral Sukses Abadi',
+  _logoUrl: string = ''
 ): Promise<User> => {
-  if (!firebaseAuth) {
-    throw new Error('Firebase Auth is not initialized. Please configure credentials first.');
-  }
-  if (!firestoreDb) {
-    throw new Error('Firestore is not initialized. Please configure credentials first.');
-  }
-  try {
-    const creds = await createUserWithEmailAndPassword(firebaseAuth, email, password);
-    const user = creds.user;
-    
-    // Wait for the auth session to populate, then record the user under users/
-    await setDoc(doc(firestoreDb, 'users', user.uid), {
-      uid: user.uid,
-      email: user.email,
-      fullName: fullName,
-      role: role ?? 'User',
-      companyId: companyId.toLowerCase().trim(),
-      companyName: companyName,
-      companyLogoUrl: logoUrl.trim(),
-      createdAt: new Date().toISOString()
-    });
-
-    // Check if the company document already exists; if not, create it with user provided/standard fallbacks
-    const companyCleanId = companyId.toLowerCase().trim();
-    const companyRef = doc(firestoreDb, 'companies', companyCleanId);
-    const companySnap = await getDoc(companyRef);
-    
-    if (!companySnap.exists()) {
-      await setDoc(companyRef, {
-        id: companyCleanId,
-        code: companyCleanId.toUpperCase(),
-        name: companyName,
-        fullName: companyName,
-        defaultJenis: 'Operasional Kantor',
-        defaultKode: `BKK-${companyCleanId.toUpperCase()}/V/2026/10001`,
-        defaultLokasi: 'Lt.1',
-        displayName: `Invoice-${companyCleanId.toUpperCase()}`,
-        icon: '🏢',
-        logoUrl: logoUrl.trim(),
-        isActive: true,
-        no_invoice_prefix: `BKK-${companyCleanId.toUpperCase()}`,
-        sigAccounting: role.toLowerCase().includes('accounting') || role.toLowerCase().includes('finance') ? fullName : 'Sri Ekowati',
-        sigDibuat: fullName || 'Nur Wahyudi',
-        sigDirKeuangan: 'Harijon',
-        sigDirektur: 'Andi Nursyam Halid',
-        sigDisetujui: 'Harijon',
-        sigKeuangan: 'Andi Dhiya Salsabila',
-        updatedAt: new Date().toISOString()
-      });
-      console.log(`🏬 Company metadata workspace created for [${companyCleanId}]`);
-    } else if (logoUrl.trim()) {
-      // If company already exists but new custom logo is provided, update it
-      await setDoc(companyRef, {
-        logoUrl: logoUrl.trim(),
-        updatedAt: new Date().toISOString()
-      }, { merge: true });
-    }
-
-    return user;
-  } catch (error: any) {
-    console.error('Authentication Signup Failed:', error);
-    throw error;
-  }
+  throw new Error('Fitur pendaftaran akun dinonaktifkan. Aplikasi berstatus tertutup khusus akun terdaftar langsung oleh Administrator di Firebase Console.');
 };
 
 // Production configuration for NMSA original database
@@ -856,14 +794,7 @@ export const loginToFirebase = async (email: string, password: string): Promise<
 };
 
 export const loginWithGoogle = async (): Promise<User> => {
-  if (!firebaseAuth) {
-    throw new Error('Firebase Auth belum dikonfigurasi.');
-  }
-  const provider = new GoogleAuthProvider();
-  provider.setCustomParameters({ prompt: 'select_account' });
-  const result = await signInWithPopup(firebaseAuth, provider);
-  currentUser = result.user;
-  return result.user;
+  throw new Error('Login Akun Google dinonaktifkan. Aplikasi berstatus tertutup khusus akun terdaftar di Firebase Console.');
 };
 
 export const resetPasswordViaEmail = async (email: string): Promise<void> => {

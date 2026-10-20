@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700;800&family=Outfit:wght@400;500;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700;800&family=Outfit:wght@400;500;600;700;800;900&family=Cinzel:wght@600;700;800;900&display=swap');
 @import "tailwindcss";
 
 @theme {
@@ -12,7 +12,7 @@
   --brand-gold-hover: #Bca031;
   --brand-gradient-start: #d97706;
   --brand-gradient-end: #f59e0b;
-  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.15s ease;
+  transition: background-color 0.25s ease, border-color 0.25s ease, color 0.2s ease, box-shadow 0.25s ease;
 }
 
 /* Responsive Viewport & Anti-Overflow Protection for Android & Desktop */
@@ -37,87 +37,267 @@ html, body {
   scrollbar-width: none;
 }
 
-/* Classic Pearl Light Theme (Default) */
+/* ═══════════════════════════════════════════════════════════════════
+   THEME 1: CLASSIC (Royal Nusantara Heritage - Warm Ivory, Gold & Batik Filigree)
+   ═══════════════════════════════════════════════════════════════════ */
 .theme-classic {
   --brand-gold: #D4AF37;
-  --brand-gold-hover: #Bca031;
-  --brand-gradient-start: #d97706;
+  --brand-gold-hover: #bca031;
+  --brand-gradient-start: #b45309;
   --brand-gradient-end: #f59e0b;
+  --theme-card-radius: 1.25rem;
+  --theme-font-title: "Cinzel", "Outfit", "Plus Jakarta Sans", serif;
+  --theme-glow: rgba(212, 175, 55, 0.25);
+  
+  --color-white: #ffffff;
+  --color-stone-50: #faf7f0;
+  --color-stone-100: #f4eee1;
+  --color-stone-150: #ede3ce;
+  --color-stone-200: #e2d3b5;
+  --color-stone-250: #d4be95;
+  --color-stone-300: #bfa170;
+  --color-stone-400: #7c6845;
+  --color-stone-500: #57482f;
+  --color-stone-800: #292524;
+  --color-stone-850: #1c1917;
+  --color-stone-900: #0c0a09;
 }
 
-/* Gold In The Dark - Luxury Midnight with Gold Accents */
+.theme-classic #app-root {
+  background-color: #faf7f0;
+  background-image: 
+    radial-gradient(rgba(212, 175, 55, 0.16) 1.5px, transparent 1.5px),
+    radial-gradient(rgba(180, 83, 9, 0.08) 2px, transparent 2px);
+  background-size: 28px 28px, 56px 56px;
+}
+
+.theme-classic .app-card-theme,
+.theme-classic .bg-white.rounded-2xl {
+  border: 2px solid rgba(212, 175, 55, 0.42) !important;
+  outline: 1px solid rgba(212, 175, 55, 0.18) !important;
+  outline-offset: -4px !important;
+  border-radius: 1.25rem !important;
+  background: linear-gradient(180deg, #ffffff 0%, #fffdf9 100%) !important;
+  box-shadow: 0 10px 30px -4px rgba(212, 175, 55, 0.14), 0 2px 8px rgba(0, 0, 0, 0.03) !important;
+  position: relative;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.theme-classic .app-card-theme:hover,
+.theme-classic .bg-white.rounded-2xl:hover {
+  box-shadow: 0 14px 36px -4px rgba(212, 175, 55, 0.22), 0 4px 12px rgba(0, 0, 0, 0.05) !important;
+}
+
+.theme-classic .border-header-gradient {
+  background: linear-gradient(90deg, #b45309 0%, #D4AF37 35%, #fef08a 50%, #D4AF37 65%, #b45309 100%) !important;
+  background-size: 200% 100% !important;
+  animation: classicGoldShimmer 4s ease-in-out infinite alternate;
+  box-shadow: 0 2px 10px rgba(212, 175, 55, 0.35);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   THEME 2: GOLD-DARK (Midnight Obsidian & 24K Luxury Neon Cyber-Gold)
+   ═══════════════════════════════════════════════════════════════════ */
 .theme-gold-dark {
-  --brand-gold: #D4AF37;
-  --brand-gold-hover: #f1c40f;
-  --brand-gradient-start: #917118;
+  --brand-gold: #fbbf24;
+  --brand-gold-hover: #f59e0b;
+  --brand-gradient-start: #b45309;
   --brand-gradient-end: #f59e0b;
+  --theme-card-radius: 1rem;
+  --theme-font-title: "Outfit", "Plus Jakarta Sans", sans-serif;
+  --theme-glow: rgba(251, 191, 36, 0.32);
   
-  /* Redefine Tailwind system color variables for deep dark skin style */
-  --color-white: #161618;           /* Card containers & header backgrounds */
-  --color-stone-50: #0a0a0b;        /* System body background */
-  --color-stone-100: #212124;       /* Table headers, hover states, input bg */
-  --color-stone-150: #2a2a2d;       
-  --color-stone-200: #2d2d31;       /* Border dividers and frames */
-  --color-stone-205: #323237;       
-  --color-stone-250: #3f3f46;
-  --color-stone-300: #49494f;
-  --color-stone-400: #a1a1aa;       /* Muted description descriptions */
-  --color-stone-450: #88888f;
-  --color-stone-500: #a1a1aa;
-  --color-stone-550: #b9b9c0;
-  --color-stone-600: #b9b9c0;
-  --color-stone-700: #d4d4d8;       
-  --color-stone-750: #e4e4e7;       
-  --color-stone-800: #e4e4e7;       /* Primary typography body elements */
-  --color-stone-850: #f4f4f5;       /* Secondary display titles */
-  --color-stone-900: #ffffff;       /* Heading, text & strong label names */
+  /* Deep obsidian carbon color map */
+  --color-white: #121217;
+  --color-stone-50: #09090c;
+  --color-stone-100: #181822;
+  --color-stone-150: #22222e;
+  --color-stone-200: #2e2e3d;
+  --color-stone-205: #38384a;
+  --color-stone-250: #46465c;
+  --color-stone-300: #585872;
+  --color-stone-400: #9da1b6;
+  --color-stone-450: #b4b8cc;
+  --color-stone-500: #9da1b6;
+  --color-stone-550: #c6cadc;
+  --color-stone-600: #d6d9ea;
+  --color-stone-700: #e8ebf8;
+  --color-stone-750: #f2f4fc;
+  --color-stone-800: #f8f9fe;
+  --color-stone-850: #ffffff;
+  --color-stone-900: #ffffff;
   --color-stone-955: #ffffff;
 }
 
-/* Royal Emerald - Dignified Corporate Marble Mint Scheme */
+.theme-gold-dark #app-root {
+  background-color: #07070a;
+  background-image: 
+    radial-gradient(rgba(251, 191, 36, 0.16) 1.2px, transparent 1.2px),
+    radial-gradient(rgba(217, 119, 6, 0.08) 1.8px, transparent 1.8px);
+  background-size: 32px 32px, 64px 64px;
+}
+
+.theme-gold-dark .app-card-theme,
+.theme-gold-dark .bg-white.rounded-2xl {
+  background-color: rgba(18, 18, 24, 0.94) !important;
+  backdrop-filter: blur(14px) !important;
+  border: 1px solid rgba(251, 191, 36, 0.42) !important;
+  border-radius: 1rem !important;
+  box-shadow: 0 16px 40px -6px rgba(0, 0, 0, 0.92), 0 0 24px -2px rgba(245, 158, 11, 0.22) !important;
+  transition: all 0.25s ease-out;
+}
+
+.theme-gold-dark .app-card-theme:hover,
+.theme-gold-dark .bg-white.rounded-2xl:hover {
+  border-color: rgba(251, 191, 36, 0.8) !important;
+  box-shadow: 0 20px 48px -4px rgba(0, 0, 0, 0.98), 0 0 32px 2px rgba(245, 158, 11, 0.35) !important;
+}
+
+.theme-gold-dark .border-header-gradient {
+  background: linear-gradient(90deg, #78350f 0%, #d97706 25%, #fbbf24 50%, #d97706 75%, #78350f 100%) !important;
+  background-size: 200% 100% !important;
+  box-shadow: 0 0 18px rgba(251, 191, 36, 0.55);
+  animation: pulseObsidianNeon 3.5s ease-in-out infinite alternate;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   THEME 3: EMERALD (Imperial Jade & Mineral Oasis - Pebble Smooth)
+   ═══════════════════════════════════════════════════════════════════ */
 .theme-emerald {
   --brand-gold: #059669;
   --brand-gold-hover: #047857;
   --brand-gradient-start: #047857;
   --brand-gradient-end: #10b981;
+  --theme-card-radius: 1.75rem;
+  --theme-font-title: "Plus Jakarta Sans", "Outfit", sans-serif;
+  --theme-glow: rgba(16, 185, 129, 0.26);
   
-  /* Soft Emerald light style override */
   --color-white: #ffffff;
-  --color-stone-50: #f1f6f3;        /* Soft mint-toned background */
-  --color-stone-100: #e3eee8;       /* Headers, status pills */
-  --color-stone-150: #dbebe2;
-  --color-stone-200: #cadcd2;       /* Borders and divides */
-  --color-stone-205: #c0d5c9;
-  --color-stone-250: #abc3b6;
-  --color-stone-300: #91ae9f;
-  --color-stone-400: #577365;       /* Forest green tinted text labels */
-  --color-stone-550: #3d5448;
-  --color-stone-800: #1f2e26;       /* Very deep corporate slate text */
-  --color-stone-850: #14201a;
-  --color-stone-900: #0a110d;
+  --color-stone-50: #f0fdf4;
+  --color-stone-100: #e5f8ee;
+  --color-stone-150: #d3f2e1;
+  --color-stone-200: #b8e7ce;
+  --color-stone-205: #9fdbb9;
+  --color-stone-250: #7cc99e;
+  --color-stone-300: #5cb684;
+  --color-stone-400: #337f55;
+  --color-stone-550: #1b5334;
+  --color-stone-800: #0a2d19;
+  --color-stone-850: #051f11;
+  --color-stone-900: #02120a;
 }
 
-/* Slate Minimalist - Sleek Executive Matte Dark Cyber theme */
+.theme-emerald #app-root {
+  background-color: #f1f9f4;
+  background-image: 
+    radial-gradient(rgba(16, 185, 129, 0.18) 1.5px, transparent 1.5px),
+    radial-gradient(rgba(5, 150, 105, 0.08) 2.5px, transparent 2.5px);
+  background-size: 30px 30px, 60px 60px;
+}
+
+.theme-emerald .app-card-theme,
+.theme-emerald .bg-white.rounded-2xl {
+  border-radius: 1.75rem !important;
+  border: 2px solid rgba(16, 185, 129, 0.42) !important;
+  background: linear-gradient(180deg, #ffffff 0%, #f7fdf9 100%) !important;
+  box-shadow: 0 14px 38px -6px rgba(5, 150, 105, 0.16), 0 4px 12px -2px rgba(16, 185, 129, 0.06) !important;
+  transition: all 0.25s ease-out;
+}
+
+.theme-emerald .app-card-theme:hover,
+.theme-emerald .bg-white.rounded-2xl:hover {
+  border-color: rgba(5, 150, 105, 0.65) !important;
+  box-shadow: 0 18px 45px -4px rgba(5, 150, 105, 0.24), 0 6px 16px -2px rgba(16, 185, 129, 0.1) !important;
+}
+
+.theme-emerald .border-header-gradient {
+  background: linear-gradient(90deg, #064e3b 0%, #059669 35%, #6ee7b7 50%, #059669 65%, #064e3b 100%) !important;
+  background-size: 200% 100% !important;
+  animation: jadeAuraBreathe 4s ease-in-out infinite alternate;
+  box-shadow: 0 0 15px rgba(16, 185, 129, 0.38);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   THEME 4: SLATE (Futuristic Titanium Cyber HUD & Azure Terminal)
+   ═══════════════════════════════════════════════════════════════════ */
 .theme-slate {
-  --brand-gold: #0284c7;            /* Sky blue cyber dynamic */
-  --brand-gold-hover: #0ea5e9;
-  --brand-gradient-start: #0369a1;
-  --brand-gradient-end: #0ea5e9;
+  --brand-gold: #06b6d4;
+  --brand-gold-hover: #0891b2;
+  --brand-gradient-start: #0284c7;
+  --brand-gradient-end: #38bdf8;
+  --theme-card-radius: 0.65rem;
+  --theme-font-title: "JetBrains Mono", monospace;
+  --theme-glow: rgba(6, 182, 212, 0.35);
   
-  /* Matte Space Dark Style */
-  --color-white: #1e222b;           /* Space gray cards BG */
-  --color-stone-50: #11141a;        /* Carbon fiber space background */
-  --color-stone-100: #292e3a;       /* Dark inputs, headings back */
-  --color-stone-150: #313745;
-  --color-stone-200: #383f4f;       /* Accent lines, borders */
-  --color-stone-205: #3e4659;
-  --color-stone-250: #4a546a;
-  --color-stone-300: #5a6680;
-  --color-stone-400: #8892b0;       /* Cool slate labels */
-  --color-stone-500: #8892b0;
-  --color-stone-800: #cbd5e1;       /* Gray-text elements */
+  /* Cyber Titanium Dark Matrix */
+  --color-white: #0a1120;
+  --color-stone-50: #040813;
+  --color-stone-100: #101c34;
+  --color-stone-150: #172748;
+  --color-stone-200: #223762;
+  --color-stone-205: #2c467a;
+  --color-stone-250: #385695;
+  --color-stone-300: #496db7;
+  --color-stone-400: #7395dd;
+  --color-stone-500: #7395dd;
+  --color-stone-800: #cbd5e1;
   --color-stone-850: #e2e8f0;
-  --color-stone-900: #f8fafc;       /* Plain snow headings */
+  --color-stone-900: #f8fafc;
+}
+
+.theme-slate #app-root {
+  background-color: #03060f;
+  background-image: 
+    linear-gradient(rgba(56, 189, 248, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(56, 189, 248, 0.08) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.theme-slate .app-card-theme,
+.theme-slate .bg-white.rounded-2xl {
+  border-radius: 0.65rem !important;
+  border: 1px solid rgba(56, 189, 248, 0.45) !important;
+  background-color: rgba(10, 17, 32, 0.95) !important;
+  box-shadow: 0 0 25px -2px rgba(2, 132, 199, 0.32), inset 0 1px 0 0 rgba(56, 189, 248, 0.35) !important;
+  position: relative;
+  transition: all 0.2s ease-out;
+}
+
+.theme-slate .app-card-theme::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 8px;
+  width: 24px;
+  height: 2px;
+  background: #38bdf8;
+  box-shadow: 0 0 8px #38bdf8;
+  pointer-events: none;
+}
+
+.theme-slate .app-card-theme::after {
+  content: "";
+  position: absolute;
+  bottom: -1px;
+  right: 8px;
+  width: 24px;
+  height: 2px;
+  background: #38bdf8;
+  box-shadow: 0 0 8px #38bdf8;
+  pointer-events: none;
+}
+
+.theme-slate .app-card-theme:hover,
+.theme-slate .bg-white.rounded-2xl:hover {
+  border-color: rgba(56, 189, 248, 0.8) !important;
+  box-shadow: 0 0 35px 2px rgba(2, 132, 199, 0.5), inset 0 1px 0 0 rgba(56, 189, 248, 0.6) !important;
+}
+
+.theme-slate .border-header-gradient {
+  background: linear-gradient(90deg, #0369a1 0%, #06b6d4 35%, #7dd3fc 50%, #06b6d4 65%, #0369a1 100%) !important;
+  background-size: 200% 100% !important;
+  box-shadow: 0 0 20px rgba(6, 182, 212, 0.6);
+  animation: cyberScanline 3s linear infinite;
 }
 
 /* Helper dynamic selectors */
@@ -138,19 +318,57 @@ html, body {
   background: linear-gradient(90deg, var(--brand-gradient-start) 0%, var(--brand-gold) 50%, var(--brand-gradient-end) 100%) !important;
 }
 
-/* Custom classy animation effects */
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: translateY(0); }
+/* ═══════════════════════════════════════════════════════════════════
+   BESPOKE THEME ANIMATIONS & MICRO-INTERACTIONS
+   ═══════════════════════════════════════════════════════════════════ */
+@keyframes classicGoldShimmer {
+  0% { background-position: 0% 50%; filter: brightness(1); }
+  50% { background-position: 100% 50%; filter: brightness(1.2) drop-shadow(0 0 8px rgba(212, 175, 55, 0.4)); }
+  100% { background-position: 0% 50%; filter: brightness(1); }
+}
+
+@keyframes pulseObsidianNeon {
+  0% { background-position: 0% 50%; box-shadow: 0 0 12px rgba(251, 191, 36, 0.35); }
+  50% { background-position: 100% 50%; box-shadow: 0 0 28px rgba(251, 191, 36, 0.85); }
+  100% { background-position: 0% 50%; box-shadow: 0 0 12px rgba(251, 191, 36, 0.35); }
+}
+
+@keyframes jadeAuraBreathe {
+  0% { background-position: 0% 50%; filter: saturate(1) brightness(1); }
+  50% { background-position: 100% 50%; filter: saturate(1.4) brightness(1.15) drop-shadow(0 0 10px rgba(16, 185, 129, 0.5)); }
+  100% { background-position: 0% 50%; filter: saturate(1) brightness(1); }
+}
+
+@keyframes cyberScanline {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+@keyframes floatGentle {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-4px); }
+}
+
+@keyframes orbPulse {
+  0%, 100% { transform: scale(1); opacity: 0.25; }
+  50% { transform: scale(1.15); opacity: 0.45; }
 }
 
 .animate-fade-in {
   animation: fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-/* Extra support for smooth background shifts */
+.animate-float-gentle {
+  animation: floatGentle 3s ease-in-out infinite;
+}
+
+.animate-orb-pulse {
+  animation: orbPulse 5s ease-in-out infinite;
+}
+
+/* Smooth background & transition handling */
 #app-root, header, footer, main, select, input, button, table, transition-all {
-  transition: background-color 0.15s ease-out, border-color 0.15s ease-out, color 0.15s ease-out;
+  transition: background-color 0.2s ease-out, border-color 0.2s ease-out, color 0.15s ease-out, box-shadow 0.2s ease-out;
 }
 
 @media print {

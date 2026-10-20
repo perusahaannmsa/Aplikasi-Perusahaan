@@ -32,6 +32,7 @@ import { Pph23BupotRecap } from './components/Pph23BupotRecap';
 import { ProjectBudgetRab } from './components/ProjectBudgetRab';
 import { CompanySwitcherModal } from './components/CompanySwitcherModal';
 import { InternalMemoManager } from './components/InternalMemoManager';
+import { ThemeSelectorModal, AppTheme } from './components/ThemeSelectorModal';
 import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, syncInvoiceSubmissionToAgenda, formatDateIndonesian } from './utils';
 import { areNamesSimilar, toTitleCase } from './utils/nameConsolidation';
 import { 
@@ -1107,6 +1108,7 @@ export default function App() {
   const [isGoogleDriveSettingsOpen, setIsGoogleDriveSettingsOpen] = useState(false);
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
   const [isExportImportModalOpen, setIsExportImportModalOpen] = useState(false);
+  const [isThemeModalOpen, setIsThemeModalOpen] = useState(false);
   const [masterDriveEmail, setMasterDriveEmailState] = useState<string>(() => getMasterDriveEmail());
 
   // Multi-Company switching handler with strictly segregated Firestore & local storage
@@ -2725,50 +2727,75 @@ export default function App() {
                       </div>
 
                     <div className="p-3 border-b border-stone-200 space-y-2">
-                      <span className="text-[10px] font-mono font-bold text-stone-400 uppercase tracking-wider block">
-                        Pilihan Tema Tampilan:
-                      </span>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-mono font-bold text-stone-400 uppercase tracking-wider block">
+                          Pilihan Tema Tampilan:
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsUserMenuOpen(false);
+                            setIsThemeModalOpen(true);
+                          }}
+                          className="text-[10px] font-mono font-bold text-amber-600 hover:text-amber-700 flex items-center gap-1 transition cursor-pointer"
+                        >
+                          <Sparkles size={11} />
+                          <span>Galeri Tema</span>
+                        </button>
+                      </div>
                       <div className="grid grid-cols-2 gap-1.5 text-xs font-mono">
                         <button
                           onClick={() => { setTheme('classic'); setIsUserMenuOpen(false); }}
                           className={`p-2 rounded-xl border flex items-center gap-2 transition cursor-pointer text-left ${
-                            theme === 'classic' ? 'bg-stone-900 text-white border-stone-900 font-bold' : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
+                            theme === 'classic' ? 'bg-amber-100 text-amber-950 border-amber-400 font-black shadow-xs' : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
                           }`}
                         >
-                          <span className="w-3 h-3 rounded-full shrink-0 border border-stone-300" style={{ background: 'linear-gradient(135deg, #ffffff 50%, #D4AF37 50%)' }} />
+                          <span className="w-3.5 h-3.5 rounded-full shrink-0 border border-amber-300" style={{ background: 'linear-gradient(135deg, #ffffff 50%, #D4AF37 50%)' }} />
                           <span className="text-[11px] truncate">Classic</span>
                         </button>
 
                         <button
                           onClick={() => { setTheme('gold-dark'); setIsUserMenuOpen(false); }}
                           className={`p-2 rounded-xl border flex items-center gap-2 transition cursor-pointer text-left ${
-                            theme === 'gold-dark' ? 'bg-stone-900 text-amber-400 border-stone-900 font-bold' : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
+                            theme === 'gold-dark' ? 'bg-stone-900 text-amber-400 border-amber-500 font-black shadow-xs' : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
                           }`}
                         >
-                          <span className="w-3 h-3 rounded-full shrink-0 border border-stone-800" style={{ background: 'linear-gradient(135deg, #141416 50%, #D4AF37 50%)' }} />
+                          <span className="w-3.5 h-3.5 rounded-full shrink-0 border border-stone-700" style={{ background: 'linear-gradient(135deg, #07070a 50%, #fbbf24 50%)' }} />
                           <span className="text-[11px] truncate">Gold Dark</span>
                         </button>
 
                         <button
                           onClick={() => { setTheme('emerald'); setIsUserMenuOpen(false); }}
                           className={`p-2 rounded-xl border flex items-center gap-2 transition cursor-pointer text-left ${
-                            theme === 'emerald' ? 'bg-emerald-900 text-white border-emerald-900 font-bold' : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
+                            theme === 'emerald' ? 'bg-emerald-900 text-emerald-100 border-emerald-500 font-black shadow-xs' : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
                           }`}
                         >
-                          <span className="w-3 h-3 rounded-full shrink-0 border border-emerald-300" style={{ background: 'linear-gradient(135deg, #f1f6f3 50%, #059669 50%)' }} />
+                          <span className="w-3.5 h-3.5 rounded-full shrink-0 border border-emerald-300" style={{ background: 'linear-gradient(135deg, #f1f9f4 50%, #059669 50%)' }} />
                           <span className="text-[11px] truncate">Emerald</span>
                         </button>
 
                         <button
                           onClick={() => { setTheme('slate'); setIsUserMenuOpen(false); }}
                           className={`p-2 rounded-xl border flex items-center gap-2 transition cursor-pointer text-left ${
-                            theme === 'slate' ? 'bg-slate-900 text-sky-300 border-slate-900 font-bold' : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
+                            theme === 'slate' ? 'bg-cyan-950 text-cyan-200 border-cyan-400 font-black shadow-xs' : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
                           }`}
                         >
-                          <span className="w-3 h-3 rounded-full shrink-0 border border-slate-800" style={{ background: 'linear-gradient(135deg, #11141a 50%, #0284c7 50%)' }} />
+                          <span className="w-3.5 h-3.5 rounded-full shrink-0 border border-cyan-700" style={{ background: 'linear-gradient(135deg, #03060f 50%, #06b6d4 50%)' }} />
                           <span className="text-[11px] truncate">Slate</span>
                         </button>
                       </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsUserMenuOpen(false);
+                          setIsThemeModalOpen(true);
+                        }}
+                        className="w-full mt-2 py-1.5 px-2 bg-gradient-to-r from-amber-500/10 to-amber-500/20 hover:from-amber-500/20 hover:to-amber-500/30 text-amber-900 border border-amber-300/80 rounded-xl text-[11px] font-bold font-mono flex items-center justify-center gap-1.5 transition cursor-pointer shadow-3xs"
+                      >
+                        <Sparkles size={12} className="text-amber-600" />
+                        <span>Buka Galeri &amp; Detail Tema ✨</span>
+                      </button>
                     </div>
 
                     <div className="p-2 bg-stone-50">
@@ -2880,6 +2907,18 @@ export default function App() {
                     {agendaDueCount}
                   </span>
                 )}
+              </button>
+
+              {/* Theme Selector Button with Animated Sparkle */}
+              <button
+                type="button"
+                onClick={() => setIsThemeModalOpen(true)}
+                className="relative p-2 rounded-xl border border-stone-250 hover:border-amber-400 bg-stone-50 hover:bg-stone-100 text-stone-750 transition cursor-pointer shadow-3xs flex items-center gap-1.5"
+                title="Pilih & Sesuaikan Tema Tampilan (Bordir, Huruf, Animasi & Kotak)"
+              >
+                <Palette size={16} className="text-amber-600 dark:text-amber-400" />
+                <span className="hidden md:inline font-sans font-bold text-xs">Tema</span>
+                <Sparkles size={11} className="text-amber-500 animate-pulse" />
               </button>
 
               {/* UNIFIED TOOLS & INTEGRATIONS DROPDOWN (WhatsApp AI, Drive, Buku Besar, dll) */}
@@ -3319,50 +3358,75 @@ export default function App() {
                     </div>
 
                   <div className="p-3 border-b border-stone-200 space-y-2">
-                    <span className="text-[10px] font-mono font-bold text-stone-400 uppercase tracking-wider block">
-                      Pilihan Tema Tampilan:
-                    </span>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-mono font-bold text-stone-400 uppercase tracking-wider block">
+                        Pilihan Tema Tampilan:
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsUserMenuOpen(false);
+                          setIsThemeModalOpen(true);
+                        }}
+                        className="text-[10px] font-mono font-bold text-amber-600 hover:text-amber-700 flex items-center gap-1 transition cursor-pointer"
+                      >
+                        <Sparkles size={11} />
+                        <span>Galeri Tema</span>
+                      </button>
+                    </div>
                     <div className="grid grid-cols-2 gap-1.5 text-xs font-mono">
                       <button
                         onClick={() => { setTheme('classic'); setIsUserMenuOpen(false); }}
                         className={`p-2 rounded-xl border flex items-center gap-2 transition cursor-pointer text-left ${
-                          theme === 'classic' ? 'bg-stone-900 text-white border-stone-900 font-bold' : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
+                          theme === 'classic' ? 'bg-amber-100 text-amber-950 border-amber-400 font-black shadow-xs' : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
                         }`}
                       >
-                        <span className="w-3 h-3 rounded-full shrink-0 border border-stone-300" style={{ background: 'linear-gradient(135deg, #ffffff 50%, #D4AF37 50%)' }} />
+                        <span className="w-3.5 h-3.5 rounded-full shrink-0 border border-amber-300" style={{ background: 'linear-gradient(135deg, #ffffff 50%, #D4AF37 50%)' }} />
                         <span className="text-[11px] truncate">Classic</span>
                       </button>
 
                       <button
                         onClick={() => { setTheme('gold-dark'); setIsUserMenuOpen(false); }}
                         className={`p-2 rounded-xl border flex items-center gap-2 transition cursor-pointer text-left ${
-                          theme === 'gold-dark' ? 'bg-stone-900 text-amber-400 border-stone-900 font-bold' : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
+                          theme === 'gold-dark' ? 'bg-stone-900 text-amber-400 border-amber-500 font-black shadow-xs' : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
                         }`}
                       >
-                        <span className="w-3 h-3 rounded-full shrink-0 border border-stone-800" style={{ background: 'linear-gradient(135deg, #141416 50%, #D4AF37 50%)' }} />
+                        <span className="w-3.5 h-3.5 rounded-full shrink-0 border border-stone-700" style={{ background: 'linear-gradient(135deg, #07070a 50%, #fbbf24 50%)' }} />
                         <span className="text-[11px] truncate">Gold Dark</span>
                       </button>
 
                       <button
                         onClick={() => { setTheme('emerald'); setIsUserMenuOpen(false); }}
                         className={`p-2 rounded-xl border flex items-center gap-2 transition cursor-pointer text-left ${
-                          theme === 'emerald' ? 'bg-emerald-900 text-white border-emerald-900 font-bold' : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
+                          theme === 'emerald' ? 'bg-emerald-900 text-emerald-100 border-emerald-500 font-black shadow-xs' : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
                         }`}
                       >
-                        <span className="w-3 h-3 rounded-full shrink-0 border border-emerald-300" style={{ background: 'linear-gradient(135deg, #f1f6f3 50%, #059669 50%)' }} />
+                        <span className="w-3.5 h-3.5 rounded-full shrink-0 border border-emerald-300" style={{ background: 'linear-gradient(135deg, #f1f9f4 50%, #059669 50%)' }} />
                         <span className="text-[11px] truncate">Emerald</span>
                       </button>
 
                       <button
                         onClick={() => { setTheme('slate'); setIsUserMenuOpen(false); }}
                         className={`p-2 rounded-xl border flex items-center gap-2 transition cursor-pointer text-left ${
-                          theme === 'slate' ? 'bg-slate-900 text-sky-300 border-slate-900 font-bold' : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
+                          theme === 'slate' ? 'bg-cyan-950 text-cyan-200 border-cyan-400 font-black shadow-xs' : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
                         }`}
                       >
-                        <span className="w-3 h-3 rounded-full shrink-0 border border-slate-800" style={{ background: 'linear-gradient(135deg, #11141a 50%, #0284c7 50%)' }} />
+                        <span className="w-3.5 h-3.5 rounded-full shrink-0 border border-cyan-700" style={{ background: 'linear-gradient(135deg, #03060f 50%, #06b6d4 50%)' }} />
                         <span className="text-[11px] truncate">Slate</span>
                       </button>
                     </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsUserMenuOpen(false);
+                        setIsThemeModalOpen(true);
+                      }}
+                      className="w-full mt-2 py-1.5 px-2 bg-gradient-to-r from-amber-500/10 to-amber-500/20 hover:from-amber-500/20 hover:to-amber-500/30 text-amber-900 border border-amber-300/80 rounded-xl text-[11px] font-bold font-mono flex items-center justify-center gap-1.5 transition cursor-pointer shadow-3xs"
+                    >
+                      <Sparkles size={12} className="text-amber-600" />
+                      <span>Buka Galeri &amp; Detail Tema ✨</span>
+                    </button>
                   </div>
 
                   <div className="p-2 bg-stone-50">
