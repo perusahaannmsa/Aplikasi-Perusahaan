@@ -57,6 +57,7 @@ import {
   deleteSppdRecordFromFirestore,
   loadConnectedDrivesFromFirestore,
   startGoogleDriveTokenAutoRefresh,
+  triggerGoogleDriveAutoRefresh,
   ensureValidDriveToken,
   getMasterDriveEmail,
   getActiveGoogleDriveAccount,
@@ -70,7 +71,7 @@ import { loadAttendanceFromFirestore } from './lib/firebaseAbsen';
 import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, ArrowLeftRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell, MessageSquare, Bot, Sparkles, BookOpen, Wrench, Building2, Plus } from 'lucide-react';
 
 export default function App() {
-  const [theme, setTheme] = useState<'classic' | 'gold-dark' | 'emerald' | 'slate'>(() => {
+  const [theme, setTheme] = useState<AppTheme>(() => {
     try {
       return (localStorage.getItem('NUSANTARA_THEME') as any) || 'classic';
     } catch (e) {
@@ -251,7 +252,7 @@ export default function App() {
       if (settings.agendaItems && Array.isArray(settings.agendaItems) && settings.agendaItems.length > 0) {
         setAgendaItems(settings.agendaItems);
       }
-      if (settings.theme && ['classic', 'gold-dark', 'emerald', 'slate'].includes(settings.theme)) {
+      if (settings.theme && ['classic', 'gold-dark', 'emerald', 'slate', 'sunset', 'nordic', 'cyberpunk', 'cozy'].includes(settings.theme)) {
         setTheme(settings.theme as any);
       }
     });
@@ -452,8 +453,8 @@ export default function App() {
       })
       .catch(err => console.warn('Firestore Drive sync skipped:', err));
 
-    // Start background auto-keeper for Google Drive token
-    const stopAutoRefresh = startGoogleDriveTokenAutoRefresh(3);
+    // Start background auto-keeper for Google Drive token (every 10 minutes)
+    const stopAutoRefresh = startGoogleDriveTokenAutoRefresh(10);
 
     return () => {
       unsubscribeCompany();
@@ -794,9 +795,9 @@ export default function App() {
     handleSaveAgendaItems(newList);
   };
 
-  // Automatic periodic Google Drive token keepalive and auto-refresh
+  // Automatic periodic Google Drive token keepalive and auto-refresh (every 10 minutes)
   useEffect(() => {
-    const stopAutoRefresh = startGoogleDriveTokenAutoRefresh(3); // Auto checks every 3 minutes
+    const stopAutoRefresh = startGoogleDriveTokenAutoRefresh(10); // Auto checks every 10 minutes
     return () => {
       stopAutoRefresh();
     };
@@ -843,8 +844,11 @@ export default function App() {
     });
   };
 
-  // ⚡ Otomatis membaca database penyimpanan di Firebase secara langsung ketika menu terkait dibuka
+  // ⚡ Otomatis membaca database penyimpanan di Firebase & menyegarkan token Google Drive ketika menu terkait dibuka
   useEffect(() => {
+    // Keep Google Drive token alive and ready across all view changes
+    triggerGoogleDriveAutoRefresh('view-' + view).catch(() => {});
+
     if (view === 'npwp' || view === 'pph23') {
       loadNpwpRecordsFromFirestore()
         .then(records => {
@@ -2743,46 +2747,28 @@ export default function App() {
                           <span>Galeri Tema</span>
                         </button>
                       </div>
-                      <div className="grid grid-cols-2 gap-1.5 text-xs font-mono">
-                        <button
-                          onClick={() => { setTheme('classic'); setIsUserMenuOpen(false); }}
-                          className={`p-2 rounded-xl border flex items-center gap-2 transition cursor-pointer text-left ${
-                            theme === 'classic' ? 'bg-amber-100 text-amber-950 border-amber-400 font-black shadow-xs' : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
-                          }`}
-                        >
-                          <span className="w-3.5 h-3.5 rounded-full shrink-0 border border-amber-300" style={{ background: 'linear-gradient(135deg, #ffffff 50%, #D4AF37 50%)' }} />
-                          <span className="text-[11px] truncate">Classic</span>
-                        </button>
-
-                        <button
-                          onClick={() => { setTheme('gold-dark'); setIsUserMenuOpen(false); }}
-                          className={`p-2 rounded-xl border flex items-center gap-2 transition cursor-pointer text-left ${
-                            theme === 'gold-dark' ? 'bg-stone-900 text-amber-400 border-amber-500 font-black shadow-xs' : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
-                          }`}
-                        >
-                          <span className="w-3.5 h-3.5 rounded-full shrink-0 border border-stone-700" style={{ background: 'linear-gradient(135deg, #07070a 50%, #fbbf24 50%)' }} />
-                          <span className="text-[11px] truncate">Gold Dark</span>
-                        </button>
-
-                        <button
-                          onClick={() => { setTheme('emerald'); setIsUserMenuOpen(false); }}
-                          className={`p-2 rounded-xl border flex items-center gap-2 transition cursor-pointer text-left ${
-                            theme === 'emerald' ? 'bg-emerald-900 text-emerald-100 border-emerald-500 font-black shadow-xs' : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
-                          }`}
-                        >
-                          <span className="w-3.5 h-3.5 rounded-full shrink-0 border border-emerald-300" style={{ background: 'linear-gradient(135deg, #f1f9f4 50%, #059669 50%)' }} />
-                          <span className="text-[11px] truncate">Emerald</span>
-                        </button>
-
-                        <button
-                          onClick={() => { setTheme('slate'); setIsUserMenuOpen(false); }}
-                          className={`p-2 rounded-xl border flex items-center gap-2 transition cursor-pointer text-left ${
-                            theme === 'slate' ? 'bg-cyan-950 text-cyan-200 border-cyan-400 font-black shadow-xs' : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
-                          }`}
-                        >
-                          <span className="w-3.5 h-3.5 rounded-full shrink-0 border border-cyan-700" style={{ background: 'linear-gradient(135deg, #03060f 50%, #06b6d4 50%)' }} />
-                          <span className="text-[11px] truncate">Slate</span>
-                        </button>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-xs font-mono">
+                        {[
+                          { id: 'classic', label: 'Classic', grad: 'linear-gradient(135deg, #ffffff 50%, #D4AF37 50%)', bdr: 'border-amber-300', act: 'bg-amber-100 text-amber-950 border-amber-400 font-black shadow-xs' },
+                          { id: 'gold-dark', label: 'Gold Dark', grad: 'linear-gradient(135deg, #07070a 50%, #fbbf24 50%)', bdr: 'border-stone-700', act: 'bg-stone-900 text-amber-400 border-amber-500 font-black shadow-xs' },
+                          { id: 'emerald', label: 'Emerald', grad: 'linear-gradient(135deg, #f1f9f4 50%, #059669 50%)', bdr: 'border-emerald-300', act: 'bg-emerald-900 text-emerald-100 border-emerald-500 font-black shadow-xs' },
+                          { id: 'slate', label: 'Slate', grad: 'linear-gradient(135deg, #03060f 50%, #06b6d4 50%)', bdr: 'border-cyan-700', act: 'bg-cyan-950 text-cyan-200 border-cyan-400 font-black shadow-xs' },
+                          { id: 'sunset', label: 'Sunset', grad: 'linear-gradient(135deg, #fff7ed 50%, #f97316 50%)', bdr: 'border-orange-300', act: 'bg-orange-100 text-orange-950 border-orange-400 font-black shadow-xs' },
+                          { id: 'nordic', label: 'Nordic', grad: 'linear-gradient(135deg, #f8fafc 50%, #0284c7 50%)', bdr: 'border-sky-300', act: 'bg-sky-100 text-sky-950 border-sky-400 font-black shadow-xs' },
+                          { id: 'cyberpunk', label: 'Synthwave', grad: 'linear-gradient(135deg, #110c1f 50%, #ec4899 50%)', bdr: 'border-pink-500', act: 'bg-purple-950 text-pink-300 border-pink-500 font-black shadow-xs' },
+                          { id: 'cozy', label: 'Cozy', grad: 'linear-gradient(135deg, #faf6f0 50%, #b45309 50%)', bdr: 'border-amber-700', act: 'bg-amber-900/15 text-amber-950 border-amber-600/50 font-black shadow-xs' }
+                        ].map(t => (
+                          <button
+                            key={t.id}
+                            onClick={() => { setTheme(t.id as any); setIsUserMenuOpen(false); }}
+                            className={`p-1.5 sm:p-2 rounded-xl border flex items-center gap-1.5 transition cursor-pointer text-left ${
+                              theme === t.id ? t.act : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
+                            }`}
+                          >
+                            <span className={`w-3.5 h-3.5 rounded-full shrink-0 border ${t.bdr}`} style={{ background: t.grad }} />
+                            <span className="text-[10px] sm:text-[11px] truncate">{t.label}</span>
+                          </button>
+                        ))}
                       </div>
 
                       <button
@@ -3374,46 +3360,28 @@ export default function App() {
                         <span>Galeri Tema</span>
                       </button>
                     </div>
-                    <div className="grid grid-cols-2 gap-1.5 text-xs font-mono">
-                      <button
-                        onClick={() => { setTheme('classic'); setIsUserMenuOpen(false); }}
-                        className={`p-2 rounded-xl border flex items-center gap-2 transition cursor-pointer text-left ${
-                          theme === 'classic' ? 'bg-amber-100 text-amber-950 border-amber-400 font-black shadow-xs' : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
-                        }`}
-                      >
-                        <span className="w-3.5 h-3.5 rounded-full shrink-0 border border-amber-300" style={{ background: 'linear-gradient(135deg, #ffffff 50%, #D4AF37 50%)' }} />
-                        <span className="text-[11px] truncate">Classic</span>
-                      </button>
-
-                      <button
-                        onClick={() => { setTheme('gold-dark'); setIsUserMenuOpen(false); }}
-                        className={`p-2 rounded-xl border flex items-center gap-2 transition cursor-pointer text-left ${
-                          theme === 'gold-dark' ? 'bg-stone-900 text-amber-400 border-amber-500 font-black shadow-xs' : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
-                        }`}
-                      >
-                        <span className="w-3.5 h-3.5 rounded-full shrink-0 border border-stone-700" style={{ background: 'linear-gradient(135deg, #07070a 50%, #fbbf24 50%)' }} />
-                        <span className="text-[11px] truncate">Gold Dark</span>
-                      </button>
-
-                      <button
-                        onClick={() => { setTheme('emerald'); setIsUserMenuOpen(false); }}
-                        className={`p-2 rounded-xl border flex items-center gap-2 transition cursor-pointer text-left ${
-                          theme === 'emerald' ? 'bg-emerald-900 text-emerald-100 border-emerald-500 font-black shadow-xs' : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
-                        }`}
-                      >
-                        <span className="w-3.5 h-3.5 rounded-full shrink-0 border border-emerald-300" style={{ background: 'linear-gradient(135deg, #f1f9f4 50%, #059669 50%)' }} />
-                        <span className="text-[11px] truncate">Emerald</span>
-                      </button>
-
-                      <button
-                        onClick={() => { setTheme('slate'); setIsUserMenuOpen(false); }}
-                        className={`p-2 rounded-xl border flex items-center gap-2 transition cursor-pointer text-left ${
-                          theme === 'slate' ? 'bg-cyan-950 text-cyan-200 border-cyan-400 font-black shadow-xs' : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
-                        }`}
-                      >
-                        <span className="w-3.5 h-3.5 rounded-full shrink-0 border border-cyan-700" style={{ background: 'linear-gradient(135deg, #03060f 50%, #06b6d4 50%)' }} />
-                        <span className="text-[11px] truncate">Slate</span>
-                      </button>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-xs font-mono">
+                      {[
+                        { id: 'classic', label: 'Classic', grad: 'linear-gradient(135deg, #ffffff 50%, #D4AF37 50%)', bdr: 'border-amber-300', act: 'bg-amber-100 text-amber-950 border-amber-400 font-black shadow-xs' },
+                        { id: 'gold-dark', label: 'Gold Dark', grad: 'linear-gradient(135deg, #07070a 50%, #fbbf24 50%)', bdr: 'border-stone-700', act: 'bg-stone-900 text-amber-400 border-amber-500 font-black shadow-xs' },
+                        { id: 'emerald', label: 'Emerald', grad: 'linear-gradient(135deg, #f1f9f4 50%, #059669 50%)', bdr: 'border-emerald-300', act: 'bg-emerald-900 text-emerald-100 border-emerald-500 font-black shadow-xs' },
+                        { id: 'slate', label: 'Slate', grad: 'linear-gradient(135deg, #03060f 50%, #06b6d4 50%)', bdr: 'border-cyan-700', act: 'bg-cyan-950 text-cyan-200 border-cyan-400 font-black shadow-xs' },
+                        { id: 'sunset', label: 'Sunset', grad: 'linear-gradient(135deg, #fff7ed 50%, #f97316 50%)', bdr: 'border-orange-300', act: 'bg-orange-100 text-orange-950 border-orange-400 font-black shadow-xs' },
+                        { id: 'nordic', label: 'Nordic', grad: 'linear-gradient(135deg, #f8fafc 50%, #0284c7 50%)', bdr: 'border-sky-300', act: 'bg-sky-100 text-sky-950 border-sky-400 font-black shadow-xs' },
+                        { id: 'cyberpunk', label: 'Synthwave', grad: 'linear-gradient(135deg, #110c1f 50%, #ec4899 50%)', bdr: 'border-pink-500', act: 'bg-purple-950 text-pink-300 border-pink-500 font-black shadow-xs' },
+                        { id: 'cozy', label: 'Cozy', grad: 'linear-gradient(135deg, #faf6f0 50%, #b45309 50%)', bdr: 'border-amber-700', act: 'bg-amber-900/15 text-amber-950 border-amber-600/50 font-black shadow-xs' }
+                      ].map(t => (
+                        <button
+                          key={t.id}
+                          onClick={() => { setTheme(t.id as any); setIsUserMenuOpen(false); }}
+                          className={`p-1.5 sm:p-2 rounded-xl border flex items-center gap-1.5 transition cursor-pointer text-left ${
+                            theme === t.id ? t.act : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
+                          }`}
+                        >
+                          <span className={`w-3.5 h-3.5 rounded-full shrink-0 border ${t.bdr}`} style={{ background: t.grad }} />
+                          <span className="text-[10px] sm:text-[11px] truncate">{t.label}</span>
+                        </button>
+                      ))}
                     </div>
 
                     <button
@@ -3947,6 +3915,14 @@ export default function App() {
         submissions={submissions}
         onImport={handleImportJson}
         isModal={true}
+      />
+
+      {/* Galeri Tema Estetika & Karakter Animasi Modal */}
+      <ThemeSelectorModal
+        isOpen={isThemeModalOpen}
+        onClose={() => setIsThemeModalOpen(false)}
+        currentTheme={theme}
+        onSelectTheme={(t) => setTheme(t)}
       />
 
     </div>

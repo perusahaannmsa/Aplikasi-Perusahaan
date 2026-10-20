@@ -5,7 +5,7 @@ import { formatRupiah, formatDateIndonesian, numberToTerbilang, isPettyCashSubmi
 import { getVoucherShareLink } from '../utils/appLinks';
 import { NusantaraLogo } from './NusantaraLogo';
 import { Printer, ArrowLeft, Layers, FileText, CheckCircle, Cloud, Loader2, Lock, ShieldAlert, RefreshCw, Share2, Copy, Check, Send, Edit2, Trash, Trash2, RotateCw, Coins, ExternalLink, QrCode, Upload, AlertTriangle, FileSpreadsheet, Receipt } from 'lucide-react';
-import { getStoredGoogleDriveToken, ensureValidDriveToken, googleDriveLogin, saveSubmissionToFirestore, getAllConnectedDriveTokens, getConnectedDrives, ensureGoogleDriveFileSharing } from '../firebase';
+import { getStoredGoogleDriveToken, ensureValidDriveToken, googleDriveLogin, saveSubmissionToFirestore, getAllConnectedDriveTokens, getConnectedDrives, ensureGoogleDriveFileSharing, triggerGoogleDriveAutoRefresh } from '../firebase';
 import { SppdSheetContent } from './PrintSppdDocument';
 import { SPPDRecord } from './SppdManager';
 import { SignerSettingsModal, SignerConfigItem } from './SignerSettingsModal';
@@ -124,6 +124,18 @@ export const VoucherOnlineQr: React.FC<{
       />
     </div>
   );
+};
+
+/**
+ * QR Code wrapper alias for digital document verification and online voucher access
+ */
+export const QrCodeWrapper: React.FC<{
+  submission: Submission;
+  grandTotal?: number;
+  size?: number;
+  className?: string;
+}> = ({ submission, size = 52, className = '' }) => {
+  return <VoucherOnlineQr submission={submission} size={size} className={className} />;
 };
 
 /**
@@ -1607,6 +1619,9 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
                   if (fileRes.ok) {
                     fileBlob = await fileRes.blob();
                     break;
+                  } else if (fileRes.status === 401) {
+                    // Trigger proactive background token refresh
+                    triggerGoogleDriveAutoRefresh('attachment-401-detect', false).catch(() => {});
                   }
                 } catch (tokenErr) {
                   // Try next available token
@@ -1663,13 +1678,19 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
                   // Fallback direct download
                   const publicRes = await fetch(`https://docs.google.com/uc?export=download&id=${fileId}`);
                   if (publicRes.ok) {
-                    fileBlob = await publicRes.blob();
+                    const blob = await publicRes.blob();
+                    // Validate if it is a real PDF or HTML page
+                    if (blob.type.includes('pdf') || blob.size > 2000) {
+                      fileBlob = blob;
+                    } else {
+                      throw new Error('Akses file Google Drive membutuhkan izin otorisasi token.');
+                    }
                   } else {
                     throw new Error(`HTTP ${publicRes.status}`);
                   }
                 }
               } catch (fallbackErr) {
-                throw new Error(`Gagal mengunduh dokumen dari Google Drive. Pastikan berkas diatur "Akses Publik" (Anyone with link can view).`);
+                throw new Error(`Gagal mengunduh dokumen dari Google Drive. Pastikan berkas diatur "Akses Publik" atau perbarui token Google Drive Anda.`);
               }
             }
 
@@ -1677,8 +1698,17 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
               if (isMounted) {
                 setLoadingProgress(`Membaca dokumen PDF ${file.name}...`);
               }
-              const pdfjsLib = await loadPdfJs();
               const arrayBuffer = await fileBlob.arrayBuffer();
+
+              // Safe verification: Check magic bytes for PDF header (%PDF-)
+              const headerBytes = new Uint8Array(arrayBuffer.slice(0, 5));
+              const headerStr = String.fromCharCode(...headerBytes);
+              if (!headerStr.startsWith('%PDF')) {
+                // Not a valid PDF byte stream (e.g. Google Drive HTML warning/login page)
+                throw new Error('Berkas lampiran dari Google Drive memerlukan otorisasi atau token aktif.');
+              }
+
+              const pdfjsLib = await loadPdfJs();
               const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
 
               for (let pNum = 1; pNum <= pdf.numPages; pNum++) {

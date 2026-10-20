@@ -1832,71 +1832,126 @@ export const executeDriveApiWithAutoRefresh = async <T>(
 // Periodic Background Auto-Keeper for Google Drive connection
 let tokenAutoRefreshIntervalId: any = null;
 let isRefreshingDriveToken = false;
+let lastDriveRefreshTime = 0;
 
-export const startGoogleDriveTokenAutoRefresh = (intervalMinutes = 2): (() => void) => {
-  if (typeof window === 'undefined') return () => {};
+/**
+ * Universal Trigger for Google Drive Token Refresh.
+ * Called automatically every 10 minutes, on view/menu switch, on user actions, and on demand.
+ */
+export const triggerGoogleDriveAutoRefresh = async (reason = 'manual', force = false): Promise<string | null> => {
+  if (typeof window === 'undefined') return null;
+  const now = Date.now();
 
-  const runKeepAliveCheck = async () => {
-    if (isRefreshingDriveToken) return;
-    isRefreshingDriveToken = true;
+  // Debounce non-forced checks to prevent network thrashing (at least 15s between runs unless forced)
+  if (!force && (now - lastDriveRefreshTime < 15000)) {
+    return getStoredGoogleDriveToken(true);
+  }
+  
+  if (isRefreshingDriveToken) {
+    return getStoredGoogleDriveToken(true);
+  }
 
+  isRefreshingDriveToken = true;
+  lastDriveRefreshTime = now;
+
+  try {
+    console.log(`⏰ [Google Drive Auto-Keeper] Memeriksa & menyegarkan token (${reason})...`);
+
+    // 1. Always pull latest shared drives from Firestore (so cross-device/tab updates sync instantly)
     try {
-      // 1. Check if we have drives connected or stored email
-      const drives = getConnectedDrives();
-      const lastEmail = localStorage.getItem('NUSANTARA_LAST_ACTIVE_EMAIL');
-      
-      if (drives.length === 0 && !lastEmail) {
-        // Try fetching shared company drive from Firestore
-        await loadConnectedDrivesFromFirestore();
-      }
+      await loadConnectedDrivesFromFirestore();
+    } catch (fsErr) {
+      console.warn('[Google Drive Auto-Keeper] Firestore sync notice:', fsErr);
+    }
 
-      const activeDrives = getConnectedDrives();
-      if (activeDrives.length > 0 || lastEmail) {
-        // Check if current token needs refresh (> 45 min old or expired)
-        const currentToken = getStoredGoogleDriveToken(true);
-        if (!currentToken) {
-          console.log('⏰ [Google Drive Auto-Keeper] Memeriksa & memperbarui token latar belakang...');
-          await ensureValidDriveToken(true);
-        } else {
-          // Token is present, periodically refresh quotas & verify
-          try {
-            await refreshAllDrivesQuota();
-          } catch (qErr) {
-            console.warn('[Google Drive Auto-Keeper] Quota ping check notice:', qErr);
+    // 2. Check all connected drives
+    const activeDrives = getConnectedDrives();
+    const currentToken = getStoredGoogleDriveToken(true);
+
+    if (!currentToken || force) {
+      // Token missing or expired: run fresh discovery from Firestore & local accounts
+      const freshToken = await ensureValidDriveToken(true);
+      if (freshToken) {
+        console.log('✅ [Google Drive Auto-Keeper] Token Google Drive berhasil disegarkan.');
+        return freshToken;
+      }
+    } else if (activeDrives.length > 0) {
+      // 3. Verify token with active Google Drive ping
+      try {
+        await refreshAllDrivesQuota();
+      } catch (qErr: any) {
+        const errMsg = String(qErr?.message || qErr);
+        const isAuth401 = errMsg.includes('401') || errMsg.includes('UNAUTHORIZED') || errMsg.includes('Invalid Credentials');
+        if (isAuth401) {
+          console.warn('⚠️ [Google Drive Auto-Keeper] Token kadaluarsa saat pengecekan kuota. Memperbarui token otomatis...');
+          if (currentToken) {
+            invalidateDriveToken(currentToken);
           }
+          // Reload from Firestore in case another admin/user already refreshed it
+          const refreshed = await loadConnectedDrivesFromFirestore();
+          const valid = refreshed.find(d => isDriveTokenValid(d) && d.accessToken);
+          if (valid && valid.accessToken) {
+            setGoogleDriveToken(valid.accessToken);
+            return valid.accessToken;
+          }
+          // Attempt silent renewal
+          return await ensureValidDriveToken(true);
         }
       }
-    } catch (err) {
-      console.warn('[Google Drive Auto-Keeper] Background check error:', err);
-    } finally {
-      isRefreshingDriveToken = false;
     }
-  };
 
-  // Run immediately on setup
-  runKeepAliveCheck();
+    return getStoredGoogleDriveToken(true);
+  } catch (err) {
+    console.warn('[Google Drive Auto-Keeper] Error saat auto-refresh:', err);
+    return null;
+  } finally {
+    isRefreshingDriveToken = false;
+  }
+};
+
+export const startGoogleDriveTokenAutoRefresh = (intervalMinutes = 10): (() => void) => {
+  if (typeof window === 'undefined') return () => {};
+
+  // Run immediately on launch
+  triggerGoogleDriveAutoRefresh('startup', true);
 
   // Clear existing interval if any
   if (tokenAutoRefreshIntervalId) {
     clearInterval(tokenAutoRefreshIntervalId);
   }
 
-  // Set interval (every 2 minutes)
-  tokenAutoRefreshIntervalId = setInterval(runKeepAliveCheck, intervalMinutes * 60 * 1000);
+  // Set interval (every 10 minutes as requested by user)
+  const intervalMs = Math.max(1, intervalMinutes) * 60 * 1000;
+  tokenAutoRefreshIntervalId = setInterval(() => {
+    triggerGoogleDriveAutoRefresh('10-minute-timer', true);
+  }, intervalMs);
 
-  // Also trigger when tab becomes visible or gains focus!
+  // Trigger when tab becomes visible or gains focus
   const onVisibilityChange = () => {
     if (document.visibilityState === 'visible') {
-      runKeepAliveCheck();
+      triggerGoogleDriveAutoRefresh('tab-visible', false);
     }
   };
 
   const onWindowFocus = () => {
-    runKeepAliveCheck();
+    triggerGoogleDriveAutoRefresh('window-focus', false);
+  };
+
+  // Trigger on user activity (clicks, navigation) throttled to once per 2 minutes
+  let lastUserActivityCheck = 0;
+  const onUserActivity = () => {
+    const t = Date.now();
+    if (t - lastUserActivityCheck > 120000) {
+      lastUserActivityCheck = t;
+      triggerGoogleDriveAutoRefresh('user-activity', false);
+    }
   };
 
   window.addEventListener('visibilitychange', onVisibilityChange);
   window.addEventListener('focus', onWindowFocus);
+  window.addEventListener('pointerdown', onUserActivity, { passive: true });
+  window.addEventListener('keydown', onUserActivity, { passive: true });
+  window.addEventListener('popstate', onUserActivity, { passive: true });
 
   return () => {
     if (tokenAutoRefreshIntervalId) {
@@ -1905,6 +1960,9 @@ export const startGoogleDriveTokenAutoRefresh = (intervalMinutes = 2): (() => vo
     }
     window.removeEventListener('visibilitychange', onVisibilityChange);
     window.removeEventListener('focus', onWindowFocus);
+    window.removeEventListener('pointerdown', onUserActivity);
+    window.removeEventListener('keydown', onUserActivity);
+    window.removeEventListener('popstate', onUserActivity);
   };
 };
 

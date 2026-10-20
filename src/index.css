@@ -300,6 +300,235 @@ html, body {
   animation: cyberScanline 3s linear infinite;
 }
 
+/* ═══════════════════════════════════════════════════════════════════
+   THEME 5: SUNSET (Senja Tropis Kasual - Warm Peach, Coral & Bouncy)
+   ═══════════════════════════════════════════════════════════════════ */
+.theme-sunset {
+  --brand-gold: #f97316;
+  --brand-gold-hover: #ea580c;
+  --brand-gradient-start: #f43f5e;
+  --brand-gradient-end: #fb923c;
+  --theme-card-radius: 1.5rem;
+  --theme-font-title: "Outfit", "Plus Jakarta Sans", sans-serif;
+  --theme-glow: rgba(249, 115, 22, 0.28);
+  
+  --color-white: #ffffff;
+  --color-stone-50: #fffaf5;
+  --color-stone-100: #fff1e6;
+  --color-stone-150: #ffe5d0;
+  --color-stone-200: #ffd4b2;
+  --color-stone-250: #fdb889;
+  --color-stone-300: #fb923c;
+  --color-stone-400: #ea580c;
+  --color-stone-500: #c2410c;
+  --color-stone-800: #431407;
+  --color-stone-850: #2d0c03;
+  --color-stone-900: #1a0601;
+}
+
+.theme-sunset #app-root {
+  background-color: #fffaf5;
+  background-image: 
+    radial-gradient(rgba(249, 115, 22, 0.15) 1.8px, transparent 1.8px),
+    radial-gradient(rgba(244, 63, 94, 0.08) 2px, transparent 2px);
+  background-size: 26px 26px, 52px 52px;
+}
+
+.theme-sunset .app-card-theme,
+.theme-sunset .bg-white.rounded-2xl {
+  border-radius: 1.5rem !important;
+  border: 2px solid rgba(249, 115, 22, 0.38) !important;
+  background: linear-gradient(180deg, #ffffff 0%, #fffcf8 100%) !important;
+  box-shadow: 0 12px 32px -4px rgba(249, 115, 22, 0.18), 0 3px 10px rgba(244, 63, 94, 0.08) !important;
+  transition: all 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.theme-sunset .app-card-theme:hover,
+.theme-sunset .bg-white.rounded-2xl:hover {
+  transform: translateY(-2px);
+  border-color: rgba(249, 115, 22, 0.7) !important;
+  box-shadow: 0 16px 40px -4px rgba(249, 115, 22, 0.28), 0 6px 16px rgba(244, 63, 94, 0.12) !important;
+}
+
+.theme-sunset .border-header-gradient {
+  background: linear-gradient(90deg, #f43f5e 0%, #f97316 35%, #fde047 50%, #f97316 65%, #f43f5e 100%) !important;
+  background-size: 200% 100% !important;
+  animation: sunsetWarmPulse 3.8s ease-in-out infinite alternate;
+  box-shadow: 0 2px 14px rgba(249, 115, 22, 0.45);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   THEME 6: NORDIC (Kutub Nordik Minimalis - Ice Breeze & Frosted Glass)
+   ═══════════════════════════════════════════════════════════════════ */
+.theme-nordic {
+  --brand-gold: #0284c7;
+  --brand-gold-hover: #0369a1;
+  --brand-gradient-start: #38bdf8;
+  --brand-gradient-end: #0284c7;
+  --theme-card-radius: 1rem;
+  --theme-font-title: "Plus Jakarta Sans", sans-serif;
+  --theme-glow: rgba(2, 132, 199, 0.25);
+  
+  --color-white: #ffffff;
+  --color-stone-50: #f8fafc;
+  --color-stone-100: #f1f5f9;
+  --color-stone-150: #e2e8f0;
+  --color-stone-200: #cbd5e1;
+  --color-stone-250: #94a3b8;
+  --color-stone-300: #64748b;
+  --color-stone-400: #475569;
+  --color-stone-500: #334155;
+  --color-stone-800: #1e293b;
+  --color-stone-850: #0f172a;
+  --color-stone-900: #020617;
+}
+
+.theme-nordic #app-root {
+  background-color: #f8fafc;
+  background-image: 
+    linear-gradient(rgba(148, 163, 184, 0.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.12) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+.theme-nordic .app-card-theme,
+.theme-nordic .bg-white.rounded-2xl {
+  border-radius: 1rem !important;
+  border: 1px solid rgba(148, 163, 184, 0.45) !important;
+  outline: 1px solid rgba(56, 189, 248, 0.22) !important;
+  outline-offset: -3px !important;
+  background: rgba(255, 255, 255, 0.92) !important;
+  backdrop-filter: blur(12px) !important;
+  box-shadow: 0 8px 24px -4px rgba(15, 23, 42, 0.06), 0 2px 8px rgba(2, 132, 199, 0.05) !important;
+  transition: all 0.2s ease-out;
+}
+
+.theme-nordic .app-card-theme:hover,
+.theme-nordic .bg-white.rounded-2xl:hover {
+  border-color: rgba(2, 132, 199, 0.6) !important;
+  box-shadow: 0 12px 30px -4px rgba(2, 132, 199, 0.16) !important;
+}
+
+.theme-nordic .border-header-gradient {
+  background: linear-gradient(90deg, #0284c7 0%, #38bdf8 35%, #e0f2fe 50%, #38bdf8 65%, #0284c7 100%) !important;
+  background-size: 200% 100% !important;
+  animation: nordicFrostShimmer 4s ease-in-out infinite alternate;
+  box-shadow: 0 2px 12px rgba(2, 132, 199, 0.35);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   THEME 7: CYBERPUNK (Neon Synthwave 80s - Electric Magenta & Cyan)
+   ═══════════════════════════════════════════════════════════════════ */
+.theme-cyberpunk {
+  --brand-gold: #ec4899;
+  --brand-gold-hover: #db2777;
+  --brand-gradient-start: #8b5cf6;
+  --brand-gradient-end: #06b6d4;
+  --theme-card-radius: 0.75rem;
+  --theme-font-title: "Outfit", "JetBrains Mono", sans-serif;
+  --theme-glow: rgba(236, 72, 153, 0.35);
+  
+  --color-white: #110c1f;
+  --color-stone-50: #0a0614;
+  --color-stone-100: #160f29;
+  --color-stone-150: #1e1538;
+  --color-stone-200: #291e4a;
+  --color-stone-250: #3b2b68;
+  --color-stone-300: #553e94;
+  --color-stone-400: #8b5cf6;
+  --color-stone-500: #a78bfa;
+  --color-stone-800: #f1f5f9;
+  --color-stone-850: #f8fafc;
+  --color-stone-900: #ffffff;
+}
+
+.theme-cyberpunk #app-root {
+  background-color: #090513;
+  background-image: 
+    linear-gradient(rgba(236, 72, 153, 0.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(6, 182, 212, 0.12) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+.theme-cyberpunk .app-card-theme,
+.theme-cyberpunk .bg-white.rounded-2xl {
+  background: rgba(17, 12, 31, 0.95) !important;
+  backdrop-filter: blur(14px) !important;
+  border-radius: 0.75rem !important;
+  border: 1px solid rgba(236, 72, 153, 0.5) !important;
+  box-shadow: 0 0 20px -2px rgba(236, 72, 153, 0.3), 0 0 35px -5px rgba(6, 182, 212, 0.22) !important;
+  transition: all 0.2s ease-out;
+}
+
+.theme-cyberpunk .app-card-theme:hover,
+.theme-cyberpunk .bg-white.rounded-2xl:hover {
+  border-color: rgba(6, 182, 212, 0.8) !important;
+  box-shadow: 0 0 28px rgba(236, 72, 153, 0.45), 0 0 45px rgba(6, 182, 212, 0.35) !important;
+}
+
+.theme-cyberpunk .border-header-gradient {
+  background: linear-gradient(90deg, #ec4899 0%, #8b5cf6 35%, #06b6d4 50%, #8b5cf6 65%, #ec4899 100%) !important;
+  background-size: 200% 100% !important;
+  animation: synthwaveNeonPulse 3s linear infinite;
+  box-shadow: 0 0 20px rgba(236, 72, 153, 0.65);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   THEME 8: COZY (Kopi & Lavender Kasual - Warm Mocha Latte & Lavender)
+   ═══════════════════════════════════════════════════════════════════ */
+.theme-cozy {
+  --brand-gold: #b45309;
+  --brand-gold-hover: #92400e;
+  --brand-gradient-start: #a855f7;
+  --brand-gradient-end: #d97706;
+  --theme-card-radius: 1.35rem;
+  --theme-font-title: "Plus Jakarta Sans", sans-serif;
+  --theme-glow: rgba(180, 83, 9, 0.22);
+  
+  --color-white: #ffffff;
+  --color-stone-50: #faf6f0;
+  --color-stone-100: #f4ecdf;
+  --color-stone-150: #e9dcce;
+  --color-stone-200: #d8c7b4;
+  --color-stone-250: #c2ad94;
+  --color-stone-300: #a88f72;
+  --color-stone-400: #7d654a;
+  --color-stone-500: #5c4731;
+  --color-stone-800: #291e13;
+  --color-stone-850: #1a130c;
+  --color-stone-900: #0d0a06;
+}
+
+.theme-cozy #app-root {
+  background-color: #faf6f0;
+  background-image: 
+    radial-gradient(rgba(180, 83, 9, 0.12) 1.5px, transparent 1.5px),
+    radial-gradient(rgba(168, 85, 247, 0.08) 2px, transparent 2px);
+  background-size: 28px 28px, 56px 56px;
+}
+
+.theme-cozy .app-card-theme,
+.theme-cozy .bg-white.rounded-2xl {
+  border-radius: 1.35rem !important;
+  border: 1.5px solid rgba(180, 83, 9, 0.32) !important;
+  background: linear-gradient(180deg, #ffffff 0%, #fffbf6 100%) !important;
+  box-shadow: 0 10px 28px -4px rgba(180, 83, 9, 0.12), 0 3px 8px rgba(168, 85, 247, 0.06) !important;
+  transition: all 0.25s ease-out;
+}
+
+.theme-cozy .app-card-theme:hover,
+.theme-cozy .bg-white.rounded-2xl:hover {
+  border-color: rgba(168, 85, 247, 0.45) !important;
+  box-shadow: 0 14px 34px -4px rgba(180, 83, 9, 0.18), 0 4px 12px rgba(168, 85, 247, 0.12) !important;
+}
+
+.theme-cozy .border-header-gradient {
+  background: linear-gradient(90deg, #a855f7 0%, #b45309 35%, #fde68a 50%, #b45309 65%, #a855f7 100%) !important;
+  background-size: 200% 100% !important;
+  animation: cozySwirlBreathe 4.5s ease-in-out infinite alternate;
+  box-shadow: 0 2px 12px rgba(180, 83, 9, 0.32);
+}
+
 /* Helper dynamic selectors */
 .text-gold-dynamic {
   color: var(--brand-gold) !important;
@@ -342,6 +571,30 @@ html, body {
 @keyframes cyberScanline {
   0% { background-position: 0% 50%; }
   100% { background-position: 200% 50%; }
+}
+
+@keyframes sunsetWarmPulse {
+  0% { background-position: 0% 50%; filter: drop-shadow(0 0 6px rgba(249, 115, 22, 0.35)); }
+  50% { background-position: 100% 50%; filter: drop-shadow(0 0 16px rgba(244, 63, 94, 0.7)); }
+  100% { background-position: 0% 50%; filter: drop-shadow(0 0 6px rgba(249, 115, 22, 0.35)); }
+}
+
+@keyframes nordicFrostShimmer {
+  0% { background-position: 0% 50%; filter: brightness(1); }
+  50% { background-position: 100% 50%; filter: brightness(1.25) drop-shadow(0 0 10px rgba(56, 189, 248, 0.5)); }
+  100% { background-position: 0% 50%; filter: brightness(1); }
+}
+
+@keyframes synthwaveNeonPulse {
+  0% { background-position: 0% 50%; box-shadow: 0 0 14px rgba(236, 72, 153, 0.4); }
+  50% { background-position: 100% 50%; box-shadow: 0 0 30px rgba(6, 182, 212, 0.85); }
+  100% { background-position: 0% 50%; box-shadow: 0 0 14px rgba(236, 72, 153, 0.4); }
+}
+
+@keyframes cozySwirlBreathe {
+  0% { background-position: 0% 50%; filter: saturate(1); }
+  50% { background-position: 100% 50%; filter: saturate(1.3) drop-shadow(0 0 8px rgba(180, 83, 9, 0.45)); }
+  100% { background-position: 0% 50%; filter: saturate(1); }
 }
 
 @keyframes floatGentle {
