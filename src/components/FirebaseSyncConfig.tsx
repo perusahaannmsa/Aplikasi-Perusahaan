@@ -12,7 +12,7 @@ import {
   registerAuthChangeListener
 } from '../firebase';
 import { Submission } from '../types';
-import { Cloud, CloudOff, RefreshCw, Key, Check, Info, Trash2, Database, AlertCircle, LogIn, LogOut, ShieldCheck } from 'lucide-react';
+import { Cloud, CloudOff, RefreshCw, Key, Check, Info, Trash2, Database, AlertCircle, LogIn, LogOut, ShieldCheck, UserCheck } from 'lucide-react';
 import { User } from 'firebase/auth';
 
 interface FirebaseSyncConfigProps {

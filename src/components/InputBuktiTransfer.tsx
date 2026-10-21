@@ -569,11 +569,22 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
         name: formattedFileName
       };
 
+      // 1b. Preserve ALL existing files (including ALL previous payment proof files)
       let finalDriveFiles = [
-        ...(selectedSubmission.googleDriveFiles || []).filter(
-          f => !f.isBuktiPembayaran
-        )
+        ...(selectedSubmission.googleDriveFiles || [])
       ];
+
+      // If selectedSubmission.buktiPembayaran exists but is not in finalDriveFiles, ensure it is preserved
+      if (selectedSubmission.buktiPembayaran && selectedSubmission.buktiPembayaran.url) {
+        const alreadyInDrive = finalDriveFiles.some(f => f.url === selectedSubmission.buktiPembayaran?.url);
+        if (!alreadyInDrive) {
+          finalDriveFiles.push({
+            url: selectedSubmission.buktiPembayaran.url,
+            name: selectedSubmission.buktiPembayaran.name || 'Bukti Pembayaran Sebelumnya',
+            isBuktiPembayaran: true
+          });
+        }
+      }
 
       // 2. Google Drive upload
       let token: string | null = null;
@@ -655,6 +666,7 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
             name: uploadResult.name
           };
 
+          // Append new payment proof without deleting previous ones
           finalDriveFiles.push({
             url: uploadResult.url,
             name: uploadResult.name,
@@ -706,8 +718,45 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
         createdAt: new Date().toISOString()
       };
 
+      // 🛡️ RECONSTRUCT & PRESERVE COMPLETE PAYMENT HISTORY:
+      // Never drop previous payments! If existing history is empty but there was a previous DP / payment:
+      let existingRiwayat: CicilanPaymentRecord[] = Array.isArray(selectedSubmission.riwayatCicilan) && selectedSubmission.riwayatCicilan.length > 0
+        ? [...selectedSubmission.riwayatCicilan]
+        : [];
+
+      // Find any previous payment proof that existed before this new payment
+      const priorProof = selectedSubmission.buktiPembayaran || 
+        (selectedSubmission.googleDriveFiles || []).find(f => f.isBuktiPembayaran);
+
+      if (existingRiwayat.length === 0 && alreadyPaid > 0) {
+        existingRiwayat.push({
+          id: `pay_initial_${selectedSubmission.id}`,
+          tanggal: selectedSubmission.tanggal,
+          nominal: alreadyPaid,
+          sisaSetelahBayar: Math.max(0, totalVoucher - alreadyPaid),
+          keterangan: selectedSubmission.cicilanNotes || 'Pembayaran DP / Termin Ke-1',
+          buktiPembayaran: priorProof,
+          createdAt: selectedSubmission.createdAt || selectedSubmission.tanggal
+        });
+      } else if (existingRiwayat.length > 0) {
+        // Verify if total of existingRiwayat equals alreadyPaid. If alreadyPaid is larger, prepend missing initial DP
+        const sumExisting = existingRiwayat.reduce((s, r) => s + (Number(r.nominal) || 0), 0);
+        if (alreadyPaid > sumExisting && (alreadyPaid - sumExisting) > 0) {
+          const missingInitial = alreadyPaid - sumExisting;
+          existingRiwayat.unshift({
+            id: `pay_init_restored_${selectedSubmission.id}`,
+            tanggal: selectedSubmission.tanggal,
+            nominal: missingInitial,
+            sisaSetelahBayar: Math.max(0, totalVoucher - missingInitial),
+            keterangan: 'Pembayaran DP / Termin Ke-1',
+            buktiPembayaran: priorProof,
+            createdAt: selectedSubmission.createdAt || selectedSubmission.tanggal
+          });
+        }
+      }
+
       const updatedRiwayat: CicilanPaymentRecord[] = [
-        ...(selectedSubmission.riwayatCicilan || []),
+        ...existingRiwayat,
         newInstallment
       ];
 

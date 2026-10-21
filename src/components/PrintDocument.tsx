@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'; 
 import QRCode from 'qrcode';
-import { Submission } from '../types';
+import { Submission, CicilanPaymentRecord } from '../types';
 import { formatRupiah, formatDateIndonesian, numberToTerbilang, isPettyCashSubmission } from '../utils';
 import { getVoucherShareLink } from '../utils/appLinks';
 import { NusantaraLogo } from './NusantaraLogo';
 import { Printer, ArrowLeft, Layers, FileText, CheckCircle, Cloud, Loader2, Lock, ShieldAlert, RefreshCw, Share2, Copy, Check, Send, Edit2, Trash, Trash2, RotateCw, Coins, ExternalLink, QrCode, Upload, AlertTriangle, FileSpreadsheet, Receipt } from 'lucide-react';
-import { getStoredGoogleDriveToken, ensureValidDriveToken, googleDriveLogin, saveSubmissionToFirestore, getAllConnectedDriveTokens, getConnectedDrives, ensureGoogleDriveFileSharing, triggerGoogleDriveAutoRefresh } from '../firebase';
+import { getStoredGoogleDriveToken, ensureValidDriveToken, googleDriveLogin, saveSubmissionToFirestore, getAllConnectedDriveTokens, getConnectedDrives, ensureGoogleDriveFileSharing, triggerGoogleDriveAutoRefresh, invalidateDriveToken } from '../firebase';
 import { SppdSheetContent } from './PrintSppdDocument';
 import { SPPDRecord } from './SppdManager';
 import { SignerSettingsModal, SignerConfigItem } from './SignerSettingsModal';
@@ -604,8 +604,8 @@ export const CicilanSheetContent: React.FC<{
     ? totalVoucher 
     : (typeof submission.dpAmount === 'number' ? submission.dpAmount : 0);
   
-  const historyPayments = Array.isArray(submission.riwayatCicilan) && submission.riwayatCicilan.length > 0
-    ? submission.riwayatCicilan
+  let historyPayments: CicilanPaymentRecord[] = Array.isArray(submission.riwayatCicilan) && submission.riwayatCicilan.length > 0
+    ? [...submission.riwayatCicilan]
     : (rawPaid > 0 ? [{
         id: 'init_pay',
         tanggal: submission.tanggal,
@@ -618,6 +618,35 @@ export const CicilanSheetContent: React.FC<{
   const totalPaid = submission.status === 'Lunas'
     ? totalVoucher
     : Math.max(rawPaid, historyPayments.reduce((s, r) => s + (Number(r.nominal) || 0), 0));
+
+  // 🛡️ Self-heal & Restore: If historyPayments sum is less than totalPaid (e.g. earlier DP was omitted when adding second installment)
+  const sumExistingHist = historyPayments.reduce((s, r) => s + (Number(r.nominal) || 0), 0);
+  if (totalPaid > sumExistingHist && (totalPaid - sumExistingHist) > 0) {
+    const missingInitial = totalPaid - sumExistingHist;
+    const priorProof = (submission.googleDriveFiles || []).find((f: any) => 
+      f.isBuktiPembayaran && f.name !== historyPayments[0]?.buktiPembayaran?.name && f.url !== historyPayments[0]?.buktiPembayaran?.url
+    ) || (submission.buktiPembayaran && submission.buktiPembayaran.url !== historyPayments[0]?.buktiPembayaran?.url ? submission.buktiPembayaran : undefined);
+
+    historyPayments.unshift({
+      id: `heal_dp_${submission.id}`,
+      tanggal: submission.tanggal,
+      nominal: missingInitial,
+      sisaSetelahBayar: Math.max(0, totalVoucher - missingInitial),
+      keterangan: 'Pembayaran DP / Termin Ke-1',
+      buktiPembayaran: priorProof,
+      createdAt: submission.createdAt || submission.tanggal
+    });
+  }
+
+  // Recalculate accurate running balance on every installment stage
+  let runningPaid = 0;
+  historyPayments = historyPayments.map((item) => {
+    runningPaid += (Number(item.nominal) || 0);
+    return {
+      ...item,
+      sisaSetelahBayar: Math.max(0, totalVoucher - runningPaid)
+    };
+  });
 
   const remainingBalance = Math.max(0, totalVoucher - totalPaid);
   const percentPaid = totalVoucher > 0 ? Math.min(100, Math.round((totalPaid / totalVoucher) * 100)) : 100;
@@ -845,7 +874,7 @@ export const CicilanSheetContent: React.FC<{
           </div>
           <F1SignaturesBlock
             signers={f1Signers}
-            style={signatureTableStyle}
+            style={signatureTableStyle === 'line' ? 'line' : 'table'}
             density="normal"
           />
         </div>
@@ -1097,7 +1126,46 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
     
   const activeBillFiles = billFiles.length > 0 ? billFiles : legacyFiles;
 
-  const paymentProofFile = submission.buktiPembayaran || displayFiles.find((f: any) => f.isBuktiPembayaran);
+  // 🛡️ Gather ALL payment proofs across all stages (DP, termin lanjutan, pelunasan)
+  const allPaymentProofFiles = useMemo(() => {
+    const list: any[] = [];
+    const seenKeys = new Set<string>();
+
+    const addProof = (file: any, defaultLabel: string) => {
+      if (!file || (!file.url && !file.name)) return;
+      const key = (file.url || file.name).trim();
+      if (seenKeys.has(key)) return;
+      seenKeys.add(key);
+      list.push({
+        ...file,
+        isBuktiPembayaran: true,
+        customLabel: file.paymentNote || file.customLabel || defaultLabel
+      });
+    };
+
+    // 1. Files in displayFiles with isBuktiPembayaran
+    const driveProofs = displayFiles.filter((f: any) => f.isBuktiPembayaran);
+    driveProofs.forEach((f: any, idx: number) => {
+      addProof(f, driveProofs.length > 1 ? `Bukti Bayar - Termin ${idx + 1}` : 'Bukti Bayar');
+    });
+
+    // 2. Proof from each installment in riwayatCicilan
+    if (Array.isArray(submission.riwayatCicilan)) {
+      submission.riwayatCicilan.forEach((item, idx) => {
+        if (item.buktiPembayaran) {
+          addProof(item.buktiPembayaran, `Bukti Bayar - ${item.keterangan || `Termin ${idx + 1}`}`);
+        }
+      });
+    }
+
+    // 3. Primary submission.buktiPembayaran
+    if (submission.buktiPembayaran) {
+      addProof(submission.buktiPembayaran, 'Bukti Bayar');
+    }
+
+    return list;
+  }, [displayFiles, submission.riwayatCicilan, submission.buktiPembayaran]);
+
   const pettyCashReportFile = submission.pettyCashFile || displayFiles.find((f: any) => f.docType === 'petty_cash_report');
   
   const handleMoveAttachmentFile = (index: number, direction: 'up' | 'down') => {
@@ -1115,21 +1183,21 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
     let files: any[] = [];
     if (attachmentOrderPreset === 'transfer_first') {
       files = [
-        ...(paymentProofFile ? [{ ...paymentProofFile, isBuktiPembayaran: true }] : []),
+        ...allPaymentProofFiles,
         ...activeBillFiles,
         ...(pettyCashReportFile ? [{ ...pettyCashReportFile, docType: 'petty_cash_report' }] : [])
       ];
     } else if (attachmentOrderPreset === 'petty_first') {
       files = [
         ...(pettyCashReportFile ? [{ ...pettyCashReportFile, docType: 'petty_cash_report' }] : []),
-        ...(paymentProofFile ? [{ ...paymentProofFile, isBuktiPembayaran: true }] : []),
+        ...allPaymentProofFiles,
         ...activeBillFiles
       ];
     } else {
-      // Default: lampiran / nota / invoice first
+      // Default: lampiran / nota / invoice first, followed by all payment proofs
       files = [
         ...activeBillFiles,
-        ...(paymentProofFile ? [{ ...paymentProofFile, isBuktiPembayaran: true }] : []),
+        ...allPaymentProofFiles,
         ...(pettyCashReportFile ? [{ ...pettyCashReportFile, docType: 'petty_cash_report' }] : [])
       ];
     }
@@ -1148,7 +1216,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
     }
 
     return files;
-  }, [activeBillFiles, paymentProofFile, pettyCashReportFile, attachmentOrderPreset, customFileOrder]);
+  }, [activeBillFiles, allPaymentProofFiles, pettyCashReportFile, attachmentOrderPreset, customFileOrder]);
 
   // Check which files are owned by the current user vs others in Drive
   useEffect(() => {
@@ -1485,10 +1553,15 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
       setRenderedPages([]);
 
       try {
+        // Proactively ensure freshest Google Drive token before downloading attachments
+        try {
+          await triggerGoogleDriveAutoRefresh('print-mount', false);
+        } catch (_) {}
+
         let token = getStoredGoogleDriveToken();
         if (!token) {
           try {
-            token = await ensureValidDriveToken();
+            token = await ensureValidDriveToken(true);
           } catch (e) {
             // Proceed if token cannot be discovered silently
           }
@@ -1620,8 +1693,20 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
                     fileBlob = await fileRes.blob();
                     break;
                   } else if (fileRes.status === 401) {
-                    // Trigger proactive background token refresh
-                    triggerGoogleDriveAutoRefresh('attachment-401-detect', false).catch(() => {});
+                    invalidateDriveToken(curToken);
+                    // Proactively attempt refresh and retry
+                    try {
+                      const freshToken = await triggerGoogleDriveAutoRefresh('attachment-401-detect', true);
+                      if (freshToken && freshToken !== curToken) {
+                        const retryRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`, {
+                          headers: { Authorization: `Bearer ${freshToken}` }
+                        });
+                        if (retryRes.ok) {
+                          fileBlob = await retryRes.blob();
+                          break;
+                        }
+                      }
+                    } catch (_) {}
                   }
                 } catch (tokenErr) {
                   // Try next available token
@@ -1679,8 +1764,10 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
                   const publicRes = await fetch(`https://docs.google.com/uc?export=download&id=${fileId}`);
                   if (publicRes.ok) {
                     const blob = await publicRes.blob();
-                    // Validate if it is a real PDF or HTML page
-                    if (blob.type.includes('pdf') || blob.size > 2000) {
+                    // Validate if it is a real PDF by inspecting magic bytes
+                    const testSlice = await blob.slice(0, 5).arrayBuffer();
+                    const sliceStr = String.fromCharCode(...new Uint8Array(testSlice));
+                    if (sliceStr.startsWith('%PDF')) {
                       fileBlob = blob;
                     } else {
                       throw new Error('Akses file Google Drive membutuhkan izin otorisasi token.');
@@ -3813,7 +3900,8 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
         {/* ================= PAGE 3+: LAMPIRAN DOKUMEN BUKTI (DYNAMIC SEVERAL PAGES) ================= */}
         {(activeTab === 'both' || activeTab === 'lampiran' || activeTab === 'pengeluaran') && !isLoadingPages && visiblePages.map((page, idx) => {
           const fileObj = attachmentFiles[page.fileIndex];
-          const fileLabel = fileObj?.isBuktiPembayaran ? 'Bukti Bayar'
+          const fileLabel = fileObj?.customLabel ? fileObj.customLabel
+                          : fileObj?.isBuktiPembayaran ? 'Bukti Bayar'
                           : fileObj?.docType === 'po' ? 'PO'
                           : fileObj?.docType === 'lhv' ? 'LHV'
                           : fileObj?.docType === 'draft_survei' ? 'Survei'

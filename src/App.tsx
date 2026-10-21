@@ -453,8 +453,8 @@ export default function App() {
       })
       .catch(err => console.warn('Firestore Drive sync skipped:', err));
 
-    // Start background auto-keeper for Google Drive token (every 10 minutes)
-    const stopAutoRefresh = startGoogleDriveTokenAutoRefresh(10);
+    // Start background auto-keeper for Google Drive token (every 30 seconds)
+    const stopAutoRefresh = startGoogleDriveTokenAutoRefresh(30);
 
     return () => {
       unsubscribeCompany();
@@ -795,9 +795,9 @@ export default function App() {
     handleSaveAgendaItems(newList);
   };
 
-  // Automatic periodic Google Drive token keepalive and auto-refresh (every 10 minutes)
+  // Automatic periodic Google Drive token keepalive and auto-refresh (every 30 seconds)
   useEffect(() => {
-    const stopAutoRefresh = startGoogleDriveTokenAutoRefresh(10); // Auto checks every 10 minutes
+    const stopAutoRefresh = startGoogleDriveTokenAutoRefresh(30); // Auto checks every 30 seconds
     return () => {
       stopAutoRefresh();
     };
@@ -847,7 +847,7 @@ export default function App() {
   // ⚡ Otomatis membaca database penyimpanan di Firebase & menyegarkan token Google Drive ketika menu terkait dibuka
   useEffect(() => {
     // Keep Google Drive token alive and ready across all view changes
-    triggerGoogleDriveAutoRefresh('view-' + view).catch(() => {});
+    triggerGoogleDriveAutoRefresh('view-' + view, true).catch(() => {});
 
     if (view === 'npwp' || view === 'pph23') {
       loadNpwpRecordsFromFirestore()

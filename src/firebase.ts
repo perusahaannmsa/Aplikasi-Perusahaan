@@ -1850,14 +1850,14 @@ let lastDriveRefreshTime = 0;
 
 /**
  * Universal Trigger for Google Drive Token Refresh.
- * Called automatically every 10 minutes, on view/menu switch, on user actions, and on demand.
+ * Called automatically every 30 seconds, on view/menu switch, on user actions, and on demand.
  */
 export const triggerGoogleDriveAutoRefresh = async (reason = 'manual', force = false): Promise<string | null> => {
   if (typeof window === 'undefined') return null;
   const now = Date.now();
 
-  // Debounce non-forced checks to prevent network thrashing (at least 15s between runs unless forced)
-  if (!force && (now - lastDriveRefreshTime < 15000)) {
+  // Debounce non-forced checks to prevent network thrashing (at least 3s between runs unless forced)
+  if (!force && (now - lastDriveRefreshTime < 3000)) {
     return getStoredGoogleDriveToken(true);
   }
   
@@ -1869,7 +1869,7 @@ export const triggerGoogleDriveAutoRefresh = async (reason = 'manual', force = f
   lastDriveRefreshTime = now;
 
   try {
-    console.log(`⏰ [Google Drive Auto-Keeper] Memeriksa & menyegarkan token (${reason})...`);
+    console.log(`⏰ [Google Drive Auto-Keeper] Memeriksa & memperbarui token (${reason})...`);
 
     // 1. Always pull latest shared drives from Firestore (so cross-device/tab updates sync instantly)
     try {
@@ -1883,10 +1883,10 @@ export const triggerGoogleDriveAutoRefresh = async (reason = 'manual', force = f
     const currentToken = getStoredGoogleDriveToken(true);
 
     if (!currentToken || force) {
-      // Token missing or expired: run silent discovery from Firestore & local accounts without popup
+      // Token missing or forced: run silent discovery from Firestore, backend & local accounts
       const freshToken = await ensureValidDriveToken(false);
       if (freshToken) {
-        console.log('✅ [Google Drive Auto-Keeper] Token Google Drive berhasil disegarkan secara senyap.');
+        console.log('✅ [Google Drive Auto-Keeper] Token Google Drive berhasil aktif & diperbarui.');
         return freshToken;
       }
     } else if (activeDrives.length > 0) {
@@ -1923,7 +1923,7 @@ export const triggerGoogleDriveAutoRefresh = async (reason = 'manual', force = f
   }
 };
 
-export const startGoogleDriveTokenAutoRefresh = (intervalMinutes = 10): (() => void) => {
+export const startGoogleDriveTokenAutoRefresh = (intervalSeconds = 30): (() => void) => {
   if (typeof window === 'undefined') return () => {};
 
   // Run immediately on launch
@@ -1934,10 +1934,10 @@ export const startGoogleDriveTokenAutoRefresh = (intervalMinutes = 10): (() => v
     clearInterval(tokenAutoRefreshIntervalId);
   }
 
-  // Set interval (every 10 minutes as requested by user)
-  const intervalMs = Math.max(1, intervalMinutes) * 60 * 1000;
+  // Set interval (every 30 seconds as explicitly requested by user)
+  const intervalMs = Math.max(5, intervalSeconds) * 1000;
   tokenAutoRefreshIntervalId = setInterval(() => {
-    triggerGoogleDriveAutoRefresh('10-minute-timer', true);
+    triggerGoogleDriveAutoRefresh('30s-timer', true);
   }, intervalMs);
 
   // Trigger when tab becomes visible or gains focus

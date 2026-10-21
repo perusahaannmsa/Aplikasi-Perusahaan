@@ -1422,8 +1422,8 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
 
     try {
       let finalFiles: { url: string; name: string; isF1?: boolean; isF2?: boolean; isBuktiPembayaran?: boolean; docType?: string }[] = [];
-      let finalBuktiPembayaran: { url: string; name: string } | undefined = undefined;
-      let finalPettyCashFile: { url: string; name: string } | undefined = undefined;
+      let finalBuktiPembayaran: { url: string; name: string } | undefined = initialSubmission?.buktiPembayaran;
+      let finalPettyCashFile: { url: string; name: string } | undefined = initialSubmission?.pettyCashFile;
       let targetFolderId: string | undefined = undefined;
 
       let token: string | null = null;
@@ -1890,6 +1890,14 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
               isBuktiPembayaran: true
             });
           }
+        } else if (initialSubmission) {
+          // If no new proof was explicitly uploaded, preserve any previous payment proof files
+          const existingProofs = (initialSubmission.googleDriveFiles || []).filter(f => f.isBuktiPembayaran);
+          for (const ep of existingProofs) {
+            if (!finalFiles.some(f => f.url === ep.url)) {
+              finalFiles.push(ep);
+            }
+          }
         }
 
         // 6. Upload Petty Cash LPJ file to dedicated Petty Cash directory if isPettyCash is true
@@ -1999,6 +2007,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
           nominal: numDp,
           sisaSetelahBayar: Math.max(0, calculatedGrandTotal - numDp),
           keterangan: cicilanNotes || 'Pembayaran DP / Termin Ke-1',
+          buktiPembayaran: finalBuktiPembayaran,
           createdAt: new Date().toISOString()
         }];
       }
