@@ -83,7 +83,7 @@ import { triggerExcelDownload } from "../lib/excelGenerator";
 import { triggerAttendanceExcelDownload, printWeeklyReportPDF, generateAttendanceExcelBlob } from "../lib/attendanceSheetGenerator";
 import { getOrCreateFolder, getOrCreateNestedFolder, uploadFileToDrive, exportAttendanceToGoogleSheet } from "../lib/googleWorkspaceAbsen";
 import { initAuth, googleSignIn, googleSignOut, getFreshGoogleToken, saveGoogleToken, saveAttendanceToFirestore, loadAttendanceFromFirestore, subscribeToAttendanceFromFirestore } from "../lib/firebaseAbsen";
-import { saveSubmissionToFirestore, saveAbsenDataToFirestore, ensureValidDriveToken, getActiveGoogleDriveAccount, getConnectedDrives, executeDriveApiWithAutoRefresh, getOrRenewDriveToken } from "../firebase";
+import { saveSubmissionToFirestore, saveAbsenDataToFirestore, ensureValidDriveToken, getActiveGoogleDriveAccount, getConnectedDrives, executeDriveApiWithAutoRefresh, getOrRenewDriveToken, triggerGoogleDriveAutoRefresh } from "../firebase";
 import { googleDriveAutoBackup, BackupSyncLog, DriveAutoBackupSettings } from "../utils/googleDriveAutoBackup";
 import { SignaturePad } from "./SignaturePad";
 import { OnlineSignatureModal } from "./OnlineSignatureModal";
@@ -1900,11 +1900,11 @@ export function AbsensiHarianNmsa({
     return () => unsubscribe();
   }, []);
 
-  // Automatically fetch unified Google Drive access token from unified system and server on mount
+  // Automatically fetch unified Google Drive access token and refresh proactively on mount
   useEffect(() => {
     const fetchUnifiedDriveToken = async () => {
       try {
-        const token = await ensureValidDriveToken(false);
+        const token = await triggerGoogleDriveAutoRefresh("menu-absensi-mount", true, true);
         if (token) {
           localStorage.setItem("g_access_token", token);
           setGoogleToken(token);

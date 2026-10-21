@@ -4,7 +4,7 @@ import { Submission, ActivityLog } from '../types';
 import { formatRupiah, formatDateIndonesian, isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, sortSubmissionsDescending } from '../utils';
 import { getVoucherShareLink } from '../utils/appLinks';
 import { Search, Eye, Edit2, Trash2, Calendar, MapPin, DollarSign, Plus, Copy, RefreshCw, Cloud, FileText, Database, History, FileSpreadsheet, CheckCircle, AlertCircle, Printer, Check, ExternalLink, Coins, User, Bell, ChevronDown, Sparkles, Share2, Send, MoreVertical, Receipt, Building2, X, AlertTriangle, Info, Layers, Filter } from 'lucide-react';
-import { loadActivityLogsFromFirestore, isFirebaseConfigured } from '../firebase';
+import { loadActivityLogsFromFirestore, isFirebaseConfigured, triggerGoogleDriveAutoRefresh } from '../firebase';
 import { LiveClock } from './LiveClock';
 import { normalizeText } from '../utils/duplicateDetector';
 
@@ -1330,7 +1330,10 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
               </button>
 
               <button
-                onClick={onAddNew}
+                onClick={() => {
+                  triggerGoogleDriveAutoRefresh('btn-input-pengajuan', true, true).catch(() => {});
+                  onAddNew();
+                }}
                 id="btn-add-new-submission"
                 className="flex items-center justify-center gap-2 bg-gold-dynamic hover:bg-gold-dynamic-hover text-stone-900 font-extrabold px-5 py-2.5 rounded-xl transition shadow-xs focus:ring-2 focus:ring-amber-300 cursor-pointer text-xs font-display tracking-wide"
               >
@@ -1663,7 +1666,10 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                       <div className="flex items-center gap-1.5 shrink-0">
                         <button
                           type="button"
-                          onClick={() => onSelect(sub)}
+                          onClick={() => {
+                            triggerGoogleDriveAutoRefresh('mob-lihat-voucher', true, true).catch(() => {});
+                            onSelect(sub);
+                          }}
                           className="px-2.5 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-800 font-bold rounded-xl text-xs transition cursor-pointer flex items-center gap-1 shadow-3xs"
                           title="Lihat / Cetak Voucher"
                         >
@@ -4629,6 +4635,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
               onClick={() => {
                 setOpenActionMenuId(null);
                 setActionMenuPosition(null);
+                triggerGoogleDriveAutoRefresh('action-lihat-voucher', true, true).catch(() => {});
                 onSelect(activeActionSub);
               }}
               className="w-full px-3.5 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-50 flex items-center gap-2.5 transition text-left cursor-pointer"

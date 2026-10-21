@@ -9,7 +9,8 @@ import {
   getOrRenewDriveToken,
   getActiveGoogleDriveAccount,
   executeDriveApiWithAutoRefresh,
-  ensureGoogleDriveFileSharing
+  ensureGoogleDriveFileSharing,
+  triggerGoogleDriveAutoRefresh
 } from '../firebase';
 import { DriveAccountsManager } from './DriveAccountsManager';
 import { SppdIntegration, SppdRecord } from './SppdIntegration';
@@ -802,12 +803,17 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
   // Check Drive connection status automatically and react to token refresh events
   useEffect(() => {
     const checkStatus = async () => {
-      const token = await ensureValidDriveToken();
-      if (token) {
-        setIsDriveConnected(true);
-      } else {
-        const drives = getConnectedDrives();
-        setIsDriveConnected(drives.length > 0);
+      try {
+        const token = await triggerGoogleDriveAutoRefresh('form-mount', true, true);
+        if (token) {
+          setIsDriveConnected(true);
+        } else {
+          const drives = getConnectedDrives();
+          setIsDriveConnected(drives.length > 0);
+        }
+      } catch (_) {
+        const token = await ensureValidDriveToken();
+        setIsDriveConnected(!!token);
       }
     };
     checkStatus();

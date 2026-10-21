@@ -1722,7 +1722,7 @@ export const getOrRenewDriveToken = async (
       // 3. Determine the exact Google Drive email to connect / reconnect
       const activeAccount = getActiveGoogleDriveAccount();
       const lastEmail = localStorage.getItem('NUSANTARA_LAST_ACTIVE_EMAIL');
-      const emailToUse = targetEmail || activeAccount?.email || lastEmail || getConnectedDrives()[0]?.email || undefined;
+      const emailToUse = targetEmail || activeAccount?.email || lastEmail || getConnectedDrives()[0]?.email || LOCKED_MASTER_DRIVE_EMAIL;
 
       // 4. If interactive renewal is allowed (e.g. user clicked save, backup, or submitting voucher), perform login
       if (interactiveIfRequired && emailToUse) {
@@ -1852,7 +1852,11 @@ let lastDriveRefreshTime = 0;
  * Universal Trigger for Google Drive Token Refresh.
  * Called automatically every 30 seconds, on view/menu switch, on user actions, and on demand.
  */
-export const triggerGoogleDriveAutoRefresh = async (reason = 'manual', force = false): Promise<string | null> => {
+export const triggerGoogleDriveAutoRefresh = async (
+  reason = 'manual', 
+  force = false, 
+  allowInteractive = false
+): Promise<string | null> => {
   if (typeof window === 'undefined') return null;
   const now = Date.now();
 
@@ -1883,10 +1887,10 @@ export const triggerGoogleDriveAutoRefresh = async (reason = 'manual', force = f
     const currentToken = getStoredGoogleDriveToken(true);
 
     if (!currentToken || force) {
-      // Token missing or forced: run silent discovery from Firestore, backend & local accounts
-      const freshToken = await ensureValidDriveToken(false);
+      // Token missing or forced: get or renew token from cache, Firestore, backend, or interactive login
+      const freshToken = await getOrRenewDriveToken(undefined, allowInteractive);
       if (freshToken) {
-        console.log('✅ [Google Drive Auto-Keeper] Token Google Drive berhasil aktif & diperbarui.');
+        console.log(`✅ [Google Drive Auto-Keeper] Token Google Drive berhasil aktif & diperbarui (${reason}).`);
         return freshToken;
       }
     } else if (activeDrives.length > 0) {
@@ -1901,15 +1905,15 @@ export const triggerGoogleDriveAutoRefresh = async (reason = 'manual', force = f
           if (currentToken) {
             invalidateDriveToken(currentToken);
           }
-          // Reload from Firestore in case another admin/user already refreshed it
+          // Reload from Firestore or interactive renewal
           const refreshed = await loadConnectedDrivesFromFirestore();
           const valid = refreshed.find(d => isDriveTokenValid(d) && d.accessToken);
           if (valid && valid.accessToken) {
             setGoogleDriveToken(valid.accessToken);
             return valid.accessToken;
           }
-          // Attempt silent renewal only (never popup unexpectedly)
-          return await ensureValidDriveToken(false);
+          // Attempt renewal
+          return await getOrRenewDriveToken(undefined, allowInteractive);
         }
       }
     }
@@ -1951,13 +1955,15 @@ export const startGoogleDriveTokenAutoRefresh = (intervalSeconds = 30): (() => v
     triggerGoogleDriveAutoRefresh('window-focus', false);
   };
 
-  // Trigger on user activity (clicks, navigation) throttled to once per 2 minutes
+  // Trigger on user activity (clicks, navigation, menu changes) throttled to once per 15s
   let lastUserActivityCheck = 0;
   const onUserActivity = () => {
     const t = Date.now();
-    if (t - lastUserActivityCheck > 120000) {
+    if (t - lastUserActivityCheck > 15000) {
       lastUserActivityCheck = t;
-      triggerGoogleDriveAutoRefresh('user-activity', false);
+      // If token is missing or expired, renew it interactively since this is an active user click!
+      const activeTok = getStoredGoogleDriveToken(true);
+      triggerGoogleDriveAutoRefresh('user-activity', !activeTok, !activeTok);
     }
   };
 

@@ -1554,11 +1554,12 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
 
       try {
         // Proactively ensure freshest Google Drive token before downloading attachments
+        let token = getStoredGoogleDriveToken();
         try {
-          await triggerGoogleDriveAutoRefresh('print-mount', false);
+          const freshTok = await triggerGoogleDriveAutoRefresh('print-mount', true, true);
+          if (freshTok) token = freshTok;
         } catch (_) {}
 
-        let token = getStoredGoogleDriveToken();
         if (!token) {
           try {
             token = await ensureValidDriveToken(true);

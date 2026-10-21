@@ -59,6 +59,7 @@ import {
   startGoogleDriveTokenAutoRefresh,
   triggerGoogleDriveAutoRefresh,
   ensureValidDriveToken,
+  getStoredGoogleDriveToken,
   getMasterDriveEmail,
   getActiveGoogleDriveAccount,
   subscribeToCompanySettingsFromFirestore,
@@ -456,10 +457,25 @@ export default function App() {
     // Start background auto-keeper for Google Drive token (every 30 seconds)
     const stopAutoRefresh = startGoogleDriveTokenAutoRefresh(30);
 
+    // ⚡ On startup, immediately refresh & verify Google Drive token
+    triggerGoogleDriveAutoRefresh('app-startup', true, false).catch(() => {});
+
+    // If token is expired/missing on app startup, renew immediately on first user interaction anywhere
+    const handleFirstUserInteraction = () => {
+      const activeToken = getStoredGoogleDriveToken(true);
+      if (!activeToken) {
+        triggerGoogleDriveAutoRefresh('first-interaction-renew', true, true).catch(() => {});
+      }
+    };
+    window.addEventListener('pointerdown', handleFirstUserInteraction, { once: true });
+    window.addEventListener('keydown', handleFirstUserInteraction, { once: true });
+
     return () => {
       unsubscribeCompany();
       if (typeof unsubscribeNpwp === 'function') unsubscribeNpwp();
       stopAutoRefresh();
+      window.removeEventListener('pointerdown', handleFirstUserInteraction);
+      window.removeEventListener('keydown', handleFirstUserInteraction);
     };
   }, []);
 
@@ -834,6 +850,9 @@ export default function App() {
     newView: 'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab' | 'memo',
     options?: { preservePrevious?: boolean }
   ) => {
+    // ⚡ Proactively refresh and extend Google Drive token immediately when user clicks/switches to ANY menu
+    triggerGoogleDriveAutoRefresh('menu-switch-' + newView, true, true).catch(() => {});
+
     setViewInternal((current) => {
       if (current !== newView && current !== 'form' && current !== 'print' && !options?.preservePrevious) {
         setPreviousView(current);
@@ -847,7 +866,7 @@ export default function App() {
   // ⚡ Otomatis membaca database penyimpanan di Firebase & menyegarkan token Google Drive ketika menu terkait dibuka
   useEffect(() => {
     // Keep Google Drive token alive and ready across all view changes
-    triggerGoogleDriveAutoRefresh('view-' + view, true).catch(() => {});
+    triggerGoogleDriveAutoRefresh('view-' + view, true, true).catch(() => {});
 
     if (view === 'npwp' || view === 'pph23') {
       loadNpwpRecordsFromFirestore()
@@ -3448,12 +3467,14 @@ export default function App() {
             onOpenRabView={() => setView('rab')}
             onSelect={(sub, initialTab) => {
               try { sessionStorage.setItem('sublist_scrollPos', window.scrollY.toString()); } catch (e) {}
+              triggerGoogleDriveAutoRefresh('lihat-transaksi', true, true).catch(() => {});
               setActiveSubmission(sub);
               setPrintInitialTab(initialTab || 'both');
               setView('print');
             }}
             onEdit={(sub) => {
               try { sessionStorage.setItem('sublist_scrollPos', window.scrollY.toString()); } catch (e) {}
+              triggerGoogleDriveAutoRefresh('edit-transaksi', true, true).catch(() => {});
               setEditingSubmission(sub);
               setView('form');
             }}
@@ -3469,6 +3490,7 @@ export default function App() {
             onDuplicate={handleDuplicate}
             onAddNew={() => {
               try { sessionStorage.setItem('sublist_scrollPos', window.scrollY.toString()); } catch (e) {}
+              triggerGoogleDriveAutoRefresh('input-pengajuan-baru', true, true).catch(() => {});
               setEditingSubmission(null);
               setView('form');
             }}
