@@ -72,19 +72,18 @@ html, body {
 }
 
 .theme-classic .app-card-theme,
-.theme-classic .bg-white.rounded-2xl {
+.theme-classic .bg-white.rounded-2xl:not(.app-header-dropdown):not(.action-menu-dropdown-popover) {
   border: 2px solid rgba(212, 175, 55, 0.42) !important;
   outline: 1px solid rgba(212, 175, 55, 0.18) !important;
   outline-offset: -4px !important;
   border-radius: 1.25rem !important;
   background: linear-gradient(180deg, #ffffff 0%, #fffdf9 100%) !important;
   box-shadow: 0 10px 30px -4px rgba(212, 175, 55, 0.14), 0 2px 8px rgba(0, 0, 0, 0.03) !important;
-  position: relative;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .theme-classic .app-card-theme:hover,
-.theme-classic .bg-white.rounded-2xl:hover {
+.theme-classic .bg-white.rounded-2xl:not(.app-header-dropdown):not(.action-menu-dropdown-popover):hover {
   box-shadow: 0 14px 36px -4px rgba(212, 175, 55, 0.22), 0 4px 12px rgba(0, 0, 0, 0.05) !important;
 }
 
@@ -842,11 +841,12 @@ html, body {
   }
 }
 
-/* Universal High-Priority Dropdown & Popover Stacking to Prevent Clipping */
+/* Universal High-Priority Dropdown & Popover Stacking to Prevent Clipping & Force Floating */
 .action-menu-dropdown-popover,
 .app-header-dropdown,
 [role="menu"],
 [data-radix-popper-content-wrapper] {
+  position: absolute !important;
   z-index: 99999 !important;
 }
 

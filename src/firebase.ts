@@ -1705,6 +1705,20 @@ export const getOrRenewDriveToken = async (
         }
       } catch (fsErr) {}
 
+      // 2b. Check backend /api/drive-token (if server service account is available, provides fresh token instantly)
+      try {
+        const srvRes = await fetch('/api/drive-token');
+        if (srvRes.ok) {
+          const srvData = await srvRes.json();
+          if (srvData?.accessToken) {
+            setGoogleDriveToken(srvData.accessToken);
+            localStorage.setItem('g_access_token', srvData.accessToken);
+            localStorage.setItem('g_access_token_time', Date.now().toString());
+            return srvData.accessToken;
+          }
+        }
+      } catch (_) {}
+
       // 3. Determine the exact Google Drive email to connect / reconnect
       const activeAccount = getActiveGoogleDriveAccount();
       const lastEmail = localStorage.getItem('NUSANTARA_LAST_ACTIVE_EMAIL');
@@ -1869,10 +1883,10 @@ export const triggerGoogleDriveAutoRefresh = async (reason = 'manual', force = f
     const currentToken = getStoredGoogleDriveToken(true);
 
     if (!currentToken || force) {
-      // Token missing or expired: run fresh discovery from Firestore & local accounts
-      const freshToken = await ensureValidDriveToken(true);
+      // Token missing or expired: run silent discovery from Firestore & local accounts without popup
+      const freshToken = await ensureValidDriveToken(false);
       if (freshToken) {
-        console.log('✅ [Google Drive Auto-Keeper] Token Google Drive berhasil disegarkan.');
+        console.log('✅ [Google Drive Auto-Keeper] Token Google Drive berhasil disegarkan secara senyap.');
         return freshToken;
       }
     } else if (activeDrives.length > 0) {
@@ -1894,8 +1908,8 @@ export const triggerGoogleDriveAutoRefresh = async (reason = 'manual', force = f
             setGoogleDriveToken(valid.accessToken);
             return valid.accessToken;
           }
-          // Attempt silent renewal
-          return await ensureValidDriveToken(true);
+          // Attempt silent renewal only (never popup unexpectedly)
+          return await ensureValidDriveToken(false);
         }
       }
     }
@@ -1998,10 +2012,13 @@ export const googleDriveLogin = async (
   provider.addScope('https://www.googleapis.com/auth/drive.file');
 
   // 🔒 STRICT LOCK: Selalu arahkan ke akun resmi akuncoding211@gmail.com
-  provider.setCustomParameters({
-    login_hint: LOCKED_MASTER_DRIVE_EMAIL,
-    prompt: 'select_account'
-  });
+  const customParams: Record<string, string> = {
+    login_hint: loginHint || LOCKED_MASTER_DRIVE_EMAIL
+  };
+  if (forceSelectAccount) {
+    customParams.prompt = 'select_account';
+  }
+  provider.setCustomParameters(customParams);
   
   try {
     const result = await signInWithPopup(driveAuth, provider);

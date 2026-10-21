@@ -2832,7 +2832,7 @@ export default function App() {
       
       {/* GLOBAL HEADER - Sticky at the top on scroll */}
       <header className="app-global-header bg-white border-b border-stone-200 sticky top-0 z-[1000] shadow-xs print:hidden">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="max-w-[1600px] w-full mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between min-h-18 py-2 md:py-0">
             {/* Logo area - Responsive for mobile and desktop */}
             <div className="flex items-center gap-2 sm:gap-3 min-w-0">
@@ -2926,7 +2926,10 @@ export default function App() {
 
                 {/* Dropdown Popover */}
                 {isToolsDropdownOpen && (
-                  <div className="app-header-dropdown absolute right-0 top-full mt-2 w-[min(22rem,calc(100vw-1.5rem))] max-h-[calc(100vh-5rem)] bg-white rounded-2xl shadow-2xl border border-stone-200 z-[1010] overflow-y-auto p-2.5 animate-in fade-in zoom-in-95 duration-150 font-sans space-y-2">
+                  <div 
+                    className="app-header-dropdown absolute right-0 top-full mt-2 w-[min(22rem,calc(100vw-1.5rem))] max-h-[calc(100vh-5rem)] bg-white rounded-2xl shadow-2xl border border-stone-200 z-[1010] overflow-y-auto p-2.5 animate-in fade-in zoom-in-95 duration-150 font-sans space-y-2"
+                    style={{ position: 'absolute' }}
+                  >
                     <div className="px-2.5 py-1 border-b border-stone-150 flex items-center justify-between">
                       <span className="text-[10px] font-mono font-bold text-stone-400 uppercase tracking-wider">
                         Layanan &amp; Integrasi Cloud
@@ -3225,7 +3228,10 @@ export default function App() {
 
                 {/* User Dropdown Popover */}
                 {isUserMenuOpen && (
-                  <div className="app-header-dropdown absolute right-0 top-full mt-2 w-[min(18rem,calc(100vw-1.5rem))] max-h-[calc(100vh-5rem)] bg-white rounded-2xl shadow-2xl border border-stone-200 z-[1010] overflow-y-auto animate-in fade-in zoom-in-95 duration-150 font-sans">
+                  <div 
+                    className="app-header-dropdown absolute right-0 top-full mt-2 w-72 sm:w-80 max-w-[calc(100vw-1.5rem)] max-h-[calc(100vh-5rem)] bg-white rounded-2xl shadow-2xl border border-stone-200 z-[1010] overflow-y-auto animate-in fade-in zoom-in-95 duration-150 font-sans"
+                    style={{ position: 'absolute' }}
+                  >
                     <div className="p-3.5 bg-stone-50 border-b border-stone-200">
                       <div className="flex items-center gap-2.5">
                         <div className="w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center text-sm shadow-xs shrink-0">
@@ -3426,7 +3432,7 @@ export default function App() {
     />
 
       {/* MAIN CONTAINER */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-5 sm:py-8 pb-24 md:pb-8">
+      <main className="flex-1 max-w-[1600px] w-full mx-auto px-3 sm:px-6 lg:px-8 py-5 sm:py-8 pb-24 md:pb-8">
         
         {/* VIEW 1: Submissions Data History & Backup Operations */}
         <div className={view === 'list' ? 'space-y-6' : 'hidden'}>
