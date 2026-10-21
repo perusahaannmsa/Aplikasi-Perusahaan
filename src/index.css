@@ -842,7 +842,10 @@ html, body {
 }
 
 /* Universal High-Priority Dropdown & Popover Stacking to Prevent Clipping & Force Floating */
-.action-menu-dropdown-popover,
+.action-menu-dropdown-popover {
+  z-index: 999999 !important;
+}
+
 .app-header-dropdown,
 [role="menu"],
 [data-radix-popper-content-wrapper] {
