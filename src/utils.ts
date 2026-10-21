@@ -1067,6 +1067,7 @@ export async function generateF1PdfBytes(
     });
 
     // History Table on Page 2
+    // History Table on Page 2 (6 Kolom: NO, TANGGAL, TAHAP, NOMINAL, SISA, CATATAN)
     let p2TableY = cardY - 14;
     const p2HeaderH = 22;
     page2.drawRectangle({
@@ -1079,26 +1080,29 @@ export async function generateF1PdfBytes(
       borderWidth: 1.5,
     });
 
-    const cNoW = 28;
-    const cTglW = 100;
-    const cNomW = 115;
-    const cSisaW = 115;
-    const cKetW = contentWidth - (cNoW + cTglW + cNomW + cSisaW);
+    const cNoW = 24;
+    const cTglW = 76;
+    const cTahapW = 110;
+    const cNomW = 95;
+    const cSisaW = 90;
+    const cCatatanW = contentWidth - (cNoW + cTglW + cTahapW + cNomW + cSisaW);
 
     const xNo = margin;
     const xTgl = xNo + cNoW;
-    const xKet = xTgl + cTglW;
-    const xNom = xKet + cKetW;
+    const xTahap = xTgl + cTglW;
+    const xNom = xTahap + cTahapW;
     const xSisa = xNom + cNomW;
+    const xCatatan = xSisa + cSisaW;
 
-    page2.drawText('NO', { x: xNo + 7, y: p2TableY - 15, size: 8, font: fontBold });
-    page2.drawText('TANGGAL BAYAR', { x: xTgl + 8, y: p2TableY - 15, size: 8, font: fontBold });
-    page2.drawText('TAHAP / TERMIN PEMBAYARAN', { x: xKet + 8, y: p2TableY - 15, size: 8, font: fontBold });
-    page2.drawText('NOMINAL DIBAYAR', { x: xNom + 10, y: p2TableY - 15, size: 8, font: fontBold });
-    page2.drawText('SISA TAGIHAN', { x: xSisa + 10, y: p2TableY - 15, size: 8, font: fontBold });
+    page2.drawText('NO', { x: xNo + 6, y: p2TableY - 15, size: 7.5, font: fontBold });
+    page2.drawText('TANGGAL BAYAR', { x: xTgl + 6, y: p2TableY - 15, size: 7.5, font: fontBold });
+    page2.drawText('TAHAP / TERMIN', { x: xTahap + 6, y: p2TableY - 15, size: 7.5, font: fontBold });
+    page2.drawText('NOMINAL DIBAYAR', { x: xNom + 8, y: p2TableY - 15, size: 7.5, font: fontBold });
+    page2.drawText('SISA TAGIHAN', { x: xSisa + 8, y: p2TableY - 15, size: 7.5, font: fontBold });
+    page2.drawText('CATATAN', { x: xCatatan + 6, y: p2TableY - 15, size: 7.5, font: fontBold });
 
     // Vertical dividers in header
-    [xTgl, xKet, xNom, xSisa].forEach(divX => {
+    [xTgl, xTahap, xNom, xSisa, xCatatan].forEach(divX => {
       page2.drawLine({
         start: { x: divX, y: p2TableY },
         end: { x: divX, y: p2TableY - p2HeaderH },
@@ -1108,7 +1112,9 @@ export async function generateF1PdfBytes(
     });
 
     p2TableY -= p2HeaderH;
-    const rowH = 24;
+    // Adaptive row height so many rows fit comfortably on 1 page:
+    const rowH = historyPayments.length > 12 ? 17 : (historyPayments.length > 6 ? 20 : 23);
+    const rowFontSize = historyPayments.length > 12 ? 7 : 7.5;
 
     historyPayments.forEach((pItem: any, idx: number) => {
       page2.drawRectangle({
@@ -1126,7 +1132,7 @@ export async function generateF1PdfBytes(
         color: rgb(0, 0, 0),
       });
 
-      [xTgl, xKet, xNom, xSisa].forEach(divX => {
+      [xTgl, xTahap, xNom, xSisa, xCatatan].forEach(divX => {
         page2.drawLine({
           start: { x: divX, y: p2TableY },
           end: { x: divX, y: p2TableY - rowH },
@@ -1135,17 +1141,46 @@ export async function generateF1PdfBytes(
         });
       });
 
-      page2.drawText(String(idx + 1), { x: xNo + 10, y: p2TableY - 15, size: 8, font: fontBold });
-      page2.drawText(cleanSingleLine(formatDateIndonesian(pItem.tanggal)), { x: xTgl + 8, y: p2TableY - 15, size: 8, font: fontRegular });
-      page2.drawText(cleanSingleLine(pItem.keterangan || `Pembayaran Ke-${idx + 1}`), { x: xKet + 8, y: p2TableY - 15, size: 8, font: fontBold });
+      // Stage Title (Hanya berisi pembayaran ke 1 atau DP, atau cicilan ke 2 dst)
+      const isFirst = idx === 0;
+      const isLunasRow = pItem.sisaSetelahBayar === 0;
+      const rawKet = (pItem.keterangan || '').trim();
+      let cleanTahap = '';
+      if (isFirst) {
+        cleanTahap = /dp|uang muka/i.test(rawKet) ? 'Pembayaran DP / Termin 1' : 'Pembayaran Ke-1 (DP)';
+      } else {
+        cleanTahap = isLunasRow ? `Cicilan Ke-${idx + 1} (Pelunasan)` : `Cicilan Ke-${idx + 1}`;
+      }
+
+      // Catatan (Bukti lampiran & info)
+      let cleanCatatan = '';
+      if (pItem.buktiPembayaran?.name) {
+        cleanCatatan = `Bukti: ${pItem.buktiPembayaran.name}`;
+      } else if (rawKet && !rawKet.toLowerCase().includes('cicilan') && !rawKet.toLowerCase().includes('termin') && !rawKet.toLowerCase().includes('dp')) {
+        cleanCatatan = rawKet;
+      } else {
+        cleanCatatan = isLunasRow ? 'Pelunasan penuh terlampir' : 'Bukti transfer terlampir';
+      }
+
+      // Clip catatan string if exceeding column width
+      let displayCatatan = cleanSingleLine(cleanCatatan);
+      while (displayCatatan.length > 5 && fontRegular.widthOfTextAtSize(displayCatatan, rowFontSize - 0.5) > (cCatatanW - 12)) {
+        displayCatatan = displayCatatan.slice(0, -4) + '...';
+      }
+
+      page2.drawText(String(idx + 1), { x: xNo + 8, y: p2TableY - (rowH * 0.65), size: rowFontSize, font: fontBold });
+      page2.drawText(cleanSingleLine(formatDateIndonesian(pItem.tanggal)), { x: xTgl + 6, y: p2TableY - (rowH * 0.65), size: rowFontSize, font: fontRegular });
+      page2.drawText(cleanSingleLine(cleanTahap), { x: xTahap + 6, y: p2TableY - (rowH * 0.65), size: rowFontSize, font: fontBold });
       
       const pNomTxt = `Rp ${formatRupiah(pItem.nominal)}`;
-      const pNomW = fontMonoBold.widthOfTextAtSize(pNomTxt, 8.5);
-      page2.drawText(pNomTxt, { x: xNom + cNomW - pNomW - 8, y: p2TableY - 15, size: 8.5, font: fontMonoBold, color: rgb(6 / 255, 95 / 255, 70 / 255) });
+      const pNomW = fontMonoBold.widthOfTextAtSize(pNomTxt, rowFontSize + 0.5);
+      page2.drawText(pNomTxt, { x: xNom + cNomW - pNomW - 6, y: p2TableY - (rowH * 0.65), size: rowFontSize + 0.5, font: fontMonoBold, color: rgb(6 / 255, 95 / 255, 70 / 255) });
 
       const pSisaTxt = `Rp ${formatRupiah(pItem.sisaSetelahBayar)}`;
-      const pSisaW = fontMonoBold.widthOfTextAtSize(pSisaTxt, 8.5);
-      page2.drawText(pSisaTxt, { x: xSisa + cSisaW - pSisaW - 8, y: p2TableY - 15, size: 8.5, font: fontMonoBold, color: rgb(159 / 255, 18 / 255, 57 / 255) });
+      const pSisaW = fontMonoBold.widthOfTextAtSize(pSisaTxt, rowFontSize + 0.5);
+      page2.drawText(pSisaTxt, { x: xSisa + cSisaW - pSisaW - 6, y: p2TableY - (rowH * 0.65), size: rowFontSize + 0.5, font: fontMonoBold, color: rgb(159 / 255, 18 / 255, 57 / 255) });
+
+      page2.drawText(displayCatatan, { x: xCatatan + 6, y: p2TableY - (rowH * 0.65), size: rowFontSize - 0.5, font: fontRegular, color: rgb(80 / 255, 80 / 255, 80 / 255) });
 
       p2TableY -= rowH;
     });
@@ -1167,7 +1202,7 @@ export async function generateF1PdfBytes(
       color: rgb(0, 0, 0),
     });
 
-    [xTgl, xKet, xNom, xSisa].forEach(divX => {
+    [xTgl, xTahap, xNom, xSisa, xCatatan].forEach(divX => {
       page2.drawLine({
         start: { x: divX, y: p2TableY },
         end: { x: divX, y: p2TableY - p2TotalRowH },
@@ -1176,15 +1211,18 @@ export async function generateF1PdfBytes(
       });
     });
 
-    page2.drawText('TOTAL TERBAYAR AKUMULATIF', { x: xTgl + 8, y: p2TableY - 15, size: 8, font: fontBold });
+    page2.drawText('TOTAL TERBAYAR AKUMULATIF', { x: xTgl + 6, y: p2TableY - 15, size: 7.5, font: fontBold });
     
     const p2GrandPaidTxt = `Rp ${formatRupiah(totalPaid)}`;
-    const p2GrandPaidW = fontMonoBold.widthOfTextAtSize(p2GrandPaidTxt, 8.5);
-    page2.drawText(p2GrandPaidTxt, { x: xNom + cNomW - p2GrandPaidW - 8, y: p2TableY - 15, size: 8.5, font: fontMonoBold, color: rgb(6 / 255, 95 / 255, 70 / 255) });
+    const p2GrandPaidW = fontMonoBold.widthOfTextAtSize(p2GrandPaidTxt, 8.0);
+    page2.drawText(p2GrandPaidTxt, { x: xNom + cNomW - p2GrandPaidW - 6, y: p2TableY - 15, size: 8.0, font: fontMonoBold, color: rgb(6 / 255, 95 / 255, 70 / 255) });
 
     const p2GrandSisaTxt = `Rp ${formatRupiah(remainingBalance)}`;
-    const p2GrandSisaW = fontMonoBold.widthOfTextAtSize(p2GrandSisaTxt, 8.5);
-    page2.drawText(p2GrandSisaTxt, { x: xSisa + cSisaW - p2GrandSisaW - 8, y: p2TableY - 15, size: 8.5, font: fontMonoBold, color: rgb(159 / 255, 18 / 255, 57 / 255) });
+    const p2GrandSisaW = fontMonoBold.widthOfTextAtSize(p2GrandSisaTxt, 8.0);
+    page2.drawText(p2GrandSisaTxt, { x: xSisa + cSisaW - p2GrandSisaW - 6, y: p2TableY - 15, size: 8.0, font: fontMonoBold, color: rgb(159 / 255, 18 / 255, 57 / 255) });
+
+    const statNote = remainingBalance === 0 ? 'Lunas Sepenuhnya' : 'Sisa Menunggu Pelunasan';
+    page2.drawText(statNote, { x: xCatatan + 6, y: p2TableY - 15, size: 7.0, font: fontBold, color: remainingBalance === 0 ? rgb(6 / 255, 95 / 255, 70 / 255) : rgb(159 / 255, 18 / 255, 57 / 255) });
 
     // Table outer border
     page2.drawRectangle({
@@ -1221,54 +1259,6 @@ export async function generateF1PdfBytes(
       size: 7.0,
       font: fontRegular,
       color: rgb(70 / 255, 70 / 255, 70 / 255),
-    });
-
-    // 4 Signatures Block on Page 2
-    const p2SigTopY = Math.max(120, p2TableY - 45);
-    page2.drawText('PENGESAHAN DOKUMEN RINCIAN PEMBAYARAN :', {
-      x: margin,
-      y: p2SigTopY + 12,
-      size: 8.0,
-      font: fontBold,
-      color: rgb(0, 0, 0),
-    });
-
-    signers.forEach((s: any, idx: number) => {
-      const colX = margin + idx * blockW;
-      const titleW = fontBold.widthOfTextAtSize(s.title, 8.5);
-      page2.drawText(s.title, {
-        x: colX + (blockW - titleW) / 2,
-        y: p2SigTopY,
-        size: 8.5,
-        font: fontBold,
-        color: rgb(0, 0, 0),
-      });
-
-      const sigLineY = p2SigTopY - sigBoxH;
-      const nameW = fontBold.widthOfTextAtSize(s.name, 9.0);
-      page2.drawText(s.name, {
-        x: colX + (blockW - nameW) / 2,
-        y: sigLineY + 3,
-        size: 9.0,
-        font: fontBold,
-        color: rgb(0, 0, 0),
-      });
-
-      page2.drawLine({
-        start: { x: colX + 12, y: sigLineY },
-        end: { x: colX + blockW - 12, y: sigLineY },
-        thickness: 1.0,
-        color: rgb(0, 0, 0),
-      });
-
-      const roleW = fontRegular.widthOfTextAtSize(s.role, 7.5);
-      page2.drawText(s.role, {
-        x: colX + (blockW - roleW) / 2,
-        y: sigLineY - 11,
-        size: 7.5,
-        font: fontRegular,
-        color: rgb(0, 0, 0),
-      });
     });
   }
 

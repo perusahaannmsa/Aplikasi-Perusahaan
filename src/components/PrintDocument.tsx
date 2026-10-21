@@ -585,7 +585,7 @@ const PageScaleWrapper: React.FC<{ children: React.ReactNode; isLandscape?: bool
 export const CicilanSheetContent: React.FC<{
   submission: Submission;
   grandTotal: number;
-  f1Signers: SignerConfigItem[];
+  f1Signers?: SignerConfigItem[];
   signatureTableStyle?: string;
   userProfile?: any;
   effectiveLogoUrl?: string;
@@ -652,54 +652,121 @@ export const CicilanSheetContent: React.FC<{
   const percentPaid = totalVoucher > 0 ? Math.min(100, Math.round((totalPaid / totalVoucher) * 100)) : 100;
   const isLunas = submission.status === 'Lunas' || remainingBalance === 0;
 
+  // 🛡️ Helper to cleanly split Tahap/Termin and Catatan / Lampiran
+  const parseTahapDanCatatan = (item: CicilanPaymentRecord, idx: number, totalCount: number) => {
+    const isFirst = idx === 0;
+    const isLunasRow = item.sisaSetelahBayar === 0;
+    const rawKet = (item.keterangan || '').trim();
+
+    // 1. Stage Title (HANYA berisi pembayaran ke 1 atau DP, atau cicilan ke 2 dan seterusnya)
+    let tahapTitle = '';
+    if (isFirst) {
+      if (/dp|uang muka/i.test(rawKet)) {
+        tahapTitle = 'Pembayaran DP / Termin Ke-1';
+      } else if (/termin\s*1|ke-?1/i.test(rawKet)) {
+        tahapTitle = 'Pembayaran Ke-1 (Termin 1)';
+      } else {
+        tahapTitle = 'Pembayaran Ke-1 (DP)';
+      }
+    } else {
+      const stageNum = idx + 1;
+      if (isLunasRow) {
+        tahapTitle = `Cicilan Ke-${stageNum} (Pelunasan)`;
+      } else {
+        tahapTitle = `Cicilan Ke-${stageNum}`;
+      }
+    }
+
+    // 2. Catatan (keterangan seperti bukti bayar pembayaran terlampir, nomor referensi, dsb.)
+    const catatanParts: string[] = [];
+    
+    // Extract custom note if user typed one that isn't just generic stage name
+    if (rawKet) {
+      const isGeneric = 
+        /^(pembayaran dp|termin ke-1|pembayaran dp \/ termin ke-1|cicilan lanjutan|cicilan ke-\d+|pelunasan penuh|pembayaran cicilan)$/i.test(rawKet);
+      if (!isGeneric) {
+        catatanParts.push(rawKet);
+      }
+    }
+
+    // Add proof attachment note
+    if (item.buktiPembayaran?.name) {
+      catatanParts.push(`Bukti: ${item.buktiPembayaran.name}`);
+    } else if (item.buktiPembayaran?.url) {
+      catatanParts.push('Bukti transfer terlampir');
+    }
+
+    if (catatanParts.length === 0) {
+      catatanParts.push(isLunasRow ? 'Bukti transfer pelunasan terlampir' : 'Bukti transfer terlampir');
+    }
+
+    return {
+      tahapTitle,
+      catatanText: catatanParts.join(' • ')
+    };
+  };
+
+  // 🛡️ Adaptive density & 1-page fit calculation:
+  const count = historyPayments.length;
+  const isUltraDense = count > 12;
+  const isDense = count > 6 && count <= 12;
+  const isCompact = count > 3 && count <= 6;
+
+  const spacingClass = isUltraDense ? 'space-y-1.5' : isDense ? 'space-y-2' : isCompact ? 'space-y-2.5' : 'space-y-3.5';
+  const tablePadY = isUltraDense ? 'py-1' : isDense ? 'py-1.5' : 'py-2';
+  const tableTextSize = isUltraDense ? 'text-[8.5px]' : isDense ? 'text-[9.5px]' : 'text-[10.5px]';
+
   return (
     <PageScaleWrapper isLandscape={false} isLastPage={isLastPage}>
-      <div className="w-[210mm] max-w-full print:!w-full print:!max-w-full min-h-[297mm] print:h-[297mm] bg-white p-[12mm] border border-stone-250 shadow-md rounded-xl print:shadow-none print:border-none print:rounded-none print:!p-0 print:!m-0 page-break flex flex-col justify-between box-border overflow-hidden">
+      {/* Lembar cicilan dirancang pas dan ringkas (tidak memanjang ke bawah berlebihan & pas 1 halaman) */}
+      <div className={`w-[210mm] max-w-full print:!w-full print:!max-w-full bg-white ${
+        isUltraDense ? 'p-[6mm]' : isDense ? 'p-[8mm]' : 'p-[10mm]'
+      } border border-stone-250 shadow-md rounded-xl print:shadow-none print:border-none print:rounded-none print:!p-0 print:!m-0 page-break flex flex-col box-border overflow-hidden print:overflow-hidden print:max-h-[285mm]`}>
         
         {/* Main Content Area */}
-        <div className="space-y-4">
+        <div className={spacingClass}>
           
           {/* 1. Header (Corporate Logo + Code + Date + QR) */}
-          <div className="flex justify-between items-start border-b-[2px] border-black pb-3">
-            <NusantaraLogo size="md" className="items-start text-left" companyName={userProfile?.companyName} logoUrl={effectiveLogoUrl} />
-            <div className="flex items-start gap-3">
+          <div className="flex justify-between items-start border-b-[2px] border-black pb-2.5">
+            <NusantaraLogo size={isUltraDense || isDense ? "sm" : "md"} className="items-start text-left" companyName={userProfile?.companyName} logoUrl={effectiveLogoUrl} />
+            <div className="flex items-start gap-2.5">
               <div className="text-right">
-                <div className="inline-block border-[1.5px] border-black px-3 py-1 bg-stone-50 text-xs font-mono font-bold text-stone-900 rounded-xs">
+                <div className="inline-block border-[1.5px] border-black px-2.5 py-0.5 bg-stone-50 text-xs font-mono font-bold text-stone-900 rounded-xs">
                   {submission.kode || '-'}
                 </div>
-                <div className="text-[11px] font-sans font-semibold text-stone-700 mt-1">
+                <div className="text-[10.5px] font-sans font-semibold text-stone-700 mt-0.5">
                   Tanggal: {formatDateIndonesian(submission.tanggal)}
                 </div>
-                <div className="text-[9.5px] font-mono text-amber-800 font-bold uppercase tracking-wider mt-0.5">
+                <div className="text-[9px] font-mono text-amber-800 font-bold uppercase tracking-wider mt-0.5">
                   Lampiran Khusus Formulir F1
                 </div>
               </div>
-              <QrCodeWrapper submission={submission} grandTotal={grandTotal} size={48} />
+              <QrCodeWrapper submission={submission} grandTotal={grandTotal} size={isUltraDense ? 36 : (isDense ? 40 : 46)} />
             </div>
           </div>
 
           {/* 2. Document Title Banner */}
-          <div className="border-[2px] border-black bg-stone-100 py-2.5 px-4 text-center">
-            <h1 className="text-base font-bold text-black uppercase tracking-wider font-sans">
+          <div className={`border-[2px] border-black bg-stone-100 ${isUltraDense ? 'py-1 px-2' : isDense ? 'py-1.5 px-3' : 'py-2 px-4'} text-center`}>
+            <h1 className={`${isUltraDense ? 'text-xs' : 'text-sm sm:text-base'} font-bold text-black uppercase tracking-wider font-sans`}>
               LEMBAR RINCIAN PEMBAYARAN BERTAHAP / CICILAN
             </h1>
-            <p className="text-[10px] font-medium text-stone-600 uppercase tracking-widest mt-0.5">
+            <p className="text-[9.5px] font-medium text-stone-600 uppercase tracking-widest mt-0.5">
               Lampiran Resmi Bukti Pengeluaran Kas / Bank (Voucher Ref: {submission.kode})
             </p>
           </div>
 
           {/* 3. Transaction & Beneficiary Information */}
-          <div className="border border-black p-3 bg-stone-50/40 text-xs font-sans">
-            <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+          <div className={`border border-black ${isUltraDense ? 'p-1.5 text-[10px]' : 'p-2.5 text-[11px]'} bg-stone-50/40 font-sans`}>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
               <div className="flex items-start">
-                <span className="w-36 font-bold text-stone-700 shrink-0">Dibayarkan Kepada</span>
-                <span className="mr-2 font-bold">:</span>
-                <span className="font-extrabold text-black">{submission.dibayarkanKepada || '-'}</span>
+                <span className="w-32 font-bold text-stone-700 shrink-0">Dibayarkan Kepada</span>
+                <span className="mr-1.5 font-bold">:</span>
+                <span className="font-extrabold text-black truncate">{submission.dibayarkanKepada || '-'}</span>
               </div>
               <div className="flex items-start">
-                <span className="w-36 font-bold text-stone-700 shrink-0">Status Pembayaran</span>
-                <span className="mr-2 font-bold">:</span>
-                <span className={`inline-block px-2 py-0.5 text-[10px] font-mono font-extrabold uppercase border rounded-xs ${
+                <span className="w-32 font-bold text-stone-700 shrink-0">Status Pembayaran</span>
+                <span className="mr-1.5 font-bold">:</span>
+                <span className={`inline-block px-2 py-0.5 text-[9.5px] font-mono font-extrabold uppercase border rounded-xs ${
                   isLunas 
                     ? 'bg-emerald-100 text-emerald-900 border-emerald-500' 
                     : 'bg-amber-100 text-amber-900 border-amber-500'
@@ -708,22 +775,22 @@ export const CicilanSheetContent: React.FC<{
                 </span>
               </div>
               <div className="flex items-start">
-                <span className="w-36 font-bold text-stone-700 shrink-0">Jenis Pengajuan</span>
-                <span className="mr-2 font-bold">:</span>
-                <span className="font-medium text-stone-800">{submission.jenisPengajuan || '-'}</span>
+                <span className="w-32 font-bold text-stone-700 shrink-0">Jenis Pengajuan</span>
+                <span className="mr-1.5 font-bold">:</span>
+                <span className="font-medium text-stone-800 truncate">{submission.jenisPengajuan || '-'}</span>
               </div>
               <div className="flex items-start">
-                <span className="w-36 font-bold text-stone-700 shrink-0">Metode & Rekening</span>
-                <span className="mr-2 font-bold">:</span>
-                <span className="font-mono text-stone-800">
+                <span className="w-32 font-bold text-stone-700 shrink-0">Metode & Rekening</span>
+                <span className="mr-1.5 font-bold">:</span>
+                <span className="font-mono text-stone-800 truncate">
                   {submission.dibayarkanDengan || 'Transfer'} 
                   {submission.rekeningTujuan ? ` • ${submission.rekeningTujuan}` : ''}
                 </span>
               </div>
               {submission.cicilanNotes && (
-                <div className="flex items-start col-span-2 border-t border-stone-200 pt-1.5 mt-0.5">
-                  <span className="w-36 font-bold text-stone-700 shrink-0">Keterangan Termin</span>
-                  <span className="mr-2 font-bold">:</span>
+                <div className="flex items-start col-span-2 border-t border-stone-200 pt-1 mt-0.5">
+                  <span className="w-32 font-bold text-stone-700 shrink-0">Keterangan Termin</span>
+                  <span className="mr-1.5 font-bold">:</span>
                   <span className="font-semibold text-amber-950 italic">{submission.cicilanNotes}</span>
                 </div>
               )}
@@ -731,62 +798,62 @@ export const CicilanSheetContent: React.FC<{
           </div>
 
           {/* 4. Financial Summary Cards (3 KPI Boxes) */}
-          <div className="grid grid-cols-3 gap-3 font-mono">
+          <div className="grid grid-cols-3 gap-2.5 font-mono">
             {/* Box 1: Total Nilai Tagihan */}
-            <div className="border-[1.5px] border-black p-2.5 bg-stone-50 rounded-xs text-left">
-              <span className="text-[9px] uppercase tracking-wider font-sans font-bold text-stone-500 block">
+            <div className={`border-[1.5px] border-black ${isUltraDense ? 'p-1.5' : 'p-2'} bg-stone-50 rounded-xs text-left`}>
+              <span className="text-[8.5px] uppercase tracking-wider font-sans font-bold text-stone-500 block">
                 Total Nilai Tagihan
               </span>
-              <div className="text-base font-black text-black mt-0.5">
+              <div className={`${isUltraDense ? 'text-xs' : 'text-sm'} font-black text-black mt-0.5`}>
                 Rp {formatRupiah(totalVoucher)}
               </div>
-              <div className="text-[8.5px] italic font-sans text-stone-600 line-clamp-1 mt-1">
+              <div className="text-[8px] italic font-sans text-stone-600 line-clamp-1 mt-0.5">
                 "{numberToTerbilang(totalVoucher)}"
               </div>
             </div>
 
             {/* Box 2: Total Realisasi Pembayaran */}
-            <div className="border-[1.5px] border-emerald-800 p-2.5 bg-emerald-50/60 rounded-xs text-left">
+            <div className={`border-[1.5px] border-emerald-800 ${isUltraDense ? 'p-1.5' : 'p-2'} bg-emerald-50/60 rounded-xs text-left`}>
               <div className="flex justify-between items-center">
-                <span className="text-[9px] uppercase tracking-wider font-sans font-bold text-emerald-800 block">
+                <span className="text-[8.5px] uppercase tracking-wider font-sans font-bold text-emerald-800 block">
                   Total Terbayar
                 </span>
-                <span className="text-[9px] font-bold text-emerald-900 bg-emerald-200/80 px-1 rounded">
+                <span className="text-[8.5px] font-bold text-emerald-900 bg-emerald-200/80 px-1 rounded">
                   {percentPaid}%
                 </span>
               </div>
-              <div className="text-base font-black text-emerald-900 mt-0.5">
+              <div className={`${isUltraDense ? 'text-xs' : 'text-sm'} font-black text-emerald-900 mt-0.5`}>
                 Rp {formatRupiah(totalPaid)}
               </div>
-              <div className="text-[8.5px] font-sans font-semibold text-emerald-800 mt-1">
+              <div className="text-[8px] font-sans font-semibold text-emerald-800 mt-0.5">
                 {historyPayments.length} kali pencairan termin
               </div>
             </div>
 
             {/* Box 3: Sisa Belum Lunas */}
-            <div className={`border-[1.5px] p-2.5 rounded-xs text-left ${
+            <div className={`border-[1.5px] ${isUltraDense ? 'p-1.5' : 'p-2'} rounded-xs text-left ${
               remainingBalance === 0 
                 ? 'border-emerald-800 bg-emerald-50/60' 
                 : 'border-rose-800 bg-rose-50/60'
             }`}>
               <div className="flex justify-between items-center">
-                <span className={`text-[9px] uppercase tracking-wider font-sans font-bold block ${
+                <span className={`text-[8.5px] uppercase tracking-wider font-sans font-bold block ${
                   remainingBalance === 0 ? 'text-emerald-800' : 'text-rose-800'
                 }`}>
                   Sisa Tagihan
                 </span>
-                <span className={`text-[9px] font-bold px-1 rounded ${
+                <span className={`text-[8.5px] font-bold px-1 rounded ${
                   remainingBalance === 0 ? 'text-emerald-900 bg-emerald-200/80' : 'text-rose-900 bg-rose-200/80'
                 }`}>
                   {remainingBalance === 0 ? '0%' : `${100 - percentPaid}%`}
                 </span>
               </div>
-              <div className={`text-base font-black mt-0.5 ${
+              <div className={`${isUltraDense ? 'text-xs' : 'text-sm'} font-black mt-0.5 ${
                 remainingBalance === 0 ? 'text-emerald-900' : 'text-rose-900'
               }`}>
                 Rp {formatRupiah(remainingBalance)}
               </div>
-              <div className={`text-[8.5px] font-sans font-semibold mt-1 ${
+              <div className={`text-[8px] font-sans font-semibold mt-0.5 ${
                 remainingBalance === 0 ? 'text-emerald-800' : 'text-rose-800'
               }`}>
                 {remainingBalance === 0 ? 'Lunas Sepenuhnya' : 'Menunggu Pelunasan'}
@@ -794,63 +861,71 @@ export const CicilanSheetContent: React.FC<{
             </div>
           </div>
 
-          {/* 5. Detailed Payment Schedule & Realization Table */}
+          {/* 5. Detailed Payment Schedule & Realization Table (Dengan Kolom Catatan Samping Sisa Tagihan) */}
           <div className="border-[1.5px] border-black overflow-hidden bg-white">
-            <div className="bg-stone-200 px-3 py-1.5 border-b-[1.5px] border-black flex justify-between items-center">
-              <span className="text-xs font-bold text-black uppercase tracking-wider font-sans">
+            <div className="bg-stone-200 px-3 py-1 border-b-[1.5px] border-black flex justify-between items-center">
+              <span className="text-[11px] font-bold text-black uppercase tracking-wider font-sans">
                 Rincian Riwayat Pembayaran & Pelunasan Bertahap
               </span>
-              <span className="text-[10px] font-mono text-stone-700">
+              <span className="text-[9.5px] font-mono text-stone-700">
                 Total: {historyPayments.length} Tahapan
               </span>
             </div>
 
-            <table className="w-full text-xs font-mono border-collapse">
+            <table className={`w-full ${tableTextSize} font-mono border-collapse table-fixed`}>
               <thead>
-                <tr className="bg-stone-100 border-b border-black text-black font-bold text-[10.5px]">
-                  <th className="py-2 px-2 text-center w-10 border-r border-black">NO</th>
-                  <th className="py-2 px-3 text-left w-36 border-r border-black">TANGGAL BAYAR</th>
-                  <th className="py-2 px-3 text-left border-r border-black">TAHAP / TERMIN PEMBAYARAN</th>
-                  <th className="py-2 px-3 text-right w-44 border-r border-black">NOMINAL DIBAYAR</th>
-                  <th className="py-2 px-3 text-right w-44">SISA TAGIHAN</th>
+                <tr className="bg-stone-100 border-b border-black text-black font-bold text-[9.5px]">
+                  <th className="py-1.5 px-1.5 text-center w-[5%] border-r border-black">NO</th>
+                  <th className="py-1.5 px-2 text-left w-[16%] border-r border-black">TANGGAL BAYAR</th>
+                  <th className="py-1.5 px-2 text-left w-[22%] border-r border-black">TAHAP / TERMIN PEMBAYARAN</th>
+                  <th className="py-1.5 px-2 text-right w-[18%] border-r border-black">NOMINAL DIBAYAR</th>
+                  <th className="py-1.5 px-2 text-right w-[17%] border-r border-black">SISA TAGIHAN</th>
+                  <th className="py-1.5 px-2 text-left w-[22%]">CATATAN</th>
                 </tr>
               </thead>
               <tbody>
-                {historyPayments.map((item, idx) => (
-                  <tr key={item.id || idx} className="border-b border-stone-300 last:border-b-0 hover:bg-stone-50">
-                    <td className="py-2 px-2 text-center border-r border-black font-bold text-stone-600">
-                      {idx + 1}
-                    </td>
-                    <td className="py-2 px-3 font-semibold text-black border-r border-black">
-                      {formatDateIndonesian(item.tanggal)}
-                    </td>
-                    <td className="py-2 px-3 text-stone-900 border-r border-black font-sans">
-                      <div className="font-bold">{item.keterangan || `Pembayaran Termin Ke-${idx + 1}`}</div>
-                      {item.buktiPembayaran?.name && (
-                        <div className="text-[9px] text-stone-500 font-mono flex items-center gap-1 mt-0.5">
-                          <span>📎 Bukti: {item.buktiPembayaran.name}</span>
+                {historyPayments.map((item, idx) => {
+                  const { tahapTitle, catatanText } = parseTahapDanCatatan(item, idx, historyPayments.length);
+                  return (
+                    <tr key={item.id || idx} className="border-b border-stone-300 last:border-b-0 hover:bg-stone-50">
+                      <td className={`${tablePadY} px-1.5 text-center border-r border-black font-bold text-stone-600`}>
+                        {idx + 1}
+                      </td>
+                      <td className={`${tablePadY} px-2 font-semibold text-black border-r border-black truncate`}>
+                        {formatDateIndonesian(item.tanggal)}
+                      </td>
+                      <td className={`${tablePadY} px-2 text-stone-900 border-r border-black font-sans font-bold truncate`}>
+                        {tahapTitle}
+                      </td>
+                      <td className={`${tablePadY} px-2 text-right font-mono font-bold text-emerald-800 border-r border-black truncate`}>
+                        Rp {formatRupiah(item.nominal)}
+                      </td>
+                      <td className={`${tablePadY} px-2 text-right font-mono font-bold text-rose-800 border-r border-black truncate`}>
+                        Rp {formatRupiah(item.sisaSetelahBayar)}
+                      </td>
+                      <td className={`${tablePadY} px-2 text-stone-700 font-sans text-[8.5px] leading-tight break-words overflow-hidden`}>
+                        <div className="flex items-start gap-1">
+                          <span className="shrink-0 text-stone-400">📎</span>
+                          <span className="break-all line-clamp-2" title={catatanText}>{catatanText}</span>
                         </div>
-                      )}
-                    </td>
-                    <td className="py-2 px-3 text-right font-mono font-bold text-emerald-800 border-r border-black">
-                      Rp {formatRupiah(item.nominal)}
-                    </td>
-                    <td className="py-2 px-3 text-right font-mono font-bold text-rose-800">
-                      Rp {formatRupiah(item.sisaSetelahBayar)}
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
               <tfoot>
-                <tr className="bg-stone-100 border-t-[1.5px] border-black font-bold">
-                  <td colSpan={3} className="py-2 px-3 text-center border-r border-black uppercase tracking-wider text-[11px] font-sans">
+                <tr className="bg-stone-100 border-t-[1.5px] border-black font-bold text-[9.5px]">
+                  <td colSpan={3} className="py-1.5 px-2 text-center border-r border-black uppercase tracking-wider font-sans">
                     TOTAL AKUMULASI TERBAYAR
                   </td>
-                  <td className="py-2 px-3 text-right font-mono text-emerald-900 text-sm border-r border-black">
+                  <td className="py-1.5 px-2 text-right font-mono text-emerald-900 border-r border-black truncate">
                     Rp {formatRupiah(totalPaid)}
                   </td>
-                  <td className={`py-2 px-3 text-right font-mono text-sm ${remainingBalance === 0 ? 'text-emerald-900' : 'text-rose-900'}`}>
+                  <td className={`py-1.5 px-2 text-right font-mono border-r border-black truncate ${remainingBalance === 0 ? 'text-emerald-900' : 'text-rose-900'}`}>
                     Rp {formatRupiah(remainingBalance)}
+                  </td>
+                  <td className="py-1.5 px-2 text-left font-sans text-[8.5px] text-stone-700 font-semibold truncate">
+                    {remainingBalance === 0 ? '✓ Lunas Sepenuhnya' : 'Sisa Menunggu Pelunasan'}
                   </td>
                 </tr>
               </tfoot>
@@ -858,25 +933,13 @@ export const CicilanSheetContent: React.FC<{
           </div>
 
           {/* 6. Legal / Audit Notes Box */}
-          <div className="border border-black p-2.5 bg-stone-50/50 rounded-xs text-[10px] font-sans text-stone-700 leading-snug">
+          <div className="border border-black p-2 bg-stone-50/50 rounded-xs text-[9px] font-sans text-stone-700 leading-snug">
             <span className="font-bold text-black uppercase block mb-0.5">Catatan Validasi Kas & Verifikasi Bank:</span>
             <p>
               Dokumen ini merupakan lampiran rincian resmi pembayaran transaksi bertahap/cicilan yang terhubung secara sah dengan Voucher Pengeluaran Kas/Bank ({submission.kode}). Seluruh mutasi pembayaran telah dicocokkan dengan rekening koran, bukti transfer perbankan, dan disahkan oleh pihak yang berwenang.
             </p>
           </div>
 
-        </div>
-
-        {/* 7. Bottom Signatures Block (4 Signers matching F1) */}
-        <div className="mt-auto pt-4">
-          <div className="text-[10px] font-bold text-black uppercase tracking-wider mb-1 font-sans text-left">
-            PENGESAHAN DOKUMEN PEMBAYARAN BERTAHAP :
-          </div>
-          <F1SignaturesBlock
-            signers={f1Signers}
-            style={signatureTableStyle === 'line' ? 'line' : 'table'}
-            density="normal"
-          />
         </div>
 
       </div>
