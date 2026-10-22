@@ -1997,9 +1997,7 @@ export function AccuratePettyCashMapping({
 
     // If NO LPJ document is attached:
     if (!docUrl) {
-      setErrorMessage(`Voucher [${sub.kode}] belum memiliki berkas fisik Lampiran Pertanggung Jawaban (LPJ). Silakan unggah berkas LPJ (PDF/Excel/Foto) terlebih dahulu atau gunakan tab "Copy & Paste Teks Tabel".`);
-      setSelectedVoucherForModal(sub);
-      setIsVoucherModalOpen(true);
+      setErrorMessage(`Voucher [${sub.kode}] belum memiliki berkas fisik Lampiran Pertanggung Jawaban (LPJ). Silakan klik "Pilih Dokumen" untuk mengunggah berkas LPJ atau gunakan tab "Copy & Paste Teks Tabel".`);
       return;
     }
 
@@ -2170,6 +2168,13 @@ export function AccuratePettyCashMapping({
         setActiveTab('workspace');
         setSuccessMessage(`Berhasil membaca berkas LPJ Lapangan "${docName || 'Petty Cash'}" & memetakan ${mappedTxs.length} rincian transaksi pengeluaran!`);
 
+        setTimeout(() => {
+          const tableEl = document.getElementById('accurate-mapped-table-section');
+          if (tableEl) {
+            tableEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        }, 150);
+
         const newMapping: AccurateMappingReport = {
           id: `vh-map-${sub.id}`,
           title: reportTitleText,
@@ -2198,15 +2203,11 @@ export function AccuratePettyCashMapping({
         return;
       } else {
         // DO NOT MAP sub.items! Inform user clearly so they can inspect or paste text
-        setErrorMessage(`Tidak dapat mengekstrak rincian transaksi secara otomatis dari berkas LPJ "${docName}". Dokumen mungkin berupa scan foto/gambar tanpa teks digital. Silakan buka Pratinjau Dokumen untuk memeriksa berkas, atau salin-tempel baris nota pada tab "Copy & Paste Teks Tabel".`);
-        setSelectedVoucherForModal(sub);
-        setIsVoucherModalOpen(true);
+        setErrorMessage(`Tidak dapat mengekstrak rincian transaksi secara otomatis dari berkas LPJ "${docName}". Dokumen mungkin berupa scan foto/gambar tanpa teks digital. Silakan klik tombol "Pilih Dokumen" untuk memeriksa berkas, atau salin-tempel baris nota pada tab "Copy & Paste Teks Tabel".`);
       }
     } catch (err: any) {
       console.warn('Ekstraksi berkas LPJ gagal:', err);
       setErrorMessage(`Gagal membaca berkas LPJ "${docName}": ${err.message || 'Format tidak didukung'}. Silakan periksa dokumen atau gunakan tab "Copy & Paste Teks Tabel".`);
-      setSelectedVoucherForModal(sub);
-      setIsVoucherModalOpen(true);
     } finally {
       setIsProcessing(false);
     }
