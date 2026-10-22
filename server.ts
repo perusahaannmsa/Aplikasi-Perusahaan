@@ -93,115 +93,11 @@ function getGeminiClient() {
 }
 
 const PRIMARY_GEMINI_MODELS = [
-  "gemini-flash-latest",
   "gemini-3.8-flash",
+  "gemini-flash-latest",
   "gemini-3.1-flash-lite",
+  "gemini-3.1-pro-preview",
 ];
-
-// Helper to safely parse JSON from Gemini text response even if wrapped in markdown
-export function parseJsonSafely(text: string): any {
-  if (!text) return null;
-  let clean = text.trim();
-  const jsonBlock = clean.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-  if (jsonBlock) {
-    clean = jsonBlock[1].trim();
-  } else if (clean.startsWith("```")) {
-    clean = clean.replace(/^```[a-z]*\s*/i, "").replace(/\s*```$/, "").trim();
-  }
-  try {
-    return JSON.parse(clean);
-  } catch (e) {
-    const firstBrace = clean.indexOf('{');
-    const lastBrace = clean.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-      try {
-        return JSON.parse(clean.substring(firstBrace, lastBrace + 1));
-      } catch (_) {}
-    }
-    const firstBracket = clean.indexOf('[');
-    const lastBracket = clean.lastIndexOf(']');
-    if (firstBracket !== -1 && lastBracket > firstBracket) {
-      try {
-        return JSON.parse(clean.substring(firstBracket, lastBracket + 1));
-      } catch (_) {}
-    }
-    return null;
-  }
-}
-
-// Normalize petty cash extraction results into uniform schema
-export function normalizePettyCashExtraction(parsedData: any, accounts: any[] = []): any {
-  if (!parsedData || typeof parsedData !== "object") return null;
-
-  let rawList: any[] = [];
-  let reportTitle = parsedData.reportTitle || parsedData.title || parsedData.judul || "Rekap Dokumen Petty Cash";
-  let period = parsedData.period || parsedData.periode || new Date().toISOString().substring(0, 7);
-  let custodianName = parsedData.custodianName || parsedData.penanggungJawab || parsedData.workerName || "";
-
-  if (Array.isArray(parsedData)) {
-    rawList = parsedData;
-  } else if (Array.isArray(parsedData.transactions)) {
-    rawList = parsedData.transactions;
-  } else if (Array.isArray(parsedData.transaksi)) {
-    rawList = parsedData.transaksi;
-  } else if (parsedData.result && (Array.isArray(parsedData.result.transactions) || Array.isArray(parsedData.result))) {
-    rawList = Array.isArray(parsedData.result) ? parsedData.result : parsedData.result.transactions;
-    if (parsedData.result.reportTitle) reportTitle = parsedData.result.reportTitle;
-    if (parsedData.result.period) period = parsedData.result.period;
-  } else if (parsedData.data && (Array.isArray(parsedData.data.transactions) || Array.isArray(parsedData.data))) {
-    rawList = Array.isArray(parsedData.data) ? parsedData.data : parsedData.data.transactions;
-    if (parsedData.data.reportTitle) reportTitle = parsedData.data.reportTitle;
-    if (parsedData.data.period) period = parsedData.data.period;
-  } else if (Array.isArray(parsedData.items)) {
-    rawList = parsedData.items;
-  } else if (Array.isArray(parsedData.rincian)) {
-    rawList = parsedData.rincian;
-  } else if (parsedData.amount || parsedData.totalExpense || parsedData.description || parsedData.uraian) {
-    rawList = [parsedData];
-  }
-
-  if (rawList.length === 0) return null;
-
-  const transactions = rawList.map((t: any, idx: number) => {
-    let amt = Number(t.amount ?? t.nominal ?? t.total ?? t.biaya ?? 0);
-    if (isNaN(amt) || amt === 0) {
-      const match = String(t.amount || t.nominal || "").match(/[\d\.]+/);
-      if (match) amt = parseFloat(match[0].replace(/\./g, '')) || 0;
-    }
-    const desc = t.description || t.uraian || t.keterangan || t.nama || `Transaksi ${idx + 1}`;
-    let code = t.accurateAccountCode || t.kodeAkun || "";
-    let name = t.accurateAccountName || t.namaAkun || "";
-
-    if (!code && Array.isArray(accounts) && accounts.length > 0) {
-      const matched = accounts.find((a: any) => desc.toLowerCase().includes((a.name || '').toLowerCase())) || accounts[0];
-      if (matched) {
-        code = matched.code;
-        name = matched.name;
-      }
-    }
-
-    return {
-      date: t.date || t.tanggal || new Date().toISOString().substring(0, 10),
-      description: desc,
-      amount: amt,
-      recipient: t.recipient || t.penerima || t.toko || "",
-      accurateAccountCode: code || "5-1900",
-      accurateAccountName: name || "Biaya Operasional Lain-lain",
-      confidence: t.confidence || "high"
-    };
-  });
-
-  const totalExpense = transactions.reduce((sum: number, t: any) => sum + t.amount, 0);
-
-  return {
-    reportTitle,
-    period,
-    totalExpense,
-    custodianName,
-    transactions
-  };
-}
-
 
 // Normalize MIME types from base64 signature for robust document reading
 export function normalizeDocumentMimeType(cleanBase64: string, fallbackMime?: string): string {
@@ -315,7 +211,13 @@ Ekstrak informasi kwitansi/faktur/nota belanja ini ke dalam JSON valid:
       },
     });
 
-    const parsedData = parseJsonSafely(response.text || "") || {};
+    let textClean = (response.text || "").trim();
+    if (textClean.startsWith("```json")) {
+      textClean = textClean.replace(/^```json\s*/, "").replace(/\s*```$/, "");
+    } else if (textClean.startsWith("```")) {
+      textClean = textClean.replace(/^```\s*/, "").replace(/\s*```$/, "");
+    }
+    const parsedData = JSON.parse(textClean || "{}");
     return res.json({ success: true, result: parsedData });
   } catch (error: any) {
     console.error("Error in parse-receipt:", error);
@@ -374,59 +276,144 @@ async function extractTextFromPdfBuffer(buffer: Buffer): Promise<string> {
     parser = new PDFParse({ data: buffer });
     await parser.load();
     const res = await parser.getText();
-    return res?.text || '';
+    if (res?.text && res.text.trim().length > 10) {
+      return res.text;
+    }
   } catch (err: any) {
     console.warn("PDF extraction error:", err?.message || err);
-    return '';
   } finally {
     if (parser) {
       try { await parser.destroy(); } catch (_) {}
     }
   }
+
+  // Secondary text extraction fallback for stream-based PDF buffers
+  try {
+    const rawStr = buffer.toString("latin1");
+    const extractedParts: string[] = [];
+    const btRegex = /BT[\s\S]*?ET/g;
+    let match;
+    while ((match = btRegex.exec(rawStr)) !== null) {
+      const block = match[0];
+      const tjRegex = /\(([^)]+)\)\s*(?:Tj|'|")/g;
+      let tjMatch;
+      let line = "";
+      while ((tjMatch = tjRegex.exec(block)) !== null) {
+        line += tjMatch[1] + " ";
+      }
+      if (line.trim().length > 2) {
+        extractedParts.push(line.trim());
+      }
+    }
+    if (extractedParts.length > 0) {
+      return extractedParts.join("\n");
+    }
+  } catch (rawErr) {
+    console.warn("Raw PDF stream extract error:", rawErr);
+  }
+
+  return '';
 }
 
 function heuristicParsePettyCashText(text: string, accounts: any[] = []) {
+  const MONTHS: Record<string, string> = {
+    jan: "01", januari: "01",
+    feb: "02", februari: "02",
+    mar: "03", maret: "03",
+    apr: "04", april: "04",
+    mei: "05", may: "05",
+    jun: "06", juni: "06",
+    jul: "07", juli: "07",
+    agu: "08", agt: "08", agustus: "08",
+    sep: "09", september: "09",
+    okt: "10", oktober: "10",
+    nov: "11", november: "11",
+    des: "12", desember: "12"
+  };
+
   const lines = text.split(/\r?\n/);
   const transactions: any[] = [];
-  
-  const dateRegex = /(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}|\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2})/;
+  let detectedPeriod = "";
+  let detectedCustodian = "";
+  let explicitTotal = 0;
 
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
-    if (!line || line.length < 5) continue;
-    // Skip summary / header lines
-    if (/^\s*(total|saldo|grand\s*total|subtotal|periode|laporan|hal|page|no\b|tanggal\b|keterangan\b|jumlah\b)/i.test(line)) continue;
+  for (let rawLine of lines) {
+    let line = rawLine.trim();
+    if (!line || line.length < 3) continue;
 
-    // extract date
-    const dateMatch = line.match(dateRegex);
-    let dateStr = dateMatch ? dateMatch[1] : '';
-    if (dateStr) {
-      const parts = dateStr.split(/[\/\-\.]/);
-      if (parts.length === 3) {
-        if (parts[0].length === 4) {
-          dateStr = `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
-        } else if (parts[2].length === 4) {
-          dateStr = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+    // Detect custodian if mentioned in header
+    const custMatch = line.match(/(?:pemegang|custodian|nama|petugas|penanggung\s*jawab)\s*[:=]\s*([A-Za-z\s]+)/i);
+    if (custMatch && !detectedCustodian && custMatch[1].trim().length > 2 && !/laporan|petty|kas/i.test(custMatch[1])) {
+      detectedCustodian = custMatch[1].trim();
+    }
+
+    // Detect period if mentioned in header
+    const periodMatch = line.match(/(?:periode|bulan)\s*[:=]?\s*([0-9]{4}[-\/][0-9]{1,2}|[A-Za-z]+\s+[0-9]{4})/i);
+    if (periodMatch && !detectedPeriod) {
+      detectedPeriod = periodMatch[1].trim();
+    }
+
+    // Skip table headers and separator lines
+    if (/^\s*(no|nomor)\s*[\.\:\t\|]?\s*(tanggal|tgl|date|keterangan|uraian|item|deskripsi|debet|jumlah|nominal|amount)/i.test(line)) continue;
+    if (/^[\s\-\=\_\*\#\|]+$/.test(line)) continue;
+
+    // Detect explicit grand total
+    const totalMatch = line.match(/(?:grand\s*total|total\s*pengeluaran|total\s*biaya|total\s*keseluruhan)\s*[:=]?\s*(?:rp\.?\s*)?([0-9]{1,3}(?:\.[0-9]{3})+(?:,[0-9]+)?|[0-9]{4,})/i);
+    if (totalMatch) {
+      explicitTotal = parseFloat(totalMatch[1].replace(/\./g, '').replace(/,/g, '.')) || 0;
+      continue;
+    }
+
+    // Remove leading numbering like "1.", "1 |", "No. 1 ", "No. 1 |"
+    line = line.replace(/^\s*(?:no\.?\s*)?\d+\s*[\.\)\|\:\-]\s*/i, "");
+
+    // Extract Date
+    let dateStr = "";
+    const textDateMatch = line.match(/(\d{1,2})\s+(jan(?:uari)?|feb(?:ruari)?|mar(?:et)?|apr(?:il)?|mei|may|jun(?:i)?|jul(?:i)?|agu(?:stus)?|agt|sep(?:tember)?|okt(?:ober)?|nov(?:ember)?|des(?:ember)?)\s+(\d{4})/i);
+    if (textDateMatch) {
+      const d = textDateMatch[1].padStart(2, "0");
+      const m = MONTHS[textDateMatch[2].toLowerCase().slice(0, 3)] || "01";
+      const y = textDateMatch[3];
+      dateStr = `${y}-${m}-${d}`;
+      line = line.replace(textDateMatch[0], " ");
+    } else {
+      const numDateMatch = line.match(/(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/);
+      if (numDateMatch) {
+        let y = numDateMatch[3].length === 2 ? "20" + numDateMatch[3] : numDateMatch[3];
+        dateStr = `${y}-${numDateMatch[2].padStart(2, "0")}-${numDateMatch[1].padStart(2, "0")}`;
+        line = line.replace(numDateMatch[0], " ");
+      } else {
+        const isoMatch = line.match(/(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/);
+        if (isoMatch) {
+          dateStr = `${isoMatch[1]}-${isoMatch[2].padStart(2, "0")}-${isoMatch[3].padStart(2, "0")}`;
+          line = line.replace(isoMatch[0], " ");
         }
       }
     }
-    
-    // extract amount
-    const numbers = line.match(/(?:Rp\.?\s*)?([0-9]{1,3}(?:\.[0-9]{3})+(?:,[0-9]+)?|[0-9]{4,})/g);
-    if (!numbers || numbers.length === 0) continue;
-    
-    const rawAmt = numbers[numbers.length - 1].replace(/Rp\.?\s*/g, '').replace(/\./g, '').replace(/,/g, '.');
-    const amount = parseFloat(rawAmt);
+
+    // Extract Amount (prefer explicit Rp prefix, or thousand-formatted number)
+    let amount = 0;
+    const rpMatch = line.match(/Rp\.?\s*([0-9]{1,3}(?:\.[0-9]{3})+(?:,[0-9]+)?|[0-9]{4,})/i);
+    if (rpMatch) {
+      amount = parseFloat(rpMatch[1].replace(/\./g, "").replace(/,/g, "."));
+      line = line.replace(rpMatch[0], " ");
+    } else {
+      const numMatches = line.match(/(?:^|[\s\|\t])([0-9]{1,3}(?:\.[0-9]{3})+(?:,[0-9]+)?|[0-9]{4,})(?:$|[\s\|\t])/g);
+      if (numMatches && numMatches.length > 0) {
+        const last = numMatches[numMatches.length - 1].trim();
+        amount = parseFloat(last.replace(/\./g, "").replace(/,/g, "."));
+        line = line.replace(last, " ");
+      }
+    }
+
     if (isNaN(amount) || amount <= 0) continue;
 
-    // description
-    let desc = line;
-    if (dateMatch) desc = desc.replace(dateMatch[0], '');
-    desc = desc.replace(numbers[numbers.length - 1], '').replace(/Rp\.?/g, '').trim();
-    desc = desc.replace(/^[\s\-\:\.\;\,\t\|0-9]+/, '').trim();
-    if (!desc || desc.length < 3) desc = 'Pengeluaran Petty Cash';
+    // Clean description
+    let desc = line.replace(/[\t\|\;]+/g, " ").replace(/\s+/g, " ").trim();
+    desc = desc.replace(/^[\s\-\:\.\;\,\/0-9]+|[\s\-\:\.\;\,\/]+$/g, "").trim();
+    if (!desc || desc.length < 2) desc = "Pengeluaran Petty Cash";
 
-    // match with accounts
+    // Match with Accurate master accounts
     let matchedAcc: any = null;
     const descLower = desc.toLowerCase();
     if (Array.isArray(accounts) && accounts.length > 0) {
@@ -447,22 +434,24 @@ function heuristicParsePettyCashText(text: string, accounts: any[] = []) {
     }
 
     transactions.push({
-      date: dateStr || new Date().toISOString().split('T')[0],
+      date: dateStr || (detectedPeriod ? `${detectedPeriod}-01` : new Date().toISOString().split('T')[0]),
       description: desc,
       amount: amount,
-      recipient: '',
-      accurateAccountCode: matchedAcc?.code || '600099',
-      accurateAccountName: matchedAcc?.name || 'Beban Operasional Lainnya',
+      recipient: detectedCustodian || '',
+      accurateAccountCode: matchedAcc?.code || '5-1900',
+      accurateAccountName: matchedAcc?.name || 'Biaya Operasional Lapangan',
       confidence: matchedAcc ? 'high' : 'medium'
     });
   }
 
-  const totalExpense = transactions.reduce((sum, t) => sum + t.amount, 0);
+  const calculatedTotal = transactions.reduce((sum, t) => sum + (t.amount || 0), 0);
+  const finalTotal = explicitTotal > 0 ? explicitTotal : calculatedTotal;
 
   return {
-    reportTitle: 'Rekap Pemetaan Dokumen Petty Cash',
-    period: new Date().toISOString().substring(0, 7),
-    totalExpense,
+    reportTitle: detectedCustodian ? `Laporan Petty Cash - ${detectedCustodian}` : 'Rekap Pemetaan Dokumen Petty Cash',
+    period: detectedPeriod || new Date().toISOString().substring(0, 7),
+    totalExpense: finalTotal,
+    custodianName: detectedCustodian || '',
     transactions
   };
 }
@@ -540,10 +529,23 @@ KEMBALIKAN HANYA FORMAT JSON VALID DENGAN SKEMA:
       }
 
       if (response && response.text) {
-        const parsedRaw = parseJsonSafely(response.text || "");
-        const normalized = normalizePettyCashExtraction(parsedRaw, accounts);
-        if (normalized && normalized.transactions && normalized.transactions.length > 0) {
-          return res.json({ success: true, result: normalized, source: 'gemini' });
+        let textClean = response.text.trim();
+        if (textClean.startsWith("```json")) {
+          textClean = textClean.replace(/^```json\s*/, "").replace(/\s*```$/, "");
+        } else if (textClean.startsWith("```")) {
+          textClean = textClean.replace(/^```\s*/, "").replace(/\s*```$/, "");
+        }
+        const parsedData = JSON.parse(textClean || "{}");
+        const rawTxs = parsedData.transactions || parsedData.items || parsedData.data || (Array.isArray(parsedData) ? parsedData : null);
+        if (Array.isArray(rawTxs) && rawTxs.length > 0) {
+          const formattedResult = {
+            reportTitle: parsedData.reportTitle || "Laporan Petty Cash Lapangan",
+            period: parsedData.period || new Date().toISOString().substring(0, 7),
+            totalExpense: parsedData.totalExpense || rawTxs.reduce((sum: number, t: any) => sum + (Number(t.amount) || 0), 0),
+            custodianName: parsedData.custodianName || "",
+            transactions: rawTxs
+          };
+          return res.json({ success: true, result: formattedResult, source: 'gemini' });
         }
       }
     } catch (err: any) {
@@ -552,11 +554,28 @@ KEMBALIKAN HANYA FORMAT JSON VALID DENGAN SKEMA:
     }
   }
 
-  // FALLBACK: Local PDF text extraction or raw text parsing
+  // FALLBACK: Local file / Excel / PDF text extraction or raw text parsing
   try {
     let extractedText = rawText || '';
-    if (!extractedText && fileBase64 && (mimeType === 'application/pdf' || fileBase64.startsWith('JVBERi') || String(fileBase64).includes('JVBERi'))) {
-      const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, "");
+    const cleanBase64 = fileBase64 ? fileBase64.replace(/^data:[^;]+;base64,/, "").trim() : "";
+    const isExcel = cleanBase64.startsWith('UEsDB') || (mimeType && (mimeType.includes('spreadsheet') || mimeType.includes('excel') || mimeType.includes('csv')));
+
+    if (cleanBase64 && isExcel) {
+      try {
+        const XLSX = await import("@e965/xlsx");
+        const buf = Buffer.from(cleanBase64, 'base64');
+        const wb = XLSX.read(buf, { type: 'buffer' });
+        const firstSheet = wb.Sheets[wb.SheetNames[0]];
+        const csvText = XLSX.utils.sheet_to_csv(firstSheet);
+        if (csvText && csvText.trim().length > 0) {
+          extractedText = csvText;
+        }
+      } catch (xlsxErr) {
+        console.warn("Excel extraction error:", xlsxErr);
+      }
+    }
+
+    if (!extractedText && cleanBase64) {
       const pdfBuffer = Buffer.from(cleanBase64, 'base64');
       extractedText = await extractTextFromPdfBuffer(pdfBuffer);
     }
@@ -577,8 +596,8 @@ KEMBALIKAN HANYA FORMAT JSON VALID DENGAN SKEMA:
     // If both AI and local extraction failed:
     return res.status(422).json({
       success: false,
-      error: "Gagal memetakan transaksi. Layanan AI tidak dapat diakses dan berkas tidak memiliki lapisan teks yang dapat diekstrak secara otomatis.",
-      details: aiError?.message || "Format dokumen membutuhkan pembacaan teks langsung atau format Excel (.xlsx)."
+      error: "Gagal memetakan transaksi. Berkas tidak memiliki lapisan teks yang dapat diekstrak secara otomatis. Silakan gunakan format Excel (.xlsx) atau tempel teks pada tab 'Copy & Paste Teks Tabel'.",
+      details: aiError?.message || "Lapisan teks dokumen tidak terdeteksi."
     });
   } catch (fallbackErr: any) {
     console.error("Error in fallback petty cash parser:", fallbackErr);
@@ -679,24 +698,15 @@ KEMBALIKAN HANYA FORMAT JSON VALID:
     });
     console.log(`Successfully parsed SPPD with model: ${modelUsed}`);
 
-    const parsedData = parseJsonSafely(response.text || "") || {};
-    let transactions: any[] = [];
-    if (Array.isArray(parsedData)) {
-      transactions = parsedData;
-    } else if (Array.isArray(parsedData.transactions)) {
-      transactions = parsedData.transactions;
-    } else if (parsedData.result && Array.isArray(parsedData.result.transactions)) {
-      transactions = parsedData.result.transactions;
+    let textClean = response.text.trim();
+    if (textClean.startsWith("```json")) {
+      textClean = textClean.replace(/^```json\s*/, "").replace(/\s*```$/, "");
+    } else if (textClean.startsWith("```")) {
+      textClean = textClean.replace(/^```\s*/, "").replace(/\s*```$/, "");
     }
-    const normalized = {
-      reportTitle: parsedData.reportTitle || `Laporan SPPD: ${employeeName || 'Karyawan'} - Perjalanan Dinas`,
-      employeeName: parsedData.employeeName || employeeName || '',
-      destination: parsedData.destination || '',
-      period: parsedData.period || new Date().toISOString().substring(0, 7),
-      totalExpense: parsedData.totalExpense || transactions.reduce((sum, t) => sum + (Number(t.amount) || 0), 0),
-      transactions: transactions
-    };
-    return res.json({ success: true, result: normalized });
+
+    const parsedData = JSON.parse(textClean || "{}");
+    return res.json({ success: true, result: parsedData });
   } catch (error: any) {
     console.error("Error in parse-sppd:", error);
     return res.status(500).json({ error: "Gagal membaca & memetakan SPPD.", details: error.message });

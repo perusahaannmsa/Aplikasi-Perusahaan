@@ -30,7 +30,8 @@ import {
   getActiveGoogleDriveAccount,
   getConnectedDrives,
   executeDriveApiWithAutoRefresh,
-  getOrRenewDriveToken
+  getOrRenewDriveToken,
+  getStoredGoogleDriveToken
 } from '../firebase';
 import { getOrCreateNestedFolder, uploadFileToDrive } from '../lib/googleWorkspaceAbsen';
 
@@ -676,6 +677,19 @@ export function AccuratePettyCashMapping({
       });
     }
 
+    // Prioritize LPJ documents so docs[0] is always the primary LPJ report
+    docs.sort((a, b) => {
+      const aLower = (a.fileName || '').toLowerCase();
+      const bLower = (b.fileName || '').toLowerCase();
+      const aScore = a.type === 'lpj' || aLower.includes('pettycash') || aLower.includes('petty_cash') || aLower.includes('lpj') || aLower.includes('pertanggungjawaban') || aLower.includes('kas_kecil') ? 4 :
+                     (aLower.endsWith('.xlsx') || aLower.endsWith('.xls') || aLower.endsWith('.csv') || aLower.includes('rekap') || aLower.includes('rincian')) ? 3 :
+                     (aLower.includes('nota') || aLower.includes('kwitansi') || aLower.includes('bon') || aLower.includes('struk')) ? 2 : 1;
+      const bScore = b.type === 'lpj' || bLower.includes('pettycash') || bLower.includes('petty_cash') || bLower.includes('lpj') || bLower.includes('pertanggungjawaban') || bLower.includes('kas_kecil') ? 4 :
+                     (bLower.endsWith('.xlsx') || bLower.endsWith('.xls') || bLower.endsWith('.csv') || bLower.includes('rekap') || bLower.includes('rincian')) ? 3 :
+                     (bLower.includes('nota') || bLower.includes('kwitansi') || bLower.includes('bon') || bLower.includes('struk')) ? 2 : 1;
+      return bScore - aScore;
+    });
+
     return docs;
   };
 
@@ -709,7 +723,7 @@ export function AccuratePettyCashMapping({
     const targetName = currentDoc?.fileName || undefined;
 
     setIsVoucherModalOpen(false);
-    handleLoadVoucherSubmission(sub, targetUrl, targetName);
+    handleLoadVoucherSubmission(sub, targetUrl, targetName, true);
 
     setTimeout(() => {
       const tableEl = document.getElementById('accurate-mapped-table-section');
@@ -1158,6 +1172,53 @@ export function AccuratePettyCashMapping({
     }
   };
 
+  // Helper to determine if a mapping report is merely the 1-line voucher summary fallback (sub.items)
+  // rather than an actual itemized LPJ (Lampiran Pertanggung Jawaban) breakdown
+  const isVoucherSummaryOnly = (mapping: AccurateMappingReport | null | undefined, targetSub?: Submission | null): boolean => {
+    if (!mapping || !mapping.transactions || mapping.transactions.length === 0) return true;
+    if ((mapping as any).isVoucherFallback) return true;
+
+    // A single line in mapping: check if it matches the voucher summary line
+    if (mapping.transactions.length === 1) {
+      const tx = mapping.transactions[0];
+      const txAmt = Number(tx.amount) || 0;
+      const txDesc = (tx.description || '').toLowerCase().trim();
+
+      if (targetSub?.items && targetSub.items.length > 0) {
+        const isMatch = targetSub.items.some(it => {
+          const itemAmt = Number(it.total) || 0;
+          const itemDesc = (it.item || '').toLowerCase().trim();
+          return (Math.abs(txAmt - itemAmt) < 1) || 
+                 (txDesc.includes(itemDesc) || itemDesc.includes(txDesc));
+        });
+        if (isMatch) return true;
+      }
+
+      // If description is a generic voucher title, it's not an itemized LPJ
+      if (
+        txDesc.includes('petty cash lapangan') ||
+        txDesc.includes('pembayaran petty cash') ||
+        txDesc.includes('biaya operasional lapangan') ||
+        txDesc.includes('operasional kantor') ||
+        txDesc.includes('petty cash kantor pusat') ||
+        txDesc.startsWith('petty cash')
+      ) {
+        return true;
+      }
+    }
+
+    // If transactions count matches sub.items exactly and mirrors it
+    if (targetSub?.items && mapping.transactions.length === targetSub.items.length) {
+      const isExactMirror = mapping.transactions.every((t, i) => {
+        const it = targetSub.items![i];
+        return Math.abs(Number(t.amount) - Number(it.total)) < 1;
+      });
+      if (isExactMirror) return true;
+    }
+
+    return false;
+  };
+
   // Helper to compute voucher card stats (submisi vs realisasi pengeluaran LPJ & date period)
   const getVoucherStats = (sub: Submission) => {
     const itemsCount = sub.items?.length || 0;
@@ -1189,9 +1250,9 @@ export function AccuratePettyCashMapping({
       savedAt: sub.accurateMappedAt || ''
     } : null);
 
-    const savedExpense = saved 
-      ? (Number(saved.totalExpense) || (saved.transactions?.reduce((acc: number, t: any) => acc + (Number(t.amount) || 0), 0) || 0)) 
-      : null;
+    // Check if saved mapping is genuine itemized LPJ or merely the 1-line voucher summary
+    const isSavedSummaryOnly = isVoucherSummaryOnly(saved, sub);
+    const validSavedMapping = !isSavedSummaryOnly ? saved : null;
 
     // 3. Check workspace petty cash reports
     const report = pettyCashReports.find((r) => {
@@ -1201,8 +1262,18 @@ export function AccuratePettyCashMapping({
       return false;
     });
 
-    const reportExpense = report 
-      ? (Number(report.summary?.totalExpense) || (report.transactions?.reduce((acc, t) => acc + (Number(t.amount) || 0), 0) || 0)) 
+    const isReportSummaryOnly = report ? (
+      (report.transactions?.length === 1 && sub.items?.length === 1) ||
+      (report.transactions?.length === 1 && (report.transactions[0].description || '').toLowerCase().includes('petty cash'))
+    ) : false;
+    const validReport = !isReportSummaryOnly ? report : null;
+
+    const savedExpense = validSavedMapping 
+      ? (Number(validSavedMapping.totalExpense) || (validSavedMapping.transactions?.reduce((acc: number, t: any) => acc + (Number(t.amount) || 0), 0) || 0)) 
+      : null;
+
+    const reportExpense = validReport 
+      ? (Number(validReport.summary?.totalExpense) || (validReport.transactions?.reduce((acc, t) => acc + (Number(t.amount) || 0), 0) || 0)) 
       : null;
 
     const totalExpense = activeExpense !== null 
@@ -1211,16 +1282,18 @@ export function AccuratePettyCashMapping({
           ? savedExpense 
           : (reportExpense !== null ? reportExpense : 0));
 
-    const isMapped = (activeExpense !== null && activeExpense > 0) || (savedExpense !== null && savedExpense > 0) || (reportExpense !== null && reportExpense > 0);
+    const isMapped = (activeExpense !== null && activeExpense > 0) || 
+                     (savedExpense !== null && savedExpense > 0) || 
+                     (reportExpense !== null && reportExpense > 0);
 
     // Calculate dates & period string
     let periodText = '';
     if (isActive && transactions.length > 0) {
       periodText = calculatePettyCashPeriod(transactions, sub, period);
-    } else if (saved && saved.transactions && saved.transactions.length > 0) {
-      periodText = calculatePettyCashPeriod(saved.transactions, sub, saved.period);
-    } else if (report && report.transactions && report.transactions.length > 0) {
-      periodText = calculatePettyCashPeriod(report.transactions, sub, report.summary?.reportMonth);
+    } else if (validSavedMapping && validSavedMapping.transactions && validSavedMapping.transactions.length > 0) {
+      periodText = calculatePettyCashPeriod(validSavedMapping.transactions, sub, validSavedMapping.period);
+    } else if (validReport && validReport.transactions && validReport.transactions.length > 0) {
+      periodText = calculatePettyCashPeriod(validReport.transactions, sub, validReport.summary?.reportMonth);
     } else {
       periodText = formatIndonesianDate(sub.tanggal);
     }
@@ -1232,8 +1305,9 @@ export function AccuratePettyCashMapping({
       lpjDocs,
       totalExpense,
       isMapped,
-      savedMapping: saved || null,
-      savedCount: saved?.transactions?.length || 0,
+      isSummaryOnly: isSavedSummaryOnly || isReportSummaryOnly,
+      savedMapping: validSavedMapping,
+      savedCount: validSavedMapping?.transactions?.length || 0,
       periodText,
       diff: totalExpense > 0 ? totalExpense - totalAmt : 0
     };
@@ -1495,66 +1569,138 @@ export function AccuratePettyCashMapping({
     reader.readAsBinaryString(file);
   };
 
-  // 2. AI / Gemini Parser for PDF, Image, or Unstructured File
+  // Helper to extract text from a client-side ArrayBuffer or text
+  const extractTextClientSide = async (file: File): Promise<string> => {
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
+      let rawStr = '';
+      for (let i = 0; i < bytes.length; i++) {
+        rawStr += String.fromCharCode(bytes[i]);
+      }
+      const extractedParts: string[] = [];
+      const btRegex = /BT[\s\S]*?ET/g;
+      let match;
+      while ((match = btRegex.exec(rawStr)) !== null) {
+        const block = match[0];
+        const tjRegex = /\(([^)]+)\)\s*(?:Tj|'|")/g;
+        let tjMatch;
+        let line = "";
+        while ((tjMatch = tjRegex.exec(block)) !== null) {
+          line += tjMatch[1] + " ";
+        }
+        if (line.trim().length > 2) {
+          extractedParts.push(line.trim());
+        }
+      }
+      return extractedParts.join('\n');
+    } catch (e) {
+      console.warn('Client-side text extraction failed:', e);
+      return '';
+    }
+  };
+
+  // 2. AI & Local Fallback Parser for PDF, Image, or Unstructured File
   const parseWithAI = async (file: File) => {
     setIsProcessing(true);
-    setProcessMessage('Menganalisis dokumen & mengekstrak data via AI (Gemini)...');
+    setProcessMessage('Menganalisis dokumen & mengekstrak data...');
     setErrorMessage('');
     setSuccessMessage('');
 
     try {
+      const fileNameLower = file.name.toLowerCase();
+      if (fileNameLower.endsWith('.xlsx') || fileNameLower.endsWith('.xls') || fileNameLower.endsWith('.csv')) {
+        parseExcelFile(file);
+        return;
+      }
+
       const reader = new FileReader();
       reader.readAsDataURL(file);
       reader.onload = async () => {
         try {
           const base64Data = reader.result as string;
-          const res = await fetch('/api/gemini/parse-petty-cash', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              fileBase64: base64Data,
-              mimeType: file.type || 'application/pdf',
-              accounts
-            })
-          });
+          let mappedTxs: AccurateMappedTransaction[] = [];
+          let docTitle = `Laporan Petty Cash: ${file.name}`;
+          let docPeriod = new Date().toISOString().substring(0, 7);
 
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok || !data?.success) {
-            throw new Error(data?.error || data?.details || data?.message || 'Gagal mengekstrak dokumen dengan AI.');
-          }
-
-          const result = data.result || (Array.isArray(data.transactions) ? data : null);
-          if (!result || typeof result !== 'object') {
-            throw new Error(data.error || data.details || data.message || 'Layanan AI tidak mengembalikan rincian data transaksi yang valid.');
-          }
-
-          const docTitle = result.reportTitle || `Laporan Petty Cash: ${file.name.replace(/\.[^/.]+$/, '')}`;
-          setReportTitle(docTitle);
-          if (result.period) setPeriod(result.period);
-
-          if (result.transactions && Array.isArray(result.transactions) && result.transactions.length > 0) {
-            const mappedTxs: AccurateMappedTransaction[] = result.transactions.map((t: any, idx: number) => {
-              const matchedAccount = accounts.find(a => a.code === t.accurateAccountCode) || autoMapTransactionToAccurate(t.description, accounts);
-              return {
-                id: `ai-${idx}-${Date.now()}`,
-                date: t.date || new Date().toISOString().split('T')[0],
-                description: t.description || 'Transaksi Petty Cash',
-                amount: Number(t.amount) || 0,
-                recipient: t.recipient || '',
-                accurateAccountCode: matchedAccount.code,
-                accurateAccountName: matchedAccount.name,
-                confidence: 'high'
-              };
+          try {
+            const res = await fetch('/api/gemini/parse-petty-cash', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                fileBase64: base64Data,
+                mimeType: file.type || 'application/pdf',
+                accounts
+              })
             });
 
+            if (res.ok) {
+              const data = await res.json();
+              const result = data?.result || (Array.isArray(data?.transactions) ? data : null) || data?.data;
+              if (result && Array.isArray(result.transactions) && result.transactions.length > 0) {
+                if (result.reportTitle) docTitle = result.reportTitle;
+                if (result.period) docPeriod = result.period;
+
+                mappedTxs = result.transactions.map((t: any, idx: number) => {
+                  const matchedAccount = accounts.find(a => a.code === t.accurateAccountCode) || autoMapTransactionToAccurate(t.description, accounts);
+                  return {
+                    id: `ai-${idx}-${Date.now()}`,
+                    date: t.date || new Date().toISOString().split('T')[0],
+                    description: t.description || 'Transaksi Petty Cash',
+                    amount: Number(t.amount) || 0,
+                    recipient: t.recipient || '',
+                    accurateAccountCode: matchedAccount.code,
+                    accurateAccountName: matchedAccount.name,
+                    confidence: 'high'
+                  };
+                });
+              }
+            }
+          } catch (apiErr) {
+            console.warn('API parsing request failed, attempting local fallback...', apiErr);
+          }
+
+          // Client-side extraction fallback if API did not return transactions
+          if (mappedTxs.length === 0) {
+            const extractedText = await extractTextClientSide(file);
+            if (extractedText && extractedText.trim().length > 10) {
+              const lines = extractedText.split('\n');
+              lines.forEach((line, idx) => {
+                const trimmed = line.trim();
+                if (!trimmed || trimmed.length < 4) return;
+                const match = trimmed.match(/(?:Rp\.?\s*)?([0-9]{1,3}(?:\.[0-9]{3})+(?:,[0-9]+)?|[0-9]{4,})/);
+                if (match) {
+                  const amt = parseFloat(match[1].replace(/\./g, '').replace(/,/g, '.'));
+                  if (amt > 0) {
+                    const desc = trimmed.replace(match[0], '').replace(/^[\s\d\.\-\:\;\|\t]+/, '').trim() || 'Pengeluaran Petty Cash';
+                    const mapped = autoMapTransactionToAccurate(desc, accounts);
+                    mappedTxs.push({
+                      id: `local-${idx}-${Date.now()}`,
+                      date: new Date().toISOString().split('T')[0],
+                      description: desc,
+                      amount: amt,
+                      recipient: '',
+                      accurateAccountCode: mapped.code,
+                      accurateAccountName: mapped.name,
+                      confidence: 'medium'
+                    });
+                  }
+                }
+              });
+            }
+          }
+
+          if (mappedTxs.length > 0) {
+            setReportTitle(docTitle);
+            setPeriod(docPeriod);
             setTransactions(mappedTxs);
-            setSuccessMessage(`Berhasil mengekstrak ${mappedTxs.length} transaksi menggunakan AI!`);
+            setSuccessMessage(`Berhasil membaca & memetakan ${mappedTxs.length} transaksi dari berkas "${file.name}"!`);
           } else {
-            throw new Error('AI tidak menemukan rincian transaksi pada dokumen ini.');
+            throw new Error(`Tidak dapat mengekstrak baris transaksi dari berkas "${file.name}". Pastikan berkas memiliki teks yang dapat dibaca, atau gunakan format Excel (.xlsx) / tempel data pada tab "Copy & Paste Teks Tabel".`);
           }
         } catch (err: any) {
           console.error(err);
-          setErrorMessage(err.message || 'Terjadi kesalahan saat memproses via AI.');
+          setErrorMessage(err.message || 'Terjadi kesalahan saat memproses berkas.');
         } finally {
           setIsProcessing(false);
         }
@@ -1714,62 +1860,82 @@ export function AccuratePettyCashMapping({
     else if (match3 && match3[1]) fileId = match3[1];
 
     if (fileId) {
-      const token = localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN') || 
+      const token = getStoredGoogleDriveToken() || 
+                    localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN') || 
                     localStorage.getItem('google_access_token') ||
                     (typeof window !== 'undefined' && (window as any).gapi?.auth?.getToken?.()?.access_token);
 
-      if (token) {
+      const allTokens = [
+        token,
+        ...getConnectedDrives().map(d => d.accessToken).filter(Boolean)
+      ].filter((t, idx, arr): t is string => Boolean(t) && arr.indexOf(t) === idx);
+
+      // 1. Try direct Drive API download with each connected token
+      for (const curToken of allTokens) {
+        if (blob) break;
         try {
-          const driveRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
-            headers: { Authorization: `Bearer ${token}` }
+          const driveRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`, {
+            headers: { Authorization: `Bearer ${curToken}` }
           });
           if (driveRes.ok) {
-            blob = await driveRes.blob();
-            const ct = driveRes.headers.get('content-type');
-            if (ct && !ct.includes('octet-stream')) mimeType = ct.split(';')[0];
+            const rawBlob = await driveRes.blob();
+            const ct = driveRes.headers.get('content-type') || rawBlob.type;
+            if (!ct.includes('text/html')) {
+              blob = rawBlob;
+              if (ct && !ct.includes('octet-stream')) mimeType = ct.split(';')[0];
+              break;
+            }
           }
         } catch (e) {
-          console.warn('Direct Google Drive API download error, attempting backend proxy...', e);
+          console.warn('Direct Google Drive API download error:', e);
         }
       }
 
-      // If direct fetch didn't succeed, use server-side drive proxy
+      // 2. If direct fetch didn't succeed, use server-side drive proxy passing multi-tokens
       if (!blob) {
         try {
-          const proxyUrl = `/api/drive-proxy?id=${fileId}${token ? `&token=${encodeURIComponent(token)}` : ''}`;
+          const tokensParam = allTokens.length > 0 ? `&tokens=${encodeURIComponent(allTokens.join(','))}` : '';
+          const proxyUrl = `/api/drive-proxy?id=${fileId}${token ? `&token=${encodeURIComponent(token)}` : ''}${tokensParam}`;
           const proxyRes = await fetch(proxyUrl, {
             headers: token ? { Authorization: `Bearer ${token}` } : {}
           });
           if (proxyRes.ok) {
-            blob = await proxyRes.blob();
-            const ct = proxyRes.headers.get('content-type');
-            if (ct && !ct.includes('octet-stream')) mimeType = ct.split(';')[0];
+            const rawBlob = await proxyRes.blob();
+            const ct = proxyRes.headers.get('content-type') || rawBlob.type;
+            if (!ct.includes('text/html')) {
+              blob = rawBlob;
+              if (ct && !ct.includes('octet-stream')) mimeType = ct.split(';')[0];
+            }
           }
         } catch (e) {
-          console.warn('Proxy download failed, attempting direct fetch...', e);
+          console.warn('Proxy download failed:', e);
         }
       }
     }
 
     // Fallback standard fetch for normal HTTP/HTTPS urls
-    if (!blob) {
+    if (!blob && !url.includes('drive.google.com')) {
       const res = await fetch(url);
-      if (!res.ok) {
-        throw new Error(`Gagal mengunduh berkas LPJ dari server/Google Drive (HTTP ${res.status}).`);
+      if (res.ok) {
+        const rawBlob = await res.blob();
+        const ct = res.headers.get('content-type') || rawBlob.type;
+        if (!ct.includes('text/html')) {
+          blob = rawBlob;
+          if (ct && !ct.includes('octet-stream')) mimeType = ct.split(';')[0];
+        }
       }
-      blob = await res.blob();
-      const ct = res.headers.get('content-type');
-      if (ct && !ct.includes('octet-stream')) mimeType = ct.split(';')[0];
     }
 
     if (!blob) {
-      throw new Error('Gagal membaca isi dokumen LPJ.');
+      throw new Error('Gagal membaca isi dokumen LPJ. Berkas mungkin memerlukan otentikasi Google Drive atau izin akses publik.');
     }
 
     if (!mimeType || mimeType === 'application/octet-stream') {
       if (url.match(/\.(jpeg|jpg)$/i)) mimeType = 'image/jpeg';
       else if (url.match(/\.png$/i)) mimeType = 'image/png';
       else if (url.match(/\.webp$/i)) mimeType = 'image/webp';
+      else if (url.match(/\.(xlsx|xls)$/i)) mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      else if (url.match(/\.csv$/i)) mimeType = 'text/csv';
       else mimeType = 'application/pdf';
     }
 
@@ -1788,7 +1954,7 @@ export function AccuratePettyCashMapping({
     });
   };
 
-  // 5. Load from Uploaded Voucher HO Submission with AI Document Parsing
+  // 5. Load & Map from Attached Physical LPJ (Lampiran Pertanggung Jawaban)
   const handleLoadVoucherSubmission = async (
     sub: Submission, 
     specificDocUrl?: string, 
@@ -1797,13 +1963,11 @@ export function AccuratePettyCashMapping({
   ) => {
     if (!sub) return;
 
-    // Fast path: if this submission already has a saved mapping, load it immediately without re-parsing!
-    if (!forceReparse) {
-      const stats = getVoucherStats(sub);
-      if (stats.savedMapping && stats.savedMapping.transactions && stats.savedMapping.transactions.length > 0) {
-        handleLoadSavedMapping(stats.savedMapping);
-        return;
-      }
+    // Check if this voucher already has a genuine LPJ breakdown mapping
+    const stats = getVoucherStats(sub);
+    if (!forceReparse && stats.savedMapping && !isVoucherSummaryOnly(stats.savedMapping, sub)) {
+      handleLoadSavedMapping(stats.savedMapping);
+      return;
     }
 
     // Strictly prioritize LPJ (Laporan Pertanggungjawaban Petty Cash Lapangan) documents
@@ -1821,16 +1985,98 @@ export function AccuratePettyCashMapping({
     setActiveCustodianName(custodian);
     setActiveSubmission(sub);
 
-    // Attempt AI/Gemini document extraction on the physical LPJ document!
-    if (docUrl) {
-      setIsProcessing(true);
-      setProcessMessage(`Menganalisis Berkas LPJ Lapangan (${docName || 'PDF'})...`);
-      setErrorMessage('');
-      setSuccessMessage('');
+    // If NO LPJ document is attached:
+    if (!docUrl) {
+      setErrorMessage(`Voucher [${sub.kode}] belum memiliki berkas fisik Lampiran Pertanggung Jawaban (LPJ). Silakan unggah berkas LPJ (PDF/Excel/Foto) terlebih dahulu atau gunakan tab "Copy & Paste Teks Tabel".`);
+      setSelectedVoucherForModal(sub);
+      setIsVoucherModalOpen(true);
+      return;
+    }
 
-      try {
-        const { base64Data, mimeType } = await extractBase64FromUrl(docUrl);
+    // Attempt document extraction on the physical LPJ document!
+    setIsProcessing(true);
+    setProcessMessage(`Menganalisis & Memetakan Berkas LPJ Lapangan: "${docName}"...`);
+    setErrorMessage('');
+    setSuccessMessage('');
 
+    try {
+      const { base64Data, mimeType } = await extractBase64FromUrl(docUrl);
+      const isExcel = (docName && (docName.toLowerCase().endsWith('.xlsx') || docName.toLowerCase().endsWith('.xls') || docName.toLowerCase().endsWith('.csv'))) ||
+                      mimeType.includes('spreadsheet') || mimeType.includes('excel') || mimeType.includes('csv');
+
+      let mappedTxs: AccurateMappedTransaction[] = [];
+      let reportTitleText = `Laporan LPJ: ${sub.kode} - ${custodian}`;
+      let periodText = sub.tanggal ? sub.tanggal.substring(0, 7) : new Date().toISOString().substring(0, 7);
+
+      // A. Direct Client-side Excel Parser for .xlsx / .xls / .csv
+      if (isExcel) {
+        try {
+          const cleanB64 = base64Data.replace(/^data:[^;]+;base64,/, '').trim();
+          const binaryStr = atob(cleanB64);
+          const bytes = new Uint8Array(binaryStr.length);
+          for (let i = 0; i < binaryStr.length; i++) {
+            bytes[i] = binaryStr.charCodeAt(i);
+          }
+          const wb = XLSX.read(bytes.buffer, { type: 'array' });
+          const firstSheet = wb.Sheets[wb.SheetNames[0]];
+          const rawRows: any[] = XLSX.utils.sheet_to_json(firstSheet, { header: 1, raw: false });
+
+          if (rawRows && rawRows.length > 0) {
+            let dateColIdx = -1;
+            let descColIdx = -1;
+            let amountColIdx = -1;
+            let startRowIdx = 0;
+
+            for (let i = 0; i < Math.min(15, rawRows.length); i++) {
+              const row = rawRows[i];
+              if (!Array.isArray(row)) continue;
+              row.forEach((cellVal, colIdx) => {
+                const str = String(cellVal || '').toLowerCase().trim();
+                if (str.includes('tanggal') || str.includes('tgl') || str.includes('date')) dateColIdx = colIdx;
+                if (str.includes('keterangan') || str.includes('uraian') || str.includes('rincian') || str.includes('deskripsi') || str.includes('item') || str.includes('keperluan')) descColIdx = colIdx;
+                if (str.includes('jumlah') || str.includes('nominal') || str.includes('debet') || str.includes('pengeluaran') || str.includes('amount') || str.includes('total') || str.includes('keluar')) amountColIdx = colIdx;
+              });
+              if (descColIdx !== -1 && amountColIdx !== -1) {
+                startRowIdx = i + 1;
+                break;
+              }
+            }
+
+            if (descColIdx === -1) descColIdx = 1;
+            if (amountColIdx === -1) amountColIdx = 2;
+            if (dateColIdx === -1) dateColIdx = 0;
+
+            for (let i = startRowIdx; i < rawRows.length; i++) {
+              const row = rawRows[i];
+              if (!row || !Array.isArray(row) || row.length === 0) continue;
+              const descStr = String(row[descColIdx] || '').trim();
+              const amtRaw = String(row[amountColIdx] || '').replace(/[^0-9.-]/g, '');
+              const amtVal = parseFloat(amtRaw) || 0;
+              if (!descStr || amtVal <= 0 || descStr.toLowerCase().includes('total') || descStr.toLowerCase().includes('saldo')) continue;
+
+              let dStr = String(row[dateColIdx] || '').trim();
+              if (!dStr || dStr.toLowerCase().includes('tanggal')) dStr = sub.tanggal || new Date().toISOString().substring(0, 10);
+
+              const mapped = autoMapTransactionToAccurate(descStr, accounts);
+              mappedTxs.push({
+                id: `lpj-xl-${i}-${Date.now()}`,
+                date: dStr,
+                description: descStr,
+                amount: amtVal,
+                recipient: custodian,
+                accurateAccountCode: mapped.code,
+                accurateAccountName: mapped.name,
+                confidence: mapped.confidence
+              });
+            }
+          }
+        } catch (excelErr) {
+          console.warn('Direct Excel parsing failed, continuing with AI API...', excelErr);
+        }
+      }
+
+      // B. AI and Gemini Serverless Parsing (/api/gemini/parse-petty-cash)
+      if (mappedTxs.length === 0) {
         const res = await fetch('/api/gemini/parse-petty-cash', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1841,15 +2087,16 @@ export function AccuratePettyCashMapping({
           })
         });
 
-        const data = await res.json().catch(() => ({}));
-        const result = data?.result || (Array.isArray(data?.transactions) ? data : null);
+        const data = await res.json();
+        const result = data?.result || (Array.isArray(data?.transactions) ? data : null) || data?.data;
+
         if (res.ok && data?.success && result && Array.isArray(result.transactions) && result.transactions.length > 0) {
-          const mappedTxs: AccurateMappedTransaction[] = result.transactions.map((t: any, idx: number) => {
+          mappedTxs = result.transactions.map((t: any, idx: number) => {
             const matchedAccount = accounts.find(a => a.code === t.accurateAccountCode) || autoMapTransactionToAccurate(t.description, accounts);
             return {
-              id: `ai-vh-${sub.id}-${idx}-${Date.now()}`,
+              id: `ai-lpj-${sub.id}-${idx}-${Date.now()}`,
               date: t.date || sub.tanggal || new Date().toISOString().substring(0, 10),
-              description: t.description || 'Transaksi Petty Cash',
+              description: t.description || 'Pengeluaran Petty Cash',
               amount: Number(t.amount) || 0,
               recipient: t.recipient || custodian,
               accurateAccountCode: matchedAccount.code,
@@ -1857,104 +2104,108 @@ export function AccuratePettyCashMapping({
               confidence: 'high'
             };
           });
-
-          setReportTitle(`Laporan Petty Cash: ${sub.kode} - ${custodian}`);
-          setPeriod(sub.tanggal ? sub.tanggal.substring(0, 7) : new Date().toISOString().substring(0, 7));
-          setTransactions(mappedTxs);
-          setActiveTab('workspace');
-          setSuccessMessage(`Berhasil menganalisis Berkas LPJ Lapangan "${docName || 'Petty Cash'}" & mengekstrak ${mappedTxs.length} rincian transaksi via AI!`);
-
-          const newMapping: AccurateMappingReport = {
-            id: `vh-map-${sub.id}`,
-            title: `Laporan Petty Cash: ${sub.kode} - ${custodian}`,
-            period: sub.tanggal ? sub.tanggal.substring(0, 7) : new Date().toISOString().substring(0, 7),
-            selectedKasCode,
-            totalExpense: mappedTxs.reduce((s, t) => s + (t.amount || 0), 0),
-            transactions: mappedTxs,
-            custodian,
-            documentUrl: docUrl || undefined,
-            documentName: docName || undefined,
-            savedAt: new Date().toISOString(),
-            submissionId: sub.id,
-            submissionCode: sub.kode
-          };
-
-          saveAccurateMappingToFirestore(newMapping);
-          setSavedMappings(prev => [newMapping, ...prev.filter(m => m.id !== newMapping.id)]);
-          try {
-            localStorage.setItem('accurate_mapping_sub_' + sub.id, JSON.stringify(newMapping));
-            if (sub.kode) {
-              localStorage.setItem('accurate_mapping_code_' + sub.kode, JSON.stringify(newMapping));
-            }
-          } catch (e) {}
-
-          setIsProcessing(false);
-          return; // Done with AI parsing!
+          if (result.reportTitle) reportTitleText = result.reportTitle;
+          if (result.period) periodText = result.period;
         }
-      } catch (err: any) {
-        console.warn('Analisis AI dokumen LPJ gagal, beralih ke rincian voucher:', err);
-      } finally {
+      }
+
+      // C. Secondary Fallback: PDF text stream parsing
+      if (mappedTxs.length === 0) {
+        try {
+          const cleanB64 = base64Data.replace(/^data:[^;]+;base64,/, '').trim();
+          const rawBytes = atob(cleanB64);
+          const extractedParts: string[] = [];
+          const btRegex = /BT[\s\S]*?ET/g;
+          let match;
+          while ((match = btRegex.exec(rawBytes)) !== null) {
+            const block = match[0];
+            const tjRegex = /\(([^)]+)\)\s*(?:Tj|'|")/g;
+            let tjMatch;
+            let line = '';
+            while ((tjMatch = tjRegex.exec(block)) !== null) {
+              line += tjMatch[1] + ' ';
+            }
+            if (line.trim().length > 2) extractedParts.push(line.trim());
+          }
+          if (extractedParts.length > 0) {
+            extractedParts.forEach((l, idx) => {
+              const match = l.match(/(?:Rp\.?\s*)?([0-9]{1,3}(?:\.[0-9]{3})+(?:,[0-9]+)?|[0-9]{4,})/);
+              if (match) {
+                const amt = parseFloat(match[1].replace(/\./g, '').replace(/,/g, '.'));
+                if (amt > 0) {
+                  const desc = l.replace(match[0], '').replace(/^[\s\d\.\-\:\;\|\t]+/, '').trim() || 'Pengeluaran Petty Cash';
+                  const mapped = autoMapTransactionToAccurate(desc, accounts);
+                  mappedTxs.push({
+                    id: `local-doc-${idx}-${Date.now()}`,
+                    date: sub.tanggal || new Date().toISOString().substring(0, 10),
+                    description: desc,
+                    amount: amt,
+                    recipient: custodian,
+                    accurateAccountCode: mapped.code,
+                    accurateAccountName: mapped.name,
+                    confidence: 'medium'
+                  });
+                }
+              }
+            });
+          }
+        } catch (_) {}
+      }
+
+      // D. Result validation
+      if (mappedTxs.length > 0) {
+        setReportTitle(reportTitleText);
+        setPeriod(periodText);
+        setTransactions(mappedTxs);
+        setActiveTab('workspace');
+        setSuccessMessage(`Berhasil membaca berkas LPJ Lapangan "${docName || 'Petty Cash'}" & memetakan ${mappedTxs.length} rincian transaksi pengeluaran!`);
+
+        const newMapping: AccurateMappingReport = {
+          id: `vh-map-${sub.id}`,
+          title: reportTitleText,
+          period: periodText,
+          selectedKasCode,
+          totalExpense: mappedTxs.reduce((s, t) => s + (t.amount || 0), 0),
+          transactions: mappedTxs,
+          custodian,
+          documentUrl: docUrl || undefined,
+          documentName: docName || undefined,
+          savedAt: new Date().toISOString(),
+          submissionId: sub.id,
+          submissionCode: sub.kode
+        };
+
+        saveAccurateMappingToFirestore(newMapping);
+        setSavedMappings(prev => [newMapping, ...prev.filter(m => m.id !== newMapping.id)]);
+        try {
+          localStorage.setItem('accurate_mapping_sub_' + sub.id, JSON.stringify(newMapping));
+          if (sub.kode) {
+            localStorage.setItem('accurate_mapping_code_' + sub.kode, JSON.stringify(newMapping));
+          }
+        } catch (e) {}
+
         setIsProcessing(false);
+        return;
+      } else {
+        // DO NOT MAP sub.items! Inform user clearly so they can inspect or paste text
+        setErrorMessage(`Tidak dapat mengekstrak rincian transaksi secara otomatis dari berkas LPJ "${docName}". Dokumen mungkin berupa scan foto/gambar tanpa teks digital. Silakan buka Pratinjau Dokumen untuk memeriksa berkas, atau salin-tempel baris nota pada tab "Copy & Paste Teks Tabel".`);
+        setSelectedVoucherForModal(sub);
+        setIsVoucherModalOpen(true);
       }
+    } catch (err: any) {
+      console.warn('Ekstraksi berkas LPJ gagal:', err);
+      setErrorMessage(`Gagal membaca berkas LPJ "${docName}": ${err.message || 'Format tidak didukung'}. Silakan periksa dokumen atau gunakan tab "Copy & Paste Teks Tabel".`);
+      setSelectedVoucherForModal(sub);
+      setIsVoucherModalOpen(true);
+    } finally {
+      setIsProcessing(false);
     }
-
-    // Fallback if no LPJ document URL or AI extraction failed/produced empty list
-    if (!sub.items || sub.items.length === 0) {
-      setErrorMessage(`Voucher [${sub?.kode || 'Ini'}] tidak memiliki berkas LPJ ataupun rincian item transaksi.`);
-      return;
-    }
-
-    const mappedTxs: AccurateMappedTransaction[] = sub.items.map((it, idx) => {
-      const itemDesc = it.item || 'Biaya Operasional Lapangan';
-      const mapped = autoMapTransactionToAccurate(itemDesc, accounts);
-      return {
-        id: `vh-${sub.id}-${idx}-${Date.now()}`,
-        date: sub.tanggal || new Date().toISOString().substring(0, 10),
-        description: itemDesc,
-        amount: Number(it.total) || 0,
-        recipient: custodian,
-        accurateAccountCode: mapped.code,
-        accurateAccountName: mapped.name,
-        confidence: mapped.confidence,
-        notes: it.keterangan || undefined
-      };
-    });
-
-    setReportTitle(`Laporan Petty Cash: ${sub.kode} - ${custodian}`);
-    setPeriod(sub.tanggal ? sub.tanggal.substring(0, 7) : new Date().toISOString().substring(0, 7));
-    setTransactions(mappedTxs);
-    setActiveTab('workspace');
-    setSuccessMessage(`Memuat ${mappedTxs.length} rincian transaksi dari data voucher [${sub.kode}] (${custodian}).`);
-
-    const fallbackMapping: AccurateMappingReport = {
-      id: `vh-map-${sub.id}`,
-      title: `Laporan Petty Cash: ${sub.kode} - ${custodian}`,
-      period: sub.tanggal ? sub.tanggal.substring(0, 7) : new Date().toISOString().substring(0, 7),
-      selectedKasCode,
-      totalExpense: mappedTxs.reduce((s, t) => s + (t.amount || 0), 0),
-      transactions: mappedTxs,
-      custodian,
-      documentUrl: docUrl || undefined,
-      documentName: docName || undefined,
-      savedAt: new Date().toISOString(),
-      submissionId: sub.id,
-      submissionCode: sub.kode
-    };
-
-    saveAccurateMappingToFirestore(fallbackMapping);
-    setSavedMappings(prev => [fallbackMapping, ...prev.filter(m => m.id !== fallbackMapping.id)]);
-    try {
-      localStorage.setItem('accurate_mapping_sub_' + sub.id, JSON.stringify(fallbackMapping));
-      if (sub.kode) {
-        localStorage.setItem('accurate_mapping_code_' + sub.kode, JSON.stringify(fallbackMapping));
-      }
-    } catch (e) {}
   };
 
   // Effect to automatically load targetSubmission when directed from Preview & Cetak Dokumen or other views
   useEffect(() => {
     if (targetSubmission) {
-      handleLoadVoucherSubmission(targetSubmission);
+      handleLoadVoucherSubmission(targetSubmission, undefined, undefined, true);
       onClearTargetSubmission?.();
     }
   }, [targetSubmission]);
@@ -2477,10 +2728,10 @@ export function AccuratePettyCashMapping({
                       key={sub.id} 
                       className="bg-white hover:bg-emerald-50/40 border border-stone-250 hover:border-emerald-400 rounded-2xl p-4 transition shadow-xs flex flex-col justify-between space-y-3.5 cursor-pointer group"
                       onClick={() => {
-                        if (stats.savedMapping) {
+                        if (stats.savedMapping && !isVoucherSummaryOnly(stats.savedMapping, sub)) {
                           handleLoadSavedMapping(stats.savedMapping);
                         } else {
-                          handleOpenVoucherModal(sub);
+                          handleLoadVoucherSubmission(sub, undefined, undefined, true);
                         }
                       }}
                     >
@@ -2677,12 +2928,12 @@ export function AccuratePettyCashMapping({
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleLoadVoucherSubmission(sub);
+                                  handleLoadVoucherSubmission(sub, undefined, undefined, true);
                                 }}
                                 className="bg-emerald-700 hover:bg-emerald-800 text-white px-3 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 shadow-xs transition cursor-pointer"
-                                title="Petakan Dokumen Lampiran ke Akun COA Accurate"
+                                title="Petakan Dokumen Lampiran LPJ ke Akun COA Accurate"
                               >
-                                <span>Petakan</span>
+                                <span>Petakan LPJ</span>
                                 <ArrowRight size={13} />
                               </button>
                             </>

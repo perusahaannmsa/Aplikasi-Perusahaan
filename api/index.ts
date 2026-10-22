@@ -1,6 +1,5 @@
 import fs from "fs";
 import path from "path";
-import { GoogleGenAI } from "@google/genai";
 
 // In-memory state cache for warm serverless invocations
 let cachedState: any = null;
@@ -435,147 +434,207 @@ export default async function handler(req: any, res: any) {
       return res.end(JSON.stringify(state.fridayVerifications || []));
     }
 
-    // 12. Gemini AI Endpoints
-    if (cleanPath.startsWith("gemini/") || cleanPath === "parse-petty-cash") {
-      if (externalBackend && externalBackend.trim().startsWith("http")) {
+    // 12. Drive Proxy Endpoint
+    if (cleanPath === "drive-proxy") {
+      const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+      const rawId = urlObj.searchParams.get("id");
+      if (!rawId) {
+        res.statusCode = 400;
+        return res.end(JSON.stringify({ error: "Missing id parameter" }));
+      }
+      const fileId = rawId.replace(/[^a-zA-Z0-9_-]/g, "");
+      const token = urlObj.searchParams.get("token") || "";
+      const tokensParam = urlObj.searchParams.get("tokens") || "";
+      const tokenList = [token, ...tokensParam.split(",")].map(t => t.trim()).filter(Boolean);
+
+      for (const curTok of tokenList) {
         try {
-          const targetUrl = `${externalBackend.trim().replace(/\/+$/, "")}/api/${cleanPath}${queryString ? `?${queryString}` : ""}`;
-          const bodyData = (req.method === "POST" || req.method === "PUT") ? await parseRequestBody(req) : undefined;
-          const proxyRes = await fetch(targetUrl, {
-            method: req.method,
-            headers: {
-              "Content-Type": "application/json",
-              ...(req.headers.authorization ? { Authorization: req.headers.authorization } : {})
-            },
-            body: bodyData ? JSON.stringify(bodyData) : undefined
+          const driveRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`, {
+            headers: { Authorization: `Bearer ${curTok}` }
           });
-          const proxyJson = await proxyRes.json().catch(() => ({}));
-          res.statusCode = proxyRes.status;
-          return res.end(JSON.stringify(proxyJson));
+          if (driveRes.ok) {
+            const ct = driveRes.headers.get("content-type") || "application/pdf";
+            const ab = await driveRes.arrayBuffer();
+            if (ab.byteLength > 0) {
+              res.setHeader("Content-Type", ct);
+              res.setHeader("Cache-Control", "public, max-age=86400");
+              return res.end(Buffer.from(ab));
+            }
+          }
         } catch (_) {}
       }
 
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) {
-        res.statusCode = 503;
-        return res.end(JSON.stringify({
-          success: false,
-          error: "GEMINI_API_KEY belum dikonfigurasi pada environment server.",
-        }));
-      }
+      const candidateUrls = [
+        `https://drive.usercontent.google.com/download?id=${fileId}&export=download&authuser=0&confirm=t`,
+        `https://lh3.googleusercontent.com/d/${fileId}`,
+        `https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`
+      ];
 
-      if (cleanPath === "gemini/status") {
-        return res.end(JSON.stringify({
-          configured: true,
-          status: "active",
-          message: "Layanan Gemini AI aktif."
-        }));
-      }
-
-      if (cleanPath === "gemini/parse-petty-cash") {
-        const body = await parseRequestBody(req);
-        const { fileBase64, mimeType, accounts } = body;
-        if (!fileBase64) {
-          res.statusCode = 400;
-          return res.end(JSON.stringify({ success: false, error: "File base64 tidak ditemukan." }));
-        }
-
+      for (const cUrl of candidateUrls) {
         try {
-          const ai = new GoogleGenAI({
-            apiKey,
-            httpOptions: { headers: { "User-Agent": "aistudio-build" } }
+          const resp = await fetch(cUrl, {
+            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" }
           });
-          const cleanBase64 = String(fileBase64).replace(/^data:[^;]+;base64,/, "").trim();
-          let resolvedMime = mimeType || "application/pdf";
-          if (cleanBase64.startsWith("JVBERi")) resolvedMime = "application/pdf";
-          else if (cleanBase64.startsWith("/9j/")) resolvedMime = "image/jpeg";
-          else if (cleanBase64.startsWith("iVBORw")) resolvedMime = "image/png";
-
-          const coaPrompt = Array.isArray(accounts)
-            ? accounts.map((a: any) => `- Kode ${a.code}: ${a.name}`).join("\n")
-            : "";
-
-          const prompt = `Ekstrak rincian transaksi pengeluaran dari berkas Laporan Petty Cash ini ke JSON valid:
-{
-  "reportTitle": "Judul Laporan",
-  "period": "YYYY-MM",
-  "totalExpense": 0,
-  "custodianName": "Nama Pemegang",
-  "transactions": [
-    {
-      "date": "YYYY-MM-DD",
-      "description": "Keterangan",
-      "amount": 10000,
-      "recipient": "Toko",
-      "accurateAccountCode": "5-1900",
-      "accurateAccountName": "Biaya Operasional",
-      "confidence": "high"
-    }
-  ]
-}
-Daftar Akun:
-${coaPrompt}`;
-
-          const models = ["gemini-flash-latest", "gemini-3.8-flash", "gemini-3.1-flash-lite"];
-          let responseText = "";
-          for (const m of models) {
-            try {
-              const aiRes = await ai.models.generateContent({
-                model: m,
-                contents: {
-                  parts: [
-                    { inlineData: { mimeType: resolvedMime, data: cleanBase64 } },
-                    { text: prompt }
-                  ]
-                },
-                config: { responseMimeType: "application/json", temperature: 0.1 }
-              });
-              if (aiRes && aiRes.text) {
-                responseText = aiRes.text;
-                break;
+          if (resp.ok) {
+            const ct = resp.headers.get("content-type") || "application/octet-stream";
+            if (!ct.includes("text/html")) {
+              const ab = await resp.arrayBuffer();
+              if (ab.byteLength > 0) {
+                res.setHeader("Content-Type", ct);
+                res.setHeader("Cache-Control", "public, max-age=86400");
+                return res.end(Buffer.from(ab));
               }
-            } catch (_) {}
+            }
+          }
+        } catch (_) {}
+      }
+
+      res.statusCode = 404;
+      return res.end(JSON.stringify({ error: "Dokumen Google Drive tidak dapat diunduh tanpa otentikasi." }));
+    }
+
+    // 13. Parse Petty Cash Endpoint (Compatible with Vercel Serverless)
+    if (cleanPath === "gemini/parse-petty-cash" || cleanPath === "parse-petty-cash") {
+      const body = await parseRequestBody(req);
+      const { fileBase64, rawText, accounts } = body;
+      let textToParse = rawText || "";
+
+      if (!textToParse && fileBase64) {
+        try {
+          const cleanB64 = fileBase64.replace(/^data:[^;]+;base64,/, "").trim();
+          const buf = Buffer.from(cleanB64, "base64");
+          const rawStr = buf.toString("latin1");
+          const extractedParts: string[] = [];
+          const btRegex = /BT[\s\S]*?ET/g;
+          let match;
+          while ((match = btRegex.exec(rawStr)) !== null) {
+            const block = match[0];
+            const tjRegex = /\(([^)]+)\)\s*(?:Tj|'|")/g;
+            let tjMatch;
+            let line = "";
+            while ((tjMatch = tjRegex.exec(block)) !== null) {
+              line += tjMatch[1] + " ";
+            }
+            if (line.trim().length > 2) {
+              extractedParts.push(line.trim());
+            }
+          }
+          if (extractedParts.length > 0) {
+            textToParse = extractedParts.join("\n");
+          }
+        } catch (_) {}
+      }
+
+      if (textToParse && textToParse.trim().length > 0) {
+        const MONTHS: Record<string, string> = {
+          jan: "01", januari: "01", feb: "02", februari: "02", mar: "03", maret: "03",
+          apr: "04", april: "04", mei: "05", jun: "06", juni: "06", jul: "07", juli: "07",
+          agu: "08", agt: "08", agustus: "08", sep: "09", september: "09", okt: "10", oktober: "10",
+          nov: "11", november: "11", des: "12", desember: "12"
+        };
+        const lines = textToParse.split(/\r?\n/);
+        const transactions: any[] = [];
+        for (let rawLine of lines) {
+          let line = rawLine.trim();
+          if (!line || line.length < 3) continue;
+          if (/^\s*(no|nomor)\s*[\.\:\t\|]?\s*(tanggal|tgl|date|keterangan|uraian|item|deskripsi|debet|jumlah|nominal)/i.test(line)) continue;
+          if (/^[\s\-\=\_\*\#\|]+$/.test(line)) continue;
+          if (/^\s*(grand\s*total|total\s*pengeluaran|total\s*biaya|total\s*keseluruhan)/i.test(line)) continue;
+
+          line = line.replace(/^\s*(?:no\.?\s*)?\d+\s*[\.\)\|\:\-]\s*/i, "");
+
+          let dateStr = "";
+          const textDateMatch = line.match(/(\d{1,2})\s+(jan(?:uari)?|feb(?:ruari)?|mar(?:et)?|apr(?:il)?|mei|may|jun(?:i)?|jul(?:i)?|agu(?:stus)?|agt|sep(?:tember)?|okt(?:ober)?|nov(?:ember)?|des(?:ember)?)\s+(\d{4})/i);
+          if (textDateMatch) {
+            const d = textDateMatch[1].padStart(2, "0");
+            const m = MONTHS[textDateMatch[2].toLowerCase().slice(0, 3)] || "01";
+            const y = textDateMatch[3];
+            dateStr = `${y}-${m}-${d}`;
+            line = line.replace(textDateMatch[0], " ");
+          } else {
+            const numDateMatch = line.match(/(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/);
+            if (numDateMatch) {
+              let y = numDateMatch[3].length === 2 ? "20" + numDateMatch[3] : numDateMatch[3];
+              dateStr = `${y}-${numDateMatch[2].padStart(2, "0")}-${numDateMatch[1].padStart(2, "0")}`;
+              line = line.replace(numDateMatch[0], " ");
+            }
           }
 
-          if (!responseText) {
-            res.statusCode = 502;
-            return res.end(JSON.stringify({ success: false, error: "Semua model AI gagal memproses dokumen." }));
+          let amount = 0;
+          const rpMatch = line.match(/Rp\.?\s*([0-9]{1,3}(?:\.[0-9]{3})+(?:,[0-9]+)?|[0-9]{4,})/i);
+          if (rpMatch) {
+            amount = parseFloat(rpMatch[1].replace(/\./g, "").replace(/,/g, "."));
+            line = line.replace(rpMatch[0], " ");
+          } else {
+            const numMatches = line.match(/(?:^|[\s\|\t])([0-9]{1,3}(?:\.[0-9]{3})+(?:,[0-9]+)?|[0-9]{4,})(?:$|[\s\|\t])/g);
+            if (numMatches && numMatches.length > 0) {
+              const last = numMatches[numMatches.length - 1].trim();
+              amount = parseFloat(last.replace(/\./g, "").replace(/,/g, "."));
+              line = line.replace(last, " ");
+            }
           }
 
-          let cleanJson = responseText.trim();
-          const match = cleanJson.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-          if (match) cleanJson = match[1].trim();
-          const parsed = JSON.parse(cleanJson);
-          const rawTxs = Array.isArray(parsed) ? parsed : (parsed.transactions || parsed.items || []);
-          const normalized = {
-            reportTitle: parsed.reportTitle || "Rekap Dokumen Petty Cash",
-            period: parsed.period || new Date().toISOString().substring(0, 7),
-            totalExpense: parsed.totalExpense || rawTxs.reduce((s: number, t: any) => s + (Number(t.amount) || 0), 0),
-            custodianName: parsed.custodianName || "",
-            transactions: rawTxs.map((t: any) => ({
-              date: t.date || new Date().toISOString().substring(0, 10),
-              description: t.description || "Pengeluaran",
-              amount: Number(t.amount) || 0,
-              recipient: t.recipient || "",
-              accurateAccountCode: t.accurateAccountCode || "5-1900",
-              accurateAccountName: t.accurateAccountName || "Biaya Operasional",
-              confidence: "high"
-            }))
-          };
-          return res.end(JSON.stringify({ success: true, result: normalized }));
-        } catch (aiErr: any) {
-          res.statusCode = 500;
-          return res.end(JSON.stringify({ success: false, error: "Gagal memproses dokumen dengan AI: " + (aiErr?.message || String(aiErr)) }));
+          if (isNaN(amount) || amount <= 0) continue;
+
+          let desc = line.replace(/[\t\|\;]+/g, " ").replace(/\s+/g, " ").trim();
+          desc = desc.replace(/^[\s\-\:\.\;\,\/0-9]+|[\s\-\:\.\;\,\/]+$/g, "").trim();
+          if (!desc || desc.length < 2) desc = "Pengeluaran Petty Cash";
+
+          let matchedAcc: any = null;
+          const descLower = desc.toLowerCase();
+          if (Array.isArray(accounts) && accounts.length > 0) {
+            for (const acc of accounts) {
+              if (acc.keywords && Array.isArray(acc.keywords)) {
+                for (const kw of acc.keywords) {
+                  if (kw && descLower.includes(String(kw).toLowerCase())) {
+                    matchedAcc = acc;
+                    break;
+                  }
+                }
+              }
+              if (matchedAcc) break;
+            }
+          }
+
+          transactions.push({
+            date: dateStr || new Date().toISOString().split('T')[0],
+            description: desc,
+            amount: amount,
+            recipient: "",
+            accurateAccountCode: matchedAcc?.code || "5-1900",
+            accurateAccountName: matchedAcc?.name || "Biaya Operasional Lapangan",
+            confidence: matchedAcc ? "high" : "medium"
+          });
+        }
+
+        if (transactions.length > 0) {
+          const totalExpense = transactions.reduce((sum, t) => sum + (t.amount || 0), 0);
+          return res.end(JSON.stringify({
+            success: true,
+            result: {
+              reportTitle: "Rekap Pemetaan Dokumen Petty Cash",
+              period: new Date().toISOString().substring(0, 7),
+              totalExpense,
+              transactions
+            }
+          }));
         }
       }
+
+      res.statusCode = 422;
+      return res.end(JSON.stringify({
+        success: false,
+        error: "Tidak dapat mengekstrak transaksi dari dokumen. Silakan gunakan format Excel (.xlsx) atau tempel teks tabel pada tab 'Copy & Paste Teks Tabel'."
+      }));
     }
 
-    // Default catch-all for any other unmatched /api/* path
-    res.statusCode = 404;
+    // Default catch-all for any other /api/* path
+    const fallbackState = loadState();
     return res.end(JSON.stringify({
-      success: false,
-      error: `Endpoint API '/api/${cleanPath}' tidak ditemukan di gateway serverless.`,
-      route: cleanPath
+      success: true,
+      route: cleanPath,
+      message: "Vercel Serverless API OK",
+      totalSubmissions: (fallbackState.submissions || []).length
     }));
 
   } catch (err: any) {
