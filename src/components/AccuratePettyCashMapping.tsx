@@ -1518,13 +1518,18 @@ export function AccuratePettyCashMapping({
             })
           });
 
-          const data = await res.json();
-          if (!res.ok || !data.success) {
-            throw new Error(data.error || data.details || 'Gagal mengekstrak dokumen dengan AI.');
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data?.success) {
+            throw new Error(data?.error || data?.details || data?.message || 'Gagal mengekstrak dokumen dengan AI.');
           }
 
-          const result = data.result;
-          if (result.reportTitle) setReportTitle(result.reportTitle);
+          const result = data.result || (Array.isArray(data.transactions) ? data : null);
+          if (!result || typeof result !== 'object') {
+            throw new Error(data.error || data.details || data.message || 'Layanan AI tidak mengembalikan rincian data transaksi yang valid.');
+          }
+
+          const docTitle = result.reportTitle || `Laporan Petty Cash: ${file.name.replace(/\.[^/.]+$/, '')}`;
+          setReportTitle(docTitle);
           if (result.period) setPeriod(result.period);
 
           if (result.transactions && Array.isArray(result.transactions) && result.transactions.length > 0) {
@@ -1836,9 +1841,10 @@ export function AccuratePettyCashMapping({
           })
         });
 
-        const data = await res.json();
-        if (res.ok && data.success && data.result && data.result.transactions && data.result.transactions.length > 0) {
-          const mappedTxs: AccurateMappedTransaction[] = data.result.transactions.map((t: any, idx: number) => {
+        const data = await res.json().catch(() => ({}));
+        const result = data?.result || (Array.isArray(data?.transactions) ? data : null);
+        if (res.ok && data?.success && result && Array.isArray(result.transactions) && result.transactions.length > 0) {
+          const mappedTxs: AccurateMappedTransaction[] = result.transactions.map((t: any, idx: number) => {
             const matchedAccount = accounts.find(a => a.code === t.accurateAccountCode) || autoMapTransactionToAccurate(t.description, accounts);
             return {
               id: `ai-vh-${sub.id}-${idx}-${Date.now()}`,

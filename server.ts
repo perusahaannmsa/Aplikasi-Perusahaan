@@ -93,11 +93,115 @@ function getGeminiClient() {
 }
 
 const PRIMARY_GEMINI_MODELS = [
-  "gemini-3.8-flash",
   "gemini-flash-latest",
+  "gemini-3.8-flash",
   "gemini-3.1-flash-lite",
-  "gemini-3.1-pro-preview",
 ];
+
+// Helper to safely parse JSON from Gemini text response even if wrapped in markdown
+export function parseJsonSafely(text: string): any {
+  if (!text) return null;
+  let clean = text.trim();
+  const jsonBlock = clean.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (jsonBlock) {
+    clean = jsonBlock[1].trim();
+  } else if (clean.startsWith("```")) {
+    clean = clean.replace(/^```[a-z]*\s*/i, "").replace(/\s*```$/, "").trim();
+  }
+  try {
+    return JSON.parse(clean);
+  } catch (e) {
+    const firstBrace = clean.indexOf('{');
+    const lastBrace = clean.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      try {
+        return JSON.parse(clean.substring(firstBrace, lastBrace + 1));
+      } catch (_) {}
+    }
+    const firstBracket = clean.indexOf('[');
+    const lastBracket = clean.lastIndexOf(']');
+    if (firstBracket !== -1 && lastBracket > firstBracket) {
+      try {
+        return JSON.parse(clean.substring(firstBracket, lastBracket + 1));
+      } catch (_) {}
+    }
+    return null;
+  }
+}
+
+// Normalize petty cash extraction results into uniform schema
+export function normalizePettyCashExtraction(parsedData: any, accounts: any[] = []): any {
+  if (!parsedData || typeof parsedData !== "object") return null;
+
+  let rawList: any[] = [];
+  let reportTitle = parsedData.reportTitle || parsedData.title || parsedData.judul || "Rekap Dokumen Petty Cash";
+  let period = parsedData.period || parsedData.periode || new Date().toISOString().substring(0, 7);
+  let custodianName = parsedData.custodianName || parsedData.penanggungJawab || parsedData.workerName || "";
+
+  if (Array.isArray(parsedData)) {
+    rawList = parsedData;
+  } else if (Array.isArray(parsedData.transactions)) {
+    rawList = parsedData.transactions;
+  } else if (Array.isArray(parsedData.transaksi)) {
+    rawList = parsedData.transaksi;
+  } else if (parsedData.result && (Array.isArray(parsedData.result.transactions) || Array.isArray(parsedData.result))) {
+    rawList = Array.isArray(parsedData.result) ? parsedData.result : parsedData.result.transactions;
+    if (parsedData.result.reportTitle) reportTitle = parsedData.result.reportTitle;
+    if (parsedData.result.period) period = parsedData.result.period;
+  } else if (parsedData.data && (Array.isArray(parsedData.data.transactions) || Array.isArray(parsedData.data))) {
+    rawList = Array.isArray(parsedData.data) ? parsedData.data : parsedData.data.transactions;
+    if (parsedData.data.reportTitle) reportTitle = parsedData.data.reportTitle;
+    if (parsedData.data.period) period = parsedData.data.period;
+  } else if (Array.isArray(parsedData.items)) {
+    rawList = parsedData.items;
+  } else if (Array.isArray(parsedData.rincian)) {
+    rawList = parsedData.rincian;
+  } else if (parsedData.amount || parsedData.totalExpense || parsedData.description || parsedData.uraian) {
+    rawList = [parsedData];
+  }
+
+  if (rawList.length === 0) return null;
+
+  const transactions = rawList.map((t: any, idx: number) => {
+    let amt = Number(t.amount ?? t.nominal ?? t.total ?? t.biaya ?? 0);
+    if (isNaN(amt) || amt === 0) {
+      const match = String(t.amount || t.nominal || "").match(/[\d\.]+/);
+      if (match) amt = parseFloat(match[0].replace(/\./g, '')) || 0;
+    }
+    const desc = t.description || t.uraian || t.keterangan || t.nama || `Transaksi ${idx + 1}`;
+    let code = t.accurateAccountCode || t.kodeAkun || "";
+    let name = t.accurateAccountName || t.namaAkun || "";
+
+    if (!code && Array.isArray(accounts) && accounts.length > 0) {
+      const matched = accounts.find((a: any) => desc.toLowerCase().includes((a.name || '').toLowerCase())) || accounts[0];
+      if (matched) {
+        code = matched.code;
+        name = matched.name;
+      }
+    }
+
+    return {
+      date: t.date || t.tanggal || new Date().toISOString().substring(0, 10),
+      description: desc,
+      amount: amt,
+      recipient: t.recipient || t.penerima || t.toko || "",
+      accurateAccountCode: code || "5-1900",
+      accurateAccountName: name || "Biaya Operasional Lain-lain",
+      confidence: t.confidence || "high"
+    };
+  });
+
+  const totalExpense = transactions.reduce((sum: number, t: any) => sum + t.amount, 0);
+
+  return {
+    reportTitle,
+    period,
+    totalExpense,
+    custodianName,
+    transactions
+  };
+}
+
 
 // Normalize MIME types from base64 signature for robust document reading
 export function normalizeDocumentMimeType(cleanBase64: string, fallbackMime?: string): string {
@@ -211,13 +315,7 @@ Ekstrak informasi kwitansi/faktur/nota belanja ini ke dalam JSON valid:
       },
     });
 
-    let textClean = (response.text || "").trim();
-    if (textClean.startsWith("```json")) {
-      textClean = textClean.replace(/^```json\s*/, "").replace(/\s*```$/, "");
-    } else if (textClean.startsWith("```")) {
-      textClean = textClean.replace(/^```\s*/, "").replace(/\s*```$/, "");
-    }
-    const parsedData = JSON.parse(textClean || "{}");
+    const parsedData = parseJsonSafely(response.text || "") || {};
     return res.json({ success: true, result: parsedData });
   } catch (error: any) {
     console.error("Error in parse-receipt:", error);
@@ -442,15 +540,10 @@ KEMBALIKAN HANYA FORMAT JSON VALID DENGAN SKEMA:
       }
 
       if (response && response.text) {
-        let textClean = response.text.trim();
-        if (textClean.startsWith("```json")) {
-          textClean = textClean.replace(/^```json\s*/, "").replace(/\s*```$/, "");
-        } else if (textClean.startsWith("```")) {
-          textClean = textClean.replace(/^```\s*/, "").replace(/\s*```$/, "");
-        }
-        const parsedData = JSON.parse(textClean || "{}");
-        if (parsedData.transactions && parsedData.transactions.length > 0) {
-          return res.json({ success: true, result: parsedData, source: 'gemini' });
+        const parsedRaw = parseJsonSafely(response.text || "");
+        const normalized = normalizePettyCashExtraction(parsedRaw, accounts);
+        if (normalized && normalized.transactions && normalized.transactions.length > 0) {
+          return res.json({ success: true, result: normalized, source: 'gemini' });
         }
       }
     } catch (err: any) {
@@ -586,15 +679,24 @@ KEMBALIKAN HANYA FORMAT JSON VALID:
     });
     console.log(`Successfully parsed SPPD with model: ${modelUsed}`);
 
-    let textClean = response.text.trim();
-    if (textClean.startsWith("```json")) {
-      textClean = textClean.replace(/^```json\s*/, "").replace(/\s*```$/, "");
-    } else if (textClean.startsWith("```")) {
-      textClean = textClean.replace(/^```\s*/, "").replace(/\s*```$/, "");
+    const parsedData = parseJsonSafely(response.text || "") || {};
+    let transactions: any[] = [];
+    if (Array.isArray(parsedData)) {
+      transactions = parsedData;
+    } else if (Array.isArray(parsedData.transactions)) {
+      transactions = parsedData.transactions;
+    } else if (parsedData.result && Array.isArray(parsedData.result.transactions)) {
+      transactions = parsedData.result.transactions;
     }
-
-    const parsedData = JSON.parse(textClean || "{}");
-    return res.json({ success: true, result: parsedData });
+    const normalized = {
+      reportTitle: parsedData.reportTitle || `Laporan SPPD: ${employeeName || 'Karyawan'} - Perjalanan Dinas`,
+      employeeName: parsedData.employeeName || employeeName || '',
+      destination: parsedData.destination || '',
+      period: parsedData.period || new Date().toISOString().substring(0, 7),
+      totalExpense: parsedData.totalExpense || transactions.reduce((sum, t) => sum + (Number(t.amount) || 0), 0),
+      transactions: transactions
+    };
+    return res.json({ success: true, result: normalized });
   } catch (error: any) {
     console.error("Error in parse-sppd:", error);
     return res.status(500).json({ error: "Gagal membaca & memetakan SPPD.", details: error.message });

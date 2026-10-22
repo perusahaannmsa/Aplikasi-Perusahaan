@@ -596,7 +596,7 @@ export function SppdAccountMapping({
               });
 
               setTransactions(mappedTxs);
-              setReportTitle(data.result.reportTitle || `SPPD: ${file.name}`);
+              setReportTitle(data.result?.reportTitle || `SPPD: ${file.name}`);
               setSuccessMessage(`AI Parser berhasil mengekstrak ${mappedTxs.length} pos transaksi dari ${file.name}!`);
             } else {
               throw new Error(data.error || 'AI tidak menemukan pos transaksi dalam dokumen.');
@@ -662,7 +662,7 @@ export function SppdAccountMapping({
         });
 
         setTransactions(mappedTxs);
-        setReportTitle(data.result.reportTitle || `SPPD: ${employeeName || 'Karyawan'} (Input Teks)`);
+        setReportTitle(data.result?.reportTitle || `SPPD: ${employeeName || 'Karyawan'} (Input Teks)`);
         setSuccessMessage(`Berhasil menganalisis dan memetakan ${mappedTxs.length} pos transaksi dari teks SPPD!`);
       } else {
         throw new Error(data.error || 'Gagal mengekstrak rincian transaksi dari teks yang ditempel.');

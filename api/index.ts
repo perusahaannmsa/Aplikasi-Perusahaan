@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { GoogleGenAI } from "@google/genai";
 
 // In-memory state cache for warm serverless invocations
 let cachedState: any = null;
@@ -434,13 +435,147 @@ export default async function handler(req: any, res: any) {
       return res.end(JSON.stringify(state.fridayVerifications || []));
     }
 
-    // Default catch-all for any other /api/* path
-    const fallbackState = loadState();
+    // 12. Gemini AI Endpoints
+    if (cleanPath.startsWith("gemini/") || cleanPath === "parse-petty-cash") {
+      if (externalBackend && externalBackend.trim().startsWith("http")) {
+        try {
+          const targetUrl = `${externalBackend.trim().replace(/\/+$/, "")}/api/${cleanPath}${queryString ? `?${queryString}` : ""}`;
+          const bodyData = (req.method === "POST" || req.method === "PUT") ? await parseRequestBody(req) : undefined;
+          const proxyRes = await fetch(targetUrl, {
+            method: req.method,
+            headers: {
+              "Content-Type": "application/json",
+              ...(req.headers.authorization ? { Authorization: req.headers.authorization } : {})
+            },
+            body: bodyData ? JSON.stringify(bodyData) : undefined
+          });
+          const proxyJson = await proxyRes.json().catch(() => ({}));
+          res.statusCode = proxyRes.status;
+          return res.end(JSON.stringify(proxyJson));
+        } catch (_) {}
+      }
+
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        res.statusCode = 503;
+        return res.end(JSON.stringify({
+          success: false,
+          error: "GEMINI_API_KEY belum dikonfigurasi pada environment server.",
+        }));
+      }
+
+      if (cleanPath === "gemini/status") {
+        return res.end(JSON.stringify({
+          configured: true,
+          status: "active",
+          message: "Layanan Gemini AI aktif."
+        }));
+      }
+
+      if (cleanPath === "gemini/parse-petty-cash") {
+        const body = await parseRequestBody(req);
+        const { fileBase64, mimeType, accounts } = body;
+        if (!fileBase64) {
+          res.statusCode = 400;
+          return res.end(JSON.stringify({ success: false, error: "File base64 tidak ditemukan." }));
+        }
+
+        try {
+          const ai = new GoogleGenAI({
+            apiKey,
+            httpOptions: { headers: { "User-Agent": "aistudio-build" } }
+          });
+          const cleanBase64 = String(fileBase64).replace(/^data:[^;]+;base64,/, "").trim();
+          let resolvedMime = mimeType || "application/pdf";
+          if (cleanBase64.startsWith("JVBERi")) resolvedMime = "application/pdf";
+          else if (cleanBase64.startsWith("/9j/")) resolvedMime = "image/jpeg";
+          else if (cleanBase64.startsWith("iVBORw")) resolvedMime = "image/png";
+
+          const coaPrompt = Array.isArray(accounts)
+            ? accounts.map((a: any) => `- Kode ${a.code}: ${a.name}`).join("\n")
+            : "";
+
+          const prompt = `Ekstrak rincian transaksi pengeluaran dari berkas Laporan Petty Cash ini ke JSON valid:
+{
+  "reportTitle": "Judul Laporan",
+  "period": "YYYY-MM",
+  "totalExpense": 0,
+  "custodianName": "Nama Pemegang",
+  "transactions": [
+    {
+      "date": "YYYY-MM-DD",
+      "description": "Keterangan",
+      "amount": 10000,
+      "recipient": "Toko",
+      "accurateAccountCode": "5-1900",
+      "accurateAccountName": "Biaya Operasional",
+      "confidence": "high"
+    }
+  ]
+}
+Daftar Akun:
+${coaPrompt}`;
+
+          const models = ["gemini-flash-latest", "gemini-3.8-flash", "gemini-3.1-flash-lite"];
+          let responseText = "";
+          for (const m of models) {
+            try {
+              const aiRes = await ai.models.generateContent({
+                model: m,
+                contents: {
+                  parts: [
+                    { inlineData: { mimeType: resolvedMime, data: cleanBase64 } },
+                    { text: prompt }
+                  ]
+                },
+                config: { responseMimeType: "application/json", temperature: 0.1 }
+              });
+              if (aiRes && aiRes.text) {
+                responseText = aiRes.text;
+                break;
+              }
+            } catch (_) {}
+          }
+
+          if (!responseText) {
+            res.statusCode = 502;
+            return res.end(JSON.stringify({ success: false, error: "Semua model AI gagal memproses dokumen." }));
+          }
+
+          let cleanJson = responseText.trim();
+          const match = cleanJson.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+          if (match) cleanJson = match[1].trim();
+          const parsed = JSON.parse(cleanJson);
+          const rawTxs = Array.isArray(parsed) ? parsed : (parsed.transactions || parsed.items || []);
+          const normalized = {
+            reportTitle: parsed.reportTitle || "Rekap Dokumen Petty Cash",
+            period: parsed.period || new Date().toISOString().substring(0, 7),
+            totalExpense: parsed.totalExpense || rawTxs.reduce((s: number, t: any) => s + (Number(t.amount) || 0), 0),
+            custodianName: parsed.custodianName || "",
+            transactions: rawTxs.map((t: any) => ({
+              date: t.date || new Date().toISOString().substring(0, 10),
+              description: t.description || "Pengeluaran",
+              amount: Number(t.amount) || 0,
+              recipient: t.recipient || "",
+              accurateAccountCode: t.accurateAccountCode || "5-1900",
+              accurateAccountName: t.accurateAccountName || "Biaya Operasional",
+              confidence: "high"
+            }))
+          };
+          return res.end(JSON.stringify({ success: true, result: normalized }));
+        } catch (aiErr: any) {
+          res.statusCode = 500;
+          return res.end(JSON.stringify({ success: false, error: "Gagal memproses dokumen dengan AI: " + (aiErr?.message || String(aiErr)) }));
+        }
+      }
+    }
+
+    // Default catch-all for any other unmatched /api/* path
+    res.statusCode = 404;
     return res.end(JSON.stringify({
-      success: true,
-      route: cleanPath,
-      message: "Vercel Serverless API OK",
-      totalSubmissions: (fallbackState.submissions || []).length
+      success: false,
+      error: `Endpoint API '/api/${cleanPath}' tidak ditemukan di gateway serverless.`,
+      route: cleanPath
     }));
 
   } catch (err: any) {
