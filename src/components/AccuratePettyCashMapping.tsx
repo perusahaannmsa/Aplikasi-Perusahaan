@@ -1623,6 +1623,7 @@ export function AccuratePettyCashMapping({
           let docTitle = `Laporan Petty Cash: ${file.name}`;
           let docPeriod = new Date().toISOString().substring(0, 7);
 
+          let serverErrorMessage = '';
           try {
             const res = await fetch('/api/gemini/parse-petty-cash', {
               method: 'POST',
@@ -1655,8 +1656,13 @@ export function AccuratePettyCashMapping({
                   };
                 });
               }
+            } else {
+              const errData = await res.json().catch(() => ({}));
+              serverErrorMessage = errData.error || errData.details || `HTTP error ${res.status}`;
+              console.warn('API parsing non-ok:', serverErrorMessage);
             }
-          } catch (apiErr) {
+          } catch (apiErr: any) {
+            serverErrorMessage = apiErr?.message || String(apiErr);
             console.warn('API parsing request failed, attempting local fallback...', apiErr);
           }
 
@@ -1696,7 +1702,11 @@ export function AccuratePettyCashMapping({
             setTransactions(mappedTxs);
             setSuccessMessage(`Berhasil membaca & memetakan ${mappedTxs.length} transaksi dari berkas "${file.name}"!`);
           } else {
-            throw new Error(`Tidak dapat mengekstrak baris transaksi dari berkas "${file.name}". Pastikan berkas memiliki teks yang dapat dibaca, atau gunakan format Excel (.xlsx) / tempel data pada tab "Copy & Paste Teks Tabel".`);
+            throw new Error(
+              serverErrorMessage
+                ? `Gagal membaca transaksi via AI: ${serverErrorMessage}`
+                : `Tidak dapat mengekstrak baris transaksi dari berkas "${file.name}". Pastikan berkas memiliki teks yang dapat dibaca, atau gunakan format Excel (.xlsx) / tempel data pada tab "Copy & Paste Teks Tabel".`
+            );
           }
         } catch (err: any) {
           console.error(err);
