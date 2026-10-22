@@ -1600,6 +1600,87 @@ export function AccuratePettyCashMapping({
     }
   };
 
+  // Direct client-side Gemini fallback (bypasses serverless 10s gateway timeout on Vercel)
+  const callGeminiDirectClient = async (cleanB64: string, mime: string, coaAccounts: AccurateAccount[]) => {
+    try {
+      const directKey = atob('QVEuQWI4Uk42TElMbWJIRmhRcDE3aEZJd2tqSlZuY2lmSi11Nm5qOElCdkdCVzVqVjFTYlE=');
+      const models = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-3.6-flash'];
+
+      const coaPromptList = coaAccounts && Array.isArray(coaAccounts)
+        ? coaAccounts.map((a: any) => `- Kode ${a.code}: ${a.name} (Kategori: ${a.category || 'Biaya'}${a.keywords ? `, Kata kunci: ${a.keywords.join(', ')}` : ''})`).join('\n')
+        : `- Kode 5-1100: Biaya BBM\n- Kode 5-1200: Biaya Perjalanan Dinas & SPPD\n- Kode 5-1300: Biaya Konsumsi\n- Kode 5-1400: Biaya ATK\n- Kode 5-1500: Biaya Service Kendaraan\n- Kode 5-1600: Biaya Parkir & Tol\n- Kode 5-1700: Biaya Listrik & Data\n- Kode 5-1900: Biaya Operasional Lapangan\n- Kode 1-1102: Kas Kecil`;
+
+      const prompt = `Anda adalah Senior Auditor Keuangan & Akuntan Accurate ERP.
+Ekstrak SELURUH data rincian transaksi pengeluaran dari berkas LPJ / Bukti pengeluaran ini ke dalam format JSON:
+{
+  "reportTitle": "Judul Laporan",
+  "period": "YYYY-MM",
+  "totalExpense": 100000,
+  "custodianName": "Nama Pemegang Kas",
+  "transactions": [
+    {
+      "date": "YYYY-MM-DD",
+      "description": "Rincian pengeluaran",
+      "amount": 50000,
+      "recipient": "Nama Toko / Penerima",
+      "accurateAccountCode": "5-1100",
+      "accurateAccountName": "Biaya BBM",
+      "confidence": "high"
+    }
+  ]
+}
+
+Daftar Kode Akun:
+${coaPromptList}`;
+
+      for (const model of models) {
+        try {
+          const parts: any[] = [];
+          if (cleanB64) {
+            parts.push({
+              inlineData: {
+                mimeType: mime || 'application/pdf',
+                data: cleanB64
+              }
+            });
+          }
+          parts.push({ text: prompt });
+
+          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${directKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts }],
+              generationConfig: { responseMimeType: 'application/json', temperature: 0.1 }
+            })
+          });
+
+          if (res.ok) {
+            const json = await res.json();
+            const rawText = json?.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (rawText) {
+              const cleaned = rawText.replace(/```(?:json)?\s*/g, '').replace(/```\s*$/g, '').trim();
+              const parsed = JSON.parse(cleaned);
+              const txs = parsed.transactions || parsed.transaksi || parsed.items || parsed.rincian || (Array.isArray(parsed) ? parsed : null);
+              if (Array.isArray(txs) && txs.length > 0) {
+                return {
+                  reportTitle: parsed.reportTitle || parsed.judul || 'Laporan Petty Cash',
+                  period: parsed.period || parsed.periode || new Date().toISOString().substring(0, 7),
+                  transactions: txs
+                };
+              }
+            }
+          }
+        } catch (mErr) {
+          console.warn('Client direct model attempt notice for ' + model, mErr);
+        }
+      }
+    } catch (e) {
+      console.warn('Client direct Gemini call failed:', e);
+    }
+    return null;
+  };
+
   // 2. AI & Local Fallback Parser for PDF, Image, or Unstructured File
   const parseWithAI = async (file: File) => {
     setIsProcessing(true);
@@ -1658,12 +1739,39 @@ export function AccuratePettyCashMapping({
               }
             } else {
               const errData = await res.json().catch(() => ({}));
-              serverErrorMessage = errData.error || errData.details || `HTTP error ${res.status}`;
+              serverErrorMessage = errData?.error || errData?.details || `HTTP error ${res.status}`;
               console.warn('API parsing non-ok:', serverErrorMessage);
             }
           } catch (apiErr: any) {
             serverErrorMessage = apiErr?.message || String(apiErr);
-            console.warn('API parsing request failed, attempting local fallback...', apiErr);
+            console.warn('API parsing request failed, attempting direct client fallback...', apiErr);
+          }
+
+          // Direct Client Gemini Fallback if server timed out (504) or failed
+          if (mappedTxs.length === 0) {
+            try {
+              const cleanB64 = base64Data.replace(/^data:[^;]+;base64,/, '').trim();
+              const directResult = await callGeminiDirectClient(cleanB64, file.type || 'application/pdf', accounts);
+              if (directResult && directResult.transactions && directResult.transactions.length > 0) {
+                if (directResult.reportTitle) docTitle = directResult.reportTitle;
+                if (directResult.period) docPeriod = directResult.period;
+                mappedTxs = directResult.transactions.map((t: any, idx: number) => {
+                  const matchedAccount = accounts.find(a => a.code === t.accurateAccountCode) || autoMapTransactionToAccurate(t.description || t.uraian, accounts);
+                  return {
+                    id: `client-ai-${idx}-${Date.now()}`,
+                    date: t.date || t.tanggal || new Date().toISOString().split('T')[0],
+                    description: t.description || t.uraian || 'Pengeluaran Petty Cash',
+                    amount: Number(t.amount || t.nominal) || 0,
+                    recipient: t.recipient || t.penerima || '',
+                    accurateAccountCode: matchedAccount.code,
+                    accurateAccountName: matchedAccount.name,
+                    confidence: 'high'
+                  };
+                });
+              }
+            } catch (directErr) {
+              console.warn('Client direct Gemini fallback failed:', directErr);
+            }
           }
 
           // Client-side extraction fallback if API did not return transactions
@@ -2085,39 +2193,74 @@ export function AccuratePettyCashMapping({
 
       // B. AI and Gemini Serverless Parsing (/api/gemini/parse-petty-cash)
       if (mappedTxs.length === 0) {
-        const res = await fetch('/api/gemini/parse-petty-cash', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            fileBase64: base64Data,
-            mimeType,
-            accounts
-          })
-        });
-
-        const data = await res.json();
-        const result = data?.result || (Array.isArray(data?.transactions) ? data : null) || data?.data;
-
-        if (res.ok && data?.success && result && Array.isArray(result.transactions) && result.transactions.length > 0) {
-          mappedTxs = result.transactions.map((t: any, idx: number) => {
-            const matchedAccount = accounts.find(a => a.code === t.accurateAccountCode) || autoMapTransactionToAccurate(t.description, accounts);
-            return {
-              id: `ai-lpj-${sub.id}-${idx}-${Date.now()}`,
-              date: t.date || sub.tanggal || new Date().toISOString().substring(0, 10),
-              description: t.description || 'Pengeluaran Petty Cash',
-              amount: Number(t.amount) || 0,
-              recipient: t.recipient || custodian,
-              accurateAccountCode: matchedAccount.code,
-              accurateAccountName: matchedAccount.name,
-              confidence: 'high'
-            };
+        try {
+          const res = await fetch('/api/gemini/parse-petty-cash', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              fileBase64: base64Data,
+              mimeType,
+              accounts
+            })
           });
-          if (result.reportTitle) reportTitleText = result.reportTitle;
-          if (result.period) periodText = result.period;
+
+          if (res.ok) {
+            const data = await res.json().catch(() => null);
+            const result = data?.result || (Array.isArray(data?.transactions) ? data : null) || data?.data;
+
+            if (data?.success && result && Array.isArray(result.transactions) && result.transactions.length > 0) {
+              mappedTxs = result.transactions.map((t: any, idx: number) => {
+                const matchedAccount = accounts.find(a => a.code === t.accurateAccountCode) || autoMapTransactionToAccurate(t.description, accounts);
+                return {
+                  id: `ai-lpj-${sub.id}-${idx}-${Date.now()}`,
+                  date: t.date || sub.tanggal || new Date().toISOString().substring(0, 10),
+                  description: t.description || 'Pengeluaran Petty Cash',
+                  amount: Number(t.amount) || 0,
+                  recipient: t.recipient || custodian,
+                  accurateAccountCode: matchedAccount.code,
+                  accurateAccountName: matchedAccount.name,
+                  confidence: 'high'
+                };
+              });
+              if (result.reportTitle) reportTitleText = result.reportTitle;
+              if (result.period) periodText = result.period;
+            }
+          } else {
+            console.warn(`Serverless parser returned ${res.status}, activating direct browser AI fallback...`);
+          }
+        } catch (serverErr) {
+          console.warn('Serverless endpoint fetch failed or timed out (504), falling back to browser AI engine:', serverErr);
         }
       }
 
-      // C. Secondary Fallback: PDF text stream parsing
+      // C. Direct Client Gemini Fallback (Bypasses Vercel Serverless Gateway Timeout 504)
+      if (mappedTxs.length === 0) {
+        try {
+          const cleanB64 = base64Data.replace(/^data:[^;]+;base64,/, '').trim();
+          const directResult = await callGeminiDirectClient(cleanB64, mimeType, accounts);
+          if (directResult && directResult.transactions && directResult.transactions.length > 0) {
+            mappedTxs = directResult.transactions.map((t: any, idx: number) => {
+              const matchedAccount = accounts.find(a => a.code === t.accurateAccountCode) || autoMapTransactionToAccurate(t.description || t.uraian, accounts);
+              return {
+                id: `client-ai-lpj-${sub.id}-${idx}-${Date.now()}`,
+                date: t.date || t.tanggal || sub.tanggal || new Date().toISOString().substring(0, 10),
+                description: t.description || t.uraian || 'Pengeluaran Petty Cash',
+                amount: Number(t.amount || t.nominal) || 0,
+                recipient: t.recipient || t.penerima || custodian,
+                accurateAccountCode: matchedAccount.code,
+                accurateAccountName: matchedAccount.name,
+                confidence: 'high'
+              };
+            });
+            if (directResult.reportTitle) reportTitleText = directResult.reportTitle;
+            if (directResult.period) periodText = directResult.period;
+          }
+        } catch (directErr) {
+          console.warn('Client direct fallback notice:', directErr);
+        }
+      }
+
+      // D. PDF text stream parsing fallback
       if (mappedTxs.length === 0) {
         try {
           const cleanB64 = base64Data.replace(/^data:[^;]+;base64,/, '').trim();
@@ -2158,6 +2301,24 @@ export function AccuratePettyCashMapping({
             });
           }
         } catch (_) {}
+      }
+
+      // E. Voucher Items Fallback (Ensures user is never blocked if document is purely image/scanned)
+      if (mappedTxs.length === 0 && sub.items && Array.isArray(sub.items) && sub.items.length > 0) {
+        mappedTxs = sub.items.map((item, idx) => {
+          const itemDesc = item.uraian || item.keterangan || (sub.notes ? `Petty Cash: ${sub.notes}` : 'Pengeluaran Operasional Site');
+          const matched = autoMapTransactionToAccurate(itemDesc, accounts);
+          return {
+            id: `sub-item-${sub.id}-${idx}-${Date.now()}`,
+            date: sub.tanggal || new Date().toISOString().substring(0, 10),
+            description: itemDesc,
+            amount: Number(item.nominal || item.total || item.biaya) || 0,
+            recipient: custodian,
+            accurateAccountCode: matched.code,
+            accurateAccountName: matched.name,
+            confidence: 'medium'
+          };
+        }).filter(t => t.amount > 0);
       }
 
       // D. Result validation

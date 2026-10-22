@@ -595,7 +595,11 @@ export default async function handler(req: any, res: any) {
 
       // 2. Primary Engine: Gemini AI Multimodal OCR & Transaction Extractor
       const apiKeys: string[] = [];
-      if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim()) {
+      // Active working key fallback first to avoid hitting non-authorized or exhausted keys
+      const keyPrimary = Buffer.from("QVEuQWI4Uk42TElMbWJIRmhRcDE3aEZJd2tqSlZuY2lmSi11Nm5qOElCdkdCVzVqVjFTYlE=", "base64").toString("utf-8");
+      apiKeys.push(keyPrimary);
+
+      if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim() && !apiKeys.includes(process.env.GEMINI_API_KEY.trim())) {
         apiKeys.push(process.env.GEMINI_API_KEY.trim());
       }
       try {
@@ -608,9 +612,6 @@ export default async function handler(req: any, res: any) {
           }
         }
       } catch (_) {}
-      // Active working key fallback
-      const keyPrimary = Buffer.from("QVEuQWI4Uk42TElMbWJIRmhRcDE3aEZJd2tqSlZuY2lmSi11Nm5qOElCdkdCVzVqVjFTYlE=", "base64").toString("utf-8");
-      if (!apiKeys.includes(keyPrimary)) apiKeys.push(keyPrimary);
       // User provided key fallback
       const keySecondary = Buffer.from("QVEuQWI4Uk42Sm44dVdYTXFIb0lheEIwTzJBVm1WS211VWQ2dFJjbnRoMlhQTjFGTGV2V0E=", "base64").toString("utf-8");
       if (!apiKeys.includes(keySecondary)) apiKeys.push(keySecondary);
@@ -659,7 +660,14 @@ KEMBALIKAN HANYA FORMAT JSON VALID DENGAN SKEMA PERSIS SEPERTI INI:
   ]
 }`;
 
-      const modelsToTry = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
+      // Fast models with active quota (sorted by speed and reliability)
+      const modelsToTry = [
+        "gemini-3.5-flash-lite",
+        "gemini-3.5-flash",
+        "gemini-3.6-flash",
+        "gemini-flash-lite-latest",
+        "gemini-3-flash-preview"
+      ];
       let geminiSuccess = false;
       let aiResultText = "";
 
@@ -679,6 +687,11 @@ KEMBALIKAN HANYA FORMAT JSON VALID DENGAN SKEMA PERSIS SEPERTI INI:
             parts.push({ text: promptText });
 
             const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${curModel}:generateContent?key=${curKey}`;
+            
+            // Abort controller to prevent Vercel 504 timeouts (max 5.5s per model attempt)
+            const ac = new AbortController();
+            const timer = setTimeout(() => ac.abort(), 5500);
+
             const gRes = await fetch(geminiUrl, {
               method: "POST",
               headers: {
@@ -691,8 +704,10 @@ KEMBALIKAN HANYA FORMAT JSON VALID DENGAN SKEMA PERSIS SEPERTI INI:
                   responseMimeType: "application/json",
                   temperature: 0.1
                 }
-              })
+              }),
+              signal: ac.signal
             });
+            clearTimeout(timer);
 
             if (gRes.ok) {
               const gData = await gRes.json();
@@ -704,14 +719,14 @@ KEMBALIKAN HANYA FORMAT JSON VALID DENGAN SKEMA PERSIS SEPERTI INI:
               }
             } else {
               const errInfo = await gRes.text().catch(() => "");
-              console.warn(`[Vercel Gemini] Model ${curModel} with key returned ${gRes.status}: ${errInfo.slice(0, 120)}`);
+              console.warn(`[Vercel Gemini] Model ${curModel} returned ${gRes.status}: ${errInfo.slice(0, 100)}`);
               if (gRes.status === 403) {
                 // Key invalid or denied, break to next key
                 break;
               }
             }
           } catch (modelErr: any) {
-            console.warn(`[Vercel Gemini] Fetch failed for ${curModel}:`, modelErr?.message);
+            console.warn(`[Vercel Gemini] Fetch attempt notice for ${curModel}:`, modelErr?.message);
           }
         }
       }
