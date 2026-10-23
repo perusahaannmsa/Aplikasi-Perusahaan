@@ -875,12 +875,12 @@ export const CicilanSheetContent: React.FC<{
             <table className={`w-full ${tableTextSize} font-mono border-collapse table-fixed`}>
               <thead>
                 <tr className="bg-stone-100 border-b border-black text-black font-bold text-[9.5px]">
-                  <th className="py-1.5 px-1.5 text-center w-[5%] border-r border-black">NO</th>
-                  <th className="py-1.5 px-2 text-left w-[16%] border-r border-black">TANGGAL BAYAR</th>
+                  <th className="py-1.5 px-1.5 text-center w-[4%] border-r border-black">NO</th>
+                  <th className="py-1.5 px-2 text-left w-[18%] border-r border-black whitespace-nowrap">TANGGAL BAYAR</th>
                   <th className="py-1.5 px-2 text-left w-[22%] border-r border-black">TAHAP / TERMIN PEMBAYARAN</th>
                   <th className="py-1.5 px-2 text-right w-[18%] border-r border-black">NOMINAL DIBAYAR</th>
-                  <th className="py-1.5 px-2 text-right w-[17%] border-r border-black">SISA TAGIHAN</th>
-                  <th className="py-1.5 px-2 text-left w-[22%]">CATATAN</th>
+                  <th className="py-1.5 px-2 text-right w-[18%] border-r border-black">SISA TAGIHAN</th>
+                  <th className="py-1.5 px-2 text-left w-[20%]">CATATAN</th>
                 </tr>
               </thead>
               <tbody>
@@ -891,7 +891,7 @@ export const CicilanSheetContent: React.FC<{
                       <td className={`${tablePadY} px-1.5 text-center border-r border-black font-bold text-stone-600`}>
                         {idx + 1}
                       </td>
-                      <td className={`${tablePadY} px-2 font-semibold text-black border-r border-black truncate`}>
+                      <td className={`${tablePadY} px-2 font-semibold text-black border-r border-black whitespace-nowrap`}>
                         {formatDateIndonesian(item.tanggal)}
                       </td>
                       <td className={`${tablePadY} px-2 text-stone-900 border-r border-black font-sans font-bold truncate`}>
@@ -3154,7 +3154,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
                         <div className="border border-black px-3 py-1 font-bold text-xs text-black bg-stone-50 mb-1 font-mono">
                           {submission.kode}
                         </div>
-                        <div className="text-xs text-black font-semibold">
+                        <div className="text-xs text-black font-semibold whitespace-nowrap">
                           Tanggal : <span className="font-normal">{formatDateIndonesian(submission.tanggal)}</span>
                         </div>
                       </div>
@@ -3393,7 +3393,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
                       <div className="border border-black px-3 py-1 font-bold text-xs text-black bg-stone-50 mb-1 font-mono">
                         {submission.kode}
                       </div>
-                      <div className="text-xs text-black font-semibold">
+                      <div className="text-xs text-black font-semibold whitespace-nowrap">
                         Tanggal : <span className="font-normal">{formatDateIndonesian(submission.tanggal)}</span>
                       </div>
                     </div>
@@ -3501,7 +3501,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
                         <div className="border border-black px-3 py-1 font-bold text-xs text-black bg-stone-50 mb-1 font-mono">
                           {submission.kode}
                         </div>
-                        <div className="text-xs text-black font-semibold">
+                        <div className="text-xs text-black font-semibold whitespace-nowrap">
                           Tanggal : <span className="font-normal">{formatDateIndonesian(submission.tanggal)}</span>
                         </div>
                       </div>
@@ -3603,7 +3603,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
                         <div className="border border-black px-3 py-1 font-bold text-xs text-black bg-stone-50 mb-1 font-mono">
                           {submission.kode}
                         </div>
-                        <div className="text-xs text-black font-semibold">
+                        <div className="text-xs text-black font-semibold whitespace-nowrap">
                           Tanggal : <span className="font-normal">{formatDateIndonesian(submission.tanggal)}</span>
                         </div>
                       </div>

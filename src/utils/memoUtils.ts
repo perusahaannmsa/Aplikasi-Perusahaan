@@ -288,13 +288,71 @@ export function saveBankAccounts(accounts: BankAccountMaster[]): void {
   }
 }
 
+/**
+ * Compares two Internal Memos by Nomor Internal Memo sequence and year.
+ * Natural descending comparator ensures highest/newest number (e.g. 183, 182, 181, 180...) appears first.
+ */
+export function compareMemosByNumber(
+  a: Partial<InternalMemo> | undefined | null,
+  b: Partial<InternalMemo> | undefined | null,
+  direction: 'desc' | 'asc' = 'desc'
+): number {
+  if (!a && !b) return 0;
+  if (!a) return direction === 'desc' ? 1 : -1;
+  if (!b) return direction === 'desc' ? -1 : 1;
+
+  const yearA = extractMemoYear(a) ?? (a.tanggal ? new Date(a.tanggal).getFullYear() : 0);
+  const yearB = extractMemoYear(b) ?? (b.tanggal ? new Date(b.tanggal).getFullYear() : 0);
+
+  // If different years, sort by year first
+  if (yearA > 0 && yearB > 0 && yearA !== yearB) {
+    return direction === 'desc' ? yearB - yearA : yearA - yearB;
+  }
+
+  const seqA = extractMemoSequence(a.nomorMemo);
+  const seqB = extractMemoSequence(b.nomorMemo);
+
+  if (seqA !== null && seqB !== null && seqA !== seqB) {
+    return direction === 'desc' ? seqB - seqA : seqA - seqB;
+  }
+
+  // If one has numeric sequence and the other does not
+  if (seqA !== null && seqB === null) return direction === 'desc' ? -1 : 1;
+  if (seqA === null && seqB !== null) return direction === 'desc' ? 1 : -1;
+
+  // Alphanumeric natural comparison
+  const strA = (a.nomorMemo || '').trim();
+  const strB = (b.nomorMemo || '').trim();
+  const strDiff = strA.localeCompare(strB, undefined, { numeric: true, sensitivity: 'base' });
+  if (strDiff !== 0) {
+    return direction === 'desc' ? -strDiff : strDiff;
+  }
+
+  // Fallback to date
+  const timeA = new Date(a.tanggal || a.createdAt || 0).getTime();
+  const timeB = new Date(b.tanggal || b.createdAt || 0).getTime();
+  return direction === 'desc' ? timeB - timeA : timeA - timeB;
+}
+
+/**
+ * Sorts an array of Internal Memos by Nomor Memo sequence.
+ * Defaults to descending order (highest/latest number first, e.g. 183 -> 182 -> 181).
+ */
+export function sortInternalMemos(
+  memosList: InternalMemo[],
+  direction: 'desc' | 'asc' = 'desc'
+): InternalMemo[] {
+  if (!Array.isArray(memosList)) return [];
+  return [...memosList].sort((a, b) => compareMemosByNumber(a, b, direction));
+}
+
 export function getSavedInternalMemos(): InternalMemo[] {
   try {
     const raw = localStorage.getItem('NMSA_INTERNAL_MEMOS');
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        return parsed.map((m) => ({
+        const cleaned = parsed.map((m) => ({
           ...m,
           companyHeaderUrl:
             !m.companyHeaderUrl ||
@@ -304,6 +362,8 @@ export function getSavedInternalMemos(): InternalMemo[] {
               ? OFFICIAL_KOP_SURAT_IMAGE_URL
               : m.companyHeaderUrl,
         }));
+        // Always sort by Nomor Memo descending so history is neatly ordered
+        return sortInternalMemos(cleaned, 'desc');
       }
     }
   } catch (e) {
@@ -314,7 +374,8 @@ export function getSavedInternalMemos(): InternalMemo[] {
 
 export function saveInternalMemos(memos: InternalMemo[]): void {
   try {
-    localStorage.setItem('NMSA_INTERNAL_MEMOS', JSON.stringify(memos));
+    const sorted = sortInternalMemos(memos, 'desc');
+    localStorage.setItem('NMSA_INTERNAL_MEMOS', JSON.stringify(sorted));
   } catch (e) {
     console.error('Failed to save internal memos:', e);
   }
@@ -859,7 +920,7 @@ export async function generateInternalMemoPdfBlob(
 
   // 3. Official recipient & subject table with border (100% Full Width, 1.5px black border)
   const tableData = [
-    { label: 'Hari/taggal', val: memo.hariTanggalDisplay || formatHariTanggalMemo(memo.tanggal), isBold: false },
+    { label: 'Hari / Tanggal', val: memo.hariTanggalDisplay || formatHariTanggalMemo(memo.tanggal), isBold: false },
     { label: 'Dari', val: memo.dari || 'Andi Muhammad Rifki', isBold: false },
     { label: 'Kepada', val: memo.kepada || 'Harijon', isBold: false },
     { label: 'Perihal', val: memo.perihal || 'Pembayaran Operasional', isBold: true },

@@ -122,13 +122,13 @@ export const InternalMemoDocument: React.FC<InternalMemoDocumentProps> = ({
           <table className="w-full border-collapse border-[1.5px] border-black text-[11pt] print:text-[11pt] text-black">
             <tbody>
               <tr className="border-b border-black">
-                <td className="w-36 px-3 py-1.5 font-semibold border-r border-black">
-                  Hari/taggal
+                <td className="w-40 px-3 py-1.5 font-semibold border-r border-black whitespace-nowrap">
+                  Hari / Tanggal
                 </td>
                 <td className="w-6 px-1 text-center font-bold border-r border-black">
                   :
                 </td>
-                <td className="px-3 py-1.5 font-normal">
+                <td className="px-3 py-1.5 font-normal whitespace-nowrap">
                   {memo.hariTanggalDisplay}
                 </td>
               </tr>

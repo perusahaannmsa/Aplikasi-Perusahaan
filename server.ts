@@ -4074,7 +4074,14 @@ app.post("/api/internal-memos", (req, res) => {
       const map = new Map();
       (state.internalMemos || []).forEach((m: any) => { if (m && m.id) map.set(m.id, m); });
       memos.forEach((m: any) => { if (m && m.id) map.set(m.id, m); });
-      state.internalMemos = Array.from(map.values());
+      const mergedList = Array.from(map.values());
+      mergedList.sort((a: any, b: any) => {
+        const seqA = parseInt(String(a.nomorMemo || '').replace(/\D+/g, ''), 10) || 0;
+        const seqB = parseInt(String(b.nomorMemo || '').replace(/\D+/g, ''), 10) || 0;
+        if (seqA !== seqB) return seqB - seqA;
+        return new Date(b.tanggal || b.createdAt || 0).getTime() - new Date(a.tanggal || a.createdAt || 0).getTime();
+      });
+      state.internalMemos = mergedList;
       writeState(state);
       return res.json({ success: true, count: state.internalMemos.length });
     } else if (memo && memo.id) {
@@ -4084,6 +4091,12 @@ app.post("/api/internal-memos", (req, res) => {
       } else {
         state.internalMemos.unshift(memo);
       }
+      state.internalMemos.sort((a: any, b: any) => {
+        const seqA = parseInt(String(a.nomorMemo || '').replace(/\D+/g, ''), 10) || 0;
+        const seqB = parseInt(String(b.nomorMemo || '').replace(/\D+/g, ''), 10) || 0;
+        if (seqA !== seqB) return seqB - seqA;
+        return new Date(b.tanggal || b.createdAt || 0).getTime() - new Date(a.tanggal || a.createdAt || 0).getTime();
+      });
       writeState(state);
       return res.json({ success: true, memo });
     } else {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { InternalMemo, BankAccountMaster, Submission, SavedKopSuratLink } from '../types';
 import {
   formatHariTanggalMemo,
@@ -19,6 +19,8 @@ import {
   getSavedKopSuratLinks,
   saveKopSuratLinks,
   findKopSuratNameByUrl,
+  compareMemosByNumber,
+  sortInternalMemos,
 } from '../utils/memoUtils';
 import { memoGoogleDriveService } from '../utils/memoDriveService';
 import { getInternalMemoLink } from '../utils/appLinks';
@@ -67,6 +69,7 @@ import {
   Loader2,
   Share2,
   X,
+  ArrowUpDown,
 } from 'lucide-react';
 
 const COMMON_MEMO_SIGNERS = [
@@ -95,6 +98,26 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
   const [activeTab, setActiveTab] = useState<'editor' | 'history' | 'banks'>('editor');
   const [historyCategory, setHistoryCategory] = useState<'with_kop' | 'without_kop' | 'all'>('with_kop');
   const [memos, setMemos] = useState<InternalMemo[]>(() => getSavedInternalMemos());
+  
+  // Sort order for Riwayat memo: default 'nomor_desc' (highest/latest memo number first, e.g. 183 -> 182 -> 181...)
+  type MemoSortOrder = 'nomor_desc' | 'nomor_asc' | 'date_desc' | 'date_asc';
+  const [historySortOrder, setHistorySortOrder] = useState<MemoSortOrder>(() => {
+    try {
+      const saved = localStorage.getItem('NMSA_MEMO_HISTORY_SORT');
+      if (saved === 'nomor_desc' || saved === 'nomor_asc' || saved === 'date_desc' || saved === 'date_asc') {
+        return saved as MemoSortOrder;
+      }
+    } catch (_) {}
+    return 'nomor_desc';
+  });
+
+  const handleSortChange = (order: MemoSortOrder) => {
+    setHistorySortOrder(order);
+    try {
+      localStorage.setItem('NMSA_MEMO_HISTORY_SORT', order);
+    } catch (_) {}
+  };
+
   const [bankAccounts, setBankAccounts] = useState<BankAccountMaster[]>(() => getSavedBankAccounts());
   const [isBankModalOpen, setIsBankModalOpen] = useState(false);
 
@@ -190,10 +213,10 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
 
         if (isMounted) {
           const mergedList = Array.from(mergedMap.values());
-          mergedList.sort((a, b) => new Date(b.createdAt || b.tanggal).getTime() - new Date(a.createdAt || a.tanggal).getTime());
-          if (mergedList.length > 0) {
-            setMemos(mergedList);
-            saveInternalMemos(mergedList);
+          const sortedList = sortInternalMemos(mergedList, 'desc');
+          if (sortedList.length > 0) {
+            setMemos(sortedList);
+            saveInternalMemos(sortedList);
           }
         }
       } catch (err) {
@@ -273,10 +296,11 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
     saveBankAccounts(updated);
   };
 
-  // Sync internal memos to storage
+  // Sync internal memos to storage (always sorted by nomor memo)
   const persistMemos = (updated: InternalMemo[]) => {
-    setMemos(updated);
-    saveInternalMemos(updated);
+    const sorted = sortInternalMemos(updated, 'desc');
+    setMemos(sorted);
+    saveInternalMemos(sorted);
   };
 
   // Save auto drive upload preference
@@ -881,23 +905,45 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
   const countWithKop = memos.filter((m) => !isMemoWithoutKopSurat(m)).length;
   const countWithoutKop = memos.filter((m) => isMemoWithoutKopSurat(m)).length;
 
-  // Filter memos for history tab with strict category separation
-  const filteredMemos = memos.filter((m) => {
-    const isWithoutKop = isMemoWithoutKopSurat(m);
-    if (historyCategory === 'with_kop' && isWithoutKop) return false;
-    if (historyCategory === 'without_kop' && !isWithoutKop) return false;
+  // Filter and sort memos for history tab with strict category separation & proper order by nomor memo
+  const filteredMemos = useMemo(() => {
+    const list = memos.filter((m) => {
+      const isWithoutKop = isMemoWithoutKopSurat(m);
+      if (historyCategory === 'with_kop' && isWithoutKop) return false;
+      if (historyCategory === 'without_kop' && !isWithoutKop) return false;
 
-    const q = searchQuery.toLowerCase();
-    if (!q) return true;
-    return (
-      m.nomorMemo.toLowerCase().includes(q) ||
-      m.perihal.toLowerCase().includes(q) ||
-      m.kepada.toLowerCase().includes(q) ||
-      m.bankName.toLowerCase().includes(q) ||
-      m.accountNumber.toLowerCase().includes(q) ||
-      m.hariTanggalDisplay.toLowerCase().includes(q)
-    );
-  });
+      const q = searchQuery.toLowerCase().trim();
+      if (!q) return true;
+      return (
+        m.nomorMemo.toLowerCase().includes(q) ||
+        m.perihal.toLowerCase().includes(q) ||
+        m.kepada.toLowerCase().includes(q) ||
+        (m.dari && m.dari.toLowerCase().includes(q)) ||
+        m.bankName.toLowerCase().includes(q) ||
+        m.accountNumber.toLowerCase().includes(q) ||
+        m.hariTanggalDisplay.toLowerCase().includes(q) ||
+        (m.isiSurat && m.isiSurat.toLowerCase().includes(q))
+      );
+    });
+
+    return list.sort((a, b) => {
+      if (historySortOrder === 'nomor_desc') return compareMemosByNumber(a, b, 'desc');
+      if (historySortOrder === 'nomor_asc') return compareMemosByNumber(a, b, 'asc');
+      if (historySortOrder === 'date_desc') {
+        const timeA = new Date(a.tanggal || a.createdAt || 0).getTime();
+        const timeB = new Date(b.tanggal || b.createdAt || 0).getTime();
+        if (timeA !== timeB) return timeB - timeA;
+        return compareMemosByNumber(a, b, 'desc');
+      }
+      if (historySortOrder === 'date_asc') {
+        const timeA = new Date(a.tanggal || a.createdAt || 0).getTime();
+        const timeB = new Date(b.tanggal || b.createdAt || 0).getTime();
+        if (timeA !== timeB) return timeA - timeB;
+        return compareMemosByNumber(a, b, 'asc');
+      }
+      return compareMemosByNumber(a, b, 'desc');
+    });
+  }, [memos, historyCategory, searchQuery, historySortOrder]);
 
   return (
     <div className="space-y-6 font-sans">
@@ -2444,6 +2490,22 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                 />
               </div>
 
+              {/* Urutkan Nomor Internal Memo */}
+              <div className="relative flex items-center shrink-0">
+                <ArrowUpDown size={13} className="absolute left-2.5 text-stone-500 pointer-events-none" />
+                <select
+                  value={historySortOrder}
+                  onChange={(e) => handleSortChange(e.target.value as MemoSortOrder)}
+                  className="pl-7 pr-3 py-1.5 text-xs font-bold bg-stone-100 hover:bg-stone-200/80 border border-stone-200 rounded-xl text-stone-800 focus:outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer shadow-2xs"
+                  title="Urutkan susunan riwayat nomor internal memo"
+                >
+                  <option value="nomor_desc">No. Memo Tertinggi (183 → 1)</option>
+                  <option value="nomor_asc">No. Memo Terendah (1 → 183)</option>
+                  <option value="date_desc">Tanggal Memo Terbaru</option>
+                  <option value="date_asc">Tanggal Memo Terlama</option>
+                </select>
+              </div>
+
               <button
                 onClick={() => handleCreateNewMemo()}
                 className="px-3 py-1.5 bg-stone-900 hover:bg-black text-white text-xs font-bold rounded-xl transition flex items-center gap-1 shrink-0 cursor-pointer"
@@ -2520,21 +2582,21 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
             </div>
           </div>
 
-          {/* Banner Penjelasan Kategori Riwayat */}
-          <div className="px-3.5 py-2 rounded-xl text-xs flex items-center justify-between gap-2 border bg-stone-50 border-stone-200">
+          {/* Banner Penjelasan Kategori Riwayat & Status Urutan */}
+          <div className="px-3.5 py-2 rounded-xl text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2 border bg-stone-50 border-stone-200">
             <div className="flex items-center gap-2 min-w-0">
               {historyCategory === 'with_kop' ? (
                 <>
                   <ImageIcon size={14} className="text-amber-600 shrink-0" />
                   <span className="text-stone-700">
-                    Kategori: <strong className="text-amber-950 font-bold">Memo Dengan Kop Surat Resmi NMSA</strong> (Format: <code className="font-mono font-bold text-amber-900">XXX/IM-NMSA/KEU/X/2026</code>). Nomor urut independen terakumulasi.
+                    Kategori: <strong className="text-amber-950 font-bold">Memo Dengan Kop Surat Resmi NMSA</strong> (Format: <code className="font-mono font-bold text-amber-900">XXX/IM-NMSA/KEU/X/2026</code>). Nomor urut terakumulasi.
                   </span>
                 </>
               ) : historyCategory === 'without_kop' ? (
                 <>
                   <FileText size={14} className="text-stone-600 shrink-0" />
                   <span className="text-stone-700">
-                    Kategori: <strong className="text-stone-900 font-bold">Memo Tanpa Kop Surat / Kertas Blanko Fisik</strong> (Format: <code className="font-mono font-bold text-stone-900">001/IM/KEU/X/2026</code>). Nomor urut independen &amp; reset awal tahun.
+                    Kategori: <strong className="text-stone-900 font-bold">Memo Tanpa Kop Surat / Blanko Fisik</strong> (Format: <code className="font-mono font-bold text-stone-900">001/IM/KEU/X/2026</code>). Nomor urut independen &amp; reset awal tahun.
                   </span>
                 </>
               ) : (
@@ -2545,6 +2607,25 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                   </span>
                 </>
               )}
+            </div>
+
+            {/* Indicator Urutan Riwayat Memo */}
+            <div className="flex items-center gap-1.5 shrink-0 text-[11px] text-stone-600 bg-white px-2.5 py-1 rounded-lg border border-stone-200 shadow-2xs">
+              <span className="text-stone-400">Urutan:</span>
+              <strong className="font-bold text-stone-900">
+                {historySortOrder === 'nomor_desc' && 'No. Memo Tertinggi (183 → 1)'}
+                {historySortOrder === 'nomor_asc' && 'No. Memo Terendah (1 → 183)'}
+                {historySortOrder === 'date_desc' && 'Tanggal Memo Terbaru'}
+                {historySortOrder === 'date_asc' && 'Tanggal Memo Terlama'}
+              </strong>
+              <button
+                type="button"
+                onClick={() => handleSortChange(historySortOrder === 'nomor_desc' ? 'nomor_asc' : 'nomor_desc')}
+                className="p-1 hover:bg-stone-100 rounded text-stone-500 hover:text-stone-800 transition cursor-pointer ml-0.5"
+                title="Balik arah urutan nomor memo"
+              >
+                <ArrowUpDown size={12} />
+              </button>
             </div>
           </div>
 
