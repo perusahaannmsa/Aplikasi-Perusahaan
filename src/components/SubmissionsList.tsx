@@ -3909,34 +3909,34 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
         Only visible on physical print paper or PDF export (hidden on screen)
       */}
       {layoutMode === 'standard' && (
-        <div id="printable-submissions-table" className="hidden print:block print-only-container font-sans text-black p-4 space-y-6">
-          <div className="border-b-2 border-stone-900 pb-4 flex justify-between items-end">
+        <div id="printable-submissions-table" className="hidden print:block print-only-container font-sans text-black p-0 space-y-4 max-w-full overflow-hidden">
+          <div className="border-b-2 border-stone-900 pb-2.5 flex justify-between items-end">
             <div>
-              <h1 className="text-xl font-bold font-display uppercase tracking-wider text-stone-900">PT NUSANTARA MINERAL SUKSES ABADI</h1>
-              <p className="text-[10px] text-stone-500 font-mono">DIVISI FINANCE & INTERNAL LEDGER DATABASE</p>
-              <h2 className="text-sm font-semibold text-stone-850 mt-1">Laporan List Transaksi Pengeluaran Kas / Bank</h2>
+              <h1 className="text-base font-bold font-display uppercase tracking-wider text-stone-900 leading-tight">PT NUSANTARA MINERAL SUKSES ABADI</h1>
+              <p className="text-[9px] text-stone-600 font-mono">DIVISI FINANCE & INTERNAL LEDGER DATABASE</p>
+              <h2 className="text-xs font-bold text-stone-850 mt-0.5">Laporan List Transaksi Pengeluaran Kas / Bank</h2>
             </div>
-            <div className="text-right font-mono text-[10px] text-stone-500">
+            <div className="text-right font-mono text-[8.5px] text-stone-600 leading-tight">
               <p>Dicetak pada: {new Date().toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
               <p>Filter: {monthFilter === 'All' ? 'Semua Bulan' : MONTHS_LIST.find(m => m.value === monthFilter)?.label} {yearFilter === 'All' ? 'Semua Tahun' : yearFilter}</p>
             </div>
           </div>
 
-          <table className="w-full text-left border-collapse text-[10px] my-2">
+          <table className="w-full text-left border-collapse text-[8.5px] my-1 table-fixed max-w-full">
             <thead>
-              <tr className="bg-stone-100 border-y-2 border-stone-900 font-bold text-stone-850">
-                <th className="py-2 px-2 border border-stone-300 text-center w-10">No</th>
-                <th className="py-2 px-2 border border-stone-300 w-22">Tanggal</th>
-                <th className="py-2 px-2 border border-stone-300 w-28">No Voucher/Kode</th>
-                <th className="py-2 px-2 border border-stone-300 w-24">Lokasi</th>
-                <th className="py-2 px-2 border border-stone-300 w-32">Jenis Pengajuan</th>
-                <th className="py-2 px-2 border border-stone-300 w-40">Penerima Kas</th>
-                <th className="py-2 px-2 border border-stone-300 w-20 text-center">Metode</th>
-                <th className="py-2 px-2 border border-stone-300 w-28 text-center">Status</th>
-                <th className="py-2 px-2 border border-stone-300 w-28 text-right">Total Nilai</th>
+              <tr className="bg-stone-100 border-y-2 border-stone-900 font-bold text-stone-900 text-[8.5px]">
+                <th className="py-1 px-1 border border-stone-400 text-center w-[3.5%]">No</th>
+                <th className="py-1 px-1 border border-stone-400 w-[11%]">Tanggal</th>
+                <th className="py-1 px-1 border border-stone-400 w-[15%]">No Voucher/Kode</th>
+                <th className="py-1 px-1 border border-stone-400 w-[6%] text-center">Lokasi</th>
+                <th className="py-1 px-1.5 border border-stone-400 w-[17%]">Jenis Pengajuan</th>
+                <th className="py-1 px-1.5 border border-stone-400 w-[18%]">Penerima Kas</th>
+                <th className="py-1 px-1 border border-stone-400 w-[7%] text-center">Metode</th>
+                <th className="py-1 px-1 border border-stone-400 w-[8.5%] text-center">Status</th>
+                <th className="py-1 px-1.5 border border-stone-400 w-[14%] text-right">Total Nilai</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-stone-200">
+            <tbody className="divide-y divide-stone-300">
               {filteredSubmissions.length > 0 ? (
                 filteredSubmissions.map((sub, idx) => {
                   const subTotal = sub.items.reduce((sum, i) => sum + i.total, 0);
@@ -3944,16 +3944,30 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                     ? `DP/Cicilan${sub.dpAmount ? ` (Rp ${formatRupiah(sub.dpAmount)})` : ''}`
                     : (sub.status || 'Lunas');
                   return (
-                    <tr key={sub.id} className="align-top">
-                      <td className="py-2 px-2 border border-stone-200 text-center font-mono">{idx + 1}</td>
-                      <td className="py-2 px-2 border border-stone-200 whitespace-nowrap">{formatDateIndonesian(sub.tanggal)}</td>
-                      <td className="py-2 px-2 border border-stone-200 font-mono font-bold">{sub.kode}</td>
-                      <td className="py-2 px-2 border border-stone-200 font-bold">{sub.lokasi}</td>
-                      <td className="py-2 px-2 border border-stone-200">{sub.jenisPengajuan}</td>
-                      <td className="py-2 px-2 border border-stone-200 font-bold">{sub.dibayarkanKepada}</td>
-                      <td className="py-2 px-2 border border-stone-200 text-center font-mono">Transfer</td>
-                      <td className="py-2 px-2 border border-stone-200 text-center font-mono font-bold text-[9px]">{displayStatus}</td>
-                      <td className="py-2 px-2 border border-stone-200 text-right font-mono font-bold font-black text-stone-900 whitespace-nowrap">
+                    <tr key={sub.id} className="align-top border-b border-stone-300">
+                      <td className="py-1 px-1 border border-stone-300 text-center font-mono text-stone-600 text-[8px]">{idx + 1}</td>
+                      <td className="py-1 px-1 border border-stone-300 font-medium leading-tight break-words text-[8px]">
+                        {formatDateIndonesian(sub.tanggal)}
+                      </td>
+                      <td className="py-1 px-1 border border-stone-300 font-mono font-bold text-stone-900 break-all leading-tight text-[8px]">
+                        {sub.kode}
+                      </td>
+                      <td className="py-1 px-1 border border-stone-300 font-semibold text-center break-words text-[8px]">
+                        {sub.lokasi || '-'}
+                      </td>
+                      <td className="py-1 px-1.5 border border-stone-300 text-stone-900 leading-tight break-words text-[8px]">
+                        {sub.jenisPengajuan || '-'}
+                      </td>
+                      <td className="py-1 px-1.5 border border-stone-300 font-bold text-stone-900 leading-tight break-words text-[8px]">
+                        {sub.dibayarkanKepada || '-'}
+                      </td>
+                      <td className="py-1 px-1 border border-stone-300 text-center font-mono text-stone-600 text-[7.5px]">
+                        Transfer
+                      </td>
+                      <td className="py-1 px-1 border border-stone-300 text-center font-mono font-bold text-[7.5px] leading-tight break-words">
+                        {displayStatus}
+                      </td>
+                      <td className="py-1 px-1.5 border border-stone-300 text-right font-mono font-black text-stone-900 text-[8.5px] whitespace-nowrap">
                         Rp {formatRupiah(subTotal)}
                       </td>
                     </tr>
@@ -3967,9 +3981,11 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
             </tbody>
             <tfoot>
               {/* Total Row */}
-              <tr className="bg-stone-50 font-bold text-stone-955 border-t-2 border-stone-900">
-                <td colSpan={8} className="py-2.5 px-2 text-right text-stone-850">SUM/TOTAL NILAI KELUAR:</td>
-                <td className="py-2.5 px-2 text-right font-mono text-xs font-black text-stone-955 whitespace-nowrap">
+              <tr className="bg-stone-100 font-bold text-stone-955 border-t-2 border-stone-900">
+                <td colSpan={8} className="py-1.5 px-2 text-right text-stone-850 font-mono text-[8.5px] uppercase tracking-wider">
+                  SUM/TOTAL NILAI KELUAR:
+                </td>
+                <td className="py-1.5 px-1.5 text-right font-mono text-[9px] font-black text-stone-955 whitespace-nowrap">
                   Rp {formatRupiah(filteredSubmissions.reduce((sum, s) => sum + s.items.reduce((acc, i) => acc + i.total, 0), 0))}
                 </td>
               </tr>

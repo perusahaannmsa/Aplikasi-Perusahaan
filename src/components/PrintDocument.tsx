@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'; 
 import QRCode from 'qrcode';
 import { Submission, CicilanPaymentRecord } from '../types';
-import { formatRupiah, formatDateIndonesian, numberToTerbilang, isPettyCashSubmission } from '../utils';
+import { formatRupiah, formatDateIndonesian, numberToTerbilang, isPettyCashSubmission, isCicilanSubmission } from '../utils';
 import { getVoucherShareLink } from '../utils/appLinks';
 import { NusantaraLogo } from './NusantaraLogo';
 import { Printer, ArrowLeft, Layers, FileText, CheckCircle, Cloud, Loader2, Lock, ShieldAlert, RefreshCw, Share2, Copy, Check, Send, Edit2, Trash, Trash2, RotateCw, Coins, ExternalLink, QrCode, Upload, AlertTriangle, FileSpreadsheet, Receipt } from 'lucide-react';
@@ -148,10 +148,7 @@ export const CicilanBreakdownBlock: React.FC<{
   grandTotal: number;
   density?: 'normal' | 'compact';
 }> = ({ submission, grandTotal }) => {
-  const isCicilan = submission.status === 'DP / Cicilan' || 
-                    (typeof submission.dpAmount === 'number' && submission.dpAmount > 0) || 
-                    (Array.isArray(submission.riwayatCicilan) && submission.riwayatCicilan.length > 0) ||
-                    (typeof submission.cicilanNotes === 'string' && submission.cicilanNotes.trim().length > 0);
+  const isCicilan = isCicilanSubmission(submission);
 
   if (!isCicilan) return null;
 
@@ -600,9 +597,9 @@ export const CicilanSheetContent: React.FC<{
   isLastPage = false,
 }) => {
   const totalVoucher = grandTotal || 0;
-  const rawPaid = submission.status === 'Lunas' 
-    ? totalVoucher 
-    : (typeof submission.dpAmount === 'number' ? submission.dpAmount : 0);
+  const rawPaid = (typeof submission.dpAmount === 'number' && submission.dpAmount > 0)
+    ? submission.dpAmount
+    : (submission.status === 'Lunas' ? totalVoucher : 0);
   
   let historyPayments: CicilanPaymentRecord[] = Array.isArray(submission.riwayatCicilan) && submission.riwayatCicilan.length > 0
     ? [...submission.riwayatCicilan]
@@ -875,12 +872,12 @@ export const CicilanSheetContent: React.FC<{
             <table className={`w-full ${tableTextSize} font-mono border-collapse table-fixed`}>
               <thead>
                 <tr className="bg-stone-100 border-b border-black text-black font-bold text-[9.5px]">
-                  <th className="py-1.5 px-1.5 text-center w-[4%] border-r border-black">NO</th>
-                  <th className="py-1.5 px-2 text-left w-[18%] border-r border-black whitespace-nowrap">TANGGAL BAYAR</th>
-                  <th className="py-1.5 px-2 text-left w-[22%] border-r border-black">TAHAP / TERMIN PEMBAYARAN</th>
-                  <th className="py-1.5 px-2 text-right w-[18%] border-r border-black">NOMINAL DIBAYAR</th>
-                  <th className="py-1.5 px-2 text-right w-[18%] border-r border-black">SISA TAGIHAN</th>
-                  <th className="py-1.5 px-2 text-left w-[20%]">CATATAN</th>
+                  <th className="py-1.5 px-1 text-center w-[4%] border-r border-black">NO</th>
+                  <th className="py-1.5 px-1.5 text-left w-[15%] border-r border-black whitespace-nowrap">TANGGAL BAYAR</th>
+                  <th className="py-1.5 px-2 text-left w-[28%] border-r border-black">TAHAP / TERMIN PEMBAYARAN</th>
+                  <th className="py-1.5 px-1.5 text-right w-[17%] border-r border-black">NOMINAL DIBAYAR</th>
+                  <th className="py-1.5 px-1.5 text-right w-[17%] border-r border-black">SISA TAGIHAN</th>
+                  <th className="py-1.5 px-2 text-left w-[19%]">CATATAN</th>
                 </tr>
               </thead>
               <tbody>
@@ -888,25 +885,27 @@ export const CicilanSheetContent: React.FC<{
                   const { tahapTitle, catatanText } = parseTahapDanCatatan(item, idx, historyPayments.length);
                   return (
                     <tr key={item.id || idx} className="border-b border-stone-300 last:border-b-0 hover:bg-stone-50">
-                      <td className={`${tablePadY} px-1.5 text-center border-r border-black font-bold text-stone-600`}>
+                      <td className={`${tablePadY} px-1 text-center border-r border-black font-bold text-stone-600 text-[8.5px]`}>
                         {idx + 1}
                       </td>
-                      <td className={`${tablePadY} px-2 font-semibold text-black border-r border-black whitespace-nowrap`}>
+                      <td className={`${tablePadY} px-1.5 font-semibold text-black border-r border-black whitespace-nowrap text-[8.5px]`}>
                         {formatDateIndonesian(item.tanggal)}
                       </td>
-                      <td className={`${tablePadY} px-2 text-stone-900 border-r border-black font-sans font-bold truncate`}>
-                        {tahapTitle}
+                      <td className={`${tablePadY} px-2 text-stone-900 border-r border-black font-sans font-bold leading-snug break-words whitespace-normal`}>
+                        <span className="text-[9px] block">
+                          {tahapTitle}
+                        </span>
                       </td>
-                      <td className={`${tablePadY} px-2 text-right font-mono font-bold text-emerald-800 border-r border-black truncate`}>
+                      <td className={`${tablePadY} px-1.5 text-right font-mono font-bold text-emerald-800 border-r border-black whitespace-nowrap text-[9px]`}>
                         Rp {formatRupiah(item.nominal)}
                       </td>
-                      <td className={`${tablePadY} px-2 text-right font-mono font-bold text-rose-800 border-r border-black truncate`}>
+                      <td className={`${tablePadY} px-1.5 text-right font-mono font-bold text-rose-800 border-r border-black whitespace-nowrap text-[9px]`}>
                         Rp {formatRupiah(item.sisaSetelahBayar)}
                       </td>
-                      <td className={`${tablePadY} px-2 text-stone-700 font-sans text-[8.5px] leading-tight break-words overflow-hidden`}>
+                      <td className={`${tablePadY} px-2 text-stone-700 font-sans text-[8px] leading-tight break-words whitespace-normal`}>
                         <div className="flex items-start gap-1">
                           <span className="shrink-0 text-stone-400">📎</span>
-                          <span className="break-all line-clamp-2" title={catatanText}>{catatanText}</span>
+                          <span className="break-words" title={catatanText}>{catatanText}</span>
                         </div>
                       </td>
                     </tr>
@@ -914,17 +913,17 @@ export const CicilanSheetContent: React.FC<{
                 })}
               </tbody>
               <tfoot>
-                <tr className="bg-stone-100 border-t-[1.5px] border-black font-bold text-[9.5px]">
+                <tr className="bg-stone-100 border-t-[1.5px] border-black font-bold text-[9px]">
                   <td colSpan={3} className="py-1.5 px-2 text-center border-r border-black uppercase tracking-wider font-sans">
                     TOTAL AKUMULASI TERBAYAR
                   </td>
-                  <td className="py-1.5 px-2 text-right font-mono text-emerald-900 border-r border-black truncate">
+                  <td className="py-1.5 px-1.5 text-right font-mono text-emerald-900 border-r border-black whitespace-nowrap text-[9px]">
                     Rp {formatRupiah(totalPaid)}
                   </td>
-                  <td className={`py-1.5 px-2 text-right font-mono border-r border-black truncate ${remainingBalance === 0 ? 'text-emerald-900' : 'text-rose-900'}`}>
+                  <td className={`py-1.5 px-1.5 text-right font-mono border-r border-black whitespace-nowrap text-[9px] ${remainingBalance === 0 ? 'text-emerald-900' : 'text-rose-900'}`}>
                     Rp {formatRupiah(remainingBalance)}
                   </td>
-                  <td className="py-1.5 px-2 text-left font-sans text-[8.5px] text-stone-700 font-semibold truncate">
+                  <td className="py-1.5 px-2 text-left font-sans text-[8px] text-stone-700 font-semibold break-words whitespace-normal leading-tight">
                     {remainingBalance === 0 ? '✓ Lunas Sepenuhnya' : 'Sisa Menunggu Pelunasan'}
                   </td>
                 </tr>
@@ -961,6 +960,14 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
   const [activeTab, setActiveTab] = useState<'both' | 'pengajuan' | 'pengeluaran' | 'slip_gaji' | 'lampiran' | 'sppd_sheet' | 'only_invoice_payment' | 'lembar_cicilan'>(
     (initialTab as any) || 'both'
   );
+
+  const isCicilan = useMemo(() => isCicilanSubmission(submission), [submission]);
+
+  useEffect(() => {
+    if (!isCicilan && activeTab === 'lembar_cicilan') {
+      setActiveTab('both');
+    }
+  }, [isCicilan, activeTab]);
 
   const isPettyCash = useMemo(() => {
     return isPettyCashSubmission(submission) || Boolean(submission.isPettyCash) || (submission.jenisPengajuan?.toLowerCase().includes('petty') ?? false);
@@ -2104,10 +2111,6 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
   const isSalarySubmission = (submission.jenisPengajuan || '').toLowerCase().includes('gaji') || !!submission.salaryDetails;
   const salarySlipPagesCount = isSalarySubmission ? 1 : 0;
   const sppdPagesCount = effectiveSppdRecord ? 2 : 0;
-  const isCicilan = submission.status === 'DP / Cicilan' || 
-                    (typeof submission.dpAmount === 'number' && submission.dpAmount > 0) || 
-                    (Array.isArray(submission.riwayatCicilan) && submission.riwayatCicilan.length > 0) ||
-                    (typeof submission.cicilanNotes === 'string' && submission.cicilanNotes.trim().length > 0);
   const cicilanPagesCount = isCicilan ? 1 : 0;
   const basePagesCount = showF2 ? (printLayoutMode === 'eco_1page' ? 1 : 2) : 1;
   const totalPagesCount = activeTab === 'pengajuan'

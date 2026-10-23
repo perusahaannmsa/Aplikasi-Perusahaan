@@ -844,10 +844,7 @@ export async function generateF1PdfBytes(
   }
 
   // ================= 8. DEDICATED SHEET: LEMBAR RINCIAN PEMBAYARAN BERTAHAP / CICILAN (PAGE 2) =================
-  const isCicilan = submission.status === 'DP / Cicilan' || 
-                    (typeof submission.dpAmount === 'number' && submission.dpAmount > 0) || 
-                    (Array.isArray(submission.riwayatCicilan) && submission.riwayatCicilan.length > 0) ||
-                    (typeof submission.cicilanNotes === 'string' && submission.cicilanNotes.trim().length > 0);
+  const isCicilan = isCicilanSubmission(submission);
 
   if (isCicilan) {
     // 1. Subtle 1-line note on Page 1 (keeps F1 pristine and uncrowded)
@@ -2377,6 +2374,44 @@ export function isSppdSubmission(sub: any): boolean {
     });
     if (hasSppdItem) return true;
   }
+  return false;
+}
+
+/**
+ * Unified helper to check if a transaction is an installment / DP transaction (Jenis Cicilan).
+ * Rule:
+ * 1. Transactions are NOT installments by default.
+ * 2. Only if the transaction's status is explicitly 'DP / Cicilan'
+ *    OR if it has genuine multi-stage installment history (> 1 payments)
+ *    OR if it has an active partial installment payment with remaining balance (sisaSetelahBayar > 0 and status !== 'Lunas')
+ *    does it qualify as a Cicilan transaction.
+ * 3. Normal single payments (such as Lunas 100% or Belum Lunas standard vouchers) are NOT cicilan
+ *    and must NOT show the installment breakdown sheet.
+ */
+export function isCicilanSubmission(sub: any): boolean {
+  if (!sub) return false;
+
+  // 1. Explicit status 'DP / Cicilan'
+  if (sub.status === 'DP / Cicilan') {
+    return true;
+  }
+
+  // 2. Genuine multi-stage installment history (2 or more installment records)
+  if (Array.isArray(sub.riwayatCicilan) && sub.riwayatCicilan.length > 1) {
+    return true;
+  }
+
+  // 3. Single installment record with active remaining unpaid balance (and not marked Lunas)
+  if (
+    Array.isArray(sub.riwayatCicilan) && 
+    sub.riwayatCicilan.length === 1 && 
+    sub.status !== 'Lunas' &&
+    typeof sub.riwayatCicilan[0]?.sisaSetelahBayar === 'number' && 
+    sub.riwayatCicilan[0].sisaSetelahBayar > 0
+  ) {
+    return true;
+  }
+
   return false;
 }
 

@@ -20,7 +20,8 @@ import {
   formatDateIndonesian, 
   convertImageToPdf, 
   compressImage, 
-  mergeFilesToSinglePdf 
+  mergeFilesToSinglePdf,
+  isCicilanSubmission 
 } from '../utils';
 import { 
   ArrowLeft, 
@@ -235,16 +236,11 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
     const paid = getSubmissionPaid(sub);
     const remaining = Math.max(0, total - paid);
 
-    if (sub.status === 'DP / Cicilan') {
+    if (isCicilanSubmission(sub)) {
       setPaymentMode('cicilan');
       setNominalBayar(remaining > 0 ? remaining : '');
       setKeteranganCicilan(sub.cicilanNotes ? `Cicilan Lanjutan` : 'Termin Pembayaran');
-    } else if (sub.status === 'Lunas') {
-      setPaymentMode('lunas');
-      setNominalBayar(total);
-      setKeteranganCicilan('');
     } else {
-      // Belum Lunas
       setPaymentMode('lunas');
       setNominalBayar(total);
       setKeteranganCicilan('');
@@ -692,83 +688,100 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
 
       setSaveProgress('5/6. Memperbarui status & riwayat pembayaran transaksi...');
 
-      const finalStatus: 'Lunas' | 'DP / Cicilan' = willBeLunas ? 'Lunas' : 'DP / Cicilan';
-      const finalDpAmount: number = willBeLunas ? totalVoucher : accumulatedPaid;
+      const isInstallmentTx = paymentMode === 'cicilan' || isCicilanSubmission(selectedSubmission);
 
-      let finalCicilanNotes = selectedSubmission.cicilanNotes || '';
-      if (willBeLunas) {
-        if (keteranganCicilan) {
-          finalCicilanNotes = `${keteranganCicilan} (LUNAS 100%)`;
-        } else if (selectedSubmission.status === 'DP / Cicilan') {
-          finalCicilanNotes = `${selectedSubmission.cicilanNotes ? selectedSubmission.cicilanNotes + ' - ' : ''}LUNAS (100%)`;
-        } else {
-          finalCicilanNotes = 'Lunas';
-        }
+      let updatedSubmission: Submission;
+
+      if (!isInstallmentTx) {
+        // STANDARD NON-INSTALLMENT TRANSACTION:
+        // Single full payment / standard transfer without installment breakdown.
+        // Wipe any dummy cicilan fields and preserve clean standard voucher status.
+        updatedSubmission = {
+          ...selectedSubmission,
+          status: 'Lunas',
+          dpAmount: undefined,
+          cicilanNotes: undefined,
+          riwayatCicilan: undefined,
+          buktiPembayaran: finalBuktiPembayaran,
+          googleDriveFiles: finalDriveFiles
+        };
       } else {
-        finalCicilanNotes = keteranganCicilan || `Cicilan Rp ${formatRupiah(currentPaymentNominal)} (Sisa Rp ${formatRupiah(remainingDebt)})`;
-      }
+        // INSTALLMENT TRANSACTION (DP / Cicilan Bertahap):
+        const finalStatus: 'Lunas' | 'DP / Cicilan' = willBeLunas ? 'Lunas' : 'DP / Cicilan';
+        const finalDpAmount: number = willBeLunas ? totalVoucher : accumulatedPaid;
 
-      const newInstallment: CicilanPaymentRecord = {
-        id: `pay_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        tanggal: new Date().toISOString().split('T')[0],
-        nominal: currentPaymentNominal,
-        sisaSetelahBayar: remainingDebt,
-        keterangan: keteranganCicilan || (willBeLunas ? 'Pelunasan Penuh' : 'Pembayaran Cicilan'),
-        buktiPembayaran: finalBuktiPembayaran,
-        createdAt: new Date().toISOString()
-      };
+        let finalCicilanNotes = selectedSubmission.cicilanNotes || '';
+        if (willBeLunas) {
+          if (keteranganCicilan) {
+            finalCicilanNotes = `${keteranganCicilan} (LUNAS 100%)`;
+          } else if (selectedSubmission.status === 'DP / Cicilan') {
+            finalCicilanNotes = `${selectedSubmission.cicilanNotes ? selectedSubmission.cicilanNotes + ' - ' : ''}LUNAS (100%)`;
+          } else {
+            finalCicilanNotes = 'Lunas (100%)';
+          }
+        } else {
+          finalCicilanNotes = keteranganCicilan || `Cicilan Rp ${formatRupiah(currentPaymentNominal)} (Sisa Rp ${formatRupiah(remainingDebt)})`;
+        }
 
-      // 🛡️ RECONSTRUCT & PRESERVE COMPLETE PAYMENT HISTORY:
-      // Never drop previous payments! If existing history is empty but there was a previous DP / payment:
-      let existingRiwayat: CicilanPaymentRecord[] = Array.isArray(selectedSubmission.riwayatCicilan) && selectedSubmission.riwayatCicilan.length > 0
-        ? [...selectedSubmission.riwayatCicilan]
-        : [];
+        const newInstallment: CicilanPaymentRecord = {
+          id: `pay_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          tanggal: new Date().toISOString().split('T')[0],
+          nominal: currentPaymentNominal,
+          sisaSetelahBayar: remainingDebt,
+          keterangan: keteranganCicilan || (willBeLunas ? 'Pelunasan Penuh' : 'Pembayaran Cicilan'),
+          buktiPembayaran: finalBuktiPembayaran,
+          createdAt: new Date().toISOString()
+        };
 
-      // Find any previous payment proof that existed before this new payment
-      const priorProof = selectedSubmission.buktiPembayaran || 
-        (selectedSubmission.googleDriveFiles || []).find(f => f.isBuktiPembayaran);
+        // Reconstruct & preserve complete payment history:
+        let existingRiwayat: CicilanPaymentRecord[] = Array.isArray(selectedSubmission.riwayatCicilan) && selectedSubmission.riwayatCicilan.length > 0
+          ? [...selectedSubmission.riwayatCicilan]
+          : [];
 
-      if (existingRiwayat.length === 0 && alreadyPaid > 0) {
-        existingRiwayat.push({
-          id: `pay_initial_${selectedSubmission.id}`,
-          tanggal: selectedSubmission.tanggal,
-          nominal: alreadyPaid,
-          sisaSetelahBayar: Math.max(0, totalVoucher - alreadyPaid),
-          keterangan: selectedSubmission.cicilanNotes || 'Pembayaran DP / Termin Ke-1',
-          buktiPembayaran: priorProof,
-          createdAt: selectedSubmission.createdAt || selectedSubmission.tanggal
-        });
-      } else if (existingRiwayat.length > 0) {
-        // Verify if total of existingRiwayat equals alreadyPaid. If alreadyPaid is larger, prepend missing initial DP
-        const sumExisting = existingRiwayat.reduce((s, r) => s + (Number(r.nominal) || 0), 0);
-        if (alreadyPaid > sumExisting && (alreadyPaid - sumExisting) > 0) {
-          const missingInitial = alreadyPaid - sumExisting;
-          existingRiwayat.unshift({
-            id: `pay_init_restored_${selectedSubmission.id}`,
+        const priorProof = selectedSubmission.buktiPembayaran || 
+          (selectedSubmission.googleDriveFiles || []).find(f => f.isBuktiPembayaran);
+
+        if (existingRiwayat.length === 0 && alreadyPaid > 0) {
+          existingRiwayat.push({
+            id: `pay_initial_${selectedSubmission.id}`,
             tanggal: selectedSubmission.tanggal,
-            nominal: missingInitial,
-            sisaSetelahBayar: Math.max(0, totalVoucher - missingInitial),
-            keterangan: 'Pembayaran DP / Termin Ke-1',
+            nominal: alreadyPaid,
+            sisaSetelahBayar: Math.max(0, totalVoucher - alreadyPaid),
+            keterangan: selectedSubmission.cicilanNotes || 'Pembayaran DP / Termin Ke-1',
             buktiPembayaran: priorProof,
             createdAt: selectedSubmission.createdAt || selectedSubmission.tanggal
           });
+        } else if (existingRiwayat.length > 0) {
+          const sumExisting = existingRiwayat.reduce((s, r) => s + (Number(r.nominal) || 0), 0);
+          if (alreadyPaid > sumExisting && (alreadyPaid - sumExisting) > 0) {
+            const missingInitial = alreadyPaid - sumExisting;
+            existingRiwayat.unshift({
+              id: `pay_init_restored_${selectedSubmission.id}`,
+              tanggal: selectedSubmission.tanggal,
+              nominal: missingInitial,
+              sisaSetelahBayar: Math.max(0, totalVoucher - missingInitial),
+              keterangan: 'Pembayaran DP / Termin Ke-1',
+              buktiPembayaran: priorProof,
+              createdAt: selectedSubmission.createdAt || selectedSubmission.tanggal
+            });
+          }
         }
+
+        const updatedRiwayat: CicilanPaymentRecord[] = [
+          ...existingRiwayat,
+          newInstallment
+        ];
+
+        updatedSubmission = {
+          ...selectedSubmission,
+          status: finalStatus,
+          dpAmount: finalDpAmount,
+          cicilanNotes: finalCicilanNotes,
+          riwayatCicilan: updatedRiwayat,
+          buktiPembayaran: finalBuktiPembayaran,
+          googleDriveFiles: finalDriveFiles
+        };
       }
-
-      const updatedRiwayat: CicilanPaymentRecord[] = [
-        ...existingRiwayat,
-        newInstallment
-      ];
-
-      const updatedSubmission: Submission = {
-        ...selectedSubmission,
-        status: finalStatus,
-        dpAmount: finalDpAmount,
-        cicilanNotes: finalCicilanNotes,
-        riwayatCicilan: updatedRiwayat,
-        buktiPembayaran: finalBuktiPembayaran,
-        googleDriveFiles: finalDriveFiles
-      };
 
       setSaveProgress('6/6. Menyimpan data ke Firebase Firestore & backup lokal...');
 
@@ -1100,7 +1113,7 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
                     const remainingVoucher = getSubmissionRemaining(sub);
                     const isSelected = selectedSubmission?.id === sub.id;
                     const isLunas = sub.status === 'Lunas';
-                    const isCicilan = sub.status === 'DP / Cicilan';
+                    const isCicilan = isCicilanSubmission(sub);
 
                     return (
                       <div

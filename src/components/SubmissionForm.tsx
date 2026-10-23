@@ -2000,22 +2000,48 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         ? normalizedPenerima 
         : (matchedHolderForCustodian || (rawCustodian ? toTitleCase(rawCustodian) : (effectiveHolders[0] || 'Suryo Pranoto')));
 
-      const numDp = dpAmount !== '' && !isNaN(Number(dpAmount)) ? Number(dpAmount) : 0;
-      const finalStatus: 'Lunas' | 'Belum Lunas' | 'DP / Cicilan' = (status === 'DP / Cicilan' || (numDp > 0 && numDp < calculatedGrandTotal))
+      const numDp = (status === 'DP / Cicilan' && dpAmount !== '' && !isNaN(Number(dpAmount))) ? Number(dpAmount) : 0;
+      
+      // Follow the user's explicit status selection.
+      // Transactions are NOT cicilan unless explicitly selected as 'DP / Cicilan'.
+      const finalStatus: 'Lunas' | 'Belum Lunas' | 'DP / Cicilan' = status === 'DP / Cicilan'
         ? 'DP / Cicilan'
-        : (status === 'Lunas' || isLunas || (numDp > 0 && numDp >= calculatedGrandTotal) ? 'Lunas' : 'Belum Lunas');
+        : (status === 'Lunas' || (isLunas && !initialSubmission) ? 'Lunas' : 'Belum Lunas');
 
-      let effectiveRiwayatCicilan = initialSubmission?.riwayatCicilan ? [...initialSubmission.riwayatCicilan] : [];
-      if ((finalStatus === 'DP / Cicilan' || numDp > 0) && numDp > 0 && effectiveRiwayatCicilan.length === 0) {
-        effectiveRiwayatCicilan = [{
-          id: `pay_initial_${Date.now()}`,
-          tanggal: tanggal || new Date().toISOString().split('T')[0],
-          nominal: numDp,
-          sisaSetelahBayar: Math.max(0, calculatedGrandTotal - numDp),
-          keterangan: cicilanNotes || 'Pembayaran DP / Termin Ke-1',
-          buktiPembayaran: finalBuktiPembayaran,
-          createdAt: new Date().toISOString()
-        }];
+      let effectiveRiwayatCicilan: CicilanPaymentRecord[] | undefined = undefined;
+      let effectiveDpAmount: number | undefined = undefined;
+      let effectiveCicilanNotes: string | undefined = undefined;
+
+      if (finalStatus === 'DP / Cicilan') {
+        effectiveDpAmount = numDp > 0 ? numDp : undefined;
+        effectiveCicilanNotes = (cicilanNotes || '').trim() || 'Pembayaran DP / Termin Ke-1';
+        
+        let existingHist = initialSubmission?.riwayatCicilan ? [...initialSubmission.riwayatCicilan] : [];
+        if (existingHist.length === 0 && numDp > 0) {
+          existingHist = [{
+            id: `pay_initial_${Date.now()}`,
+            tanggal: tanggal || new Date().toISOString().split('T')[0],
+            nominal: numDp,
+            sisaSetelahBayar: Math.max(0, calculatedGrandTotal - numDp),
+            keterangan: effectiveCicilanNotes,
+            buktiPembayaran: finalBuktiPembayaran,
+            createdAt: new Date().toISOString()
+          }];
+        }
+        effectiveRiwayatCicilan = existingHist.length > 0 ? existingHist : undefined;
+      } else {
+        // If the transaction is NOT 'DP / Cicilan' (e.g. Belum Lunas or Lunas Selesai):
+        // Only preserve previous installment history if it already had genuine multi-stage history (> 1 payments)
+        // and user is completing it to Lunas. Otherwise, wipe any dummy installment residue!
+        if (finalStatus === 'Lunas' && initialSubmission?.riwayatCicilan && initialSubmission.riwayatCicilan.length > 1) {
+          effectiveRiwayatCicilan = initialSubmission.riwayatCicilan;
+          effectiveDpAmount = initialSubmission.dpAmount;
+          effectiveCicilanNotes = initialSubmission.cicilanNotes;
+        } else {
+          effectiveRiwayatCicilan = undefined;
+          effectiveDpAmount = undefined;
+          effectiveCicilanNotes = undefined;
+        }
       }
 
       const payload: Submission = {
@@ -2027,9 +2053,9 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         dibayarkanKepada: normalizedPenerima,
         dibayarkanDengan: 'Cek/Transfer',
         status: finalStatus,
-        dpAmount: (finalStatus === 'DP / Cicilan' || numDp > 0) ? numDp : undefined,
-        cicilanNotes: (finalStatus === 'DP / Cicilan' || numDp > 0) ? (cicilanNotes || undefined) : undefined,
-        riwayatCicilan: effectiveRiwayatCicilan.length > 0 ? effectiveRiwayatCicilan : undefined,
+        dpAmount: effectiveDpAmount,
+        cicilanNotes: effectiveCicilanNotes,
+        riwayatCicilan: effectiveRiwayatCicilan,
         rekeningTujuan: rekeningTujuan || undefined,
         notes,
         
@@ -2550,6 +2576,10 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
               onChange={(e) => {
                 const newStatus = e.target.value as any;
                 setStatus(newStatus);
+                if (newStatus !== 'DP / Cicilan') {
+                  setDpAmount('');
+                  setCicilanNotes('');
+                }
               }}
             >
               <option value="Belum Lunas">Belum Lunas</option>
