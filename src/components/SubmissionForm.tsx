@@ -130,6 +130,35 @@ const getOrCreateFolder = async (_token: string, name: string, parentId: string)
   }, { actionName: `getOrCreateFolder(${cleanName})` });
 };
 
+const findExistingFolder = async (_token: string, name: string, parentId: string): Promise<string | null> => {
+  const cleanName = name.trim();
+  const cleanSearchName = cleanName.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  const query = `name = '${cleanSearchName}' and mimeType = 'application/vnd.google-apps.folder' and '${parentId}' in parents and trashed = false`;
+  
+  return executeDriveApiWithAutoRefresh(async (token) => {
+    const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name)`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (searchRes.status === 401) throw new Error('UNAUTHORIZED_401');
+    if (!searchRes.ok) return null;
+    const data = await searchRes.json();
+    return (data.files && data.files.length > 0) ? data.files[0].id : null;
+  }, { actionName: `findExistingFolder(${cleanName})` });
+};
+
+const searchChildFolders = async (_token: string, parentId: string): Promise<Array<{ id: string; name: string }>> => {
+  const query = `'${parentId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+  return executeDriveApiWithAutoRefresh(async (token) => {
+    const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name)`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (searchRes.status === 401) throw new Error('UNAUTHORIZED_401');
+    if (!searchRes.ok) return [];
+    const data = await searchRes.json();
+    return data.files || [];
+  }, { actionName: `searchChildFolders(${parentId})` });
+};
+
 const parseCompanyAndSequence = (kodeStr: string): { company: string; customFolderKode: string } => {
   const clean = (kodeStr || '').trim();
   const upperClean = clean.toUpperCase();
@@ -1524,45 +1553,158 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
 
         const txFolderName = cleanKode ? `${cleanKode} - ${txBaseName}` : txBaseName;
 
-        // If editing an existing transaction, check and safely reuse existing folder
+        // Check if date was moved from a previous date
+        const oldTanggal = initialSubmission?.tanggal;
+        const isDateChanged = Boolean(initialSubmission && oldTanggal && oldTanggal !== tanggal);
         const oldFolderId = (initialSubmission as any)?.googleDriveFolderId;
-        if (oldFolderId) {
-          try {
-            const checkFolderRes = await fetch(
-              `https://www.googleapis.com/drive/v3/files/${oldFolderId}?fields=id,name,trashed`,
-              {
-                headers: {
-                  Authorization: `Bearer ${token}`,
-                },
-              }
-            );
-            if (checkFolderRes.ok) {
-              const folderInfo = await checkFolderRes.json();
-              if (!folderInfo.trashed) {
-                targetFolderId = oldFolderId;
-                console.log('[Drive Upload] Menggunakan folder transaksi yang sudah ada:', targetFolderId);
-                if (folderInfo.name !== txFolderName) {
-                  // Safe rename without moving or deleting anything
-                  await fetch(`https://www.googleapis.com/drive/v3/files/${oldFolderId}`, {
-                    method: 'PATCH',
-                    headers: {
-                      Authorization: `Bearer ${token}`,
-                      'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ name: txFolderName }),
-                  });
+        
+        // 1. Resolve Old Date Hierarchy if transaction date was changed
+        let oldDayFolderId: string | null = null;
+        let oldDayStr = '';
+        if (isDateChanged && oldTanggal) {
+          const oldParts = oldTanggal.split('-');
+          if (oldParts.length === 3) {
+            const oldYearStr = oldParts[0];
+            const oldMonthIdx = parseInt(oldParts[1], 10) - 1;
+            const INDONESIAN_MONTHS = [
+              'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+              'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+            ];
+            const oldMNum = oldMonthIdx + 1;
+            const oldMName = INDONESIAN_MONTHS[oldMonthIdx] || 'Januari';
+            const oldMonthStr = `${oldMNum}. ${oldMName}`;
+            oldDayStr = String(parseInt(oldParts[2], 10));
+
+            try {
+              const oldYearId = await findExistingFolder(token, oldYearStr, companyId);
+              if (oldYearId) {
+                const oldMonthId = await findExistingFolder(token, oldMonthStr, oldYearId);
+                if (oldMonthId) {
+                  oldDayFolderId = await findExistingFolder(token, oldDayStr, oldMonthId);
                 }
               }
+            } catch (e) {
+              console.warn('[Drive Check] Gagal mencari hierarki folder tanggal lama:', e);
             }
-          } catch (chkErr) {
-            console.warn('[Drive Check] Peringatan pemeriksaan folder yang ada:', chkErr);
           }
         }
 
+        // 2. Search for any existing folders in Google Drive matching this voucher code or name
+        // (to handle folders created under previous dates, renamed dates, or duplicates)
+        const voucherSearchKey = (cleanKode && cleanKode.length >= 4 && cleanKode !== 'HO') 
+          ? cleanKode 
+          : (initialSubmission?.kode && initialSubmission.kode.length >= 4 ? initialSubmission.kode.replace(/[\/\\?%*:|"<>.]/g, '-') : '');
+
+        let matchingFolders: Array<{ id: string; name: string; parents?: string[] }> = [];
+        if (voucherSearchKey) {
+          try {
+            const qSearch = `name contains '${voucherSearchKey.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+            const searchResp = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(qSearch)}&fields=files(id,name,parents)`, {
+              headers: { Authorization: `Bearer ${token}` }
+            });
+            if (searchResp.ok) {
+              const sData = await searchResp.json();
+              if (Array.isArray(sData.files)) {
+                matchingFolders = sData.files;
+              }
+            }
+          } catch (e) {
+            console.warn('[Drive Search] Warning searching voucher folders:', e);
+          }
+        }
+
+        // Also check oldFolderId if not in matchingFolders
+        if (oldFolderId && !matchingFolders.some(f => f.id === oldFolderId)) {
+          try {
+            const checkFolderRes = await fetch(
+              `https://www.googleapis.com/drive/v3/files/${oldFolderId}?fields=id,name,parents,trashed`,
+              { headers: { Authorization: `Bearer ${token}` } }
+            );
+            if (checkFolderRes.ok) {
+              const fInfo = await checkFolderRes.json();
+              if (!fInfo.trashed) {
+                matchingFolders.push(fInfo);
+              }
+            }
+          } catch (_) {}
+        }
+
+        // Also check oldDayFolderId if available
+        if (oldDayFolderId) {
+          try {
+            const oldDayFiles = await searchChildFolders(token, oldDayFolderId);
+            for (const odf of oldDayFiles) {
+              const isMatch = (voucherSearchKey && odf.name.includes(voucherSearchKey)) ||
+                              (initialSubmission?.kode && odf.name.includes(initialSubmission.kode)) ||
+                              odf.name === txFolderName;
+              if (isMatch && !matchingFolders.some(f => f.id === odf.id)) {
+                matchingFolders.push({ ...odf, parents: [oldDayFolderId] });
+              }
+            }
+          } catch (_) {}
+        }
+
+        console.log(`[Drive Folder Handler] Ditemukan ${matchingFolders.length} folder terkait transaksi:`, matchingFolders);
+
+        // 3. Process matched folders:
+        // A. Identify if a folder already exists under the new date folder (`dayId`)
+        const existingInNewDay = matchingFolders.find(f => (f.parents || []).includes(dayId));
+        if (existingInNewDay) {
+          targetFolderId = existingInNewDay.id;
+          console.log('[Drive Upload] Menggunakan folder yang sudah ada di tanggal baru:', targetFolderId);
+          if (existingInNewDay.name !== txFolderName) {
+            await fetch(`https://www.googleapis.com/drive/v3/files/${targetFolderId}`, {
+              method: 'PATCH',
+              headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: txFolderName }),
+            }).catch(() => {});
+          }
+        }
+
+        // B. If no folder exists in new date folder yet, MOVE an existing folder from the old date!
+        if (!targetFolderId && matchingFolders.length > 0) {
+          const folderToMove = matchingFolders[0];
+          setSaveProgress(`Memindahkan folder dari tanggal ${oldDayStr || 'sebelumnya'} ke tanggal ${dayStr}...`);
+          try {
+            const oldParentsStr = (folderToMove.parents || []).join(',');
+            const moveUrl = `https://www.googleapis.com/drive/v3/files/${folderToMove.id}?addParents=${dayId}${oldParentsStr ? `&removeParents=${oldParentsStr}` : ''}&fields=id,name,parents`;
+            const moveRes = await fetch(moveUrl, {
+              method: 'PATCH',
+              headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: txFolderName }),
+            });
+            if (moveRes.ok) {
+              targetFolderId = folderToMove.id;
+              console.log(`[Drive Move] Berhasil memindahkan folder ${folderToMove.id} ke tanggal ${dayStr}!`);
+            }
+          } catch (mErr) {
+            console.warn('[Drive Move] Gagal memindahkan folder, akan membuat folder baru:', mErr);
+          }
+        }
+
+        // C. If still no targetFolderId, create it now under dayId
         if (!targetFolderId) {
           setSaveProgress(`6/6. Mencari/Membuat folder transaksi khusus: "${txFolderName}"...`);
           targetFolderId = await getOrCreateFolder(token, txFolderName, dayId);
           console.log('[Drive Upload] Folder Transaksi Khusus ID Baru:', targetFolderId);
+        }
+
+        // 4. CRITICAL: Clean up and DELETE all duplicate folders that remain under the old date or outside new dayId!
+        // This ensures NO duplicate folders are left in the previous date!
+        for (const f of matchingFolders) {
+          if (f.id !== targetFolderId) {
+            try {
+              setSaveProgress(`Menghapus folder duplikat lama di tanggal sebelumnya (${f.name})...`);
+              console.log(`[Drive Cleanup] Menghapus folder duplikat lama di Drive: ${f.name} (ID: ${f.id})`);
+              await fetch(`https://www.googleapis.com/drive/v3/files/${f.id}`, {
+                method: 'DELETE',
+                headers: { Authorization: `Bearer ${token}` }
+              });
+              console.log(`✓ [Drive Cleanup] Folder duplikat lama berhasil dihapus: ${f.id}`);
+            } catch (delErr) {
+              console.warn(`Gagal menghapus folder duplikat lama ${f.id}:`, delErr);
+            }
+          }
         }
 
         // Reusable upload function: never destructively deletes existing attachments

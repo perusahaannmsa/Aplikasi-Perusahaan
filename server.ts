@@ -94,12 +94,6 @@ function getGeminiApiKeys(): string[] {
       }
     }
   } catch (_) {}
-  // Primary active working key fallback
-  const workingKey = Buffer.from("QVEuQWI4Uk42TElMbWJIRmhRcDE3aEZJd2tqSlZuY2lmSi11Nm5qOElCdkdCVzVqVjFTYlE=", "base64").toString("utf-8");
-  if (!keys.includes(workingKey)) keys.push(workingKey);
-  // User provided key fallback
-  const userKey = Buffer.from("QVEuQWI4Uk42Sm44dVdYTXFIb0lheEIwTzJBVm1WS211VWQ2dFJjbnRoMlhQTjFGTGV2V0E=", "base64").toString("utf-8");
-  if (!keys.includes(userKey)) keys.push(userKey);
   return keys;
 }
 
@@ -5171,7 +5165,7 @@ async function bootstrap() {
 
     // Dev fallback for SPA navigation
     app.use("*", async (req, res, next) => {
-      if (req.method !== "GET") return next();
+      if (req.method !== "GET" || req.originalUrl.startsWith("/api")) return next();
       const url = req.originalUrl;
       try {
         const indexPath = path.join(process.cwd(), "index.html");
@@ -5189,6 +5183,9 @@ async function bootstrap() {
     app.use("/assets", express.static(path.join(distPath, "assets")));
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
+      if (req.originalUrl.startsWith("/api")) {
+        return res.status(404).json({ success: false, error: `Endpoint API '${req.originalUrl}' tidak ditemukan.` });
+      }
       res.sendFile(path.join(distPath, "index.html"));
     });
   }

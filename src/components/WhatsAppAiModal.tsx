@@ -829,15 +829,12 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                     {/* QR Box - Shows real WhatsApp QR or clear serverless guidance */}
                     <div className="w-52 h-52 bg-white p-3 rounded-2xl border-2 border-emerald-500/30 shadow-md flex flex-col items-center justify-center relative group">
                       {qrCode ? (
-                        <div className="relative w-full h-full flex items-center justify-center">
+                        <div className="relative w-full h-full flex items-center justify-center p-1">
                           <img 
                             src={qrCode} 
                             alt="WhatsApp Bot QR Code" 
                             className="w-full h-full object-contain rounded-lg"
                           />
-                          <div className="absolute top-1 right-1 p-1 bg-white/90 rounded-full shadow-2xs border border-emerald-200">
-                            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping block" />
-                          </div>
                         </div>
                       ) : isVercelHost ? (
                         <div className="flex flex-col items-center justify-center gap-1.5 text-stone-600 text-xs p-2 text-center h-full">
