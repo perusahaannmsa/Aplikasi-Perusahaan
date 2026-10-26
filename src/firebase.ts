@@ -194,11 +194,12 @@ export const mapFirestoreToSubmission = (docId: string, data: any): Submission =
   }
 
   const firstItem = firestoreItems[0] || {};
+  const hasProof = !!(data.buktiPembayaran || (Array.isArray(data.googleDriveFiles) && data.googleDriveFiles.some((f: any) => f.isBuktiPembayaran)));
   const rawStatus = data.status || firstItem.status;
-  const isDocLunas = rawStatus === 'Lunas' || (!rawStatus && (data.dibayarkanDengan === 'Cek/Transfer' || data.dibayarkan_dengan === 'Cek/Transfer'));
+  const isDocLunas = rawStatus === 'Lunas' || hasProof || (!rawStatus && (data.dibayarkanDengan === 'Cek/Transfer' || data.dibayarkan_dengan === 'Cek/Transfer'));
   const finalStatus: 'Lunas' | 'Belum Lunas' | 'DP / Cicilan' = rawStatus === 'DP / Cicilan'
     ? 'DP / Cicilan'
-    : (rawStatus || (isDocLunas ? 'Lunas' : 'Belum Lunas'));
+    : (isDocLunas ? 'Lunas' : (rawStatus || 'Belum Lunas'));
 
   // Parse DP / Cicilan amount and history
   const rawDp = data.dpAmount !== undefined ? data.dpAmount : (data.dp_amount !== undefined ? data.dp_amount : undefined);
@@ -306,7 +307,10 @@ export const mapSubmissionToFirestore = (
   userCompanyId: string = 'nmsa',
   userCompanyName: string = 'PT Nusantara Mineral Sukses Abadi'
 ): any => {
-  const finalStatus = sub.status || (sub.dibayarkanDengan === 'Cek/Transfer' ? 'Lunas' : 'Belum Lunas');
+  const hasProof = !!(sub.buktiPembayaran || (Array.isArray(sub.googleDriveFiles) && sub.googleDriveFiles.some(f => f.isBuktiPembayaran)));
+  const finalStatus = sub.status === 'DP / Cicilan'
+    ? 'DP / Cicilan'
+    : (sub.status === 'Lunas' || hasProof ? 'Lunas' : (sub.status || (sub.dibayarkanDengan === 'Cek/Transfer' ? 'Lunas' : 'Belum Lunas')));
   const isLunas = finalStatus === 'Lunas';
   const computedTotal = Array.isArray(sub.items) ? sub.items.reduce((sum, item) => sum + (item.total || 0), 0) : 0;
   const firstItemKeterangan = (sub.items && sub.items[0]?.keterangan) || '';

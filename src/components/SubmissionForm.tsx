@@ -820,14 +820,23 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
   const [fileToDeleteStatus, setFileToDeleteStatus] = useState<'idle' | 'deleting'>('idle');
   const [fileToDeleteError, setFileToDeleteError] = useState<string | null>(null);
 
-  // Sync payment status state with payment proof file presence
+  // Sync payment status state with initial submission
   useEffect(() => {
-    if (initialSubmission?.status) {
-      setStatus(initialSubmission.status);
-    } else if (buktiPembayaranFile || buktiPembayaranDrive) {
-      setStatus('Lunas');
+    if (initialSubmission) {
+      if (initialSubmission.status) {
+        setStatus(initialSubmission.status);
+      } else if (initialSubmission.buktiPembayaran || (initialSubmission.googleDriveFiles || []).some(f => f.isBuktiPembayaran)) {
+        setStatus('Lunas');
+      }
     }
-  }, [buktiPembayaranFile, buktiPembayaranDrive, initialSubmission]);
+  }, [initialSubmission]);
+
+  // When a payment proof is uploaded or selected, automatically upgrade status to 'Lunas' unless explicitly in DP/Cicilan mode
+  useEffect(() => {
+    if (buktiPembayaranFile || buktiPembayaranDrive) {
+      setStatus(prev => (prev === 'DP / Cicilan' ? 'DP / Cicilan' : 'Lunas'));
+    }
+  }, [buktiPembayaranFile, buktiPembayaranDrive]);
 
   // Check Drive connection status automatically and react to token refresh events
   useEffect(() => {
@@ -2122,13 +2131,15 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         total: Number(item.total) || 0
       }));
 
-      // Ensure the Lunas status is determined strictly by the presence of a payment proof document
-      // uploaded on the dedicated "bukti pembayaran" uploader menu, or if previously marked as paid.
-      const isLunas = !!(
+      // Ensure the Lunas status is determined by the presence of a payment proof document
+      // uploaded on the dedicated "bukti pembayaran" uploader, or if marked as paid.
+      const hasPaymentProof = !!(
         finalBuktiPembayaran ||
         buktiPembayaranFile ||
-        buktiPembayaranDrive
-      ) || (initialSubmission?.status === 'Lunas');
+        buktiPembayaranDrive ||
+        (initialSubmission?.googleDriveFiles || []).some(f => f.isBuktiPembayaran)
+      );
+      const isLunas = hasPaymentProof || status === 'Lunas' || (initialSubmission?.status === 'Lunas');
 
       // Normalize dibayarkanKepada: match against registered holders first (case-insensitive / incomplete), fallback to clean Title Case
       const rawPenerima = (dibayarkanKepada || '').trim();
@@ -2146,9 +2157,10 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
       
       // Follow the user's explicit status selection.
       // Transactions are NOT cicilan unless explicitly selected as 'DP / Cicilan'.
+      // If a payment proof document is present or status was selected as Lunas, mark as 'Lunas'!
       const finalStatus: 'Lunas' | 'Belum Lunas' | 'DP / Cicilan' = status === 'DP / Cicilan'
         ? 'DP / Cicilan'
-        : (status === 'Lunas' || (isLunas && !initialSubmission) ? 'Lunas' : 'Belum Lunas');
+        : ((status === 'Lunas' || isLunas) ? 'Lunas' : 'Belum Lunas');
 
       let effectiveRiwayatCicilan: CicilanPaymentRecord[] | undefined = undefined;
       let effectiveDpAmount: number | undefined = undefined;

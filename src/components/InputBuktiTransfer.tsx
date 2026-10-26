@@ -504,12 +504,12 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
   const sisaSebelumBayar = Math.max(0, totalVoucher - alreadyPaid);
   
   const currentPaymentNominal = paymentMode === 'lunas' 
-    ? sisaSebelumBayar 
+    ? (sisaSebelumBayar > 0 ? sisaSebelumBayar : (totalVoucher > 0 ? totalVoucher : 0)) 
     : (typeof nominalBayar === 'number' ? nominalBayar : 0);
 
   const accumulatedPaid = alreadyPaid + currentPaymentNominal;
   const remainingDebt = Math.max(0, totalVoucher - accumulatedPaid);
-  const willBeLunas = (accumulatedPaid >= totalVoucher && totalVoucher > 0) || (paymentMode === 'lunas' && sisaSebelumBayar > 0);
+  const willBeLunas = paymentMode === 'lunas' || accumulatedPaid >= totalVoucher || remainingDebt === 0;
 
   // Shortcut percentage button click
   const handleSetPercentage = (percent: number) => {

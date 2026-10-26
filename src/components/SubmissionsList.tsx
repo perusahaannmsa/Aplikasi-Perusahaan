@@ -461,9 +461,24 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
 
   const [isReminderOpen, setIsReminderOpen] = useState(false);
 
+  // Central helper to accurately determine payment status, taking into account uploaded payment proofs
+  const getSubStatus = (sub: Submission): 'Lunas' | 'Belum Lunas' | 'DP / Cicilan' => {
+    if (sub.status === 'DP / Cicilan') {
+      const grandTotal = (sub.items || []).reduce((s, i) => s + (Number(i.total) || 0), 0);
+      const dp = Number(sub.dpAmount) || 0;
+      if (dp >= grandTotal && grandTotal > 0) return 'Lunas';
+      return 'DP / Cicilan';
+    }
+    if (sub.status === 'Lunas') return 'Lunas';
+    if (sub.buktiPembayaran || (sub.googleDriveFiles || []).some(f => f.isBuktiPembayaran)) {
+      return 'Lunas';
+    }
+    return sub.status || (sub.dibayarkanDengan === 'Cek/Transfer' ? 'Lunas' : 'Belum Lunas');
+  };
+
   // Helper to check if an unpaid transaction is older than 1 week (7 days)
   const isEligibleForManualPaymentMark = (sub: Submission) => {
-    const subStatus = sub.status || (sub.dibayarkanDengan === 'Cek/Transfer' ? 'Lunas' : 'Belum Lunas');
+    const subStatus = getSubStatus(sub);
     if (subStatus !== 'Belum Lunas') return false;
     
     if (!sub.tanggal) return false;
@@ -608,7 +623,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
       }
 
       const matchMethod = methodFilter === 'All' || sub.dibayarkanDengan === methodFilter;
-      const subStatus = sub.status || (sub.dibayarkanDengan === 'Cek/Transfer' ? 'Lunas' : 'Belum Lunas');
+      const subStatus = getSubStatus(sub);
       const matchStatus = statusFilter === 'All' || subStatus === statusFilter;
 
       // Filter by Date, Month, Year
@@ -847,7 +862,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
     filteredSubmissions.forEach(sub => {
       const subSum = sub.items.reduce((itemSum, item) => itemSum + item.total, 0);
       transfer += subSum;
-      const status = sub.status || (sub.dibayarkanDengan === 'Cek/Transfer' ? 'Lunas' : 'Belum Lunas');
+      const status = getSubStatus(sub);
       if (status === 'Lunas') lunasCount++;
       else if (status === 'DP / Cicilan') dpCount++;
       else belumLunasCount++;
@@ -1048,7 +1063,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   // ALL unpaid submissions of all time across the entire application
   const allUnpaidSubmissionsAllTime = useMemo(() => {
     return submissions.filter(sub => {
-      const subStatus = sub.status || (sub.dibayarkanDengan === 'Cek/Transfer' ? 'Lunas' : 'Belum Lunas');
+      const subStatus = getSubStatus(sub);
       return subStatus === 'Belum Lunas';
     });
   }, [submissions]);
@@ -1117,7 +1132,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
       const subTotal = sub.items.reduce((sum, item) => sum + item.total, 0);
       const itemsStr = sub.items.map(item => item.item).join(" | ");
       const specStr = sub.items.map(item => item.keterangan || "").filter(Boolean).join(" | ");
-      const statusStr = sub.status || (sub.dibayarkanDengan === 'Cek/Transfer' ? 'Lunas' : 'Belum Lunas');
+      const statusStr = getSubStatus(sub);
 
       rows.push([
         String(idx + 1),
@@ -1573,19 +1588,25 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                       </div>
 
                       <div className="shrink-0">
-                        {sub.status === 'DP / Cicilan' ? (
-                          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full font-extrabold bg-amber-50 text-amber-800 border border-amber-200">
-                            DP: Rp {formatRupiah(sub.dpAmount || 0)}
-                          </span>
-                        ) : (
-                          <span className={`text-[10px] font-mono px-2.5 py-0.5 rounded-full font-extrabold border ${
-                            (sub.status || 'Lunas') === 'Lunas'
-                              ? 'bg-teal-50 text-teal-700 border-teal-150'
-                              : 'bg-rose-50 text-rose-700 border-rose-150'
-                          }`}>
-                            {sub.status || 'Lunas'}
-                          </span>
-                        )}
+                        {(() => {
+                          const effStatus = getSubStatus(sub);
+                          if (effStatus === 'DP / Cicilan') {
+                            return (
+                              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full font-extrabold bg-amber-50 text-amber-800 border border-amber-200">
+                                DP: Rp {formatRupiah(sub.dpAmount || 0)}
+                              </span>
+                            );
+                          }
+                          return (
+                            <span className={`text-[10px] font-mono px-2.5 py-0.5 rounded-full font-extrabold border ${
+                              effStatus === 'Lunas'
+                                ? 'bg-teal-50 text-teal-700 border-teal-150'
+                                : 'bg-rose-50 text-rose-700 border-rose-150'
+                            }`}>
+                              {effStatus}
+                            </span>
+                          );
+                        })()}
                       </div>
                     </div>
 
@@ -1773,20 +1794,26 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                               Transfer
                             </span>
                             
-                            {sub.status === 'DP / Cicilan' ? (
-                              <span className="inline-block text-[10px] font-mono px-2.5 py-0.5 rounded-full font-extrabold bg-amber-50 text-amber-800 border border-amber-200" title={sub.cicilanNotes || 'Pembayaran bertahap/cicilan'}>
-                                DP/Cicilan: Rp {formatRupiah(sub.dpAmount || 0)}
-                                {sub.dpAmount && subTotal > sub.dpAmount ? ` (Sisa Rp ${formatRupiah(subTotal - sub.dpAmount)})` : ''}
-                              </span>
-                            ) : (
-                              <span className={`inline-block text-[10px] font-mono px-2.5 py-0.5 rounded-full font-extrabold ${
-                                (sub.status || 'Lunas') === 'Lunas'
-                                  ? 'bg-teal-50 text-teal-700 border border-teal-150'
-                                  : 'bg-rose-50 text-rose-700 border border-rose-150'
-                              }`}>
-                                {sub.status || 'Lunas'}
-                              </span>
-                            )}
+                            {(() => {
+                              const effStatus = getSubStatus(sub);
+                              if (effStatus === 'DP / Cicilan') {
+                                return (
+                                  <span className="inline-block text-[10px] font-mono px-2.5 py-0.5 rounded-full font-extrabold bg-amber-50 text-amber-800 border border-amber-200" title={sub.cicilanNotes || 'Pembayaran bertahap/cicilan'}>
+                                    DP/Cicilan: Rp {formatRupiah(sub.dpAmount || 0)}
+                                    {sub.dpAmount && subTotal > sub.dpAmount ? ` (Sisa Rp ${formatRupiah(subTotal - sub.dpAmount)})` : ''}
+                                  </span>
+                                );
+                              }
+                              return (
+                                <span className={`inline-block text-[10px] font-mono px-2.5 py-0.5 rounded-full font-extrabold ${
+                                  effStatus === 'Lunas'
+                                    ? 'bg-teal-50 text-teal-700 border border-teal-150'
+                                    : 'bg-rose-50 text-rose-700 border border-rose-150'
+                                }`}>
+                                  {effStatus}
+                                </span>
+                              );
+                            })()}
 
                             {sub.isInvoice && (
                               <span className="inline-block text-[9px] font-mono bg-amber-500 text-white font-black px-2 py-0.5 rounded-md shadow-3xs uppercase tracking-wider">
@@ -2108,13 +2135,20 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                         
                         {/* Column H: Status */}
                         <td className="border-r border-stone-200/80 px-2 py-1.5 text-center">
-                          <span className={`inline-block text-[9px] font-bold px-1.5 py-0.5 rounded ${
-                            (sub.status || (sub.dibayarkanDengan === 'Cek/Transfer' ? 'Lunas' : 'Belum Lunas')) === 'Lunas'
-                              ? 'bg-emerald-100 text-emerald-850 font-extrabold uppercase border border-emerald-350'
-                              : 'bg-rose-100 text-rose-850 font-extrabold uppercase border border-rose-350 animate-pulse'
-                          }`}>
-                            {sub.status || (sub.dibayarkanDengan === 'Cek/Transfer' ? 'Lunas' : 'Belum Lunas')}
-                          </span>
+                          {(() => {
+                            const effStatus = getSubStatus(sub);
+                            return (
+                              <span className={`inline-block text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                                effStatus === 'Lunas'
+                                  ? 'bg-emerald-100 text-emerald-850 font-extrabold uppercase border border-emerald-350'
+                                  : effStatus === 'DP / Cicilan'
+                                  ? 'bg-amber-100 text-amber-850 font-extrabold uppercase border border-amber-350'
+                                  : 'bg-rose-100 text-rose-850 font-extrabold uppercase border border-rose-350 animate-pulse'
+                              }`}>
+                                {effStatus}
+                              </span>
+                            );
+                          })()}
                         </td>
                         
                         {/* Column I: Dibayarkan */}
@@ -3940,9 +3974,10 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
               {filteredSubmissions.length > 0 ? (
                 filteredSubmissions.map((sub, idx) => {
                   const subTotal = sub.items.reduce((sum, i) => sum + i.total, 0);
-                  const displayStatus = sub.status === 'DP / Cicilan'
+                  const effStatus = getSubStatus(sub);
+                  const displayStatus = effStatus === 'DP / Cicilan'
                     ? `DP/Cicilan${sub.dpAmount ? ` (Rp ${formatRupiah(sub.dpAmount)})` : ''}`
-                    : (sub.status || 'Lunas');
+                    : effStatus;
                   return (
                     <tr key={sub.id} className="align-top border-b border-stone-300">
                       <td className="py-1 px-1 border border-stone-300 text-center font-mono text-stone-600 text-[8px]">{idx + 1}</td>
