@@ -1,0 +1,878 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700;800&family=Outfit:wght@400;500;600;700;800;900&family=Cinzel:wght@600;700;800;900&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-display: "Outfit", "Plus Jakarta Sans", sans-serif;
+}
+
+:root {
+  --brand-gold: #D4AF37;
+  --brand-gold-hover: #Bca031;
+  --brand-gradient-start: #d97706;
+  --brand-gradient-end: #f59e0b;
+  transition: background-color 0.25s ease, border-color 0.25s ease, color 0.2s ease, box-shadow 0.25s ease;
+}
+
+/* Responsive Viewport & Anti-Overflow Protection for Android & Desktop */
+html, body {
+  max-width: 100vw;
+  overflow-x: clip;
+  -webkit-text-size-adjust: 100%;
+}
+
+#root, #app-root {
+  max-width: 100vw;
+  overflow-x: clip;
+  min-height: 100vh;
+}
+
+/* Smooth Horizontal Scrollbar Utilities for Navigation Menus */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   THEME 1: CLASSIC (Royal Nusantara Heritage - Warm Ivory, Gold & Batik Filigree)
+   ═══════════════════════════════════════════════════════════════════ */
+.theme-classic {
+  --brand-gold: #D4AF37;
+  --brand-gold-hover: #bca031;
+  --brand-gradient-start: #b45309;
+  --brand-gradient-end: #f59e0b;
+  --theme-card-radius: 1.25rem;
+  --theme-font-title: "Cinzel", "Outfit", "Plus Jakarta Sans", serif;
+  --theme-glow: rgba(212, 175, 55, 0.25);
+  
+  --color-white: #ffffff;
+  --color-stone-50: #faf7f0;
+  --color-stone-100: #f4eee1;
+  --color-stone-150: #ede3ce;
+  --color-stone-200: #e2d3b5;
+  --color-stone-250: #d4be95;
+  --color-stone-300: #bfa170;
+  --color-stone-400: #7c6845;
+  --color-stone-500: #57482f;
+  --color-stone-800: #292524;
+  --color-stone-850: #1c1917;
+  --color-stone-900: #0c0a09;
+}
+
+.theme-classic #app-root {
+  background-color: #faf7f0;
+  background-image: 
+    radial-gradient(rgba(212, 175, 55, 0.16) 1.5px, transparent 1.5px),
+    radial-gradient(rgba(180, 83, 9, 0.08) 2px, transparent 2px);
+  background-size: 28px 28px, 56px 56px;
+}
+
+.theme-classic .app-card-theme,
+.theme-classic .bg-white.rounded-2xl:not(.app-header-dropdown):not(.action-menu-dropdown-popover) {
+  border: 2px solid rgba(212, 175, 55, 0.42) !important;
+  outline: 1px solid rgba(212, 175, 55, 0.18) !important;
+  outline-offset: -4px !important;
+  border-radius: 1.25rem !important;
+  background: linear-gradient(180deg, #ffffff 0%, #fffdf9 100%) !important;
+  box-shadow: 0 10px 30px -4px rgba(212, 175, 55, 0.14), 0 2px 8px rgba(0, 0, 0, 0.03) !important;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.theme-classic .app-card-theme:hover,
+.theme-classic .bg-white.rounded-2xl:not(.app-header-dropdown):not(.action-menu-dropdown-popover):hover {
+  box-shadow: 0 14px 36px -4px rgba(212, 175, 55, 0.22), 0 4px 12px rgba(0, 0, 0, 0.05) !important;
+}
+
+.theme-classic .border-header-gradient {
+  background: linear-gradient(90deg, #b45309 0%, #D4AF37 35%, #fef08a 50%, #D4AF37 65%, #b45309 100%) !important;
+  background-size: 200% 100% !important;
+  animation: classicGoldShimmer 4s ease-in-out infinite alternate;
+  box-shadow: 0 2px 10px rgba(212, 175, 55, 0.35);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   THEME 2: GOLD-DARK (Midnight Obsidian & 24K Luxury Neon Cyber-Gold)
+   ═══════════════════════════════════════════════════════════════════ */
+.theme-gold-dark {
+  --brand-gold: #fbbf24;
+  --brand-gold-hover: #f59e0b;
+  --brand-gradient-start: #b45309;
+  --brand-gradient-end: #f59e0b;
+  --theme-card-radius: 1rem;
+  --theme-font-title: "Outfit", "Plus Jakarta Sans", sans-serif;
+  --theme-glow: rgba(251, 191, 36, 0.32);
+  
+  /* Deep obsidian carbon color map */
+  --color-white: #121217;
+  --color-stone-50: #09090c;
+  --color-stone-100: #181822;
+  --color-stone-150: #22222e;
+  --color-stone-200: #2e2e3d;
+  --color-stone-205: #38384a;
+  --color-stone-250: #46465c;
+  --color-stone-300: #585872;
+  --color-stone-400: #9da1b6;
+  --color-stone-450: #b4b8cc;
+  --color-stone-500: #9da1b6;
+  --color-stone-550: #c6cadc;
+  --color-stone-600: #d6d9ea;
+  --color-stone-700: #e8ebf8;
+  --color-stone-750: #f2f4fc;
+  --color-stone-800: #f8f9fe;
+  --color-stone-850: #ffffff;
+  --color-stone-900: #ffffff;
+  --color-stone-955: #ffffff;
+}
+
+.theme-gold-dark #app-root {
+  background-color: #07070a;
+  background-image: 
+    radial-gradient(rgba(251, 191, 36, 0.16) 1.2px, transparent 1.2px),
+    radial-gradient(rgba(217, 119, 6, 0.08) 1.8px, transparent 1.8px);
+  background-size: 32px 32px, 64px 64px;
+}
+
+.theme-gold-dark .app-card-theme,
+.theme-gold-dark .bg-white.rounded-2xl {
+  background-color: rgba(18, 18, 24, 0.94) !important;
+  backdrop-filter: blur(14px) !important;
+  border: 1px solid rgba(251, 191, 36, 0.42) !important;
+  border-radius: 1rem !important;
+  box-shadow: 0 16px 40px -6px rgba(0, 0, 0, 0.92), 0 0 24px -2px rgba(245, 158, 11, 0.22) !important;
+  transition: all 0.25s ease-out;
+}
+
+.theme-gold-dark .app-card-theme:hover,
+.theme-gold-dark .bg-white.rounded-2xl:hover {
+  border-color: rgba(251, 191, 36, 0.8) !important;
+  box-shadow: 0 20px 48px -4px rgba(0, 0, 0, 0.98), 0 0 32px 2px rgba(245, 158, 11, 0.35) !important;
+}
+
+.theme-gold-dark .border-header-gradient {
+  background: linear-gradient(90deg, #78350f 0%, #d97706 25%, #fbbf24 50%, #d97706 75%, #78350f 100%) !important;
+  background-size: 200% 100% !important;
+  box-shadow: 0 0 18px rgba(251, 191, 36, 0.55);
+  animation: pulseObsidianNeon 3.5s ease-in-out infinite alternate;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   THEME 3: EMERALD (Imperial Jade & Mineral Oasis - Pebble Smooth)
+   ═══════════════════════════════════════════════════════════════════ */
+.theme-emerald {
+  --brand-gold: #059669;
+  --brand-gold-hover: #047857;
+  --brand-gradient-start: #047857;
+  --brand-gradient-end: #10b981;
+  --theme-card-radius: 1.75rem;
+  --theme-font-title: "Plus Jakarta Sans", "Outfit", sans-serif;
+  --theme-glow: rgba(16, 185, 129, 0.26);
+  
+  --color-white: #ffffff;
+  --color-stone-50: #f0fdf4;
+  --color-stone-100: #e5f8ee;
+  --color-stone-150: #d3f2e1;
+  --color-stone-200: #b8e7ce;
+  --color-stone-205: #9fdbb9;
+  --color-stone-250: #7cc99e;
+  --color-stone-300: #5cb684;
+  --color-stone-400: #337f55;
+  --color-stone-550: #1b5334;
+  --color-stone-800: #0a2d19;
+  --color-stone-850: #051f11;
+  --color-stone-900: #02120a;
+}
+
+.theme-emerald #app-root {
+  background-color: #f1f9f4;
+  background-image: 
+    radial-gradient(rgba(16, 185, 129, 0.18) 1.5px, transparent 1.5px),
+    radial-gradient(rgba(5, 150, 105, 0.08) 2.5px, transparent 2.5px);
+  background-size: 30px 30px, 60px 60px;
+}
+
+.theme-emerald .app-card-theme,
+.theme-emerald .bg-white.rounded-2xl {
+  border-radius: 1.75rem !important;
+  border: 2px solid rgba(16, 185, 129, 0.42) !important;
+  background: linear-gradient(180deg, #ffffff 0%, #f7fdf9 100%) !important;
+  box-shadow: 0 14px 38px -6px rgba(5, 150, 105, 0.16), 0 4px 12px -2px rgba(16, 185, 129, 0.06) !important;
+  transition: all 0.25s ease-out;
+}
+
+.theme-emerald .app-card-theme:hover,
+.theme-emerald .bg-white.rounded-2xl:hover {
+  border-color: rgba(5, 150, 105, 0.65) !important;
+  box-shadow: 0 18px 45px -4px rgba(5, 150, 105, 0.24), 0 6px 16px -2px rgba(16, 185, 129, 0.1) !important;
+}
+
+.theme-emerald .border-header-gradient {
+  background: linear-gradient(90deg, #064e3b 0%, #059669 35%, #6ee7b7 50%, #059669 65%, #064e3b 100%) !important;
+  background-size: 200% 100% !important;
+  animation: jadeAuraBreathe 4s ease-in-out infinite alternate;
+  box-shadow: 0 0 15px rgba(16, 185, 129, 0.38);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   THEME 4: SLATE (Futuristic Titanium Cyber HUD & Azure Terminal)
+   ═══════════════════════════════════════════════════════════════════ */
+.theme-slate {
+  --brand-gold: #06b6d4;
+  --brand-gold-hover: #0891b2;
+  --brand-gradient-start: #0284c7;
+  --brand-gradient-end: #38bdf8;
+  --theme-card-radius: 0.65rem;
+  --theme-font-title: "JetBrains Mono", monospace;
+  --theme-glow: rgba(6, 182, 212, 0.35);
+  
+  /* Cyber Titanium Dark Matrix */
+  --color-white: #0a1120;
+  --color-stone-50: #040813;
+  --color-stone-100: #101c34;
+  --color-stone-150: #172748;
+  --color-stone-200: #223762;
+  --color-stone-205: #2c467a;
+  --color-stone-250: #385695;
+  --color-stone-300: #496db7;
+  --color-stone-400: #7395dd;
+  --color-stone-500: #7395dd;
+  --color-stone-800: #cbd5e1;
+  --color-stone-850: #e2e8f0;
+  --color-stone-900: #f8fafc;
+}
+
+.theme-slate #app-root {
+  background-color: #03060f;
+  background-image: 
+    linear-gradient(rgba(56, 189, 248, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(56, 189, 248, 0.08) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.theme-slate .app-card-theme,
+.theme-slate .bg-white.rounded-2xl {
+  border-radius: 0.65rem !important;
+  border: 1px solid rgba(56, 189, 248, 0.45) !important;
+  background-color: rgba(10, 17, 32, 0.95) !important;
+  box-shadow: 0 0 25px -2px rgba(2, 132, 199, 0.32), inset 0 1px 0 0 rgba(56, 189, 248, 0.35) !important;
+  position: relative;
+  transition: all 0.2s ease-out;
+}
+
+.theme-slate .app-card-theme::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 8px;
+  width: 24px;
+  height: 2px;
+  background: #38bdf8;
+  box-shadow: 0 0 8px #38bdf8;
+  pointer-events: none;
+}
+
+.theme-slate .app-card-theme::after {
+  content: "";
+  position: absolute;
+  bottom: -1px;
+  right: 8px;
+  width: 24px;
+  height: 2px;
+  background: #38bdf8;
+  box-shadow: 0 0 8px #38bdf8;
+  pointer-events: none;
+}
+
+.theme-slate .app-card-theme:hover,
+.theme-slate .bg-white.rounded-2xl:hover {
+  border-color: rgba(56, 189, 248, 0.8) !important;
+  box-shadow: 0 0 35px 2px rgba(2, 132, 199, 0.5), inset 0 1px 0 0 rgba(56, 189, 248, 0.6) !important;
+}
+
+.theme-slate .border-header-gradient {
+  background: linear-gradient(90deg, #0369a1 0%, #06b6d4 35%, #7dd3fc 50%, #06b6d4 65%, #0369a1 100%) !important;
+  background-size: 200% 100% !important;
+  box-shadow: 0 0 20px rgba(6, 182, 212, 0.6);
+  animation: cyberScanline 3s linear infinite;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   THEME 5: SUNSET (Senja Tropis Kasual - Warm Peach, Coral & Bouncy)
+   ═══════════════════════════════════════════════════════════════════ */
+.theme-sunset {
+  --brand-gold: #f97316;
+  --brand-gold-hover: #ea580c;
+  --brand-gradient-start: #f43f5e;
+  --brand-gradient-end: #fb923c;
+  --theme-card-radius: 1.5rem;
+  --theme-font-title: "Outfit", "Plus Jakarta Sans", sans-serif;
+  --theme-glow: rgba(249, 115, 22, 0.28);
+  
+  --color-white: #ffffff;
+  --color-stone-50: #fffaf5;
+  --color-stone-100: #fff1e6;
+  --color-stone-150: #ffe5d0;
+  --color-stone-200: #ffd4b2;
+  --color-stone-250: #fdb889;
+  --color-stone-300: #fb923c;
+  --color-stone-400: #ea580c;
+  --color-stone-500: #c2410c;
+  --color-stone-800: #431407;
+  --color-stone-850: #2d0c03;
+  --color-stone-900: #1a0601;
+}
+
+.theme-sunset #app-root {
+  background-color: #fffaf5;
+  background-image: 
+    radial-gradient(rgba(249, 115, 22, 0.15) 1.8px, transparent 1.8px),
+    radial-gradient(rgba(244, 63, 94, 0.08) 2px, transparent 2px);
+  background-size: 26px 26px, 52px 52px;
+}
+
+.theme-sunset .app-card-theme,
+.theme-sunset .bg-white.rounded-2xl {
+  border-radius: 1.5rem !important;
+  border: 2px solid rgba(249, 115, 22, 0.38) !important;
+  background: linear-gradient(180deg, #ffffff 0%, #fffcf8 100%) !important;
+  box-shadow: 0 12px 32px -4px rgba(249, 115, 22, 0.18), 0 3px 10px rgba(244, 63, 94, 0.08) !important;
+  transition: all 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.theme-sunset .app-card-theme:hover,
+.theme-sunset .bg-white.rounded-2xl:hover {
+  transform: translateY(-2px);
+  border-color: rgba(249, 115, 22, 0.7) !important;
+  box-shadow: 0 16px 40px -4px rgba(249, 115, 22, 0.28), 0 6px 16px rgba(244, 63, 94, 0.12) !important;
+}
+
+.theme-sunset .border-header-gradient {
+  background: linear-gradient(90deg, #f43f5e 0%, #f97316 35%, #fde047 50%, #f97316 65%, #f43f5e 100%) !important;
+  background-size: 200% 100% !important;
+  animation: sunsetWarmPulse 3.8s ease-in-out infinite alternate;
+  box-shadow: 0 2px 14px rgba(249, 115, 22, 0.45);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   THEME 6: NORDIC (Kutub Nordik Minimalis - Ice Breeze & Frosted Glass)
+   ═══════════════════════════════════════════════════════════════════ */
+.theme-nordic {
+  --brand-gold: #0284c7;
+  --brand-gold-hover: #0369a1;
+  --brand-gradient-start: #38bdf8;
+  --brand-gradient-end: #0284c7;
+  --theme-card-radius: 1rem;
+  --theme-font-title: "Plus Jakarta Sans", sans-serif;
+  --theme-glow: rgba(2, 132, 199, 0.25);
+  
+  --color-white: #ffffff;
+  --color-stone-50: #f8fafc;
+  --color-stone-100: #f1f5f9;
+  --color-stone-150: #e2e8f0;
+  --color-stone-200: #cbd5e1;
+  --color-stone-250: #94a3b8;
+  --color-stone-300: #64748b;
+  --color-stone-400: #475569;
+  --color-stone-500: #334155;
+  --color-stone-800: #1e293b;
+  --color-stone-850: #0f172a;
+  --color-stone-900: #020617;
+}
+
+.theme-nordic #app-root {
+  background-color: #f8fafc;
+  background-image: 
+    linear-gradient(rgba(148, 163, 184, 0.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.12) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+.theme-nordic .app-card-theme,
+.theme-nordic .bg-white.rounded-2xl {
+  border-radius: 1rem !important;
+  border: 1px solid rgba(148, 163, 184, 0.45) !important;
+  outline: 1px solid rgba(56, 189, 248, 0.22) !important;
+  outline-offset: -3px !important;
+  background: rgba(255, 255, 255, 0.92) !important;
+  backdrop-filter: blur(12px) !important;
+  box-shadow: 0 8px 24px -4px rgba(15, 23, 42, 0.06), 0 2px 8px rgba(2, 132, 199, 0.05) !important;
+  transition: all 0.2s ease-out;
+}
+
+.theme-nordic .app-card-theme:hover,
+.theme-nordic .bg-white.rounded-2xl:hover {
+  border-color: rgba(2, 132, 199, 0.6) !important;
+  box-shadow: 0 12px 30px -4px rgba(2, 132, 199, 0.16) !important;
+}
+
+.theme-nordic .border-header-gradient {
+  background: linear-gradient(90deg, #0284c7 0%, #38bdf8 35%, #e0f2fe 50%, #38bdf8 65%, #0284c7 100%) !important;
+  background-size: 200% 100% !important;
+  animation: nordicFrostShimmer 4s ease-in-out infinite alternate;
+  box-shadow: 0 2px 12px rgba(2, 132, 199, 0.35);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   THEME 7: CYBERPUNK (Neon Synthwave 80s - Electric Magenta & Cyan)
+   ═══════════════════════════════════════════════════════════════════ */
+.theme-cyberpunk {
+  --brand-gold: #ec4899;
+  --brand-gold-hover: #db2777;
+  --brand-gradient-start: #8b5cf6;
+  --brand-gradient-end: #06b6d4;
+  --theme-card-radius: 0.75rem;
+  --theme-font-title: "Outfit", "JetBrains Mono", sans-serif;
+  --theme-glow: rgba(236, 72, 153, 0.35);
+  
+  --color-white: #110c1f;
+  --color-stone-50: #0a0614;
+  --color-stone-100: #160f29;
+  --color-stone-150: #1e1538;
+  --color-stone-200: #291e4a;
+  --color-stone-250: #3b2b68;
+  --color-stone-300: #553e94;
+  --color-stone-400: #8b5cf6;
+  --color-stone-500: #a78bfa;
+  --color-stone-800: #f1f5f9;
+  --color-stone-850: #f8fafc;
+  --color-stone-900: #ffffff;
+}
+
+.theme-cyberpunk #app-root {
+  background-color: #090513;
+  background-image: 
+    linear-gradient(rgba(236, 72, 153, 0.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(6, 182, 212, 0.12) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+.theme-cyberpunk .app-card-theme,
+.theme-cyberpunk .bg-white.rounded-2xl {
+  background: rgba(17, 12, 31, 0.95) !important;
+  backdrop-filter: blur(14px) !important;
+  border-radius: 0.75rem !important;
+  border: 1px solid rgba(236, 72, 153, 0.5) !important;
+  box-shadow: 0 0 20px -2px rgba(236, 72, 153, 0.3), 0 0 35px -5px rgba(6, 182, 212, 0.22) !important;
+  transition: all 0.2s ease-out;
+}
+
+.theme-cyberpunk .app-card-theme:hover,
+.theme-cyberpunk .bg-white.rounded-2xl:hover {
+  border-color: rgba(6, 182, 212, 0.8) !important;
+  box-shadow: 0 0 28px rgba(236, 72, 153, 0.45), 0 0 45px rgba(6, 182, 212, 0.35) !important;
+}
+
+.theme-cyberpunk .border-header-gradient {
+  background: linear-gradient(90deg, #ec4899 0%, #8b5cf6 35%, #06b6d4 50%, #8b5cf6 65%, #ec4899 100%) !important;
+  background-size: 200% 100% !important;
+  animation: synthwaveNeonPulse 3s linear infinite;
+  box-shadow: 0 0 20px rgba(236, 72, 153, 0.65);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   THEME 8: COZY (Kopi & Lavender Kasual - Warm Mocha Latte & Lavender)
+   ═══════════════════════════════════════════════════════════════════ */
+.theme-cozy {
+  --brand-gold: #b45309;
+  --brand-gold-hover: #92400e;
+  --brand-gradient-start: #a855f7;
+  --brand-gradient-end: #d97706;
+  --theme-card-radius: 1.35rem;
+  --theme-font-title: "Plus Jakarta Sans", sans-serif;
+  --theme-glow: rgba(180, 83, 9, 0.22);
+  
+  --color-white: #ffffff;
+  --color-stone-50: #faf6f0;
+  --color-stone-100: #f4ecdf;
+  --color-stone-150: #e9dcce;
+  --color-stone-200: #d8c7b4;
+  --color-stone-250: #c2ad94;
+  --color-stone-300: #a88f72;
+  --color-stone-400: #7d654a;
+  --color-stone-500: #5c4731;
+  --color-stone-800: #291e13;
+  --color-stone-850: #1a130c;
+  --color-stone-900: #0d0a06;
+}
+
+.theme-cozy #app-root {
+  background-color: #faf6f0;
+  background-image: 
+    radial-gradient(rgba(180, 83, 9, 0.12) 1.5px, transparent 1.5px),
+    radial-gradient(rgba(168, 85, 247, 0.08) 2px, transparent 2px);
+  background-size: 28px 28px, 56px 56px;
+}
+
+.theme-cozy .app-card-theme,
+.theme-cozy .bg-white.rounded-2xl {
+  border-radius: 1.35rem !important;
+  border: 1.5px solid rgba(180, 83, 9, 0.32) !important;
+  background: linear-gradient(180deg, #ffffff 0%, #fffbf6 100%) !important;
+  box-shadow: 0 10px 28px -4px rgba(180, 83, 9, 0.12), 0 3px 8px rgba(168, 85, 247, 0.06) !important;
+  transition: all 0.25s ease-out;
+}
+
+.theme-cozy .app-card-theme:hover,
+.theme-cozy .bg-white.rounded-2xl:hover {
+  border-color: rgba(168, 85, 247, 0.45) !important;
+  box-shadow: 0 14px 34px -4px rgba(180, 83, 9, 0.18), 0 4px 12px rgba(168, 85, 247, 0.12) !important;
+}
+
+.theme-cozy .border-header-gradient {
+  background: linear-gradient(90deg, #a855f7 0%, #b45309 35%, #fde68a 50%, #b45309 65%, #a855f7 100%) !important;
+  background-size: 200% 100% !important;
+  animation: cozySwirlBreathe 4.5s ease-in-out infinite alternate;
+  box-shadow: 0 2px 12px rgba(180, 83, 9, 0.32);
+}
+
+/* Helper dynamic selectors */
+.text-gold-dynamic {
+  color: var(--brand-gold) !important;
+}
+.bg-gold-dynamic {
+  background-color: var(--brand-gold) !important;
+}
+.hover\:bg-gold-dynamic-hover:hover {
+  background-color: var(--brand-gold-hover) !important;
+}
+.border-gold-dynamic {
+  border-color: var(--brand-gold) !important;
+}
+
+.border-header-gradient {
+  background: linear-gradient(90deg, var(--brand-gradient-start) 0%, var(--brand-gold) 50%, var(--brand-gradient-end) 100%) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   BESPOKE THEME ANIMATIONS & MICRO-INTERACTIONS
+   ═══════════════════════════════════════════════════════════════════ */
+@keyframes classicGoldShimmer {
+  0% { background-position: 0% 50%; filter: brightness(1); }
+  50% { background-position: 100% 50%; filter: brightness(1.2) drop-shadow(0 0 8px rgba(212, 175, 55, 0.4)); }
+  100% { background-position: 0% 50%; filter: brightness(1); }
+}
+
+@keyframes pulseObsidianNeon {
+  0% { background-position: 0% 50%; box-shadow: 0 0 12px rgba(251, 191, 36, 0.35); }
+  50% { background-position: 100% 50%; box-shadow: 0 0 28px rgba(251, 191, 36, 0.85); }
+  100% { background-position: 0% 50%; box-shadow: 0 0 12px rgba(251, 191, 36, 0.35); }
+}
+
+@keyframes jadeAuraBreathe {
+  0% { background-position: 0% 50%; filter: saturate(1) brightness(1); }
+  50% { background-position: 100% 50%; filter: saturate(1.4) brightness(1.15) drop-shadow(0 0 10px rgba(16, 185, 129, 0.5)); }
+  100% { background-position: 0% 50%; filter: saturate(1) brightness(1); }
+}
+
+@keyframes cyberScanline {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+@keyframes sunsetWarmPulse {
+  0% { background-position: 0% 50%; filter: drop-shadow(0 0 6px rgba(249, 115, 22, 0.35)); }
+  50% { background-position: 100% 50%; filter: drop-shadow(0 0 16px rgba(244, 63, 94, 0.7)); }
+  100% { background-position: 0% 50%; filter: drop-shadow(0 0 6px rgba(249, 115, 22, 0.35)); }
+}
+
+@keyframes nordicFrostShimmer {
+  0% { background-position: 0% 50%; filter: brightness(1); }
+  50% { background-position: 100% 50%; filter: brightness(1.25) drop-shadow(0 0 10px rgba(56, 189, 248, 0.5)); }
+  100% { background-position: 0% 50%; filter: brightness(1); }
+}
+
+@keyframes synthwaveNeonPulse {
+  0% { background-position: 0% 50%; box-shadow: 0 0 14px rgba(236, 72, 153, 0.4); }
+  50% { background-position: 100% 50%; box-shadow: 0 0 30px rgba(6, 182, 212, 0.85); }
+  100% { background-position: 0% 50%; box-shadow: 0 0 14px rgba(236, 72, 153, 0.4); }
+}
+
+@keyframes cozySwirlBreathe {
+  0% { background-position: 0% 50%; filter: saturate(1); }
+  50% { background-position: 100% 50%; filter: saturate(1.3) drop-shadow(0 0 8px rgba(180, 83, 9, 0.45)); }
+  100% { background-position: 0% 50%; filter: saturate(1); }
+}
+
+@keyframes floatGentle {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-4px); }
+}
+
+@keyframes orbPulse {
+  0%, 100% { transform: scale(1); opacity: 0.25; }
+  50% { transform: scale(1.15); opacity: 0.45; }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-float-gentle {
+  animation: floatGentle 3s ease-in-out infinite;
+}
+
+.animate-orb-pulse {
+  animation: orbPulse 5s ease-in-out infinite;
+}
+
+/* Smooth background & transition handling */
+#app-root, header, footer, main, select, input, button, table, transition-all {
+  transition: background-color 0.2s ease-out, border-color 0.2s ease-out, color 0.15s ease-out, box-shadow 0.2s ease-out;
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 10mm 12mm 10mm 12mm;
+  }
+  @page landscape-page {
+    size: A4 landscape;
+    margin: 10mm 12mm 10mm 12mm;
+  }
+  html, body, #app-root, main, #submissions-list-container {
+    display: block !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-width: 100% !important;
+    overflow: visible !important;
+    position: static !important;
+    float: none !important;
+    background: white !important;
+    color: black !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  .page-break {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+  .print-force-page-break {
+    page-break-after: always !important;
+    break-after: page !important;
+  }
+  .sppd-print-page {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+  .internal-memo-page {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+    height: auto !important;
+    min-height: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+
+  /* Internal Memo Exact Word-Matching Print Isolation */
+  body.is-printing-internal-memo * {
+    visibility: hidden;
+  }
+  body.is-printing-internal-memo #internal-memo-printable-document,
+  body.is-printing-internal-memo #internal-memo-printable-document * {
+    visibility: visible;
+  }
+  body.is-printing-internal-memo #internal-memo-printable-document {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+    background: white !important;
+    font-family: Calibri, 'Calibri (Body)', Aptos, 'Segoe UI', Arial, sans-serif !important;
+  }
+  body.is-printing-internal-memo #internal-memo-printable-document img {
+    max-width: 100% !important;
+    width: 100% !important;
+    height: auto !important;
+    display: block !important;
+    object-fit: fill !important;
+  }
+
+/* Microsoft Word Exact Font & Paragraph Layout for Internal Memo */
+.memo-word-document {
+  font-family: Calibri, 'Calibri (Body)', Aptos, 'Segoe UI', Arial, sans-serif !important;
+  font-size: 11pt !important;
+}
+
+.memo-word-document,
+.memo-word-document p,
+.memo-word-document td,
+.memo-word-document div,
+.memo-word-document span {
+  font-family: Calibri, 'Calibri (Body)', Aptos, 'Segoe UI', Arial, sans-serif;
+}
+
+.memo-word-document .memo-rich-content {
+  text-align: justify !important;
+  text-justify: inter-word !important;
+  line-height: 1.15 !important;
+}
+
+.memo-word-document .memo-rich-content p {
+  line-height: 1.15 !important;
+  margin-top: 0 !important;
+  margin-bottom: 0.5rem !important;
+  text-align: justify !important;
+}
+
+/* Microsoft Word Rich Text Formatting styles for Memo */
+.memo-rich-content b,
+.memo-rich-content strong,
+.memo-editor-surface b,
+.memo-editor-surface strong {
+  font-weight: 700 !important;
+  color: inherit;
+}
+
+.memo-rich-content i,
+.memo-rich-content em,
+.memo-editor-surface i,
+.memo-editor-surface em {
+  font-style: italic !important;
+}
+
+.memo-rich-content u,
+.memo-editor-surface u {
+  text-decoration: underline !important;
+  text-underline-offset: 2.5px !important;
+}
+
+.memo-rich-content s,
+.memo-rich-content strike,
+.memo-editor-surface s,
+.memo-editor-surface strike {
+  text-decoration: line-through !important;
+}
+
+.memo-rich-content mark,
+.memo-editor-surface mark {
+  background-color: #fef08a !important;
+  padding: 0 2px !important;
+  border-radius: 2px;
+}
+
+.memo-rich-content ul,
+.memo-editor-surface ul {
+  list-style-type: disc !important;
+  padding-left: 1.5rem !important;
+  margin-top: 0.25rem !important;
+  margin-bottom: 0.25rem !important;
+}
+
+.memo-rich-content ol,
+.memo-editor-surface ol {
+  list-style-type: decimal !important;
+  padding-left: 1.5rem !important;
+  margin-top: 0.25rem !important;
+  margin-bottom: 0.25rem !important;
+}
+
+.memo-editor-surface:empty:before {
+  content: attr(data-placeholder);
+  color: #a8a29e;
+  pointer-events: none;
+}
+  #printable-submissions-table,
+  .print-only-container {
+    display: block !important;
+    visibility: visible !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+  }
+  #printable-submissions-table table {
+    table-layout: fixed !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+  }
+  #printable-submissions-table th,
+  #printable-submissions-table td {
+    box-sizing: border-box !important;
+    word-break: break-word !important;
+    overflow-wrap: break-word !important;
+  }
+  table {
+    page-break-inside: auto !important;
+    break-inside: auto !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    border-collapse: collapse !important;
+    box-sizing: border-box !important;
+  }
+  table, table th, table td {
+    box-sizing: border-box !important;
+  }
+  .voucher-table-wrapper {
+    width: 100% !important;
+    padding-right: 2px !important;
+    padding-left: 1px !important;
+    box-sizing: border-box !important;
+    overflow: visible !important;
+  }
+  .voucher-table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    box-sizing: border-box !important;
+    border: 2px solid #000000 !important;
+  }
+  .voucher-table th:last-child,
+  .voucher-table td:last-child {
+    border-right: 2px solid #000000 !important;
+  }
+  .voucher-table th:first-child,
+  .voucher-table td:first-child {
+    border-left: 2px solid #000000 !important;
+  }
+  thead {
+    display: table-header-group !important;
+  }
+  tbody {
+    display: table-row-group !important;
+  }
+  tfoot {
+    display: table-footer-group !important;
+  }
+  tr {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+  td, th {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+}
+
+/* Universal High-Priority Dropdown & Popover Stacking to Prevent Clipping & Force Floating */
+.action-menu-dropdown-popover {
+  z-index: 999999 !important;
+}
+
+.app-header-dropdown,
+[role="menu"],
+[data-radix-popper-content-wrapper] {
+  position: absolute !important;
+  z-index: 99999 !important;
+}
+
+tr:has([aria-expanded="true"]),
+tr.dropdown-active-row {
+  position: relative !important;
+  z-index: 70 !important;
+}

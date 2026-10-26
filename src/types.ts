@@ -1,0 +1,577 @@
+export interface SubmissionItem {
+  id: string;
+  no: number;
+  item: string;
+  jumlahVolume: string; // Keterangan/Volume
+  total: number; // Nominal
+  nominal?: number;
+  keterangan: string; // Detail tambahan
+  debit?: number;
+  kredit?: number;
+  saldo?: number;
+  // Optional project RAB allocation per item
+  rabItemId?: string;
+  rabItemName?: string;
+  accountCode?: string;
+  accountName?: string;
+}
+
+export type PaymentMethod = 'Tunai' | 'Cek/Transfer';
+
+export interface SalaryDetails {
+  namaKaryawan?: string;
+  nikJabatan?: string;
+  periodeBulan?: string;
+  gajiPokok?: number;
+  tunjanganJabatan?: number;
+  tunjanganOperasional?: number;
+  uangMakanTransport?: number;
+  bonusInsentif?: number;
+  potonganBpjs?: number;
+  potonganPajak?: number;
+  potonganLain?: number;
+  keteranganPotongan?: string;
+  totalGajiBersih?: number;
+}
+
+export interface CicilanPaymentRecord {
+  id: string;
+  tanggal: string; // YYYY-MM-DD
+  nominal: number; // Nominal yang dibayarkan kali ini
+  sisaSetelahBayar: number; // Sisa yang belum dibayar setelah pembayaran ini
+  keterangan?: string; // e.g. "Termin 1", "Cicilan ke-2"
+  buktiPembayaran?: { url: string; name: string };
+  createdAt?: string; // ISO timestamp
+}
+
+export interface Submission {
+  id: string;
+  lokasi: string;
+  tanggal: string; // ISO format YYYY-MM-DD
+  jenisPengajuan: string; // e.g. "Biaya Gaji", "Operasional"
+  kode: string; // e.g. "HO"
+  dibayarkanKepada: string;
+  dibayarkanDengan: PaymentMethod;
+  status?: 'Lunas' | 'Belum Lunas' | 'DP / Cicilan';
+  dpAmount?: number; // Nominal DP atau Cicilan yang sudah dibayarkan
+  cicilanNotes?: string; // Catatan termin / cicilan (contoh: "DP 50%", "Termin 1")
+  riwayatCicilan?: CicilanPaymentRecord[]; // Riwayat seluruh pembayaran bertahap/cicilan
+  driveArchived?: boolean; // Penanda pengarsipan Google Drive selesai
+  notes: string;
+  
+  // Invoice properties
+  isInvoice?: boolean;
+  invoiceNumber?: string;
+  invoiceDate?: string;
+  invoiceAmount?: number;
+  sendToAgenda?: boolean; // Jadwalkan pengingat lapor PPh ke Agenda (Coretax DJP)
+  agendaItemId?: string; // ID agenda terkait jika ada
+  
+  // PPh 23 & Bukti Potong (Coretax DJP) properties
+  pph23Rate?: number; // Persentase tarif PPh 23 (default 2%)
+  pph23Amount?: number; // Nominal PPh 23 yang dipotong (Rp)
+  dppAmount?: number; // Dasar Pengenaan Pajak (DPP)
+  bupotNumber?: string; // Nomor Bukti Pemotongan PPh 23 / Coretax
+  bupotStatus?: 'Belum Bupot' | 'Sudah Bupot' | 'Siap Lapor Coretax';
+  bupotDate?: string; // Tanggal penerbitan Bukti Potong
+  vendorNpwp?: string; // NPWP Vendor/Rekanan terkait (jika disimpan langsung)
+  
+  // Salary Slip details
+  salaryDetails?: SalaryDetails;
+  
+  // Petty Cash properties
+  isPettyCash?: boolean;
+  pettyCashCustodian?: string;
+  pettyCashFile?: { url: string; name: string };
+  
+  // SPPD (Surat Perintah Perjalanan Dinas) properties
+  isSppd?: boolean;
+  sppdId?: string;
+  sppdNo?: string;
+  sppdRecord?: any;
+
+  // Accurate Online Mapping properties (Petty Cash)
+  isAccurateMapped?: boolean;
+  accurateMappedAt?: string;
+  accurateMappingReportId?: string;
+  accurateMappedTransactions?: AccurateMappedTransaction[];
+  accurateTotalExpense?: number;
+  accurateKasAccountCode?: string;
+  accurateReportTitle?: string;
+
+  // Google Drive attachment support
+  googleDriveFileUrl?: string;
+  googleDriveFileName?: string;
+  googleDriveFiles?: { url: string; name: string; pageCount?: number; isF1?: boolean; isF2?: boolean; isBuktiPembayaran?: boolean; docType?: string }[];
+  files?: { id?: string; name: string; url?: string; isDrive?: boolean; docType?: string; file?: File; dataUrl?: string; base64?: string }[];
+  googleDriveFolderId?: string;
+  buktiPembayaran?: { url: string; name: string };
+  
+  // Signatures for Formulir Pengajuan
+  dibuatOleh: string;
+  disetujuiOleh: string; // e.g. "Harijon"
+  disetujuiJabatan?: string; // e.g. "Direktur Keuangan"
+  diketahuiOleh?: string;
+  companyId?: string;
+  companyName?: string;
+  companyLogoUrl?: string;
+  rekeningTujuan?: string;
+  noRekeningTujuan?: string;
+  namaBankTujuan?: string;
+  atasNamaRekeningTujuan?: string;
+
+  // Signatures for Bukti Pengeluaran Kas/Bank (F1)
+  diajukanOleh?: string; // e.g. "Andi Dhiya Salsabila"
+  diajukanJabatan?: string; // e.g. "Keuangan"
+  diverifikasiOleh: string; // e.g. "Andi Muhammad Rifki"
+  diverifikasiJabatan: string; // e.g. "Direktur"
+  mengetahuiOleh?: string; // e.g. "ABDUL AZIZ HALID"
+  mengetahuiJabatan?: string; // e.g. "Direktur"
+  disetujuiOleh2: string; // e.g. "Harijon"
+  disetujuiJabatan2: string; // e.g. "Direktur Keuangan"
+  dibukukanOleh: string; // e.g. "Sri Ekowati"
+  dibukukanJabatan: string; // e.g. "Accounting"
+
+  // Project & RAB link (Accurate Style)
+  projectId?: string;
+  projectName?: string;
+  projectCode?: string;
+  projectRabItemId?: string;
+  projectRabItemName?: string;
+  projectAccountCode?: string;
+  projectAccountName?: string;
+
+  items: SubmissionItem[];
+  createdAt: string;
+  updatedAt?: string;
+  deletedPageIds?: string[];
+}
+
+export interface ActivityLog {
+  id: string;
+  timestamp: string; // ISO String
+  userId: string;
+  userEmail: string;
+  userName: string;
+  action: string; // 'create_submission' | 'update_submission' | 'delete_submission' | 'pay_submission' | 'import_sheets' | 'copy_drive_file'
+  details: string; // Detailed description of action
+  submissionId?: string;
+  submissionCode?: string;
+  category: 'info' | 'success' | 'warning';
+}
+
+export const REQUIRED_TRANSACTION_DOCS = [
+  { key: 'invoice_vendor', label: 'Invoice Vendor', fullName: 'Invoice / Surat Tagihan Vendor' },
+  { key: 'po', label: 'PO', fullName: 'PO (Purchase Order)' },
+  { key: 'lhv', label: 'LHV', fullName: 'LHV (Laporan Hasil Verifikasi)' },
+  { key: 'draft_survei', label: 'Draft Survei', fullName: 'Draft Survei (Survey Draft)' },
+  { key: 'bill_of_lading', label: 'Bill of Lading', fullName: 'Bill of Lading (B/L)' },
+  { key: 'cargo_manifest', label: 'Cargo Manifest', fullName: 'Cargo Manifest' },
+  { key: 'cow_coa_ds_bongkar', label: 'COW & COA DS Bongkar', fullName: 'COW & COA DS Bongkar (Draft Survey)' },
+  { key: 'bukti_pembayaran_batubara', label: 'Bukti Pembayaran Batubara', fullName: 'Bukti Pembayaran Batubara' },
+  { key: 'bukti_shipment_tongkang_founder', label: 'Bukti Shipment Tongkang', fullName: 'Bukti Pembayaran Shipment Tongkang dari Founder' },
+  { key: 'bukti_pajak_trader_founder', label: 'Bukti Bayar Pajak Trader', fullName: 'Bukti Bayar Pajak Trader ke Founder' }
+];
+
+/* ============================================================================
+ * ABSENSI HARIAN & PETTY CASH TYPES (NMSA INTEGRATION)
+ * ============================================================================ */
+export enum TransactionType {
+  EXPENSE = "EXPENSE",
+  INCOME = "INCOME",
+}
+
+export interface Worker {
+  id: string;
+  name: string;
+  role: string;
+  isActive: boolean;
+  bankName?: string;
+  bankAccount?: string;
+  phoneNumber?: string;
+  nik?: string;
+  photoUrl?: string;
+  updatedAt?: number;
+}
+
+export interface DailyAttendance {
+  date: string; // YYYY-MM-DD
+  isPresent: boolean;
+  notes?: string;
+}
+
+export interface AttendanceRecord {
+  workerId: string;
+  workerName?: string;
+  attendance: { [date: string]: boolean }; // date -> present status
+  dailyAllowance: number; // e.g. Rp 50.000
+  customStatus?: { [date: string]: "Sakit" | "Izin" | "Meeting" | "Cuti" | "Absen" | "Alpa" | string };
+  reasons?: { [date: string]: string };
+  allowanceRate?: { [date: string]: number };
+  signatures?: { [date: string]: string };
+  notes?: { [date: string]: string };
+}
+
+export interface WeeklyReport {
+  id: string;
+  weekStartDate: string; // Monday
+  weekEndDate: string; // Friday
+  records: AttendanceRecord[];
+  isSubmitted: boolean;
+  submittedAt?: string;
+  sheetsUrl?: string; // If exported to Google Sheets
+  driveFileId?: string;
+  driveUrl?: string;
+  pdfDriveUrl?: string;
+  excelDriveUrl?: string;
+  totalAmount?: number;
+  status?: string;
+}
+
+export interface PettyCashTransaction {
+  date: string;
+  description: string;
+  category: string;
+  amount: number;
+  worker: string;
+  type: TransactionType;
+  verified?: boolean;
+}
+
+export interface PettyCashSummary {
+  totalIncome: number;
+  totalExpense: number;
+  remainingBalance: number;
+  workerName: string;
+  reportMonth: string;
+}
+
+export interface PettyCashReport {
+  id: string;
+  fileName: string;
+  uploadedAt: string;
+  summary: PettyCashSummary;
+  transactions: PettyCashTransaction[];
+  driveFileId?: string;
+  driveUrl?: string;
+  submissionId?: string;
+  submissionCode?: string;
+}
+
+export interface BankStatementTransaction {
+  date: string;
+  description: string;
+  amount: number;
+  type: "DEBIT" | "CREDIT";
+  balance?: number;
+  pemakaian?: string;
+}
+
+export interface BankStatementSummary {
+  bankName: string;
+  accountNumber?: string;
+  accountHolder?: string;
+  period?: string;
+  totalDebit: number;
+  totalCredit: number;
+  startingBalance?: number;
+  endingBalance?: number;
+}
+
+export interface BankStatementReport {
+  id: string;
+  fileName: string;
+  uploadedAt: string;
+  summary: BankStatementSummary;
+  transactions: BankStatementTransaction[];
+  driveFileId?: string;
+  driveUrl?: string;
+  companyName?: string;
+  bankName?: string;
+}
+
+export interface NpwpRecord {
+  id: string;
+  companyName: string;
+  npwpNumber: string;
+  address?: string;
+  kppName?: string;
+  taxStatus?: 'PKP' | 'Non-PKP';
+  contactPerson?: string;
+  notes?: string;
+  createdAt: string;
+}
+
+export interface AccurateAccount {
+  code: string; // e.g. "5-1100"
+  name: string; // e.g. "Biaya Bahan Bakar Minyak"
+  category: string; // e.g. "Beban Operasional", "Kas & Bank", "Hutang"
+  keywords?: string[]; // e.g. ["bensin", "solar", "pertamax", "spbu"]
+  isDefaultKas?: boolean;
+}
+
+export interface AccurateMappedTransaction {
+  id: string;
+  date: string;
+  description: string;
+  amount: number;
+  recipient?: string;
+  accurateAccountCode: string;
+  accurateAccountName: string;
+  confidence: 'high' | 'medium' | 'manual';
+  notes?: string;
+  rawLine?: string;
+}
+
+export interface AccurateMappingReport {
+  id: string;
+  title: string;
+  period: string;
+  sourceType?: 'excel' | 'pdf' | 'text' | 'workspace_petty_cash' | 'voucher_submission';
+  createdAt?: string;
+  savedAt?: string;
+  updatedAt?: string;
+  totalExpense: number;
+  selectedKasCode?: string;
+  kasAccountCode?: string;
+  kasAccountName?: string;
+  custodian?: string | null;
+  documentUrl?: string | null;
+  documentName?: string | null;
+  driveBackupUrl?: string | null;
+  driveBackupFileId?: string | null;
+  submissionId?: string | null;
+  submissionCode?: string | null;
+  accountsCount?: number;
+  transactions: AccurateMappedTransaction[];
+}
+
+/* ============================================================================
+ * FITUR PENGINGAT KEGIATAN & AGENDA KERJA (TASK & ACTIVITY REMINDER)
+ * ============================================================================ */
+export type AgendaCategory = 
+  | 'Keuangan'
+  | 'Pajak'
+  | 'Penggajian'
+  | 'SPPD & Lapangan'
+  | 'Vendor & Tagihan'
+  | 'Operasional'
+  | 'Administrasi'
+  | 'Lainnya';
+
+export type AgendaPriority = 'tinggi' | 'sedang' | 'normal';
+export type AgendaRecurrence = 'none' | 'daily' | 'weekly' | 'monthly';
+
+export interface AgendaItem {
+  id: string;
+  title: string;
+  description?: string;
+  dueDate: string; // YYYY-MM-DD
+  dueTime?: string; // HH:mm
+  category: AgendaCategory;
+  priority: AgendaPriority;
+  status: 'pending' | 'completed';
+  completedAt?: string;
+  completedBy?: string;
+  recurrence?: AgendaRecurrence;
+  voucherCode?: string;
+  linkedVoucherCodes?: string[]; // Daftar kode voucher yang terhubung ke agenda ini
+  taxPeriod?: string; // Masa Pajak format YYYY-MM (misal: 2026-08)
+  assignedTo?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+/* ============================================================================
+ * FITUR RAB & ANGGARAN PROYEK (PROJECT BUDGET & RAB - ACCURATE STYLE)
+ * ============================================================================ */
+export type ProjectStatus = 'Perencanaan' | 'Berjalan' | 'Selesai' | 'On-Hold';
+
+export type RabCategory =
+  | 'Material & Bahan'
+  | 'Material'
+  | 'Upah & Tenaga Kerja'
+  | 'Upah Tenaga Kerja'
+  | 'Sewa Alat & Mesin'
+  | 'Alat Berat & Peralatan'
+  | 'Subkontraktor & Spesialis'
+  | 'Subkontraktor'
+  | 'Transportasi & Logistik'
+  | 'Overhead & Perizinan'
+  | 'Biaya Operasional Lapangan'
+  | 'Operasional & BBM'
+  | 'Biaya Lain-Lain & Cadangan'
+  | 'Lain-lain';
+
+export interface ProjectRabItem {
+  id: string;
+  projectId: string;
+  category: RabCategory;
+  accurateAccountCode?: string; // e.g. "5-1100"
+  accurateAccountName?: string; // e.g. "Beban Material Proyek"
+  accountCode?: string;
+  accountName?: string;
+  itemCode?: string;
+  name: string; // Deskripsi Pekerjaan / Nama Barang
+  itemName?: string;
+  volume: number;
+  unit: string; // "m3", "ton", "unit", "jam", "hari", "ls", "titik", "rit"
+  unitPrice: number; // Harga Satuan (Rp)
+  totalBudget: number; // volume * unitPrice
+  actualSpent: number; // Total realisasi yang terpakai
+  notes?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface ProjectExpense {
+  id: string;
+  projectId: string;
+  rabItemId?: string; // Link ke item RAB spesifik
+  voucherNumber?: string; // No Voucher HO / Ref
+  submissionId?: string; // ID transaksi voucher jika berasal dari pengajuan
+  date: string; // YYYY-MM-DD
+  category: RabCategory;
+  accountCode?: string;
+  accountName?: string;
+  accurateAccountCode?: string;
+  accurateAccountName?: string;
+  description: string;
+  recipient: string; // Dibayarkan kepada / Vendor
+  amount: number; // Nominal Pengeluaran (Rp)
+  paymentMethod?: string;
+  invoiceNumber?: string;
+  receiptUrl?: string; // Link bukti / Google Drive
+  accurateRef?: string;
+  recordedBy?: string;
+  notes?: string;
+  createdAt: string;
+}
+
+export interface Project {
+  id: string;
+  code: string; // e.g. "PRJ-2026-001"
+  name: string; // e.g. "Pembangunan Dermaga Jetty Phase 1"
+  clientName: string; // Klien / Pemilik Proyek
+  location: string; // Lokasi Pekerjaan (e.g. "Site Morowali", "Site Pomalaa")
+  contractNumber?: string; // No SPK / Kontrak / PO
+  contractValue: number; // Nilai Kontrak Proyek (Rp)
+  startDate: string; // YYYY-MM-DD
+  targetEndDate: string; // YYYY-MM-DD
+  endDate?: string;
+  actualEndDate?: string;
+  projectManager: string; // Manajer Proyek / PIC (e.g. "Harijon")
+  status: ProjectStatus;
+  progressPercent: number; // 0 - 100%
+  physicalProgress?: number;
+  description?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface CompanyProfile {
+  id: string; // clean lowercase id, e.g. "nmsa", "pbm", "bbm"
+  code: string; // uppercase code, e.g. "NMSA", "PBM", "BBM"
+  name: string; // e.g. "PT Nusantara Mineral Sukses Abadi"
+  fullName: string; // e.g. "PT. Nusantara Mineral Sukses Abadi"
+  displayName?: string; // e.g. "Invoice-NMSA" or "NMSA Portal"
+  icon?: string; // e.g. "🏢"
+  logoUrl?: string; // e.g. ImgBB link "https://i.ibb.co.com/gFHNJ1JD/LOGO-NH.png"
+  defaultJenis?: string;
+  defaultKode?: string;
+  defaultLokasi?: string;
+  no_invoice_prefix?: string; // e.g. "BKK-NMSA"
+  sigAccounting?: string;
+  sigAccountingJabatan?: string;
+  sigDibuat?: string;
+  sigDibuatJabatan?: string;
+  sigDirKeuangan?: string;
+  sigDirektur?: string;
+  sigDirekturJabatan?: string;
+  sigDisetujui?: string;
+  sigDisetujuiJabatan?: string;
+  sigDiverifikasi?: string;
+  sigDiverifikasiJabatan?: string;
+  sigMengetahui?: string;
+  sigMengetahuiJabatan?: string;
+  sigKeuangan?: string;
+  isActive?: boolean;
+  googleDrives?: any[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface BankAccountMaster {
+  id: string;
+  bankName: string;
+  accountNumber: string;
+  accountHolder: string;
+  isDefault?: boolean;
+}
+
+export interface InternalMemo {
+  id: string;
+  nomorMemo: string;
+  tanggal: string;
+  hariTanggalDisplay: string;
+  dari: string;
+  kepada: string;
+  perihal: string;
+  isiSurat: string;
+  bankName: string;
+  accountNumber: string;
+  accountHolder: string;
+  includeBankDetails?: boolean; // true = Tampilkan Rekening (Memo Pembayaran), false = Sembunyikan Rekening (Memo Surat Biasa)
+  penutup: string;
+  salamPenutup: string;
+  penandatanganNama: string;
+  penandatanganJabatan: string;
+  useSecondSigner?: boolean;
+  salamPenutup2?: string;
+  penandatanganNama2?: string;
+  penandatanganJabatan2?: string;
+  // 3 Penandatangan (Sesuai Word Resmi NMSA)
+  signerCount?: 1 | 2 | 3;
+  useThirdSigner?: boolean;
+  salamPenutup3?: string;
+  penandatanganNama3?: string;
+  penandatanganJabatan3?: string;
+  approvalHeaderTitle?: string; // e.g. "Mengetahui dan Menyetujui"
+  linkedSubmissionId?: string;
+  linkedSubmissionKode?: string;
+  linkedAmount?: number;
+  companyName?: string;
+  companyAddress?: string;
+  companyContact?: string;
+  companyLogoUrl?: string;
+  companyHeaderUrl?: string;
+  companyHeaderName?: string; // Nama alias / label kop surat (misal: "Kop Surat Resmi PT NMSA", "Kop Surat ANH", dll.)
+  useImageHeader?: boolean;
+  showKopSurat?: boolean; // true = Dengan Kop Surat (Banner Resmi), false = Tanpa Kop Surat (Kertas Berkop Fisik / Polos)
+  driveFileId?: string;
+  driveUrl?: string;
+  driveFolderId?: string;
+  driveFolderPath?: string;
+  driveSyncedAt?: string;
+  // Berkas Scan & Tanda Tangan Fisik (Hasil Scan Printer / Kamera / Upload Berkas)
+  signedDocumentUrl?: string; // Data URL atau remote storage URL
+  signedDocumentName?: string;
+  signedDocumentType?: string; // 'pdf' | 'image' | mime
+  signedDocumentSize?: number;
+  signedAt?: string;
+  signedDriveUrl?: string; // Tautan langsung ke berkas scan bertanda tangan di Google Drive
+  signedDriveFileId?: string;
+  signedDriveFolderPath?: string;
+  signedUploadedBy?: string;
+  signedNotes?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface SavedKopSuratLink {
+  id: string;
+  name: string;        // Nama alias kop surat (misal: "b" atau "Kop Surat Resmi PT NMSA")
+  url: string;         // Direct link URL (misal: "a" atau "/kop-surat-nmsa-full.png")
+  isDefault?: boolean;
+  createdAt?: string;
+}

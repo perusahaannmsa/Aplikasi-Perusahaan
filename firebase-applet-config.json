@@ -1,0 +1,13 @@
+{
+  "projectId": "pencatatan-voucher-perusahaan",
+  "appId": "1:5344554002:web:9137a500fbb8f3223b7ccb",
+  "apiKey": "AIzaSyDfIvUOLqAULR9eKy0rkqJfY_99Q4rxy2M",
+  "authDomain": "pencatatan-voucher-perusahaan.firebaseapp.com",
+  "databaseURL": "https://pencatatan-voucher-perusahaan-default-rtdb.asia-southeast1.firebasedatabase.app",
+  "storageBucket": "pencatatan-voucher-perusahaan.firebasestorage.app",
+  "messagingSenderId": "5344554002",
+  "measurementId": "G-1249N852Y5",
+  "firestoreDatabaseId": "(default)",
+  "oAuthClientId": "",
+  "recaptchaSiteKey": ""
+}

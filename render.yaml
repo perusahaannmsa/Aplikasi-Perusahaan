@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: aplikasi-perusahaan
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: VITE_FIREBASE_API_KEY
+        value: AIzaSyDfIvUOLqAULR9eKy0rkqJfY_99Q4rxy2M
+      - key: VITE_FIREBASE_PROJECT_ID
+        value: pencatatan-voucher-perusahaan
+      - key: VITE_FIREBASE_AUTH_DOMAIN
+        value: pencatatan-voucher-perusahaan.firebaseapp.com
+      - key: VITE_FIREBASE_DATABASE_URL
+        value: https://pencatatan-voucher-perusahaan-default-rtdb.asia-southeast1.firebasedatabase.app
+      - key: VITE_FIREBASE_STORAGE_BUCKET
+        value: pencatatan-voucher-perusahaan.firebasestorage.app
+      - key: VITE_FIREBASE_MESSAGING_SENDER_ID
+        value: "5344554002"
+      - key: VITE_FIREBASE_APP_ID
+        value: 1:5344554002:web:9137a500fbb8f3223b7ccb
+      - key: VITE_FIREBASE_MEASUREMENT_ID
+        value: G-1249N852Y5
