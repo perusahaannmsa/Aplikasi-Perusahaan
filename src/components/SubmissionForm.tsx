@@ -1460,6 +1460,21 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
 
   const hasUnacknowledgedDuplicates = !isMarkedLegitimateDraft && potentialDuplicateSubmissions.length > 0 && !acknowledgedDoubleInputKeys.includes(currentDoubleInputKey);
 
+  const [isDuplicateToastDismissed, setIsDuplicateToastDismissed] = useState(false);
+
+  useEffect(() => {
+    setIsDuplicateToastDismissed(false);
+  }, [currentDoubleInputKey]);
+
+  const matchedDuplicateItemIndices = useMemo(() => {
+    if (potentialDuplicateSubmissions.length === 0 || !hasUnacknowledgedDuplicates) return new Set<number>();
+    const indices = new Set<number>();
+    potentialDuplicateSubmissions.forEach(match => {
+      (match.matchedCurrentItemIndices || []).forEach(idx => indices.add(idx));
+    });
+    return indices;
+  }, [potentialDuplicateSubmissions, hasUnacknowledgedDuplicates]);
+
   const handleMarkAsLegitimateTransaction = () => {
     setIsMarkedLegitimateDraft(true);
     if (currentDoubleInputKey) {
@@ -2505,6 +2520,64 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
           </div>
         </div>
       </div>
+
+      {/* FLOATING UI ALERT NOTIFICATION: TERDETEKSI TRANSAKSI DENGAN NAMA/DESKRIPSI & NOMINAL SAMA DI BULAN INI */}
+      {potentialDuplicateSubmissions.length > 0 && hasUnacknowledgedDuplicates && !isDuplicateToastDismissed && (
+        <div className="sticky top-2 z-40 mx-3 sm:mx-6 my-2 bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 text-white rounded-2xl p-3.5 sm:p-4 shadow-xl border-2 border-amber-300 animate-in fade-in slide-in-from-top-4 duration-300">
+          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+            <div className="flex items-start gap-3 min-w-0">
+              <div className="p-2 bg-white/20 rounded-xl shrink-0 mt-0.5 shadow-3xs">
+                <AlertTriangle size={20} className="text-white animate-pulse" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-black uppercase tracking-wider bg-white/20 px-2 py-0.5 rounded-full">
+                    Peringatan Transaksi Pengeluaran
+                  </span>
+                  <span className="text-[10px] font-mono font-bold bg-amber-900/40 text-amber-100 px-2 py-0.5 rounded-full border border-white/20">
+                    {potentialDuplicateSubmissions.length} Data Terdeteksi di Bulan Ini
+                  </span>
+                </div>
+                <p className="text-xs text-amber-50 mt-1 font-medium leading-relaxed">
+                  Terdeteksi pengeluaran dengan nama/deskripsi dan nominal yang sama dalam rentang bulan ini: <strong>{potentialDuplicateSubmissions[0].matchedNameOrDescription || potentialDuplicateSubmissions[0].submission.dibayarkanKepada}</strong> (Rp {potentialDuplicateSubmissions[0].matchedNominal.toLocaleString('id-ID')}).
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0 w-full md:w-auto justify-end flex-wrap">
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedDuplicateModalIndex(0);
+                  setIsDoubleInputConfirmModalOpen(true);
+                }}
+                className="px-3 py-1.5 bg-white text-amber-900 hover:bg-amber-50 rounded-xl text-xs font-extrabold shadow-xs transition cursor-pointer flex items-center gap-1.5"
+              >
+                <Layers size={13} className="text-amber-700" />
+                <span>Bandingkan</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleMarkAsLegitimateTransaction}
+                className="px-3 py-1.5 bg-amber-900/60 hover:bg-amber-900/80 text-white border border-white/30 rounded-xl text-xs font-bold shadow-xs transition cursor-pointer flex items-center gap-1.5"
+              >
+                <Check size={13} className="text-emerald-300 font-bold" />
+                <span>Tandai Sah</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsDuplicateToastDismissed(true)}
+                className="p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded-xl transition cursor-pointer"
+                title="Tutup Notifikasi"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="p-3.5 sm:p-6 space-y-4 sm:space-y-6 overflow-x-hidden">
         {validationError && (
@@ -4299,15 +4372,23 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                 {items.map((item, index) => {
                   const volAnalysis = analyzeVolumeInput(item.jumlahVolume);
                   const isItemDuplicate = duplicateItemIndices.has(index);
+                  const isMonthExpenseDuplicate = matchedDuplicateItemIndices.has(index);
 
                   return (
-                    <tr key={item.id} className={`transition ${isItemDuplicate ? 'bg-amber-50/70 border-l-4 border-l-amber-500' : 'hover:bg-stone-50/50'}`}>
+                    <tr key={item.id} className={`transition ${isItemDuplicate || isMonthExpenseDuplicate ? 'bg-amber-50/80 border-l-4 border-l-amber-500' : 'hover:bg-stone-50/50'}`}>
                       <td className="py-3 font-mono text-stone-450">
-                        <div className="flex items-center gap-1">
-                          <span>{index + 1}</span>
-                          {isItemDuplicate && (
-                            <span className="text-[9px] font-bold font-mono px-1 py-0.2 bg-amber-200 text-amber-900 rounded border border-amber-300" title="Baris duplikat dengan uraian & nominal sama">
-                              Dobel
+                        <div className="flex flex-col gap-0.5">
+                          <div className="flex items-center gap-1">
+                            <span>{index + 1}</span>
+                            {isItemDuplicate && (
+                              <span className="text-[9px] font-bold font-mono px-1 py-0.2 bg-amber-200 text-amber-900 rounded border border-amber-300" title="Baris duplikat dengan uraian & nominal sama">
+                                Dobel
+                              </span>
+                            )}
+                          </div>
+                          {isMonthExpenseDuplicate && (
+                            <span className="text-[8.5px] font-extrabold font-mono px-1 py-0.5 bg-amber-200 text-amber-950 rounded border border-amber-300 whitespace-nowrap animate-pulse" title="Pengeluaran dengan nama/deskripsi dan nominal yang sama dalam rentang bulan ini">
+                              ⚠️ Serupa di Bulan Ini
                             </span>
                           )}
                         </div>

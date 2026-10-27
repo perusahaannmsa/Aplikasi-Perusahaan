@@ -18,6 +18,8 @@ export interface DuplicateSubmissionMatch {
   };
   matchedLabels: string[];
   itemSnippet?: string;
+  matchedCurrentItemIndices?: number[];
+  matchedNameOrDescription?: string;
 }
 
 /**
@@ -227,34 +229,62 @@ export function findPotentialDuplicateSubmissions(
       }
     }
 
+    const matchedCurItemIndices: number[] = [];
+
     // Check items description and line-item nominals
-    if (current.items && current.items.length > 0 && existing.items && existing.items.length > 0) {
-      for (const curIt of current.items) {
+    if (current.items && current.items.length > 0) {
+      current.items.forEach((curIt, curIdx) => {
         const curDesc = normalizeText(curIt.item || curIt.keterangan);
         const curAmt = Number(curIt.total) || 0;
-        if (!curDesc || curDesc.length < 3) continue;
+        if (!curDesc && curAmt <= 0) return;
 
-        for (const exIt of existing.items) {
-          const exDesc = normalizeText(exIt.item || exIt.keterangan);
-          const exAmt = Number(exIt.total) || 0;
-          if (!exDesc || exDesc.length < 3) continue;
+        // Check against existing items
+        if (existing.items && existing.items.length > 0) {
+          for (const exIt of existing.items) {
+            const exDesc = normalizeText(exIt.item || exIt.keterangan);
+            const exAmt = Number(exIt.total) || 0;
+            if (!exDesc && exAmt <= 0) continue;
 
-          const descMatches = curDesc === exDesc || 
-            (curDesc.length >= 5 && exDesc.length >= 5 && (curDesc.includes(exDesc) || exDesc.includes(curDesc)));
+            const descMatches = Boolean(
+              curDesc && exDesc && (
+                curDesc === exDesc || 
+                (curDesc.length >= 4 && exDesc.length >= 4 && (curDesc.includes(exDesc) || exDesc.includes(curDesc)))
+              )
+            );
 
-          if (descMatches) {
-            isSameContent = true;
-            matchedItemSnippet = `Item: "${exIt.item}"`;
-            if (curAmt > 0 && exAmt > 0 && Math.abs(curAmt - exAmt) < 0.01) {
-              isItemLevelMatch = true;
-              itemMatchNominal = curAmt;
-              matchedItemSnippet = `Item "${exIt.item}" senilai Rp ${curAmt.toLocaleString('id-ID')}`;
-              break;
+            const amtMatches = curAmt > 0 && exAmt > 0 && Math.abs(curAmt - exAmt) < 0.01;
+
+            if (descMatches) {
+              isSameContent = true;
+              matchedItemSnippet = `Item: "${exIt.item || exIt.keterangan}"`;
+              if (amtMatches) {
+                isItemLevelMatch = true;
+                itemMatchNominal = curAmt;
+                matchedItemSnippet = `Item "${exIt.item || exIt.keterangan}" senilai Rp ${curAmt.toLocaleString('id-ID')}`;
+                if (!matchedCurItemIndices.includes(curIdx)) matchedCurItemIndices.push(curIdx);
+                break;
+              }
+            } else if (amtMatches && (isSameName || isSameType)) {
+              if (!matchedCurItemIndices.includes(curIdx)) matchedCurItemIndices.push(curIdx);
             }
           }
         }
-        if (isItemLevelMatch) break;
-      }
+
+        // Also check if item description matches existing jenisPengajuan or vice versa with same amount
+        if (curDesc && existingType && (curDesc === existingType || (curDesc.length >= 4 && (curDesc.includes(existingType) || existingType.includes(curDesc))))) {
+          if (curAmt > 0 && existingTotal > 0 && Math.abs(curAmt - existingTotal) < 0.01) {
+            isSameContent = true;
+            isItemLevelMatch = true;
+            itemMatchNominal = curAmt;
+            matchedItemSnippet = `Pos/Jenis: "${existing.jenisPengajuan}" senilai Rp ${curAmt.toLocaleString('id-ID')}`;
+            if (!matchedCurItemIndices.includes(curIdx)) matchedCurItemIndices.push(curIdx);
+          }
+        }
+      });
+    }
+
+    if (isTotalNominalMatch && (isSameName || isSameType) && current.items && current.items.length === 1) {
+      if (!matchedCurItemIndices.includes(0)) matchedCurItemIndices.push(0);
     }
 
     // 5. Same Date Check
@@ -337,7 +367,9 @@ export function findPotentialDuplicateSubmissions(
         matchedContentSnippet: matchedItemSnippet || existing.notes
       },
       matchedLabels,
-      itemSnippet: matchedItemSnippet
+      itemSnippet: matchedItemSnippet,
+      matchedCurrentItemIndices: matchedCurItemIndices,
+      matchedNameOrDescription: existing.dibayarkanKepada || existing.jenisPengajuan || matchedItemSnippet || 'Pengeluaran'
     });
   }
 
