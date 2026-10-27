@@ -689,6 +689,7 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
       setSaveProgress('5/6. Memperbarui status & riwayat pembayaran transaksi...');
 
       const isInstallmentTx = paymentMode === 'cicilan' || isCicilanSubmission(selectedSubmission);
+      const finalStatus: 'Lunas' | 'DP / Cicilan' = (!isInstallmentTx || willBeLunas) ? 'Lunas' : 'DP / Cicilan';
 
       let updatedSubmission: Submission;
 
@@ -707,7 +708,6 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
         };
       } else {
         // INSTALLMENT TRANSACTION (DP / Cicilan Bertahap):
-        const finalStatus: 'Lunas' | 'DP / Cicilan' = willBeLunas ? 'Lunas' : 'DP / Cicilan';
         const finalDpAmount: number = willBeLunas ? totalVoucher : accumulatedPaid;
 
         let finalCicilanNotes = selectedSubmission.cicilanNotes || '';
