@@ -289,6 +289,41 @@ const getOrCreatePettyCashFolderHierarchy = async (
   return dayId;
 };
 
+// Helper to extract { romanMonth, yy } from any BKK voucher code
+const parseBkkMonthYear = (bkkCode: string): { romanMonth: string; yy: string } | null => {
+  if (!bkkCode) return null;
+  const match = bkkCode.trim().match(/BKK[ -]*[A-Z0-9]+[\/\-]([IVXLCDM]+)[\/\-](\d{2})[\/\-]\d+/i);
+  if (match) {
+    return {
+      romanMonth: match[1].toUpperCase(),
+      yy: match[2]
+    };
+  }
+  return null;
+};
+
+// Helper to get roman month and 2-digit year from ISO date YYYY-MM-DD
+const getDateMonthYearInfo = (dateStr: string): { romanMonth: string; yy: string } | null => {
+  if (!dateStr) return null;
+  const parts = dateStr.split('-');
+  if (parts.length !== 3) return null;
+  const monthIdx = parseInt(parts[1], 10);
+  const romanMonths = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'];
+  const romanMonth = romanMonths[monthIdx - 1];
+  if (!romanMonth) return null;
+  const yy = parts[0].substring(parts[0].length - 2);
+  return { romanMonth, yy };
+};
+
+// Check if kode is out of sync with tanggal's month/year (e.g. kode has Roman month X for Oct, but tanggal is in Sept)
+const isKodeOutOfSyncWithDate = (currentKode: string, targetDate: string): boolean => {
+  if (!targetDate || !currentKode) return false;
+  const dateInfo = getDateMonthYearInfo(targetDate);
+  const kodeInfo = parseBkkMonthYear(currentKode);
+  if (!dateInfo || !kodeInfo) return false;
+  return dateInfo.romanMonth !== kodeInfo.romanMonth || dateInfo.yy !== kodeInfo.yy;
+};
+
 // Helper to auto-generate monthly dynamic accounting voucher codes based on Company name, month, and year.
 const generateAutoKode = (targetDate: string, compCode: string, allSubmissions: Submission[], currentId?: string): string => {
   if (!targetDate) return '';
@@ -307,13 +342,14 @@ const generateAutoKode = (targetDate: string, compCode: string, allSubmissions: 
   
   let maxSeq = 1000; // Next starts at 1001 (maxSeq + 1)
   
+  // Flexible match for standard BKK patterns (slash, hyphen, optional spaces)
+  const pattern = new RegExp(`^BKK[ -]*(?:${cleanComp}|[A-Z0-9]+)[\\/\\-]${romanMonth}[\\/\\-]${yy}[\\/\\-](\\d+)$`, 'i');
+
   allSubmissions.forEach(sub => {
     if (currentId && sub.id === currentId) return;
     const subKode = sub.kode;
     if (!subKode) return;
     
-    // Check match for exactly formatting: e.g. BKK-NMSA/VI/26/1001
-    const pattern = new RegExp(`^BKK-${cleanComp}\\/${romanMonth}\\/${yy}\\/(\\d+)$`, 'i');
     const match = subKode.trim().match(pattern);
     if (match) {
       const seqVal = parseInt(match[1], 10);
@@ -1297,16 +1333,42 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
     }
   }, [initialSubmission, userProfile]);
 
+  const handleDateChange = (newDate: string) => {
+    setTanggal(newDate);
+    if (!newDate) return;
+    const compCode = (userProfile?.companyDetails?.code || userProfile?.companyId || 'NMSA').toUpperCase();
+    if (isKodeOutOfSyncWithDate(kode, newDate) || !kode || kode === 'HO') {
+      const autoKode = generateAutoKode(newDate, compCode, submissions, id);
+      if (autoKode) {
+        setKode(autoKode);
+        setIsManualKode(false);
+      }
+    }
+  };
+
   // Hook to dynamically generate voucher code automatically on fields changes
   useEffect(() => {
-    if (isManualKode) return;
+    if (!tanggal) return;
     
     const compCode = (userProfile?.companyDetails?.code || userProfile?.companyId || 'NMSA').toUpperCase();
-    const autoKode = generateAutoKode(tanggal, compCode, submissions, id);
-    if (autoKode) {
-      setKode(autoKode);
+
+    // Check if current kode is out of sync with tanggal's month/year
+    // (e.g. user moved voucher date to a previous or next month/year)
+    const outOfSync = isKodeOutOfSyncWithDate(kode, tanggal);
+    
+    if (outOfSync || !kode || kode === 'HO') {
+      const autoKode = generateAutoKode(tanggal, compCode, submissions, id);
+      if (autoKode && autoKode !== kode) {
+        setKode(autoKode);
+        setIsManualKode(false);
+      }
+    } else if (!isManualKode) {
+      const autoKode = generateAutoKode(tanggal, compCode, submissions, id);
+      if (autoKode && autoKode !== kode) {
+        setKode(autoKode);
+      }
     }
-  }, [tanggal, userProfile, submissions, isManualKode, id]);
+  }, [tanggal, userProfile, submissions, id, isManualKode, kode]);
 
   // Handle item input updates
   const handleItemChange = (index: number, field: keyof SubmissionItem, value: any) => {
@@ -1386,7 +1448,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         id: initialSubmission?.id
       },
       submissions,
-      { onlyCompareWithLastTransaction: true }
+      { onlyCompareWithLastTransaction: false, sameMonthOnly: true }
     );
   }, [dibayarkanKepada, calculatedGrandTotal, tanggal, jenisPengajuan, items, notes, initialSubmission, submissions]);
 
@@ -2509,7 +2571,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                   : 'border-stone-200 focus:ring-1 focus:ring-stone-400'
               }`}
               value={tanggal}
-              onChange={(e) => setTanggal(e.target.value)}
+              onChange={(e) => handleDateChange(e.target.value)}
             />
             {holidayInfo.dayName && (
               <div className="mt-1 flex items-center justify-between text-[11px] font-mono">
@@ -2602,7 +2664,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                 {holidayInfo.suggestedNextWorkday && (
                   <button
                     type="button"
-                    onClick={() => setTanggal(holidayInfo.suggestedNextWorkday)}
+                    onClick={() => handleDateChange(holidayInfo.suggestedNextWorkday)}
                     className="flex-1 md:flex-none inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-xs transition cursor-pointer"
                     title={`Pindahkan tanggal ke: ${formatDateIndonesian(holidayInfo.suggestedNextWorkday)}`}
                   >
@@ -2613,7 +2675,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                 {holidayInfo.suggestedPrevWorkday && (
                   <button
                     type="button"
-                    onClick={() => setTanggal(holidayInfo.suggestedPrevWorkday)}
+                    onClick={() => handleDateChange(holidayInfo.suggestedPrevWorkday)}
                     className="flex-1 md:flex-none inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-lg bg-white hover:bg-rose-100 text-rose-800 border border-rose-300 text-xs font-bold transition cursor-pointer"
                     title={`Pindahkan tanggal ke: ${formatDateIndonesian(holidayInfo.suggestedPrevWorkday)}`}
                   >
@@ -2828,7 +2890,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <h4 className="text-xs sm:text-sm font-black text-amber-950 uppercase tracking-wide flex items-center gap-1.5 flex-wrap">
-                    <span>⚠️ Peringatan: Transaksi Sama dengan Transaksi Terakhir</span>
+                    <span>⚠️ Peringatan: Transaksi Serupa Terdeteksi di Bulan Ini</span>
                     <span className="text-[10px] font-mono font-bold bg-amber-200 text-amber-900 px-2 py-0.5 rounded-full border border-amber-300">
                       {potentialDuplicateSubmissions.length} Data Terdeteksi
                     </span>
@@ -2863,7 +2925,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                 </div>
 
                 <p className="text-xs text-amber-800 mt-1 leading-relaxed">
-                  Sistem mendeteksi transaksi ini sama dengan <strong>transaksi yang terakhir diinput</strong> (nama penerima, isi, atau total nominal sama). Jika ini transaksi baru yang sah, klik <strong>✓ Tandai Sebagai Transaksi yang Sah</strong> agar tidak terhitung sama lagi.
+                  Sistem mendeteksi transaksi ini memiliki kemiripan atau sama dengan <strong>transaksi lain di bulan yang sama</strong> (nama penerima, jenis, isi, atau total nominal sama). Ini hanya peringatan. Jika ini transaksi baru yang sah, klik <strong>✓ Tandai Sebagai Transaksi yang Sah</strong> untuk melanjutkan.
                 </p>
 
                 <div className="mt-3 space-y-2.5">
@@ -4902,7 +4964,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      setTanggal(holidayInfo.suggestedNextWorkday);
+                      handleDateChange(holidayInfo.suggestedNextWorkday);
                       setIsHolidayConfirmModalOpen(false);
                     }}
                     className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-3 rounded-xl text-xs transition cursor-pointer flex items-center justify-between shadow-xs"
@@ -4926,7 +4988,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      setTanggal(holidayInfo.suggestedPrevWorkday);
+                      handleDateChange(holidayInfo.suggestedPrevWorkday);
                       setIsHolidayConfirmModalOpen(false);
                     }}
                     className="w-full bg-stone-100 hover:bg-stone-200 text-stone-800 border border-stone-300 font-bold px-4 py-2.5 rounded-xl text-xs transition cursor-pointer flex items-center justify-between"

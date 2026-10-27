@@ -96,6 +96,28 @@ export function removeDuplicateItems(items: SubmissionItem[]): {
  * 3. Same Content / Item Details (items / notes) + Same Nominal
  * 4. Combinations of the above (highest risk duplicate)
  */
+/**
+ * Helper to extract YYYY-MM from date string
+ */
+export function extractYearMonth(dateStr?: string): string | null {
+  if (!dateStr) return null;
+  const trimmed = dateStr.trim();
+  if (/^\d{4}-\d{2}/.test(trimmed)) {
+    return trimmed.substring(0, 7);
+  }
+  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(trimmed)) {
+    const parts = trimmed.split('/');
+    return `${parts[2]}-${parts[1].padStart(2, '0')}`;
+  }
+  const d = new Date(trimmed);
+  if (!isNaN(d.getTime())) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    return `${y}-${m}`;
+  }
+  return null;
+}
+
 export function findPotentialDuplicateSubmissions(
   current: {
     dibayarkanKepada?: string;
@@ -109,6 +131,7 @@ export function findPotentialDuplicateSubmissions(
   existingSubmissions: Submission[] = [],
   options?: {
     onlyCompareWithLastTransaction?: boolean;
+    sameMonthOnly?: boolean;
   }
 ): DuplicateSubmissionMatch[] {
   if (!existingSubmissions || existingSubmissions.length === 0) return [];
@@ -120,26 +143,37 @@ export function findPotentialDuplicateSubmissions(
   const cleanRecipient = normalizeText(current.dibayarkanKepada);
   const cleanType = normalizeText(current.jenisPengajuan);
   const cleanNotes = normalizeText(current.notes);
-  const matches: DuplicateSubmissionMatch[] = [];
 
   // Filter out self
-  const candidates = existingSubmissions.filter(s => !current.id || s.id !== current.id);
+  let candidates = existingSubmissions.filter(s => !current.id || s.id !== current.id);
   if (candidates.length === 0) return [];
 
-  const onlyCompareWithLast = options?.onlyCompareWithLastTransaction ?? true;
+  const sameMonthOnly = options?.sameMonthOnly ?? true;
+  const onlyCompareWithLast = options?.onlyCompareWithLastTransaction ?? false;
 
-  // Sesuai permintaan pengguna:
-  // "Saya ingin potensi double itu hanya muncul jika ada transaksi yang sama dengan transaksi yang terakhir, bukan transaksi sebelum sebelumnya."
+  // Filter khusus: Dalam jangka bulan itu saja (sesuai tanggal transaksi yang sedang diinput/diedit)
+  if (sameMonthOnly && current.tanggal) {
+    const curYM = extractYearMonth(current.tanggal);
+    if (curYM) {
+      candidates = candidates.filter(s => {
+        const sYM = extractYearMonth(s.tanggal);
+        return sYM === curYM;
+      });
+      if (candidates.length === 0) return [];
+    }
+  }
+
   // Urutkan transaksi dari yang paling terakhir/terbaru berdasarkan tanggal & ID
-  let targetSubmissions = candidates;
+  const sortedCandidates = [...candidates].sort((a, b) => {
+    const timeA = new Date(a.tanggal || 0).getTime();
+    const timeB = new Date(b.tanggal || 0).getTime();
+    if (timeB !== timeA) return timeB - timeA;
+    return String(b.id || '').localeCompare(String(a.id || ''));
+  });
+
+  let targetSubmissions = sortedCandidates;
   if (onlyCompareWithLast) {
-    const sortedCandidates = [...candidates].sort((a, b) => {
-      const timeA = new Date(a.tanggal || 0).getTime();
-      const timeB = new Date(b.tanggal || 0).getTime();
-      if (timeB !== timeA) return timeB - timeA;
-      return String(b.id || '').localeCompare(String(a.id || ''));
-    });
-    // Ambil hanya transaksi paling terakhir
+    // Ambil hanya transaksi paling terakhir jika diminta
     targetSubmissions = sortedCandidates.slice(0, 1);
   }
 

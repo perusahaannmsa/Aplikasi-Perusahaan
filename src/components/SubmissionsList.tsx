@@ -1434,35 +1434,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 </button>
               </div>
 
-              {/* Quick Filter & Analisis: Potensi Dobel Input (Auto-hidden jika 0 / sudah disahkan aman) */}
-              {activeDuplicateSubmissionIds.size > 0 && (
-                <div className="self-end pb-0.5 flex items-center gap-1.5 flex-wrap animate-fade-in">
-                  <button
-                    type="button"
-                    id="btn-open-duplicate-modal"
-                    onClick={() => {
-                      setSelectedClusterKey(null);
-                      setDuplicateModalSearch('');
-                      setIsDuplicateModalOpen(true);
-                    }}
-                    title="Klik untuk membuka dialog analisis & rekap voucher yang berpotensi dobel dengan transaksi terakhir"
-                    className="px-3.5 py-2 text-xs font-bold font-mono rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-xs bg-amber-500 hover:bg-amber-600 text-stone-950 font-black ring-2 ring-amber-400 active:scale-95 animate-pulse"
-                  >
-                    <AlertTriangle size={14} className="text-stone-950" />
-                    <span>⚠️ Potensi Dobel ({activeDuplicateSubmissionIds.size})</span>
-                  </button>
 
-                  <button
-                    type="button"
-                    onClick={handleAcknowledgeAllHistory}
-                    title="Pilih bahwa transaksi ini seluruhnya tidak dobel (Status potensi dobel menjadi 0 & riwayat disahkan/diabaikan)"
-                    className="px-3 py-2 text-xs font-bold font-mono rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-3xs bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold active:scale-95"
-                  >
-                    <Check size={13} className="text-white font-bold" />
-                    <span>✓ Sahkan / Beri Tanda (Set 0)</span>
-                  </button>
-                </div>
-              )}
 
               {/* Specific Date Picker Input */}
               <div className="flex flex-col gap-1.5 w-full sm:w-auto">
@@ -1827,23 +1799,6 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                               </span>
                             )}
 
-                            {activeDuplicateSubmissionIds.has(sub.id) && (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  const total = (sub.items || []).reduce((acc, it) => acc + (Number(it.total) || 0), 0) || (sub as any).nominal || 0;
-                                  const key = `${normalizeText(sub.dibayarkanKepada)}_${total}`;
-                                  setSelectedClusterKey(key);
-                                  setDuplicateModalSearch(sub.dibayarkanKepada || '');
-                                  setIsDuplicateModalOpen(true);
-                                }}
-                                className="inline-flex items-center gap-1 text-[9px] font-mono bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 font-black px-2 py-0.5 rounded-md shadow-3xs cursor-pointer transition active:scale-95"
-                                title="Klik untuk membuka rincian pasangan transaksi yang sama persis di sistem"
-                              >
-                                <span>⚠️ Potensi Dobel</span>
-                              </button>
-                            )}
 
                             {(() => {
                               const displayFileObj = (sub.googleDriveFiles || []).find(f => !f.isF1 && !f.isF2 && !f.isBuktiPembayaran) || 
