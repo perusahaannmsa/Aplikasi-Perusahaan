@@ -539,6 +539,9 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
     setSaveProgress(`1/6. Menggabungkan ${uploadedFiles.length} berkas bukti transfer menjadi 1 file PDF pembayaran...`);
 
     try {
+      const isInstallmentTx = paymentMode === 'cicilan' || isCicilanSubmission(selectedSubmission);
+      const finalStatus: 'Lunas' | 'DP / Cicilan' = (!isInstallmentTx || willBeLunas) ? 'Lunas' : 'DP / Cicilan';
+
       const cleanJenis = (selectedSubmission.jenisPengajuan || 'Non-Kategori').replace(/[^a-zA-Z0-9\s_-]/g, '').trim();
       const cleanPenerima = (selectedSubmission.dibayarkanKepada || 'Penerima').replace(/[^a-zA-Z0-9\s_-]/g, '').trim();
       const baseMergedName = `Bukti Pembayaran - (${cleanJenis} - ${cleanPenerima})`;
@@ -688,9 +691,6 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
 
       setSaveProgress('5/6. Memperbarui status & riwayat pembayaran transaksi...');
 
-      const isInstallmentTx = paymentMode === 'cicilan' || isCicilanSubmission(selectedSubmission);
-      const finalStatus: 'Lunas' | 'DP / Cicilan' = (!isInstallmentTx || willBeLunas) ? 'Lunas' : 'DP / Cicilan';
-
       let updatedSubmission: Submission;
 
       if (!isInstallmentTx) {
@@ -803,6 +803,10 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
       // Save directly to localStorage as backup
       try {
         localStorage.setItem('NUSANTARA_HO_SUBMISSIONS', JSON.stringify(nextList));
+        const compId = selectedSubmission.companyId || userProfile?.companyId;
+        if (compId) {
+          localStorage.setItem(`NUSANTARA_HO_SUBMISSIONS_${compId}`, JSON.stringify(nextList));
+        }
       } catch (localSaveErr) {
         console.warn('LocalStorage save failure:', localSaveErr);
       }
