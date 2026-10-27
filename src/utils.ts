@@ -2664,3 +2664,49 @@ export function isVendorOrCompanyMatch(nameA: string | null | undefined, nameB: 
   return false;
 }
 
+/**
+ * Standarisasi format nama folder transaksi Google Drive di seluruh aplikasi:
+ * Format: "{cleanKode} - Pembayaran-{cleanJenis}+{cleanPenerima}" 
+ * Atau untuk Invoice: "{cleanKode} - Pembayaran-{cleanInv}"
+ * Contoh hasil: "BKK-NMSA-X-26-1025 - Pembayaran-Tiket Pesawat+Traveloka"
+ */
+export function getStandardDriveFolderName(sub: {
+  kode?: string;
+  jenisPengajuan?: string;
+  dibayarkanKepada?: string;
+  isInvoice?: boolean;
+  invoiceNumber?: string;
+  pettyCashCustodian?: string;
+  isPettyCash?: boolean;
+}): string {
+  const cleanKode = (sub.kode || '').trim().replace(/[\/\\?%*:|"<>.]/g, '-');
+  const cleanJenis = (sub.jenisPengajuan || (sub.isPettyCash ? 'Petty Cash' : 'Pengajuan')).trim().replace(/[\/\\?%*:|"<>.]/g, '');
+  const cleanPenerima = (
+    sub.dibayarkanKepada || 
+    (sub.isPettyCash ? sub.pettyCashCustodian : '') || 
+    'Penerima'
+  ).trim().replace(/[\/\\?%*:|"<>.]/g, '');
+
+  let txBaseName = '';
+  if (sub.isInvoice && sub.invoiceNumber) {
+    const cleanInv = sub.invoiceNumber.trim().replace(/[\/\\?%*:|"<>.]/g, '');
+    txBaseName = `Pembayaran-${cleanInv}`;
+  } else {
+    txBaseName = `Pembayaran-${cleanJenis}+${cleanPenerima}`;
+  }
+
+  return cleanKode ? `${cleanKode} - ${txBaseName}` : txBaseName;
+}
+
+/**
+ * Format nama folder versi legacy lama (sebelum standar kode):
+ * Contoh: "Tiket Pesawat - Traveloka"
+ */
+export function getLegacyDriveFolderName(sub: {
+  jenisPengajuan?: string;
+  dibayarkanKepada?: string;
+}): string {
+  const cleanJenis = (sub.jenisPengajuan || 'Non-Kategori').trim().replace(/[\/\\?%*:|"<>.]/g, '');
+  const cleanPenerima = (sub.dibayarkanKepada || 'Penerima').trim().replace(/[\/\\?%*:|"<>.]/g, '');
+  return `${cleanJenis} - ${cleanPenerima}`;
+}

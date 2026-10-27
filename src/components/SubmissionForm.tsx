@@ -252,7 +252,7 @@ const getOrCreateFolderHierarchy = async (
   // 6. Get or create custom transaction folder under day folder named (Jenis_Pengajuan - Dibayarkan_Kepada)
   const cleanJenis = (jenisPengajuan || 'Pengajuan').trim().replace(/[\/\\?%*:|"<>.]/g, '');
   const cleanPenerima = (dibayarkanKepada || 'Penerima').trim().replace(/[\/\\?%*:|"<>.]/g, '');
-  const txFolderName = `${cleanJenis} - ${cleanPenerima}`;
+  const txFolderName = `Pembayaran-${cleanJenis}+${cleanPenerima}`;
 
   const txFolderId = await getOrCreateFolder(token, txFolderName, dayId);
   
@@ -1653,11 +1653,29 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
           } catch (_) {}
         }
 
+        // Also check current dayId for legacy folder (e.g. "Tiket Pesawat - Traveloka") or previous duplicates
+        const legacyTxFolderName = `${cleanJenis} - ${cleanPenerima}`;
+        try {
+          const currentDayFiles = await searchChildFolders(token, dayId);
+          for (const cdf of currentDayFiles) {
+            const isMatch = (voucherSearchKey && cdf.name.includes(voucherSearchKey)) ||
+                            (initialSubmission?.kode && cdf.name.includes(initialSubmission.kode)) ||
+                            cdf.name === txFolderName ||
+                            cdf.name === legacyTxFolderName;
+            if (isMatch && !matchingFolders.some(f => f.id === cdf.id)) {
+              matchingFolders.push({ ...cdf, parents: [dayId] });
+            }
+          }
+        } catch (_) {}
+
         console.log(`[Drive Folder Handler] Ditemukan ${matchingFolders.length} folder terkait transaksi:`, matchingFolders);
 
         // 3. Process matched folders:
         // A. Identify if a folder already exists under the new date folder (`dayId`)
-        const existingInNewDay = matchingFolders.find(f => (f.parents || []).includes(dayId));
+        // Prefer exact standard folder name first, otherwise any match
+        const exactMatchInNewDay = matchingFolders.find(f => (f.parents || []).includes(dayId) && f.name === txFolderName);
+        const existingInNewDay = exactMatchInNewDay || matchingFolders.find(f => (f.parents || []).includes(dayId));
+
         if (existingInNewDay) {
           targetFolderId = existingInNewDay.id;
           console.log('[Drive Upload] Menggunakan folder yang sudah ada di tanggal baru:', targetFolderId);
@@ -1698,12 +1716,54 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
           console.log('[Drive Upload] Folder Transaksi Khusus ID Baru:', targetFolderId);
         }
 
-        // 4. CRITICAL: Clean up and DELETE all duplicate folders that remain under the old date or outside new dayId!
-        // This ensures NO duplicate folders are left in the previous date!
+        // 4. CRITICAL: Clean up, merge files, and DELETE all duplicate folders that remain under the old date or inside dayId!
+        // This ensures NO orphan or duplicate folders like 'Tiket Pesawat - Traveloka' are left behind!
         for (const f of matchingFolders) {
           if (f.id !== targetFolderId) {
             try {
-              setSaveProgress(`Menghapus folder duplikat lama di tanggal sebelumnya (${f.name})...`);
+              setSaveProgress(`Menggabungkan isi file dari folder duplikat (${f.name})...`);
+              console.log(`[Drive Cleanup] Menggabungkan isi folder duplikat di Drive: ${f.name} (ID: ${f.id}) ke ${targetFolderId}`);
+              
+              // Move all contents from f into targetFolderId
+              const childRes = await fetch(
+                `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
+                  `'${f.id}' in parents and trashed = false`
+                )}&fields=files(id,name,mimeType)&pageSize=100`,
+                { headers: { Authorization: `Bearer ${token}` } }
+              );
+              if (childRes.ok) {
+                const childData = await childRes.json();
+                for (const item of (childData.files || [])) {
+                  if (item.mimeType === 'application/vnd.google-apps.folder') {
+                    const subDestId = await getOrCreateFolder(token, item.name, targetFolderId);
+                    const subChildRes = await fetch(
+                      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
+                        `'${item.id}' in parents and trashed = false`
+                      )}&fields=files(id)&pageSize=100`,
+                      { headers: { Authorization: `Bearer ${token}` } }
+                    );
+                    if (subChildRes.ok) {
+                      const scData = await subChildRes.json();
+                      for (const sc of (scData.files || [])) {
+                        await fetch(`https://www.googleapis.com/drive/v3/files/${sc.id}?addParents=${subDestId}&removeParents=${item.id}`, {
+                          method: 'PATCH',
+                          headers: { Authorization: `Bearer ${token}` }
+                        }).catch(() => {});
+                      }
+                    }
+                    await fetch(`https://www.googleapis.com/drive/v3/files/${item.id}`, {
+                      method: 'DELETE',
+                      headers: { Authorization: `Bearer ${token}` }
+                    }).catch(() => {});
+                  } else {
+                    await fetch(`https://www.googleapis.com/drive/v3/files/${item.id}?addParents=${targetFolderId}&removeParents=${f.id}`, {
+                      method: 'PATCH',
+                      headers: { Authorization: `Bearer ${token}` }
+                    }).catch(() => {});
+                  }
+                }
+              }
+
               console.log(`[Drive Cleanup] Menghapus folder duplikat lama di Drive: ${f.name} (ID: ${f.id})`);
               await fetch(`https://www.googleapis.com/drive/v3/files/${f.id}`, {
                 method: 'DELETE',
@@ -1711,7 +1771,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
               });
               console.log(`✓ [Drive Cleanup] Folder duplikat lama berhasil dihapus: ${f.id}`);
             } catch (delErr) {
-              console.warn(`Gagal menghapus folder duplikat lama ${f.id}:`, delErr);
+              console.warn(`Gagal membersihkan/menghapus folder duplikat lama ${f.id}:`, delErr);
             }
           }
         }

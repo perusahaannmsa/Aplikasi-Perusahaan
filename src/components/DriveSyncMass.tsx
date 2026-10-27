@@ -14,7 +14,9 @@ import {
   generateF1PdfBytes, 
   generateF2PdfBytes, 
   formatDateIndonesian, 
-  convertImageToPdf 
+  convertImageToPdf,
+  getStandardDriveFolderName,
+  getLegacyDriveFolderName
 } from '../utils';
 import { Cloud, Loader2, CheckCircle2, AlertTriangle, Play, RefreshCw, Layers, FolderSync, Trash2, Sparkles } from 'lucide-react';
 
@@ -906,21 +908,67 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
         const monthId = await getOrCreateFolder(token, monthStr, yearId);
         const dayId = await getOrCreateFolder(token, dayStr, monthId);
 
-        // Name of transaction custom folder
-        const cleanJenis = (sub.jenisPengajuan || 'Pengajuan').trim().replace(/[\/\\?%*:|"<>.]/g, '');
-        const cleanPenerima = (sub.dibayarkanKepada || 'Penerima').trim().replace(/[\/\\?%*:|"<>.]/g, '');
-        const cleanKode = (sub.kode || '').trim().replace(/[\/\\?%*:|"<>.]/g, '-');
-        
-        let txBaseName = '';
-        if (sub.isInvoice && sub.invoiceNumber) {
-          const cleanInv = sub.invoiceNumber.trim().replace(/[\/\\?%*:|"<>.]/g, '');
-          txBaseName = `Pembayaran-${cleanInv}`;
-        } else {
-          txBaseName = `Pembayaran-${cleanJenis}+${cleanPenerima}`;
-        }
-
-        const txFolderName = cleanKode ? `${cleanKode} - ${txBaseName}` : txBaseName;
+        // Standardized name of transaction custom folder
+        const txFolderName = getStandardDriveFolderName(sub);
+        const legacyTxFolderName = getLegacyDriveFolderName(sub);
         const targetFolderId = await getOrCreateFolder(token, txFolderName, dayId);
+
+        // Check if legacy folder (e.g. Tiket Pesawat - Traveloka) exists under dayId and merge it
+        try {
+          const cleanSearchLegacy = legacyTxFolderName.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+          const qLeg = `name = '${cleanSearchLegacy}' and mimeType = 'application/vnd.google-apps.folder' and '${dayId}' in parents and trashed = false`;
+          const resLeg = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(qLeg)}&fields=files(id,name)`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          if (resLeg.ok) {
+            const dataLeg = await resLeg.json();
+            if (dataLeg.files && dataLeg.files.length > 0) {
+              const legacyFolder = dataLeg.files[0];
+              if (legacyFolder.id !== targetFolderId) {
+                addLog(`[MERGE] Menggabungkan folder lama '${legacyFolder.name}' ke '${txFolderName}'...`);
+                const childRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`'${legacyFolder.id}' in parents and trashed = false`)}&fields=files(id,name,mimeType)`, {
+                  headers: { Authorization: `Bearer ${token}` }
+                });
+                if (childRes.ok) {
+                  const childData = await childRes.json();
+                  for (const ch of (childData.files || [])) {
+                    if (ch.mimeType === 'application/vnd.google-apps.folder') {
+                      const subDest = await getOrCreateFolder(token, ch.name, targetFolderId);
+                      const subChild = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`'${ch.id}' in parents and trashed = false`)}&fields=files(id)`, {
+                        headers: { Authorization: `Bearer ${token}` }
+                      });
+                      if (subChild.ok) {
+                        const scData = await subChild.json();
+                        for (const sc of (scData.files || [])) {
+                          await fetch(`https://www.googleapis.com/drive/v3/files/${sc.id}?addParents=${subDest}&removeParents=${ch.id}`, {
+                            method: 'PATCH',
+                            headers: { Authorization: `Bearer ${token}` }
+                          }).catch(() => {});
+                        }
+                      }
+                      await fetch(`https://www.googleapis.com/drive/v3/files/${ch.id}`, {
+                        method: 'DELETE',
+                        headers: { Authorization: `Bearer ${token}` }
+                      }).catch(() => {});
+                    } else {
+                      await fetch(`https://www.googleapis.com/drive/v3/files/${ch.id}?addParents=${targetFolderId}&removeParents=${legacyFolder.id}`, {
+                        method: 'PATCH',
+                        headers: { Authorization: `Bearer ${token}` }
+                      }).catch(() => {});
+                    }
+                  }
+                }
+                await fetch(`https://www.googleapis.com/drive/v3/files/${legacyFolder.id}`, {
+                  method: 'DELETE',
+                  headers: { Authorization: `Bearer ${token}` }
+                }).catch(() => {});
+                addLog(`✓ [MERGE] Folder lama '${legacyFolder.name}' berhasil digabung dan dibersihkan.`);
+              }
+            }
+          }
+        } catch (mErr) {
+          console.warn('Gagal merge legacy folder di sync mass:', mErr);
+        }
 
         addLog(`Folder Tujuan: /Voucher-APP/${folderCompanyUpper}/${yearStr}/${monthStr}/${dayStr}/${txFolderName}`);
 

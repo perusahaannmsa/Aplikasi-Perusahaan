@@ -1,7 +1,15 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'; 
 import QRCode from 'qrcode';
 import { Submission, CicilanPaymentRecord } from '../types';
-import { formatRupiah, formatDateIndonesian, numberToTerbilang, isPettyCashSubmission, isCicilanSubmission } from '../utils';
+import { 
+  formatRupiah, 
+  formatDateIndonesian, 
+  numberToTerbilang, 
+  isPettyCashSubmission, 
+  isCicilanSubmission,
+  getStandardDriveFolderName,
+  getLegacyDriveFolderName
+} from '../utils';
 import { getVoucherShareLink } from '../utils/appLinks';
 import { NusantaraLogo } from './NusantaraLogo';
 import { Printer, ArrowLeft, Layers, FileText, CheckCircle, Cloud, Loader2, Lock, ShieldAlert, RefreshCw, Share2, Copy, Check, Send, Edit2, Trash, Trash2, RotateCw, Coins, ExternalLink, QrCode, Upload, AlertTriangle, FileSpreadsheet, Receipt } from 'lucide-react';
@@ -306,6 +314,20 @@ const loadPdfJs = (): Promise<any> => {
 // Helper functions for real-time Google Drive synchronization
 const findFolderIdForSubmission = async (token: string, sub: any): Promise<string | null> => {
   try {
+    // 0. If submission already has googleDriveFolderId stored, verify it directly
+    if (sub.googleDriveFolderId) {
+      try {
+        const chkRes = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${sub.googleDriveFolderId}?fields=id,trashed`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (chkRes.ok) {
+          const chkData = await chkRes.json();
+          if (!chkData.trashed) return chkData.id;
+        }
+      } catch (_) {}
+    }
+
     // 1. Search 'Voucher-APP' folder under root
     const resVoucherApp = await fetch(
       `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
@@ -348,7 +370,7 @@ const findFolderIdForSubmission = async (token: string, sub: any): Promise<strin
       dayStr = String(dateObj.getDate());
     }
 
-    const companyUpper = 'NMSA';
+    const companyUpper = (sub.companyId || 'nmsa').toUpperCase();
 
     // 3. Search Company folder under 'Voucher-APP'
     const resCompany = await fetch(
@@ -399,13 +421,40 @@ const findFolderIdForSubmission = async (token: string, sub: any): Promise<strin
     const dayId = dataDay.files[0].id;
 
     // 7. Search Custom Transaction folder under Day folder
-    const cleanJenis = (sub.jenisPengajuan || 'Pengajuan').trim().replace(/[\/\\?%*:|"<>.]/g, '');
-    const cleanPenerima = (sub.dibayarkanKepada || 'Penerima').trim().replace(/[\/\\?%*:|"<>.]/g, '');
-    const txFolderName = `${cleanJenis} - ${cleanPenerima}`;
+    const standardTxFolderName = getStandardDriveFolderName(sub);
+    const legacyTxFolderName = getLegacyDriveFolderName(sub);
+    const cleanKode = (sub.kode || '').trim().replace(/[\/\\?%*:|"<>.]/g, '-');
 
+    // 7A. Search exact standard name (e.g. BKK-NMSA-X-26-1025 - Pembayaran-Tiket Pesawat+Traveloka)
+    const resStd = await fetch(
+      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
+        `name = '${standardTxFolderName.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and '${dayId}' in parents and trashed = false`
+      )}&fields=files(id)`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (resStd.ok) {
+      const dataStd = await resStd.json();
+      if (dataStd.files && dataStd.files.length > 0) return dataStd.files[0].id;
+    }
+
+    // 7B. Search by voucher code under dayId
+    if (cleanKode && cleanKode.length >= 4 && cleanKode !== 'HO') {
+      const resKode = await fetch(
+        `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
+          `name contains '${cleanKode.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and '${dayId}' in parents and trashed = false`
+        )}&fields=files(id)`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (resKode.ok) {
+        const dataKode = await resKode.json();
+        if (dataKode.files && dataKode.files.length > 0) return dataKode.files[0].id;
+      }
+    }
+
+    // 7C. Fallback to legacy format (e.g. Tiket Pesawat - Traveloka)
     const resTx = await fetch(
       `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
-        `name = '${txFolderName.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and '${dayId}' in parents and trashed = false`
+        `name = '${legacyTxFolderName.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and '${dayId}' in parents and trashed = false`
       )}&fields=files(id)`,
       { headers: { Authorization: `Bearer ${token}` } }
     );

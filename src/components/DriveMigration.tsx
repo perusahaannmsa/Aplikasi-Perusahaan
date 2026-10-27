@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Submission, REQUIRED_TRANSACTION_DOCS } from '../types';
+import { getStandardDriveFolderName } from '../utils';
 import { 
   ConnectedDrive, 
   getConnectedDrives, 
@@ -338,9 +339,7 @@ export const DriveMigration: React.FC<DriveMigrationProps> = ({ submissions, onU
         const monthId = await getOrCreateFolder(targetToken, monthStr, yearId);
         const dayId = await getOrCreateFolder(targetToken, dayStr, monthId);
 
-        const cleanJenis = (sub.jenisPengajuan || 'Pengajuan').trim().replace(/[\/\\?%*:|"<>.]/g, '');
-        const cleanPenerima = (sub.dibayarkanKepada || 'Penerima').trim().replace(/[\/\\?%*:|"<>.]/g, '');
-        const txFolderName = `${cleanJenis} - ${cleanPenerima}`;
+        const txFolderName = getStandardDriveFolderName(sub);
         const targetFolderId = await getOrCreateFolder(targetToken, txFolderName, dayId);
 
         addLog(`[TARGET DIRECTORY] /Voucher-APP/${folderCompanyUpper}/${yearStr}/${monthStr}/${dayStr}/${txFolderName}`);

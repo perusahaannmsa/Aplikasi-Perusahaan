@@ -21,7 +21,9 @@ import {
   convertImageToPdf, 
   compressImage, 
   mergeFilesToSinglePdf,
-  isCicilanSubmission 
+  isCicilanSubmission,
+  getStandardDriveFolderName,
+  getLegacyDriveFolderName
 } from '../utils';
 import { 
   ArrowLeft, 
@@ -58,7 +60,9 @@ import {
   ExternalLink,
   Layers,
   ChevronRight,
-  Receipt
+  Receipt,
+  FolderSync,
+  Loader2
 } from 'lucide-react';
 
 interface InputBuktiTransferProps {
@@ -121,6 +125,8 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
   // Google Drive state variables
   const [isDriveConnected, setIsDriveConnected] = useState(false);
   const [saveProgress, setSaveProgress] = useState('');
+  const [repairLoading, setRepairLoading] = useState(false);
+  const [repairMessage, setRepairMessage] = useState<{ text: string; isError?: boolean } | null>(null);
 
   // Check Drive connection status on mount and userProfile changes
   useEffect(() => {
@@ -392,6 +398,246 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
     }, { actionName: `upload ${fileName}` });
   };
 
+  // Helper to recursively merge duplicate or legacy folder contents into the canonical transaction folder and remove duplicate
+  const mergeFolderContents = async (token: string, sourceFolderId: string, destFolderId: string): Promise<void> => {
+    try {
+      const res = await fetch(
+        `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
+          `'${sourceFolderId}' in parents and trashed = false`
+        )}&fields=files(id,name,mimeType)&pageSize=100`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      const items: Array<{ id: string; name: string; mimeType: string }> = data.files || [];
+      
+      for (const item of items) {
+        if (item.mimeType === 'application/vnd.google-apps.folder') {
+          const subDestFolderId = await getOrCreateFolder(token, item.name, destFolderId);
+          await mergeFolderContents(token, item.id, subDestFolderId);
+          await fetch(`https://www.googleapis.com/drive/v3/files/${item.id}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` }
+          }).catch(() => {});
+        } else {
+          await fetch(
+            `https://www.googleapis.com/drive/v3/files/${item.id}?addParents=${destFolderId}&removeParents=${sourceFolderId}`,
+            {
+              method: 'PATCH',
+              headers: { Authorization: `Bearer ${token}` }
+            }
+          ).catch(() => {});
+        }
+      }
+    } catch (e) {
+      console.warn('[Drive Merge] Gagal menggabungkan isi folder:', e);
+    }
+  };
+
+  // Consolidates legacy folders (e.g. "Tiket Pesawat - Traveloka") into the official voucher folder in Drive
+  const repairAndConsolidateDriveFolder = async (
+    sub: Submission
+  ): Promise<{ success: boolean; message: string; folderId?: string }> => {
+    return executeDriveApiWithAutoRefresh(async (token) => {
+      let yearStr = '';
+      let monthStr = '';
+      let dayStr = '';
+
+      const parts = (sub.tanggal || '').split('-');
+      if (parts.length === 3) {
+        yearStr = parts[0];
+        const monthIdx = parseInt(parts[1], 10) - 1;
+        const INDONESIAN_MONTHS = [
+          'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+          'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+        ];
+        const mNum = monthIdx + 1;
+        const mName = INDONESIAN_MONTHS[monthIdx] || 'Januari';
+        monthStr = `${mNum}. ${mName}`;
+        dayStr = String(parseInt(parts[2], 10));
+      } else {
+        const dateObj = new Date();
+        yearStr = String(dateObj.getFullYear());
+        const INDONESIAN_MONTHS = [
+          'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+          'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+        ];
+        const mNum = dateObj.getMonth() + 1;
+        const mName = INDONESIAN_MONTHS[dateObj.getMonth()];
+        monthStr = `${mNum}. ${mName}`;
+        dayStr = String(dateObj.getDate());
+      }
+
+      const activeCompanyCode = (
+        userProfile?.companyDetails?.code || 
+        userProfile?.companyId || 
+        sub.companyId || 
+        'nmsa'
+      ).toLowerCase().trim();
+      const folderCompanyUpper = activeCompanyCode.toUpperCase();
+
+      const rootId = 'root';
+      const voucherAppId = await getOrCreateFolder(token, 'Voucher-APP', rootId);
+      const companyFolderId = await getOrCreateFolder(token, folderCompanyUpper, voucherAppId);
+      const yearId = await getOrCreateFolder(token, yearStr, companyFolderId);
+      const monthId = await getOrCreateFolder(token, monthStr, yearId);
+      const dayId = await getOrCreateFolder(token, dayStr, monthId);
+
+      const standardTxFolderName = getStandardDriveFolderName(sub);
+      const legacyTxFolderName = getLegacyDriveFolderName(sub);
+      const cleanKode = (sub.kode || '').trim().replace(/[\/\\?%*:|"<>.]/g, '-');
+
+      // 1. Resolve official standard folder
+      let targetFolderId: string | null = null;
+      if (sub.googleDriveFolderId) {
+        try {
+          const chkRes = await fetch(
+            `https://www.googleapis.com/drive/v3/files/${sub.googleDriveFolderId}?fields=id,name,parents,trashed`,
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+          if (chkRes.ok) {
+            const fInfo = await chkRes.json();
+            if (!fInfo.trashed) {
+              targetFolderId = fInfo.id;
+              if (fInfo.name !== standardTxFolderName) {
+                await fetch(`https://www.googleapis.com/drive/v3/files/${targetFolderId}`, {
+                  method: 'PATCH',
+                  headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ name: standardTxFolderName }),
+                }).catch(() => {});
+              }
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (!targetFolderId) {
+        const cleanSearchStandard = standardTxFolderName.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        const qStd = `name = '${cleanSearchStandard}' and mimeType = 'application/vnd.google-apps.folder' and '${dayId}' in parents and trashed = false`;
+        const resStd = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(qStd)}&fields=files(id,name)`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (resStd.ok) {
+          const dataStd = await resStd.json();
+          if (dataStd.files && dataStd.files.length > 0) {
+            targetFolderId = dataStd.files[0].id;
+          }
+        }
+      }
+
+      if (!targetFolderId && cleanKode && cleanKode.length >= 4 && cleanKode !== 'HO') {
+        const cleanSearchKode = cleanKode.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        const qKode = `name contains '${cleanSearchKode}' and mimeType = 'application/vnd.google-apps.folder' and '${dayId}' in parents and trashed = false`;
+        const resKode = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(qKode)}&fields=files(id,name)`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (resKode.ok) {
+          const dataKode = await resKode.json();
+          if (dataKode.files && dataKode.files.length > 0) {
+            targetFolderId = dataKode.files[0].id;
+            if (dataKode.files[0].name !== standardTxFolderName) {
+              await fetch(`https://www.googleapis.com/drive/v3/files/${targetFolderId}`, {
+                method: 'PATCH',
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: standardTxFolderName }),
+              }).catch(() => {});
+            }
+          }
+        }
+      }
+
+      if (!targetFolderId) {
+        const cleanSearchLegacy = legacyTxFolderName.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        const qLeg = `name = '${cleanSearchLegacy}' and mimeType = 'application/vnd.google-apps.folder' and '${dayId}' in parents and trashed = false`;
+        const resLeg = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(qLeg)}&fields=files(id,name)`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (resLeg.ok) {
+          const dataLeg = await resLeg.json();
+          if (dataLeg.files && dataLeg.files.length > 0) {
+            targetFolderId = dataLeg.files[0].id;
+            await fetch(`https://www.googleapis.com/drive/v3/files/${targetFolderId}`, {
+              method: 'PATCH',
+              headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: standardTxFolderName }),
+            }).catch(() => {});
+          }
+        }
+      }
+
+      if (!targetFolderId) {
+        targetFolderId = await getOrCreateFolder(token, standardTxFolderName, dayId);
+      }
+
+      // 2. Scan and merge any duplicate folders under dayId
+      let mergedCount = 0;
+      const dayChildrenResp = await fetch(
+        `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
+          `'${dayId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`
+        )}&fields=files(id,name)&pageSize=100`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (dayChildrenResp.ok) {
+        const dayChildrenData = await dayChildrenResp.json();
+        const childFolders: Array<{ id: string; name: string }> = dayChildrenData.files || [];
+        
+        const duplicateFolders = childFolders.filter(f => {
+          if (f.id === targetFolderId) return false;
+          if (f.name === legacyTxFolderName) return true;
+          if (cleanKode && cleanKode.length >= 4 && cleanKode !== 'HO' && f.name.includes(cleanKode)) return true;
+          return false;
+        });
+
+        for (const dup of duplicateFolders) {
+          await mergeFolderContents(token, dup.id, targetFolderId);
+          await fetch(`https://www.googleapis.com/drive/v3/files/${dup.id}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` }
+          }).catch(() => {});
+          mergedCount++;
+        }
+      }
+
+      return {
+        success: true,
+        message: mergedCount > 0 
+          ? `Berhasil menggabungkan ${mergedCount} folder duplikat ke dalam folder resmi "${standardTxFolderName}"!` 
+          : `Folder resmi "${standardTxFolderName}" sudah rapi dan sesuai format standar.`,
+        folderId: targetFolderId
+      };
+    }, { actionName: 'repairAndConsolidateDriveFolder' });
+  };
+
+  const handleManualFolderRepair = async () => {
+    if (!selectedSubmission) return;
+    setRepairLoading(true);
+    setRepairMessage(null);
+    try {
+      const res = await repairAndConsolidateDriveFolder(selectedSubmission);
+      setRepairMessage({ text: res.message, isError: !res.success });
+      if (res.folderId && res.folderId !== selectedSubmission.googleDriveFolderId) {
+        const updated = {
+          ...selectedSubmission,
+          googleDriveFolderId: res.folderId
+        };
+        setSelectedSubmission(updated);
+        const nextList = localSubmissions.map(s => s.id === updated.id ? updated : s);
+        setLocalSubmissions(nextList);
+        onUpdateSubmissions(nextList);
+        if (isFirebaseConfigured()) {
+          const finalCompanyId = updated.companyId || 'nmsa';
+          const finalCompanyName = updated.companyName || 'PT Nusantara Mineral Sukses Abadi';
+          await saveSubmissionToFirestore(updated, finalCompanyId, finalCompanyName);
+        }
+      }
+    } catch (e: any) {
+      setRepairMessage({ text: `Gagal merapikan folder: ${e?.message || e}`, isError: true });
+    } finally {
+      setRepairLoading(false);
+    }
+  };
+
+
   // ═════════ MULTI-FILE PROCESSING ACTIONS ═════════
   const processFiles = async (fileList: FileList | File[]) => {
     if (!fileList || fileList.length === 0) return;
@@ -634,20 +880,15 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
           dayStr = String(dateObj.getDate());
         }
 
-        const folderCompanyUpper = 'NMSA';
+        let targetFolderId: string | undefined = undefined;
 
         try {
-          const rootId = 'root';
-          const voucherAppId = await getOrCreateFolder(token, 'Voucher-APP', rootId);
-          const companyFolderId = await getOrCreateFolder(token, folderCompanyUpper, voucherAppId);
-          const yearId = await getOrCreateFolder(token, yearStr, companyFolderId);
-          const monthId = await getOrCreateFolder(token, monthStr, yearId);
-          const dayId = await getOrCreateFolder(token, dayStr, monthId);
-
-          const cleanJenisFolder = (selectedSubmission.jenisPengajuan || 'Non-Kategori').trim().replace(/[\/\\?%*:|"<>.]/g, '');
-          const cleanPenerimaFolder = (selectedSubmission.dibayarkanKepada || 'Penerima').trim().replace(/[\/\\?%*:|"<>.]/g, '');
-          const txFolderName = `${cleanJenisFolder} - ${cleanPenerimaFolder}`;
-          const targetFolderId = await getOrCreateFolder(token, txFolderName, dayId);
+          setSaveProgress('3/6. Menyiapkan folder transaksi resmi di Google Drive...');
+          const repairResult = await repairAndConsolidateDriveFolder(selectedSubmission);
+          targetFolderId = repairResult.folderId;
+          if (!targetFolderId) {
+            throw new Error('Gagal mendapatkan atau membuat folder transaksi Google Drive');
+          }
 
           const folderBuktiBayarId = await getOrCreateFolder(token, 'Bukti Pembayaran', targetFolderId);
 
@@ -700,6 +941,7 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
         updatedSubmission = {
           ...selectedSubmission,
           status: 'Lunas',
+          googleDriveFolderId: targetFolderId || selectedSubmission.googleDriveFolderId,
           dpAmount: undefined,
           cicilanNotes: undefined,
           riwayatCicilan: undefined,
@@ -775,6 +1017,7 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
         updatedSubmission = {
           ...selectedSubmission,
           status: finalStatus,
+          googleDriveFolderId: targetFolderId || selectedSubmission.googleDriveFolderId,
           dpAmount: finalDpAmount,
           cicilanNotes: finalCicilanNotes,
           riwayatCicilan: updatedRiwayat,
@@ -1371,6 +1614,45 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
                         <strong className="text-sm font-black text-stone-900 font-mono">
                           Rp {formatRupiah(totalVoucher)}
                         </strong>
+                      </div>
+
+                      {/* Google Drive Standard Folder Info & Quick Consolidate / Repair Button */}
+                      <div className="pt-2 border-t border-stone-200 space-y-1.5">
+                        <div className="flex items-center justify-between text-[10px]">
+                          <span className="text-stone-400 font-mono uppercase tracking-wider flex items-center gap-1">
+                            <Cloud size={11} className="text-blue-500" />
+                            Folder Drive:
+                          </span>
+                          <span className="font-mono text-stone-700 font-semibold truncate max-w-[210px]" title={getStandardDriveFolderName(selectedSubmission)}>
+                            {getStandardDriveFolderName(selectedSubmission)}
+                          </span>
+                        </div>
+                        {isDriveConnected && (
+                          <button
+                            type="button"
+                            onClick={handleManualFolderRepair}
+                            disabled={repairLoading}
+                            className="w-full py-1.5 px-2 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 rounded-lg text-[10px] font-mono font-bold flex items-center justify-center gap-1.5 transition disabled:opacity-50"
+                            title="Periksa dan gabungkan folder duplikat (seperti Tiket Pesawat - Traveloka) ke folder resmi voucher ini"
+                          >
+                            {repairLoading ? (
+                              <>
+                                <Loader2 size={11} className="animate-spin" />
+                                <span>Memeriksa & Merapikan Folder Drive...</span>
+                              </>
+                            ) : (
+                              <>
+                                <FolderSync size={11} />
+                                <span>Periksa & Rapikan Folder Duplikat Drive</span>
+                              </>
+                            )}
+                          </button>
+                        )}
+                        {repairMessage && (
+                          <div className={`p-2 rounded-lg text-[10px] font-mono ${repairMessage.isError ? 'bg-rose-50 text-rose-800 border border-rose-200' : 'bg-emerald-50 text-emerald-800 border border-emerald-200'}`}>
+                            {repairMessage.text}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
