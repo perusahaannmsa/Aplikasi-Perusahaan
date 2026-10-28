@@ -80,6 +80,16 @@ export default function App() {
     }
   });
 
+  const handleSelectTheme = (newTheme: AppTheme) => {
+    setTheme(newTheme);
+    try {
+      localStorage.setItem('NUSANTARA_THEME', newTheme);
+      saveCompanySettingsToFirestore({ theme: newTheme }).catch(() => {});
+    } catch (e) {
+      console.warn('Error saving theme:', e);
+    }
+  };
+
   useEffect(() => {
     try {
       localStorage.setItem('NUSANTARA_THEME', theme);
@@ -2779,7 +2789,7 @@ export default function App() {
                         ].map(t => (
                           <button
                             key={t.id}
-                            onClick={() => { setTheme(t.id as any); setIsUserMenuOpen(false); }}
+                            onClick={() => { handleSelectTheme(t.id as any); setIsUserMenuOpen(false); }}
                             className={`p-1.5 sm:p-2 rounded-xl border flex items-center gap-1.5 transition cursor-pointer text-left ${
                               theme === t.id ? t.act : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
                             }`}
@@ -3398,7 +3408,7 @@ export default function App() {
                       ].map(t => (
                         <button
                           key={t.id}
-                          onClick={() => { setTheme(t.id as any); setIsUserMenuOpen(false); }}
+                          onClick={() => { handleSelectTheme(t.id as any); setIsUserMenuOpen(false); }}
                           className={`p-1.5 sm:p-2 rounded-xl border flex items-center gap-1.5 transition cursor-pointer text-left ${
                             theme === t.id ? t.act : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
                           }`}
@@ -3950,7 +3960,7 @@ export default function App() {
         isOpen={isThemeModalOpen}
         onClose={() => setIsThemeModalOpen(false)}
         currentTheme={theme}
-        onSelectTheme={(t) => setTheme(t)}
+        onSelectTheme={(t) => handleSelectTheme(t)}
       />
 
     </div>
