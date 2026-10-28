@@ -238,7 +238,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
         width: 280,
         margin: 2,
         color: {
-          dark: '#064e3b',
+          dark: '#000000',
           light: '#ffffff'
         }
       });
@@ -1218,12 +1218,12 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                       {/* Left: Live QR Code Card */}
                       <div className="p-4 sm:p-5 rounded-2xl border border-stone-200 bg-stone-50/70 flex flex-col items-center text-center space-y-3">
                         <div className="flex items-center gap-2 text-xs font-black text-stone-900 uppercase tracking-wider">
-                          <QrCode size={16} className="text-emerald-600" />
+                          <QrCode size={16} className="text-stone-800" />
                           <span>Pindai (Scan) QR Code WhatsApp</span>
                         </div>
 
                         {/* Scannable QR Image Container */}
-                        <div className="w-60 h-60 bg-white p-3 rounded-2xl border-2 border-emerald-500/50 shadow-md flex flex-col items-center justify-center relative">
+                        <div className="w-60 h-60 bg-white p-3 rounded-2xl border-2 border-stone-300 shadow-md flex flex-col items-center justify-center relative">
                           {qrCode ? (
                             <img 
                               src={qrCode} 

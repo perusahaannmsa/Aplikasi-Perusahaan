@@ -737,7 +737,14 @@ Silakan buka tautan di atas untuk mengakses menu absensi dan mencatat kehadiran 
       if (qr) {
         connectionStatus = "qr";
         try {
-          qrCodeDataUrl = await QRCode.toDataURL(qr);
+          qrCodeDataUrl = await QRCode.toDataURL(qr, {
+            width: 280,
+            margin: 2,
+            color: {
+              dark: "#000000",
+              light: "#ffffff",
+            },
+          });
         } catch (err: any) {
           console.error("Failed to generate QR data URL", err);
           qrCodeDataUrl = null;
