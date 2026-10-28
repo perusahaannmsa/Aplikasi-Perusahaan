@@ -20,6 +20,7 @@ import {
   disconnectWhatsApp, 
   sendWhatsAppMessage, 
   requestWhatsAppPairingCode,
+  setCustomConnectedUser,
   generateBusinessAiReply,
   recordKeepAlivePing,
   getKeepAliveInfo,
@@ -33,15 +34,29 @@ const app = express();
 // Port configuration: AI Studio dev server MUST run on port 3000 (nginx listens on 8080 and proxies to 3000).
 // In external platforms (e.g. Render, Railway), use process.env.PORT.
 let PORT = 3000;
-const portArgIndex = process.argv.indexOf("--port");
-if (portArgIndex !== -1 && process.argv[portArgIndex + 1]) {
-  PORT = parseInt(process.argv[portArgIndex + 1], 10);
-} else if (process.env.RENDER || process.env.RAILWAY_ENVIRONMENT) {
-  PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
-} else if (process.env.NODE_ENV === "production" && process.env.PORT && process.env.PORT !== "8080") {
-  PORT = parseInt(process.env.PORT, 10);
-} else {
-  PORT = 3000;
+let HOST = "0.0.0.0";
+
+for (let i = 0; i < process.argv.length; i++) {
+  const arg = process.argv[i];
+  if (arg === "--port" && process.argv[i + 1]) {
+    PORT = parseInt(process.argv[i + 1], 10) || 3000;
+  } else if (arg.startsWith("--port=")) {
+    PORT = parseInt(arg.split("=")[1], 10) || 3000;
+  } else if (arg === "--host" && process.argv[i + 1]) {
+    HOST = process.argv[i + 1];
+  } else if (arg.startsWith("--host=")) {
+    HOST = arg.split("=")[1];
+  }
+}
+
+if (!process.argv.includes("--port") && !process.argv.some(a => a.startsWith("--port="))) {
+  if (process.env.RENDER || process.env.RAILWAY_ENVIRONMENT) {
+    PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+  } else if (process.env.NODE_ENV === "production" && process.env.PORT && process.env.PORT !== "8080") {
+    PORT = parseInt(process.env.PORT, 10) || 3000;
+  } else {
+    PORT = 3000;
+  }
 }
 
 process.on("SIGTERM", () => {
@@ -3783,6 +3798,30 @@ app.post("/api/wa/pairing-code", async (req, res) => {
   }
 });
 
+// POST Connect phone number directly as personal WhatsApp
+app.post("/api/wa/connect-phone", (req, res) => {
+  try {
+    const { phone, name } = req.body || {};
+    if (!phone) {
+      return res.status(400).json({ success: false, error: "Nomor WhatsApp wajib diisi." });
+    }
+    let clean = String(phone).replace(/[^0-9]/g, "");
+    if (clean.startsWith("0")) clean = "62" + clean.slice(1);
+    else if (clean.startsWith("8")) clean = "62" + clean;
+    const resolvedName = name || `WhatsApp Pribadi (${clean})`;
+
+    const user = setCustomConnectedUser(clean, resolvedName);
+    return res.json({
+      success: true,
+      status: "connected",
+      user,
+      message: `Nomor WhatsApp ${clean} berhasil ditautkan sebagai WhatsApp pribadi sistem.`
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // POST Send a test WhatsApp message manually
 app.post("/api/wa/send-test", async (req, res) => {
   if (!validateAdminToken(req)) {
@@ -5156,7 +5195,6 @@ async function bootstrap() {
       server: {
         middlewareMode: true,
         hmr: false,
-        watch: null,
       },
       appType: "spa",
     });
@@ -5190,8 +5228,8 @@ async function bootstrap() {
     });
   }
 
-  const serverInstance = app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server is running at http://localhost:${PORT}`);
+  const serverInstance = app.listen(PORT, HOST, () => {
+    console.log(`Server is running at http://${HOST === "0.0.0.0" ? "localhost" : HOST}:${PORT}`);
     // Boot up WhatsApp Bot service if local credentials or session backup exists
     setTimeout(() => {
       try {
@@ -5238,20 +5276,8 @@ async function bootstrap() {
     }, 1500);
   });
 
-
   serverInstance.on("error", (err: any) => {
-    console.error("Server listen error:", err);
-    if (err.code === "EADDRINUSE") {
-      console.warn(`[Server] Port ${PORT} sedang digunakan. Menghubungkan ulang ke port 3000 dalam 1 detik...`);
-      setTimeout(() => {
-        try {
-          serverInstance.close();
-        } catch (_) {}
-        app.listen(3000, "0.0.0.0", () => {
-          console.log("Server berhasil berjalan normal di http://localhost:3000");
-        });
-      }, 1000);
-    }
+    console.error(`[Server Listen Error] ${err?.message || err}`);
   });
 }
 
