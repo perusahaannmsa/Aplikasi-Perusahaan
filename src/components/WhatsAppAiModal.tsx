@@ -225,32 +225,6 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
 
   const [qrCountdown, setQrCountdown] = useState<number>(60);
 
-  // Generate real QR code image directly in browser
-  const generateRealQr = async (phoneToPair?: string) => {
-    try {
-      const cleanPhone = phoneToPair ? phoneToPair.replace(/[^0-9]/g, '') : '';
-      const pairingToken = `NMSA-WA-${Date.now().toString(36).toUpperCase()}`;
-      const payload = cleanPhone
-        ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(`[PT NMSA] Autentikasi Tautan WhatsApp Resmi Absensi Keuangan: ${pairingToken}`)}`
-        : `https://web.whatsapp.com/send?text=${encodeURIComponent(`[PT NMSA] Tautkan WhatsApp Admin Absensi & Keuangan: ${pairingToken}`)}`;
-      
-      const qrDataUrl = await QRCode.toDataURL(payload, {
-        width: 280,
-        margin: 2,
-        color: {
-          dark: '#000000',
-          light: '#ffffff'
-        }
-      });
-      setQrCode(qrDataUrl);
-      setStatus('qr');
-      return qrDataUrl;
-    } catch (e) {
-      console.warn('Failed to generate local QR:', e);
-      return null;
-    }
-  };
-
   // Fetch WhatsApp connection status from active server or saved personal account
   const fetchStatus = async () => {
     try {
@@ -267,38 +241,33 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
         return;
       }
 
-      // 2. Check server status
+      // 2. Check server status for real Baileys connection / QR code
       const res = await apiFetch('/api/wa/status');
       if (res.ok) {
         const data = await res.json().catch(() => ({}));
         if (data.status === 'connected' && data.user) {
           setStatus('connected');
           setConnectedUser(data.user);
+          setQrCode(null);
           setErrorMessage(null);
           return;
         }
         if (data.qr) {
           setQrCode(data.qr);
           setStatus('qr');
+          setErrorMessage(null);
           return;
         }
-      }
-
-      // If disconnected, ensure state reflects it and generate client QR
-      if (status !== 'connected') {
-        if (!qrCode) {
-          await generateRealQr(pairingPhone);
+        if (data.status) {
+          setStatus(data.status);
         }
       }
     } catch (err: any) {
       console.warn('Error fetching WA status:', err);
-      if (status !== 'connected' && !qrCode) {
-        await generateRealQr(pairingPhone);
-      }
     }
   };
 
-  // Refresh QR code manually
+  // Refresh QR code manually from Baileys server
   const handleRefreshQr = async () => {
     setIsRefreshingQr(true);
     setErrorMessage(null);
@@ -310,11 +279,12 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
         setQrCode(data.qr);
         setStatus('qr');
       } else {
-        await generateRealQr(pairingPhone);
+        // Auto-fetch after 1.5 seconds to pick up the fresh QR from socket handshake
+        setTimeout(fetchStatus, 1500);
       }
     } catch (err: any) {
-      console.warn('Error refreshing WA QR, fallback to direct QR:', err);
-      await generateRealQr(pairingPhone);
+      console.warn('Error refreshing WA QR:', err);
+      setTimeout(fetchStatus, 1500);
     } finally {
       setIsRefreshingQr(false);
     }
@@ -464,15 +434,14 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
       const data = await res.json().catch(() => ({}));
       if (data.success && (data.code || data.pairingCode)) {
         setPairingCode(safeString(data.code || data.pairingCode));
+        setErrorMessage(null);
       } else {
-        const p1 = Math.floor(1000 + Math.random() * 9000);
-        const p2 = Math.floor(1000 + Math.random() * 9000);
-        setPairingCode(`${p1}-${p2}`);
+        setErrorMessage(data.error || 'Server belum siap memberikan kode pairing. Silakan coba lagi dalam beberapa detik.');
+        setPairingCode(null);
       }
     } catch (err: any) {
-      const p1 = Math.floor(1000 + Math.random() * 9000);
-      const p2 = Math.floor(1000 + Math.random() * 9000);
-      setPairingCode(`${p1}-${p2}`);
+      setErrorMessage(err?.message || 'Gagal menghubungi server untuk meminta kode pairing.');
+      setPairingCode(null);
     } finally {
       setPairingLoading(false);
     }
@@ -977,7 +946,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                       type="button"
                       onClick={() => {
                         setActiveLinkMethod('qr');
-                        if (!qrCode) generateRealQr(pairingPhone);
+                        fetchStatus();
                       }}
                       className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
                         activeLinkMethod === 'qr'

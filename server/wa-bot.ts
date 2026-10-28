@@ -962,14 +962,11 @@ export async function requestWhatsAppPairingCode(phone: string): Promise<string>
       }
     }
   } catch (err: any) {
-    console.warn("Baileys pairing code request direct attempt warned:", err?.message);
+    console.error("[WhatsApp Bot] Error requesting pairing code:", err);
+    throw new Error(`Gagal meminta kode pairing: ${err?.message || "Server WhatsApp belum siap. Silakan ulangi dalam beberapa detik."}`);
   }
 
-  // Guaranteed fallback 8-digit pairing code (format: XXXX-XXXX)
-  const part1 = Math.floor(1000 + Math.random() * 9000);
-  const part2 = Math.floor(1000 + Math.random() * 9000);
-  const fallbackCode = `${part1}-${part2}`;
-  return fallbackCode;
+  throw new Error("Koneksi WhatsApp belum merespons permintaan kode pairing. Silakan klik tombol sekali lagi.");
 }
 
 /**
