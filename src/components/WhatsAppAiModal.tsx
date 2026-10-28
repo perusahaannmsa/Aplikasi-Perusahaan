@@ -262,6 +262,31 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
           setStatus(data.status);
         }
       }
+
+      // 3. Fallback: Check Firebase Firestore (for Vercel serverless syncing with active backend)
+      try {
+        const { getDoc, doc } = await import('firebase/firestore');
+        const { firestoreDb } = await import('../firebase');
+        if (firestoreDb) {
+          const snap = await getDoc(doc(firestoreDb, 'companies', 'nmsa'));
+          if (snap.exists()) {
+            const cData = snap.data();
+            if (cData?.waConnected && cData?.waUser) {
+              setStatus('connected');
+              setConnectedUser(cData.waUser);
+              setQrCode(null);
+              setErrorMessage(null);
+              return;
+            }
+            if (cData?.waQr) {
+              setQrCode(cData.waQr);
+              setStatus('qr');
+              setErrorMessage(null);
+              return;
+            }
+          }
+        }
+      } catch (_) {}
     } catch (err: any) {
       console.warn('Error fetching WA status:', err);
     }
@@ -322,6 +347,19 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: clean, name: resolvedName })
+      });
+    } catch (_) {}
+
+    // 4. Sync to Firebase Firestore so Vercel and all devices see the connection
+    try {
+      const { saveCompanySettingsToFirestore } = await import('../firebase');
+      await saveCompanySettingsToFirestore({
+        waConnected: true,
+        waPhone: clean,
+        waName: resolvedName,
+        waUser: { id: `${clean}@s.whatsapp.net`, name: resolvedName },
+        waStatus: 'connected',
+        waQr: null
       });
     } catch (_) {}
   };
@@ -397,8 +435,17 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
       setErrorMessage(null);
       setIsLinkingNewAccount(true);
       await apiFetch('/api/wa/disconnect', { method: 'POST' }).catch(() => {});
-      // Immediately regenerate clean QR code
-      await generateRealQr();
+      try {
+        const { saveCompanySettingsToFirestore } = await import('../firebase');
+        await saveCompanySettingsToFirestore({
+          waConnected: false,
+          waUser: null,
+          waPhone: undefined,
+          waQr: null,
+          waStatus: 'disconnected'
+        });
+      } catch (_) {}
+      fetchStatus();
     } catch (err) {
       console.error('Disconnect error:', err);
     } finally {
@@ -422,9 +469,6 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
         setPairingLoading(false);
         return;
       }
-
-      // Generate matching QR code for this specific phone as well
-      generateRealQr(clean);
 
       const res = await apiFetch('/api/wa/pairing-code', {
         method: 'POST',
@@ -1200,10 +1244,31 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                               className="w-full h-full object-contain rounded-lg"
                             />
                           ) : (
-                            <div className="flex flex-col items-center justify-center gap-2 text-stone-500 text-xs p-3 text-center h-full">
-                              <RefreshCw size={24} className="animate-spin text-emerald-600" />
-                              <span className="font-bold text-xs text-emerald-800">Menyiapkan QR Code Resmi...</span>
-                              <span className="text-[10px] text-stone-400">Silakan tunggu sebentar</span>
+                            <div className="flex flex-col items-center justify-center gap-2 p-3 text-center h-full">
+                              <div className="w-10 h-10 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold text-base shadow-2xs">
+                                <Smartphone size={20} className="text-emerald-700" />
+                              </div>
+                              <span className="font-bold text-xs text-stone-900">Tautkan Cepat Tanpa Scan</span>
+                              <p className="text-[10px] text-stone-600 leading-snug">
+                                Di hosting Vercel (serverless), tautkan WhatsApp pribadi Anda langsung via <strong>Metode 1 (Nomor Telepon)</strong> tanpa perlu scan QR kamera.
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => setActiveLinkMethod('phone')}
+                                className="mt-1 py-1.5 px-3 bg-emerald-800 hover:bg-emerald-900 text-white rounded-lg text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs w-full"
+                              >
+                                <CheckCircle2 size={13} />
+                                <span>Buka Metode 1 (Tautkan No HP)</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleRefreshQr}
+                                disabled={isRefreshingQr}
+                                className="text-[10px] text-stone-500 hover:text-stone-800 underline transition cursor-pointer flex items-center gap-1 mt-0.5"
+                              >
+                                <RefreshCw size={10} className={isRefreshingQr ? "animate-spin" : ""} />
+                                <span>{isRefreshingQr ? "Memeriksa..." : "Cek Ulang QR Server"}</span>
+                              </button>
                             </div>
                           )}
                         </div>

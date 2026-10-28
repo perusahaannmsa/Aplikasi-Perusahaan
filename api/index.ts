@@ -499,6 +499,76 @@ export default async function handler(req: any, res: any) {
       return res.end(JSON.stringify(state.internalMemos || []));
     }
 
+    // WhatsApp Endpoints for Vercel Serverless
+    if (cleanPath === "wa/status") {
+      const state = loadState();
+      return res.end(JSON.stringify({
+        status: state.waConnected ? "connected" : (state.waQr ? "qr" : "disconnected"),
+        qr: state.waQr || null,
+        user: state.waUser || (state.waPhone ? { id: `${state.waPhone}@s.whatsapp.net`, name: state.waName || "WhatsApp Pribadi" } : null),
+        phone: state.waPhone || null,
+        isServerless: true
+      }));
+    }
+
+    if (cleanPath === "wa/connect-phone") {
+      const state = loadState();
+      const body = await parseRequestBody(req);
+      const cleanPhone = String(body.phone || "").replace(/[^0-9]/g, "");
+      const resolvedName = String(body.name || `WhatsApp Pribadi (+${cleanPhone})`);
+      if (cleanPhone) {
+        state.waConnected = true;
+        state.waPhone = cleanPhone;
+        state.waName = resolvedName;
+        state.waUser = { id: `${cleanPhone}@s.whatsapp.net`, name: resolvedName };
+        state.waQr = null;
+        saveState(state);
+        return res.end(JSON.stringify({ success: true, phone: cleanPhone, name: resolvedName }));
+      }
+      res.statusCode = 400;
+      return res.end(JSON.stringify({ success: false, error: "Nomor telepon tidak valid" }));
+    }
+
+    if (cleanPath === "wa/disconnect") {
+      const state = loadState();
+      state.waConnected = false;
+      state.waPhone = null;
+      state.waName = null;
+      state.waUser = null;
+      state.waQr = null;
+      saveState(state);
+      return res.end(JSON.stringify({ success: true, message: "WhatsApp terputus" }));
+    }
+
+    if (cleanPath === "wa/refresh-qr") {
+      const state = loadState();
+      return res.end(JSON.stringify({
+        success: false,
+        qr: state.waQr || null,
+        isServerless: true,
+        message: "Di Vercel serverless, silakan gunakan Metode 1 (Tautkan No HP) atau jalankan backend server."
+      }));
+    }
+
+    if (cleanPath === "wa/security-settings") {
+      const state = loadState();
+      if (req.method === "POST") {
+        const body = await parseRequestBody(req);
+        state.securitySettings = { ...(state.securitySettings || {}), ...body };
+        saveState(state);
+        return res.end(JSON.stringify({ success: true, settings: state.securitySettings }));
+      }
+      return res.end(JSON.stringify({
+        success: true,
+        settings: state.securitySettings || {
+          privacyMode: "whitelist",
+          allowedPhones: [],
+          securityPin: "1234",
+          enableDriveLinks: true
+        }
+      }));
+    }
+
     // 10. Admin Login
     if (cleanPath === "admin/login") {
       const state = loadState();
