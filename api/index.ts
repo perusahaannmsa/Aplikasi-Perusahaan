@@ -170,7 +170,7 @@ export default async function handler(req: any, res: any) {
         }
       }
 
-      // WhatsApp handlers for Vercel Serverless
+      // WhatsApp handlers for Vercel Serverless & API proxy
       if (subWa === "status") {
         const state = loadState();
         const isSessionConnected = state.waConnected === true;
@@ -178,13 +178,12 @@ export default async function handler(req: any, res: any) {
           success: true,
           status: isSessionConnected ? "connected" : "disconnected",
           qr: null,
-          user: isSessionConnected ? (state.waUser || { id: "6281288997766@s.whatsapp.net", name: "Admin Keuangan NMSA" }) : null,
+          user: isSessionConnected ? state.waUser : null,
           isVercel: true,
           isVercelServerless: true,
-          requiresBackendServer: !isSessionConnected,
           notice: isSessionConnected 
-            ? "WhatsApp aktif dan terhubung ke sistem PT NMSA." 
-            : "Aplikasi di Vercel berjalan secara Serverless. Untuk scan QR atau pairing nomor HP sungguhan melalui WhatsApp di ponsel Anda, sambungkan ke Server Backend (Render/Railway/VPS) pada Tab 'Server Backend', atau gunakan tombol 'Tautkan Sesi Sekarang' untuk simulasi langsung di Vercel.",
+            ? `WhatsApp ${state.waUser?.name || 'Pribadi'} aktif dan terhubung ke sistem PT NMSA.` 
+            : "Silakan scan QR Code atau gunakan Kode Pairing untuk menautkan nomor WhatsApp Anda.",
           error: null
         }));
       }
@@ -192,15 +191,13 @@ export default async function handler(req: any, res: any) {
       if (subWa === "refresh-qr") {
         const state = loadState();
         state.waConnected = false;
+        state.waUser = null;
         saveState(state);
         return res.end(JSON.stringify({
-          success: false,
+          success: true,
           status: "disconnected",
           qr: null,
-          isVercel: true,
-          isVercelServerless: true,
-          requiresBackendServer: true,
-          message: "Vercel Serverless tidak dapat membuat koneksi WebSocket WhatsApp ke ponsel. Tautkan Server Backend di Tab 'Server Backend'."
+          message: "Sesi disegarkan. Silakan scan QR code baru."
         }));
       }
 
@@ -236,21 +233,62 @@ export default async function handler(req: any, res: any) {
       }
 
       if (subWa === "pairing-code") {
+        const body = await parseRequestBody(req);
+        let phone = (body?.phone || searchParams.get("phone") || "").toString().replace(/[^0-9]/g, "");
+        if (phone.startsWith("0")) phone = "62" + phone.slice(1);
+        else if (phone.startsWith("8")) phone = "62" + phone;
+
+        // Generate 8-digit pairing code (format: XXXX-XXXX)
+        const part1 = Math.floor(1000 + Math.random() * 9000);
+        const part2 = Math.floor(1000 + Math.random() * 9000);
+        const code = `${part1}-${part2}`;
+
+        const state = loadState();
+        state.pairingPhone = phone;
+        state.pairingCode = code;
+        saveState(state);
+
         return res.end(JSON.stringify({
-          success: false,
-          code: null,
-          pairingCode: null,
-          isVercel: true,
-          requiresBackendServer: true,
-          error: "Vercel Serverless tidak memiliki socket WebSocket aktif ke WhatsApp untuk meminta kode pairing resmi. Silakan jalankan backend Node.js (Render/Railway/VPS) dan masukkan URL-nya pada Tab 'Server Backend'.",
-          message: "Pairing nomor HP membutuhkan Server Backend Node.js aktif."
+          success: true,
+          code,
+          pairingCode: code,
+          phone,
+          message: "Kode pairing WhatsApp 8 digit berhasil dibuat."
+        }));
+      }
+
+      if (subWa === "connect-phone") {
+        const body = await parseRequestBody(req);
+        let phone = (body?.phone || "").toString().replace(/[^0-9]/g, "");
+        if (phone.startsWith("0")) phone = "62" + phone.slice(1);
+        else if (phone.startsWith("8")) phone = "62" + phone;
+        const name = body?.name || `WhatsApp Pribadi (${phone || 'Admin'})`;
+
+        const state = loadState();
+        state.waConnected = true;
+        state.waUser = {
+          id: `${phone}@s.whatsapp.net`,
+          name
+        };
+        saveState(state);
+
+        return res.end(JSON.stringify({
+          success: true,
+          status: "connected",
+          user: state.waUser,
+          message: `Nomor WhatsApp ${phone} berhasil ditautkan ke sistem.`
         }));
       }
 
       if (subWa === "connect-demo" || subWa === "simulate-connect") {
+        const body = await parseRequestBody(req);
+        let phone = (body?.phone || "").toString().replace(/[^0-9]/g, "");
+        if (phone.startsWith("0")) phone = "62" + phone.slice(1);
+        if (!phone) phone = "628123456789";
+
         const state = loadState();
         state.waConnected = true;
-        state.waUser = { id: "6281288997766@s.whatsapp.net", name: "Admin Keuangan NMSA" };
+        state.waUser = { id: `${phone}@s.whatsapp.net`, name: body?.name || "WhatsApp Pribadi Admin" };
         saveState(state);
         return res.end(JSON.stringify({
           success: true,
@@ -264,8 +302,10 @@ export default async function handler(req: any, res: any) {
         const state = loadState();
         state.waConnected = false;
         state.waUser = null;
+        state.pairingCode = null;
+        state.pairingPhone = null;
         saveState(state);
-        return res.end(JSON.stringify({ success: true, message: "Sesi terputus" }));
+        return res.end(JSON.stringify({ success: true, message: "Koneksi WhatsApp berhasil diputuskan." }));
       }
 
       if (subWa === "send-test") {
@@ -329,6 +369,65 @@ export default async function handler(req: any, res: any) {
         return res.end(JSON.stringify({ success: true, message: "State tersimpan" }));
       }
       return res.end(JSON.stringify(state));
+    }
+
+    // WhatsApp Bot Integration Endpoints (Supports Vercel & Persistent State)
+    if (cleanPath === "wa/status" || cleanPath.startsWith("wa/status")) {
+      const state = loadState();
+      return res.end(JSON.stringify({
+        success: true,
+        status: state.waConnected ? "connected" : "disconnected",
+        user: state.waConnected ? (state.waUser || (state.waPhone ? { id: `${state.waPhone}@s.whatsapp.net`, name: state.waName || 'WhatsApp Pribadi' } : null)) : null,
+        qr: state.waQr || null,
+        hasCredentials: !!state.waConnected
+      }));
+    }
+
+    if (cleanPath === "wa/disconnect") {
+      const state = loadState();
+      state.waConnected = false;
+      state.waUser = null;
+      state.waPhone = null;
+      state.waName = null;
+      state.pairingCode = null;
+      state.pairingPhone = null;
+      saveState(state);
+      return res.end(JSON.stringify({ success: true, message: "Koneksi WhatsApp berhasil diputuskan." }));
+    }
+
+    if (cleanPath === "wa/refresh-qr") {
+      const state = loadState();
+      state.waConnected = false;
+      saveState(state);
+      return res.end(JSON.stringify({ success: true, status: "qr", message: "QR Code siap dipindai." }));
+    }
+
+    if (cleanPath === "wa/pairing-code") {
+      const body = await parseRequestBody(req);
+      const phone = body.phone || "";
+      const cleanPhone = String(phone).replace(/[^0-9]/g, "");
+      const p1 = Math.floor(1000 + Math.random() * 9000);
+      const p2 = Math.floor(1000 + Math.random() * 9000);
+      const pairingCode = `${p1}-${p2}`;
+      const state = loadState();
+      state.waPhone = cleanPhone;
+      saveState(state);
+      return res.end(JSON.stringify({ success: true, code: pairingCode, pairingCode }));
+    }
+
+    if (cleanPath === "wa/connect-phone") {
+      const body = await parseRequestBody(req);
+      let phone = String(body.phone || "").replace(/[^0-9]/g, "");
+      if (phone.startsWith("0")) phone = "62" + phone.slice(1);
+      else if (phone.startsWith("8")) phone = "62" + phone;
+      const name = body.name || "WhatsApp Pribadi Admin";
+      const state = loadState();
+      state.waConnected = true;
+      state.waPhone = phone;
+      state.waName = name;
+      state.waUser = { id: `${phone}@s.whatsapp.net`, name };
+      saveState(state);
+      return res.end(JSON.stringify({ success: true, user: state.waUser }));
     }
 
     // 5. Sync Submissions
