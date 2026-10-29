@@ -59,14 +59,28 @@ const getInitialF2Signers = (sub: Submission): SignerConfigItem[] => {
     const saved = localStorage.getItem(STORAGE_KEY_F2_SIGNERS);
     if (saved) {
       const parsed = JSON.parse(saved);
-      if (Array.isArray(parsed) && parsed.length === 2) return parsed;
+      if (Array.isArray(parsed) && parsed.length >= 1) {
+        // Self-heal: If saved F2 had hardcoded Nur Wahyudi and sub has diajukanOleh, prefer sub.diajukanOleh!
+        return parsed.map((item, idx) => {
+          if (idx === 0 && item.name === 'Nur Wahyudi' && sub.diajukanOleh && sub.diajukanOleh !== 'Nur Wahyudi') {
+            return { ...item, name: sub.diajukanOleh, role: sub.diajukanJabatan || item.role };
+          }
+          return item;
+        });
+      }
     }
   } catch (e) {
     console.warn('Failed to parse saved F2 signers', e);
   }
+
+  // Derive directly from F1 signers so F2 dynamically matches the voucher in the application
+  const f1List = getInitialF1Signers(sub, 'rifki');
+  const applicant = f1List[0] || { title: 'Diajukan', name: sub.diajukanOleh || 'Andi Dhiya Salsabila', role: sub.diajukanJabatan || 'Staff Keuangan', enabled: true };
+  const verifier = f1List[1] || { title: 'Diverifikasi', name: 'Sri Ekowati', role: 'Manager Keuangan', enabled: false };
+
   return [
-    { title: 'Dibuat Oleh', name: sub.dibuatOleh || 'Nur Wahyudi', role: 'Staff Keuangan' },
-    { title: 'Diajukan', name: sub.diajukanOleh || 'Sri Ekowati', role: sub.diajukanJabatan || 'Manager Keuangan' },
+    { title: applicant.title || 'Diajukan', name: applicant.name, role: applicant.role, enabled: true },
+    { title: verifier.title || 'Diverifikasi', name: verifier.name, role: verifier.role, enabled: false }, // 2nd signer removed by default
   ];
 };
 
@@ -1096,7 +1110,14 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
     } catch (e) {}
     return 'table';
   });
-  const [showF2, setShowF2] = useState<boolean>(false);
+  const [showF2, setShowF2] = useState<boolean>(() => {
+    if (submission.showF2 !== undefined) return !!submission.showF2;
+    try {
+      const saved = localStorage.getItem('nmsa_voucher_show_f2');
+      if (saved !== null) return saved === 'true';
+    } catch (e) {}
+    return false;
+  });
   const [f1Verifier, setF1Verifier] = useState<'rifki' | 'nursyam'>(() => {
     if (submission.diverifikasiOleh?.toLowerCase().includes('nursyam')) return 'nursyam';
     return 'rifki';
@@ -2355,7 +2376,10 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
                   <span className="text-[10px] font-bold text-stone-500 px-2 uppercase font-mono hidden sm:inline">Formulir F2:</span>
                   <button
                     type="button"
-                    onClick={() => setShowF2(true)}
+                    onClick={() => {
+                      setShowF2(true);
+                      localStorage.setItem('nmsa_voucher_show_f2', 'true');
+                    }}
                     className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer flex items-center gap-1 ${
                       showF2 ? 'bg-amber-600 text-white shadow-3xs' : 'text-stone-500 hover:text-stone-850'
                     }`}
@@ -2366,7 +2390,10 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
                   </button>
                   <button
                     type="button"
-                    onClick={() => setShowF2(false)}
+                    onClick={() => {
+                      setShowF2(false);
+                      localStorage.setItem('nmsa_voucher_show_f2', 'false');
+                    }}
                     className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer flex items-center gap-1 ${
                       !showF2 ? 'bg-stone-800 text-white shadow-3xs' : 'text-stone-500 hover:text-stone-850'
                     }`}

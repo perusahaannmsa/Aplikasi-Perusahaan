@@ -27,6 +27,120 @@ export function formatMemoBodyHtml(raw: string | undefined): string {
 }
 
 /**
+ * Strips HTML tags, Word styles, and decodes HTML entities to clean, human-readable plain text
+ */
+export function stripHtmlToText(rawHtml: string | undefined): string {
+  if (!rawHtml) return '';
+  return rawHtml
+    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<\/p>/gi, ' ')
+    .replace(/<br\s*[\/]?>/gi, ' ')
+    .replace(/<\/div>/gi, ' ')
+    .replace(/<\/li>/gi, ' ')
+    .replace(/<\/tr>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&mdash;/gi, '—')
+    .replace(/&ndash;/gi, '–')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export interface ExtractedMemoNominal {
+  amount: number | null;
+  formatted: string | null;
+  terbilang?: string | null;
+}
+
+/**
+ * Extracts nominal value (Rp) and terbilang description from memo
+ * Checks linkedAmount first, then scans isiSurat and perihal text for currency patterns
+ */
+export function extractMemoNominal(memo: Partial<InternalMemo>): ExtractedMemoNominal {
+  // 1. Check linkedAmount
+  if (typeof memo.linkedAmount === 'number' && memo.linkedAmount > 0) {
+    return {
+      amount: memo.linkedAmount,
+      formatted: `Rp ${memo.linkedAmount.toLocaleString('id-ID')}`,
+    };
+  }
+
+  // 2. Check nominal property if set
+  const anyMemo = memo as any;
+  if (anyMemo.nominal) {
+    const parsed = typeof anyMemo.nominal === 'number'
+      ? anyMemo.nominal
+      : parseFloat(String(anyMemo.nominal).replace(/[^0-9]/g, ''));
+    if (!isNaN(parsed) && parsed > 0) {
+      return {
+        amount: parsed,
+        formatted: `Rp ${parsed.toLocaleString('id-ID')}`,
+      };
+    }
+  }
+
+  // 3. Scan isiSurat and perihal text
+  const cleanBody = stripHtmlToText(memo.isiSurat);
+  const cleanPerihal = memo.perihal || '';
+  const fullText = `${cleanPerihal} ${cleanBody}`;
+
+  // Extract terbilang if present (e.g. "terbilang (Empat Belas Juta...)" or "terbilang Empat Belas Juta...")
+  let terbilang: string | null = null;
+  const tbMatch = fullText.match(/terbilang\s*(?::|\s)\s*(?:\()?([a-zA-Z\s\(\)]+?)(?:\)|\.(?:\s|$)|,(?:\s|$)|$)/i);
+  if (tbMatch && tbMatch[1]) {
+    const rawTb = tbMatch[1].trim();
+    if (rawTb.length >= 4 && !/^\d+$/.test(rawTb)) {
+      terbilang = `(${rawTb})`;
+    }
+  }
+
+  // Search for currency patterns:
+  // e.g. "Rp 14.985.000,-" or "Rp. 14.985.000,-" or "Rp 14.985.000" or "sebesar Rp 2.500.000"
+  const rpRegex = /(?:sebesar\s+dana|sebesar|nominal|senilai)?\s*(?:Rp\.?|IDR)\s*([0-9]{1,3}(?:\.[0-9]{3})+(?:,[0-9]+)?|-?|[0-9]{5,})/gi;
+  let match;
+  let bestAmount: number | null = null;
+  let bestFormatted: string | null = null;
+
+  while ((match = rpRegex.exec(fullText)) !== null) {
+    const rawNum = match[1];
+    if (!rawNum) continue;
+    // Strip trailing ,- or .-
+    const cleanNumStr = rawNum.replace(/[,-]+$/, '').replace(/\./g, '').replace(/,/g, '.');
+    const parsed = parseFloat(cleanNumStr);
+    if (!isNaN(parsed) && parsed > 100) {
+      bestAmount = parsed;
+      bestFormatted = `Rp ${parsed.toLocaleString('id-ID')}`;
+      break;
+    }
+  }
+
+  // Alternative fallback pattern: "sebesar 14.985.000" (without explicit "Rp")
+  if (!bestAmount) {
+    const altRegex = /(?:sebesar|nominal|senilai)\s+([0-9]{1,3}(?:\.[0-9]{3})+)/i;
+    const altMatch = fullText.match(altRegex);
+    if (altMatch && altMatch[1]) {
+      const parsed = parseFloat(altMatch[1].replace(/\./g, ''));
+      if (!isNaN(parsed) && parsed > 100) {
+        bestAmount = parsed;
+        bestFormatted = `Rp ${parsed.toLocaleString('id-ID')}`;
+      }
+    }
+  }
+
+  return {
+    amount: bestAmount,
+    formatted: bestFormatted,
+    terbilang,
+  };
+}
+
+/**
  * Parses a "Dari" string into Name and Role/Jabatan.
  * Supports formats like:
  * - "Andi Muhammad Rifki - Direktur"

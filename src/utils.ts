@@ -1268,8 +1268,8 @@ export async function generateF1PdfBytes(
 export async function generateF2PdfBytes(
   submission: any,
   grandTotal: number,
-  customSigners?: Array<{ title: string; name: string; role: string }>,
-  showApproved: boolean = true
+  customSigners?: Array<{ title: string; name: string; role: string; enabled?: boolean }>,
+  showApproved: boolean = false
 ): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.create();
   const page = pdfDoc.addPage([595.27, 841.89]);
@@ -1624,8 +1624,8 @@ export async function generateF2PdfBytes(
   curTableY -= totalRowH;
 
   // ================= 5. SIGNATURES BLOCK (TABLE STYLE MATCHING F2SignaturesBlock) =================
-  let f2Signers = customSigners;
-  if (!f2Signers && typeof window !== 'undefined' && window.localStorage) {
+  let f2Signers: any[] = customSigners || [];
+  if ((!f2Signers || f2Signers.length === 0) && typeof window !== 'undefined' && window.localStorage) {
     try {
       const saved = localStorage.getItem('nmsa_custom_f2_signers_config');
       if (saved) {
@@ -1635,13 +1635,55 @@ export async function generateF2PdfBytes(
     } catch (_) {}
   }
 
-  const s1Title = cleanSingleLine(f2Signers?.[0]?.title || 'Dibuat Oleh');
-  const s1Name = cleanSingleLine(f2Signers?.[0]?.name || submission.dibuatOleh || 'Nur Wahyudi');
-  const s1Role = cleanSingleLine(f2Signers?.[0]?.role || 'Staff Keuangan');
+  // Retrieve F1 signers so F2 automatically matches the voucher in the application
+  let f1SignersList: any[] = [];
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      const savedF1 = localStorage.getItem('nmsa_custom_f1_signers_config');
+      if (savedF1) {
+        const parsedF1 = JSON.parse(savedF1);
+        if (Array.isArray(parsedF1) && parsedF1.length >= 1) f1SignersList = parsedF1;
+      }
+    } catch (_) {}
+  }
 
-  const s2Title = cleanSingleLine(f2Signers?.[1]?.title || 'Diajukan');
-  const s2Name = cleanSingleLine(f2Signers?.[1]?.name || submission.diajukanOleh || 'Sri Ekowati');
-  const s2Role = cleanSingleLine(f2Signers?.[1]?.role || submission.diajukanJabatan || 'Manager Keuangan');
+  const applicantF1 = f1SignersList[0] || {
+    title: 'Diajukan',
+    name: (submission.diajukanOleh && submission.diajukanOleh !== 'Sri Ekowati') ? submission.diajukanOleh : (submission.dibuatOleh || 'Andi Dhiya Salsabila'),
+    role: submission.diajukanJabatan || 'Staff Keuangan',
+    enabled: true
+  };
+  const verifierF1 = f1SignersList[1] || {
+    title: 'Diverifikasi',
+    name: 'Sri Ekowati',
+    role: 'Manager Keuangan',
+    enabled: true
+  };
+
+  if (!f2Signers || f2Signers.length === 0) {
+    // Default F2: Matches voucher F1 signers with 2nd signer disabled
+    f2Signers = [
+      { title: applicantF1.title || 'Diajukan', name: applicantF1.name, role: applicantF1.role, enabled: true },
+      { title: verifierF1.title || 'Diverifikasi', name: verifierF1.name, role: verifierF1.role, enabled: false }
+    ];
+  } else {
+    // If F2 had legacy hardcoded Nur Wahyudi while voucher applicant is different, update to match voucher!
+    if (f2Signers[0] && f2Signers[0].name === 'Nur Wahyudi' && submission.diajukanOleh && submission.diajukanOleh !== 'Nur Wahyudi') {
+      f2Signers[0].name = submission.diajukanOleh;
+      if (submission.diajukanJabatan) f2Signers[0].role = submission.diajukanJabatan;
+    }
+  }
+
+  const isSigner1Active = f2Signers[0] ? f2Signers[0].enabled !== false : true;
+  const isSigner2Active = f2Signers[1] ? f2Signers[1].enabled !== false : false;
+
+  const s1Title = cleanSingleLine(f2Signers[0]?.title || applicantF1.title || 'Diajukan');
+  const s1Name = cleanSingleLine(f2Signers[0]?.name || applicantF1.name);
+  const s1Role = cleanSingleLine(f2Signers[0]?.role || applicantF1.role);
+
+  const s2Title = cleanSingleLine(f2Signers[1]?.title || verifierF1.title || 'Diverifikasi');
+  const s2Name = cleanSingleLine(f2Signers[1]?.name || verifierF1.name);
+  const s2Role = cleanSingleLine(f2Signers[1]?.role || verifierF1.role);
 
   const sigTopY = curTableY - (scale < 0.75 ? 12 : 18);
   const sigTableW = Math.min(380, contentWidth - 40);
@@ -1651,10 +1693,14 @@ export async function generateF2PdfBytes(
   const sigFooterH = 34;
   const sigTotalH = sigHdrH + sigSpaceH + sigFooterH;
 
-  const isDualSigners = showApproved && submission.f2ApprovedBy !== 'none';
+  // By default in the application: submission.f2ApprovedBy is 'none' / showApproved is false
+  const isDualSigners = showApproved && submission.f2ApprovedBy !== 'none' && isSigner2Active;
 
-  if (!isDualSigners) {
-    // 1 Signer Centered Box
+  if (!isSigner1Active && !isSigner2Active) {
+    // No signers active
+    curTableY = sigTopY - 12;
+  } else if (!isDualSigners) {
+    // 1 Signer Centered Box (2nd signer removed to match the voucher in the application)
     const singleW = 200;
     const singleX = margin + (contentWidth - singleW) / 2;
 

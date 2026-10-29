@@ -145,6 +145,8 @@ export interface Submission {
   createdAt: string;
   updatedAt?: string;
   deletedPageIds?: string[];
+  showF2?: boolean; // Penanda lembar F2 aktif atau non-aktif
+  f2ApprovedBy?: 'harijon' | 'nursyam' | 'none'; // Penyetuju F2 (default: 'none' / tanpa disetujui)
 }
 
 export interface ActivityLog {

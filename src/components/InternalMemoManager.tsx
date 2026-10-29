@@ -21,6 +21,9 @@ import {
   findKopSuratNameByUrl,
   compareMemosByNumber,
   sortInternalMemos,
+  stripHtmlToText,
+  extractMemoNominal,
+  formatMemoBodyHtml,
 } from '../utils/memoUtils';
 import { memoGoogleDriveService } from '../utils/memoDriveService';
 import { getInternalMemoLink } from '../utils/appLinks';
@@ -55,6 +58,7 @@ import {
   FileUp,
   Link as LinkIcon,
   ChevronDown,
+  ChevronUp,
   Image as ImageIcon,
   Users,
   UserCheck,
@@ -116,6 +120,14 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
     try {
       localStorage.setItem('NMSA_MEMO_HISTORY_SORT', order);
     } catch (_) {}
+  };
+
+  // Expandable memo body view in history tab
+  const [expandedMemoIds, setExpandedMemoIds] = useState<string[]>([]);
+  const handleToggleExpandMemo = (id: string) => {
+    setExpandedMemoIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
   };
 
   const [bankAccounts, setBankAccounts] = useState<BankAccountMaster[]>(() => getSavedBankAccounts());
@@ -914,6 +926,10 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
 
       const q = searchQuery.toLowerCase().trim();
       if (!q) return true;
+      const cleanBody = stripHtmlToText(m.isiSurat).toLowerCase();
+      const nomInfo = extractMemoNominal(m);
+      const nomStr = nomInfo.formatted ? nomInfo.formatted.toLowerCase() : '';
+      const tbStr = nomInfo.terbilang ? nomInfo.terbilang.toLowerCase() : '';
       return (
         m.nomorMemo.toLowerCase().includes(q) ||
         m.perihal.toLowerCase().includes(q) ||
@@ -922,7 +938,9 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
         m.bankName.toLowerCase().includes(q) ||
         m.accountNumber.toLowerCase().includes(q) ||
         m.hariTanggalDisplay.toLowerCase().includes(q) ||
-        (m.isiSurat && m.isiSurat.toLowerCase().includes(q))
+        cleanBody.includes(q) ||
+        nomStr.includes(q) ||
+        tbStr.includes(q)
       );
     });
 
@@ -1601,6 +1619,46 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                   placeholder="Pembayaran DP Batubara 50%"
                   className="w-full px-3 py-2 text-xs font-bold bg-stone-50 border border-stone-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:bg-white focus:outline-none"
                 />
+              </div>
+
+              {/* Nominal / Nilai Memo (Terhubung ke Keuangan) */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[11px] font-bold text-stone-700 flex items-center gap-1.5">
+                    <CreditCard size={12} className="text-amber-700" />
+                    <span>Nominal / Nilai Memo (Rp)</span>
+                    <span className="text-stone-400 font-normal text-[10px]">(Opsional)</span>
+                  </label>
+                  {currentMemo.linkedAmount ? (
+                    <span className="text-[10px] font-bold font-mono text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                      Terisi: Rp {currentMemo.linkedAmount.toLocaleString('id-ID')}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="relative">
+                  <span className="absolute left-3 top-2 text-xs font-bold text-stone-400">Rp</span>
+                  <input
+                    type="text"
+                    value={
+                      currentMemo.linkedAmount
+                        ? currentMemo.linkedAmount.toLocaleString('id-ID')
+                        : ''
+                    }
+                    onChange={(e) => {
+                      const cleanNum = e.target.value.replace(/[^0-9]/g, '');
+                      const val = parseFloat(cleanNum) || 0;
+                      setCurrentMemo((prev) => ({
+                        ...prev,
+                        linkedAmount: val > 0 ? val : undefined,
+                      }));
+                    }}
+                    placeholder="Contoh: 14.985.000 (Otomatis terisi jika dari voucher atau dideteksi di teks)"
+                    className="w-full pl-9 pr-3 py-2 text-xs font-mono font-bold bg-stone-50 border border-stone-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:bg-white focus:outline-none"
+                  />
+                </div>
+                <p className="text-[10px] text-stone-500 mt-1">
+                  Jika dikosongkan, nominal akan otomatis dideteksi dari teks isi memo (misal: "sebesar Rp 14.985.000,-").
+                </p>
               </div>
 
               {/* Isi Surat with AI Assist */}
@@ -2699,20 +2757,99 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                       </span>
                     </div>
 
-                    <h4 className="font-bold text-sm text-stone-900 mt-2 line-clamp-1">
-                      {memo.perihal}
-                    </h4>
+                    {/* Perihal dengan label tegas dan jelas */}
+                    <div className="mt-2.5">
+                      <div className="flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-amber-800">
+                        <FileText size={11} className="text-amber-700 shrink-0" />
+                        <span>Perihal:</span>
+                      </div>
+                      <h4 className="font-bold text-sm text-stone-900 mt-0.5 leading-snug">
+                        {memo.perihal || 'Memo Internal'}
+                      </h4>
+                    </div>
 
-                    <p className="text-xs text-stone-600 line-clamp-2 mt-1 leading-relaxed">
-                      {memo.isiSurat}
-                    </p>
+                    {/* Rincian Nominal / Nilai Memo */}
+                    {(() => {
+                      const nomInfo = extractMemoNominal(memo);
+                      return (
+                        <div className="mt-2 p-2 bg-stone-50/90 rounded-lg border border-stone-200/90 flex flex-wrap items-center justify-between gap-1.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[10px] font-bold text-stone-500 uppercase tracking-wider">
+                              Nominal:
+                            </span>
+                            {nomInfo.formatted ? (
+                              <span className="inline-flex items-center gap-1 font-mono font-black text-xs sm:text-sm text-emerald-900 bg-emerald-100/90 border border-emerald-300 px-2 py-0.5 rounded shadow-3xs">
+                                <CreditCard size={12} className="text-emerald-700" />
+                                <span>{nomInfo.formatted}</span>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-[10.5px] text-stone-500 bg-stone-100 border border-stone-200 px-2 py-0.5 rounded font-medium">
+                                Memo Non-Finansial (Administrasi)
+                              </span>
+                            )}
+                          </div>
+                          {nomInfo.terbilang && (
+                            <span className="text-[10px] italic text-stone-600 truncate max-w-full" title={nomInfo.terbilang}>
+                              {nomInfo.terbilang}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Rincian / Isi Surat Bersih Tanpa Kode HTML */}
+                    {(() => {
+                      const cleanText = stripHtmlToText(memo.isiSurat);
+                      const isExpanded = expandedMemoIds.includes(memo.id);
+                      return (
+                        <div className="mt-2.5">
+                          <div className="flex items-center justify-between text-[10.5px] text-stone-500 mb-1">
+                            <span className="font-bold text-stone-600 uppercase tracking-wider text-[10px]">
+                              Rincian / Isi Surat:
+                            </span>
+                            {cleanText.length > 90 && (
+                              <button
+                                type="button"
+                                onClick={() => handleToggleExpandMemo(memo.id)}
+                                className="text-amber-800 hover:text-amber-950 font-bold hover:underline transition cursor-pointer flex items-center gap-1 text-[10.5px]"
+                              >
+                                {isExpanded ? (
+                                  <>
+                                    <span>Tutup / Ringkas</span>
+                                    <ChevronUp size={11} />
+                                  </>
+                                ) : (
+                                  <>
+                                    <span>Lihat Isi Selengkapnya</span>
+                                    <ChevronDown size={11} />
+                                  </>
+                                )}
+                              </button>
+                            )}
+                          </div>
+
+                          {isExpanded ? (
+                            <div className="p-3 bg-stone-50/90 rounded-lg border border-stone-200 text-xs text-stone-800 leading-relaxed max-h-56 overflow-y-auto space-y-2">
+                              <div
+                                className="prose prose-stone prose-xs max-w-none text-stone-800"
+                                dangerouslySetInnerHTML={{ __html: formatMemoBodyHtml(memo.isiSurat) }}
+                              />
+                            </div>
+                          ) : (
+                            <p className="text-xs text-stone-700 line-clamp-3 leading-relaxed bg-stone-50/60 p-2.5 rounded-lg border border-stone-200/70">
+                              {cleanText || '(Tidak ada rincian isi surat)'}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })()}
 
                     <div className="mt-3 pt-2 border-t border-stone-100 flex items-center justify-between text-[11px] text-stone-500">
                       <span>
                         Bank: <strong className="text-stone-800">{memo.bankName}</strong> ({memo.accountNumber})
                       </span>
                       <span>
-                        Dari: <strong className="text-stone-800">{memo.dari.split('–')[0]}</strong>
+                        Dari: <strong className="text-stone-800">{memo.dari.split('–')[0].split('-')[0].trim()}</strong>
                       </span>
                     </div>
 

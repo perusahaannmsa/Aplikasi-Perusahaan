@@ -1010,33 +1010,41 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
           addLog(`✓ F1 berhasil digenerate & diunggah ke Drive: ${f1Data.name}`);
         }
 
-        // 3. Process F2
-        const existingF2 = existingDriveFiles.find(f => 
-          (f.isF2 || (f.name && (f.name.startsWith('F2 -') || f.name.startsWith('F2-') || f.name.toUpperCase() === 'F2.PDF'))) &&
-          (!!f.url && f.url.includes('drive.google.com'))
-        );
+        // 3. Process F2 ONLY if active for this submission
+        const isF2RequiredForSub = sub.showF2 !== undefined 
+          ? !!sub.showF2 
+          : (typeof window !== 'undefined' && localStorage.getItem('nmsa_voucher_show_f2') === 'true');
 
-        if (mode === 'incomplete_only' && existingF2) {
-          freshFinalFiles.push(existingF2);
-          addLog(`✓ Dokumen F2 sudah ada di Google Drive, mempertahankan berkas: ${existingF2.name}`);
-        } else {
-          addLog(`Menggambar & Mengunggah F2 Form Pengajuan HO...`);
-          const f2PdfBytes = await generateF2PdfBytes(sub, grandTotal);
-          const f2Data = await uploadFileToFolder(
-            token,
-            `F2 - ${txBaseName}.pdf`,
-            'application/pdf',
-            f2PdfBytes,
-            targetFolderId
+        if (isF2RequiredForSub) {
+          const existingF2 = existingDriveFiles.find(f => 
+            (f.isF2 || (f.name && (f.name.startsWith('F2 -') || f.name.startsWith('F2-') || f.name.toUpperCase() === 'F2.PDF'))) &&
+            (!!f.url && f.url.includes('drive.google.com'))
           );
-          freshFinalFiles.push({
-            url: f2Data.url,
-            name: f2Data.name,
-            isF2: true
-          });
-          actualF2Count++;
-          setF2GeneratedCount(actualF2Count);
-          addLog(`✓ F2 berhasil digenerate & diunggah ke Drive: ${f2Data.name}`);
+
+          if (mode === 'incomplete_only' && existingF2) {
+            freshFinalFiles.push(existingF2);
+            addLog(`✓ Dokumen F2 sudah ada di Google Drive, mempertahankan berkas: ${existingF2.name}`);
+          } else {
+            addLog(`Menggambar & Mengunggah F2 Form Pengajuan HO (penanda tangan disamakan)...`);
+            const f2PdfBytes = await generateF2PdfBytes(sub, grandTotal, undefined, false);
+            const f2Data = await uploadFileToFolder(
+              token,
+              `F2 - ${txBaseName}.pdf`,
+              'application/pdf',
+              f2PdfBytes,
+              targetFolderId
+            );
+            freshFinalFiles.push({
+              url: f2Data.url,
+              name: f2Data.name,
+              isF2: true
+            });
+            actualF2Count++;
+            setF2GeneratedCount(actualF2Count);
+            addLog(`✓ F2 berhasil digenerate & diunggah ke Drive: ${f2Data.name}`);
+          }
+        } else {
+          addLog(`ℹ️ Formulir F2 non-aktif untuk transaksi ini, hanya menyimpan & mengunggah F1.`);
         }
 
         // 4. Archive raw attachments from sub.files (if any local/unarchived files exist)

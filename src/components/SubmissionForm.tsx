@@ -433,6 +433,16 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
   // Petty Cash & SPPD fields
   const [isPettyCash, setIsPettyCash] = useState(false);
   const [isSppd, setIsSppd] = useState(false);
+  const [enableF2, setEnableF2] = useState<boolean>(() => {
+    if (initialSubmission && initialSubmission.showF2 !== undefined) {
+      return !!initialSubmission.showF2;
+    }
+    try {
+      const saved = localStorage.getItem('nmsa_voucher_show_f2');
+      if (saved !== null) return saved === 'true';
+    } catch (e) {}
+    return false; // Default: non-aktif (hanya F1 saja)
+  });
   const [pettyCashCustodian, setPettyCashCustodian] = useState('');
   const [pettyCashLocalFile, setPettyCashLocalFile] = useState<File | null>(null);
   const [pettyCashDriveFile, setPettyCashDriveFile] = useState<{ url: string; name: string } | null>(null);
@@ -1245,6 +1255,9 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
       setDisetujuiJabatan2(initialSubmission.disetujuiJabatan2);
       setDibukukanOleh(initialSubmission.dibukukanOleh);
       setDibukukanJabatan(initialSubmission.dibukukanJabatan);
+      if (initialSubmission.showF2 !== undefined) {
+        setEnableF2(!!initialSubmission.showF2);
+      }
 
       if (initialSubmission.salaryDetails) {
         const sd = initialSubmission.salaryDetails;
@@ -1982,16 +1995,18 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
           isF1: true
         });
 
-        // 3. Generate and Upload F2
-        setSaveProgress('Membuat Dokumen PDF Form Pengajuan HO (F2)...');
-        const f2PdfBytes = await generateF2PdfBytes(tempSubmissionForPdf, calculatedGrandTotal);
-        setSaveProgress('Mengunggah Dokumen F2 ke Google Drive...');
-        const f2Data = await uploadFileToFolder(`F2 - ${txBaseName}.pdf`, 'application/pdf', f2PdfBytes, targetFolderId);
-        finalFiles.push({
-          url: f2Data.url,
-          name: f2Data.name,
-          isF2: true
-        });
+        // 3. Generate and Upload F2 ONLY IF enableF2 is TRUE
+        if (enableF2) {
+          setSaveProgress('Membuat Dokumen PDF Form Pengajuan HO (F2)...');
+          const f2PdfBytes = await generateF2PdfBytes(tempSubmissionForPdf, calculatedGrandTotal, undefined, false);
+          setSaveProgress('Mengunggah Dokumen F2 ke Google Drive...');
+          const f2Data = await uploadFileToFolder(`F2 - ${txBaseName}.pdf`, 'application/pdf', f2PdfBytes, targetFolderId);
+          finalFiles.push({
+            url: f2Data.url,
+            name: f2Data.name,
+            isF2: true
+          });
+        }
 
         // 4. Upload normal selected attachments (fileItems)
         const getFileExtensionForSave = (filename: string): string => {
@@ -2016,7 +2031,9 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         const usedNames = new Set<string>();
         // Add system-generated files to usedNames to avoid conflicts
         usedNames.add(`F1 - ${txBaseName}.pdf`.toLowerCase());
-        usedNames.add(`F2 - ${txBaseName}.pdf`.toLowerCase());
+        if (enableF2) {
+          usedNames.add(`F2 - ${txBaseName}.pdf`.toLowerCase());
+        }
 
         // Pre-scan all items to register existing files and determine starting counters accurately
         let maxB = 0;
@@ -2395,6 +2412,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         googleDriveFiles: finalFiles,
         googleDriveFolderId: targetFolderId || (initialSubmission as any)?.googleDriveFolderId,
         buktiPembayaran: finalBuktiPembayaran,
+        showF2: enableF2,
         dibuatOleh,
         disetujuiOleh,
         diverifikasiOleh,
@@ -4730,6 +4748,49 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
           <div className="border-b border-stone-200 pb-2">
             <h3 className="text-xs font-semibold uppercase font-mono tracking-wider text-stone-500">Otorisasi & Tanda Tangan</h3>
             <p className="text-xs text-stone-450">Tentukan nama penandatangan untuk kedua format dokumen (Formulir PO maupun Kwitansi Kas).</p>
+          </div>
+
+          {/* Formulir F2 (Pengajuan Dana HO) Toggle */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 bg-white border border-stone-200 rounded-xl gap-2 shadow-2xs">
+            <div>
+              <span className="font-bold text-xs text-stone-900 flex items-center gap-1.5">
+                <span>Formulir Pengajuan Dana HO (F2)</span>
+                <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono font-bold ${enableF2 ? 'bg-amber-100 text-amber-800' : 'bg-stone-200 text-stone-700'}`}>
+                  {enableF2 ? 'AKTIF (F1 + F2)' : 'NON-AKTIF (HANYA F1)'}
+                </span>
+              </span>
+              <span className="text-[11px] text-stone-500">
+                {enableF2 
+                  ? 'F1 & F2 akan dibuat & diunggah ke Google Drive dengan penanda tangan yang disamakan.' 
+                  : 'Hanya Formulir F1 (Bukti Pengeluaran Kas/Bank) yang dibuat & diunggah ke Google Drive.'}
+              </span>
+            </div>
+            <div className="flex bg-stone-200 p-0.5 rounded-lg border border-stone-300 self-start sm:self-auto shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setEnableF2(false);
+                  localStorage.setItem('nmsa_voucher_show_f2', 'false');
+                }}
+                className={`px-3 py-1 text-xs font-bold rounded-md transition cursor-pointer ${
+                  !enableF2 ? 'bg-stone-800 text-white shadow-2xs' : 'text-stone-600 hover:text-stone-900'
+                }`}
+              >
+                🚫 Non-Aktif (Hanya F1)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setEnableF2(true);
+                  localStorage.setItem('nmsa_voucher_show_f2', 'true');
+                }}
+                className={`px-3 py-1 text-xs font-bold rounded-md transition cursor-pointer ${
+                  enableF2 ? 'bg-amber-600 text-white shadow-2xs' : 'text-stone-600 hover:text-stone-900'
+                }`}
+              >
+                ✓ Aktifkan F2
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

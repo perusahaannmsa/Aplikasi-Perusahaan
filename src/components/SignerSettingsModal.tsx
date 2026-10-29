@@ -115,6 +115,16 @@ export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
     });
   };
 
+  const handleSyncF2WithF1 = () => {
+    // Dynamically match F2 signers with F1 voucher signers
+    const firstF1 = localF1[0] || { title: 'Diajukan', name: 'Andi Dhiya Salsabila', role: 'Staff Keuangan' };
+    const secondF1 = localF1[1] || { title: 'Diverifikasi', name: 'Sri Ekowati', role: 'Manager Keuangan' };
+    setLocalF2([
+      { title: firstF1.title || 'Diajukan', name: firstF1.name, role: firstF1.role, enabled: true },
+      { title: secondF1.title || 'Diverifikasi', name: secondF1.name, role: secondF1.role, enabled: false }, // 2nd signer disabled by default
+    ]);
+  };
+
   const handleApplyPreset = (presetType: 'nmsa_standard' | 'direksi_utama' | 'operasional') => {
     if (presetType === 'nmsa_standard') {
       setLocalF1([
@@ -124,8 +134,8 @@ export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
         { title: 'Disetujui', name: 'Harijon', role: 'Direktur Keuangan', enabled: true },
       ]);
       setLocalF2([
-        { title: 'Dibuat Oleh', name: 'Nur Wahyudi', role: 'Staff Keuangan', enabled: true },
-        { title: 'Diajukan', name: 'Sri Ekowati', role: 'Manager Keuangan', enabled: true },
+        { title: 'Diajukan', name: 'Andi Dhiya Salsabila', role: 'Staff Keuangan', enabled: true },
+        { title: 'Diverifikasi', name: 'Sri Ekowati', role: 'Manager Keuangan', enabled: false },
       ]);
     } else if (presetType === 'direksi_utama') {
       setLocalF1([
@@ -135,8 +145,8 @@ export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
         { title: 'Disetujui', name: 'Harijon', role: 'Direktur Keuangan', enabled: true },
       ]);
       setLocalF2([
-        { title: 'Dibuat Oleh', name: 'Nur Wahyudi', role: 'Staff Keuangan', enabled: true },
-        { title: 'Diajukan', name: 'Sri Ekowati', role: 'Manager Keuangan', enabled: true },
+        { title: 'Diajukan', name: 'Andi Dhiya Salsabila', role: 'Staff Keuangan', enabled: true },
+        { title: 'Diverifikasi', name: 'Sri Ekowati', role: 'Manager Keuangan', enabled: false },
       ]);
     } else if (presetType === 'operasional') {
       setLocalF1([
@@ -147,7 +157,7 @@ export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
       ]);
       setLocalF2([
         { title: 'Dibuat Oleh', name: 'Staff Operasional', role: 'Koordinator Lapangan', enabled: true },
-        { title: 'Diajukan', name: 'Sri Ekowati', role: 'Manager Keuangan', enabled: true },
+        { title: 'Diajukan', name: 'Sri Ekowati', role: 'Manager Keuangan', enabled: false },
       ]);
     }
   };
@@ -507,14 +517,39 @@ export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
             </div>
           ) : (
             <div>
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-xs font-black uppercase tracking-wider text-stone-700 flex items-center gap-1.5">
-                  <Shield size={14} className="text-amber-600" />
-                  Konfigurasi Penanda Tangan Formulir F2 (Dana HO)
-                </span>
-                <span className="text-[11px] text-stone-500">
-                  Digunakan pada lembar F2 standar, compact, maupun eco
-                </span>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-3 gap-2">
+                <div>
+                  <span className="text-xs font-black uppercase tracking-wider text-stone-700 flex items-center gap-1.5">
+                    <Shield size={14} className="text-amber-600" />
+                    Konfigurasi Penanda Tangan Formulir F2 (Dana HO)
+                  </span>
+                  <span className="text-[11px] text-stone-500">
+                    Menyesuaikan tanda tangan dengan voucher di aplikasi
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={handleSyncF2WithF1}
+                    className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1"
+                    title="Samakan nama & jabatan penanda tangan F2 dengan F1 voucher"
+                  >
+                    <span>🔄 Samakan dgn Voucher F1</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLocalF2(prev => [
+                        { ...prev[0], enabled: true },
+                        { ...prev[1], enabled: false }
+                      ]);
+                    }}
+                    className="px-2.5 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 border border-stone-300 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1"
+                    title="Hapus penanda tangan ke-2 agar hanya ada 1 kolom penanda tangan"
+                  >
+                    <span>🚫 Hapus Penanda Tangan Ke-2</span>
+                  </button>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
