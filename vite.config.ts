@@ -15,6 +15,10 @@ export default defineConfig(() => {
     server: {
       allowedHosts: true as const,
       hmr: false,
+      ws: false,
+    },
+    build: {
+      chunkSizeWarningLimit: 3000,
     },
   };
 });

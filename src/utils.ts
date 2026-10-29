@@ -125,10 +125,12 @@ export async function getCorporateLogoPngBytes(): Promise<Uint8Array | null> {
   }
 
   // Node.js SSR / Background task fallback
-  if (typeof process !== 'undefined' && process.cwd) {
+  if (typeof window === 'undefined' && typeof process !== 'undefined' && process.cwd) {
     try {
-      const fs = await import('fs');
-      const path = await import('path');
+      const fsPkg = 'fs';
+      const pathPkg = 'path';
+      const fs = await import(/* @vite-ignore */ fsPkg);
+      const path = await import(/* @vite-ignore */ pathPkg);
       const fullPath = path.join(process.cwd(), 'public', 'kop-surat-nmsa-full.png');
       if (fs.existsSync(fullPath)) {
         cachedCorporateLogoBytes = new Uint8Array(fs.readFileSync(fullPath));

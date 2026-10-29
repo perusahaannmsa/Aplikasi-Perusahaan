@@ -9,6 +9,7 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
+import { execSync } from "child_process";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import { google } from "googleapis";
@@ -5195,6 +5196,7 @@ async function bootstrap() {
       server: {
         middlewareMode: true,
         hmr: false,
+        ws: false,
       },
       appType: "spa",
     });
@@ -5227,6 +5229,26 @@ async function bootstrap() {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
+
+  function freePortIfOccupied(port: number) {
+    try {
+      const output = execSync(`ss -lptn 'sport = :${port}'`, { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] });
+      const match = output.match(/pid=(\d+)/);
+      if (match && match[1]) {
+        const targetPid = parseInt(match[1], 10);
+        if (targetPid && targetPid !== process.pid && targetPid !== process.ppid) {
+          console.log(`[Startup] Port ${port} is occupied by previous process ${targetPid}. Reclaiming port...`);
+          try {
+            process.kill(targetPid, "SIGTERM");
+          } catch (_) {}
+          const start = Date.now();
+          while (Date.now() - start < 350) {}
+        }
+      }
+    } catch (_) {}
+  }
+
+  freePortIfOccupied(PORT);
 
   const serverInstance = app.listen(PORT, HOST, () => {
     console.log(`Server is running at http://${HOST === "0.0.0.0" ? "localhost" : HOST}:${PORT}`);
@@ -5277,12 +5299,19 @@ async function bootstrap() {
   });
 
   serverInstance.on("error", (err: any) => {
+    if (err && err.code === "EADDRINUSE") {
+      console.warn(`[Server] Port ${PORT} already bound by an active instance. Exiting secondary process gracefully.`);
+      process.exit(0);
+      return;
+    }
     console.error(`[Server Listen Error] ${err?.message || err}`);
   });
 }
 
 if (!process.env.VERCEL) {
-  bootstrap();
+  bootstrap().catch((err) => {
+    console.error("[Server Bootstrap Fatal]", err);
+  });
 }
 
 export default app;

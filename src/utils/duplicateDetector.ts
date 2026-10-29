@@ -179,6 +179,8 @@ export function findPotentialDuplicateSubmissions(
     targetSubmissions = sortedCandidates.slice(0, 1);
   }
 
+  const matches: DuplicateSubmissionMatch[] = [];
+
   for (const existing of targetSubmissions) {
     const existingTotal = (existing.items && existing.items.length > 0)
       ? existing.items.reduce((acc, it) => acc + (Number(it.total) || 0), 0)
