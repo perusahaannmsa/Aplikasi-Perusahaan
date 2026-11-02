@@ -2465,15 +2465,18 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
                   </button>
                 </div>
 
-                {/* Tombol Menu Atur Penanda Tangan (Manual & Permanen) */}
+                {/* Tombol Menu Atur Penanda Tangan (Manual & Permanen Hingga 8 Kolom) */}
                 <button
                   type="button"
                   onClick={() => setIsSignerModalOpen(true)}
                   className="px-3 py-1 text-xs font-bold rounded-xl transition cursor-pointer bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white shadow-3xs flex items-center gap-1.5"
-                  title="Atur Nama, Jabatan, dan Status Penanda Tangan (Disetujui/Dibuat/Diverifikasi) secara Manual & Permanen"
+                  title="Atur Nama, Jabatan, dan Status Penanda Tangan (Disetujui/Dibuat/Diverifikasi) secara Manual & Permanen (Hingga 8 Kolom)"
                 >
                   <SlidersHorizontal size={13} />
                   <span>Atur Penanda Tangan</span>
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-white/25 font-black">
+                    {f1Signers.filter((s) => s.enabled !== false).length} Kolom
+                  </span>
                 </button>
 
                 {/* Menu Diverifikasi F1 */}

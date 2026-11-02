@@ -194,21 +194,21 @@ export const EmployeeLoanDocument: React.FC<EmployeeLoanDocumentProps> = ({
         </div>
 
         {/* 5. TABEL PERSETUJUAN 4 KOLOM BERDAMPINGAN (EQUAL 25% COLUMN WIDTHS - TIDAK PECAH/VERTIKAL) */}
-        <div className="border-[1.5px] border-black mb-4 print:mb-3">
+        <div className="border-[1.5px] border-black mb-3 print:mb-2.5">
           <table className="w-full table-fixed border-collapse text-[10pt] print:text-[10pt] text-black">
             <thead>
               <tr className="border-b border-black text-center font-bold">
                 <th className="py-2 px-2 w-1/4 border-r border-black font-bold">
-                  Peminjam :
+                  {loan.peminjamRole || 'Peminjam :'}
                 </th>
                 <th className="py-2 px-2 w-1/4 border-r border-black font-bold">
-                  Persetujuan Atasan :
+                  {loan.atasanRole || 'Persetujuan Atasan :'}
                 </th>
                 <th className="py-2 px-2 w-1/4 border-r border-black font-bold">
-                  Persetujuan Finance :
+                  {loan.financeRole || 'Persetujuan Finance :'}
                 </th>
                 <th className="py-2 px-2 w-1/4 font-bold">
-                  Persetujuan Direktur :
+                  {loan.direkturRole || 'Persetujuan Direktur :'}
                 </th>
               </tr>
             </thead>
@@ -265,6 +265,68 @@ export const EmployeeLoanDocument: React.FC<EmployeeLoanDocumentProps> = ({
             </tbody>
           </table>
         </div>
+
+        {/* 5B. PENANDA TANGAN TAMBAHAN DI BAWAH (UKURAN SAMA DENGAN 4 KOTAK DI ATAS & BERPOSISI TENGAH JIKA 1, 2, 3 DAN SEJAJAR JIKA 4) */}
+        {loan.additionalSigners && loan.additionalSigners.length > 0 && (() => {
+          const rows: Array<typeof loan.additionalSigners> = [];
+          for (let i = 0; i < loan.additionalSigners.length; i += 4) {
+            rows.push(loan.additionalSigners.slice(i, i + 4));
+          }
+
+          return (
+            <div className="space-y-3 print:space-y-2 mb-3 print:mb-2.5">
+              {rows.map((rowSigners, rIdx) => {
+                const count = rowSigners.length;
+                // Posisi dimulai dari tengah jika hanya 1, 2, dan 3.
+                // Jika 4 dibuat sejajar dengan 4 penanda tangan sebelumnya.
+                // Ukuran setiap kotak dipastikan sama persis (masing-masing 25% dari lebar kontainer).
+                const widthClass = count === 1 ? 'w-1/4' : count === 2 ? 'w-2/4' : count === 3 ? 'w-3/4' : 'w-full';
+
+                return (
+                  <div key={rIdx} className="w-full flex justify-center">
+                    <table className={`border-[1.5px] border-black table-fixed border-collapse text-[10pt] print:text-[10pt] text-black ${widthClass}`}>
+                      <thead>
+                        <tr className="border-b border-black text-center font-bold">
+                          {rowSigners.map((signer, sIdx) => (
+                            <th
+                              key={signer.id || sIdx}
+                              className={`py-2 px-2 font-bold ${sIdx < count - 1 ? 'border-r border-black' : ''}`}
+                              style={{ width: `${100 / count}%` }}
+                            >
+                              {signer.role || 'Disetujui :'}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          {rowSigners.map((signer, sIdx) => (
+                            <td
+                              key={signer.id || sIdx}
+                              className={`p-2 align-top h-32 ${sIdx < count - 1 ? 'border-r border-black' : ''}`}
+                              style={{ width: `${100 / count}%` }}
+                            >
+                              <div className="h-16 flex items-center justify-center text-stone-300 print:text-stone-200 text-[10px] italic">
+                                {signer.paraf || 'Paraf / TTD'}
+                              </div>
+                              <div className="border-t border-black pt-1.5 text-[9pt] leading-tight space-y-0.5">
+                                <div><strong>Nama :</strong> {signer.nama || '.....................'}</div>
+                                <div><strong>Jabatan :</strong> {signer.jabatan || '.....................'}</div>
+                                {signer.tanggal ? (
+                                  <div><strong>Tanggal :</strong> {formatTanggalIndo(signer.tanggal)}</div>
+                                ) : null}
+                              </div>
+                            </td>
+                          ))}
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
 
         {/* 6. KOTAK CATATAN (SESUAI SCAN FORM ASLI) */}
         <div className="mb-4">

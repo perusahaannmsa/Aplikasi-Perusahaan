@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { EmployeeLoan, LoanPayment, Worker, Submission } from '../types';
+import { EmployeeLoan, LoanPayment, LoanSigner, Worker, Submission } from '../types';
 import {
   calculateLoanSummary,
   formatRupiah,
@@ -42,7 +42,8 @@ import {
   ZoomIn,
   ZoomOut,
   Maximize2,
-  Users
+  Users,
+  UserPlus
 } from 'lucide-react';
 
 interface EmployeeLoanManagerProps {
@@ -114,6 +115,17 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
   const [catatan, setCatatan] = useState('');
   const [loanStatus, setLoanStatus] = useState<EmployeeLoan['status']>('Belum Lunas');
 
+  // Signer Roles & Additional Signers State
+  const [peminjamRole, setPeminjamRole] = useState('Diajukan');
+  const [atasanRole, setAtasanRole] = useState('Diverifikasi');
+  const [financeRole, setFinanceRole] = useState('Diverifikasi');
+  const [direkturRole, setDirekturRole] = useState('Disetujui');
+  const [additionalSigners, setAdditionalSigners] = useState<LoanSigner[]>([]);
+
+  // Signer Config Modal State (Quick Editor)
+  const [isSignerConfigModalOpen, setIsSignerConfigModalOpen] = useState(false);
+  const [targetLoanForSigners, setTargetLoanForSigners] = useState<EmployeeLoan | null>(null);
+
   // Payment Form State
   const [payTanggal, setPayTanggal] = useState(() => new Date().toISOString().split('T')[0]);
   const [payJumlah, setPayJumlah] = useState<number | ''>('');
@@ -150,13 +162,18 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
     setCicilanPerBulan('');
     setCaraPembayaran('');
     setTanggalPengambilanPinjaman(new Date().toISOString().split('T')[0]);
+    setPeminjamRole('Diajukan');
     setPeminjamJabatan('Karyawan');
+    setAtasanRole('Diverifikasi');
     setAtasanNama('Andi Muhammad Rifki');
     setAtasanJabatan('Direktur');
+    setFinanceRole('Diverifikasi');
     setFinanceNama('Harijon');
     setFinanceJabatan('Direktur Keuangan');
+    setDirekturRole('Disetujui');
     setDirekturNama('Andi Nursyam Halid');
     setDirekturJabatan('Direktur Utama');
+    setAdditionalSigners([]);
     setCatatan('Disetujui. Pembayaran angsuran dipotong melalui slip gaji bulanan.');
     setLoanStatus('Belum Lunas');
     setIsFormModalOpen(true);
@@ -174,13 +191,18 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
     setCicilanPerBulan(loan.cicilanPerBulan || '');
     setCaraPembayaran(loan.caraPembayaran);
     setTanggalPengambilanPinjaman(loan.tanggalPengambilanPinjaman);
+    setPeminjamRole(loan.peminjamRole || 'Diajukan');
     setPeminjamJabatan(loan.peminjamJabatan || 'Karyawan');
+    setAtasanRole(loan.atasanRole || 'Diverifikasi');
     setAtasanNama(loan.atasanNama || 'Andi Muhammad Rifki');
     setAtasanJabatan(loan.atasanJabatan || 'Direktur');
+    setFinanceRole(loan.financeRole || 'Diverifikasi');
     setFinanceNama(loan.financeNama || 'Harijon');
     setFinanceJabatan(loan.financeJabatan || 'Direktur Keuangan');
+    setDirekturRole(loan.direkturRole || 'Disetujui');
     setDirekturNama(loan.direkturNama || 'Andi Nursyam Halid');
     setDirekturJabatan(loan.direkturJabatan || 'Direktur Utama');
+    setAdditionalSigners(loan.additionalSigners ? [...loan.additionalSigners] : []);
     setCatatan(loan.catatan || '');
     setLoanStatus(loan.status);
     setIsFormModalOpen(true);
@@ -213,14 +235,19 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
             cicilanPerBulan: Number(cicilanPerBulan) || undefined,
             caraPembayaran: caraPembayaran.trim(),
             tanggalPengambilanPinjaman,
+            peminjamRole: peminjamRole.trim() || 'Diajukan',
             peminjamNama: namaKaryawan.trim(),
             peminjamJabatan: peminjamJabatan.trim(),
+            atasanRole: atasanRole.trim() || 'Diverifikasi',
             atasanNama: atasanNama.trim(),
             atasanJabatan: atasanJabatan.trim(),
+            financeRole: financeRole.trim() || 'Diverifikasi',
             financeNama: financeNama.trim(),
             financeJabatan: financeJabatan.trim(),
+            direkturRole: direkturRole.trim() || 'Disetujui',
             direkturNama: direkturNama.trim(),
             direkturJabatan: direkturJabatan.trim(),
+            additionalSigners: [...additionalSigners],
             catatan: catatan.trim(),
             status: loanStatus,
             updatedAt: new Date().toISOString()
@@ -242,14 +269,19 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
         cicilanPerBulan: Number(cicilanPerBulan) || undefined,
         caraPembayaran: caraPembayaran.trim(),
         tanggalPengambilanPinjaman,
+        peminjamRole: peminjamRole.trim() || 'Diajukan',
         peminjamNama: namaKaryawan.trim(),
         peminjamJabatan: peminjamJabatan.trim() || 'Karyawan',
+        atasanRole: atasanRole.trim() || 'Diverifikasi',
         atasanNama: atasanNama.trim() || 'Andi Muhammad Rifki',
         atasanJabatan: atasanJabatan.trim() || 'Direktur',
+        financeRole: financeRole.trim() || 'Diverifikasi',
         financeNama: financeNama.trim() || 'Harijon',
         financeJabatan: financeJabatan.trim() || 'Direktur Keuangan',
+        direkturRole: direkturRole.trim() || 'Disetujui',
         direkturNama: direkturNama.trim() || 'Andi Nursyam Halid',
         direkturJabatan: direkturJabatan.trim() || 'Direktur Utama',
+        additionalSigners: [...additionalSigners],
         catatan: catatan.trim(),
         status: loanStatus,
         payments: [],
@@ -260,6 +292,74 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
     }
 
     setIsFormModalOpen(false);
+  };
+
+  // Signer Configuration Handlers
+  const handleOpenSignerConfig = (loan: EmployeeLoan) => {
+    setTargetLoanForSigners(loan);
+    setPeminjamRole(loan.peminjamRole || 'Diajukan');
+    setPeminjamJabatan(loan.peminjamJabatan || loan.divisi || 'Karyawan');
+    setNamaKaryawan(loan.peminjamNama || loan.namaKaryawan || '');
+    setAtasanRole(loan.atasanRole || 'Diverifikasi');
+    setAtasanNama(loan.atasanNama || 'Andi Muhammad Rifki');
+    setAtasanJabatan(loan.atasanJabatan || 'Direktur');
+    setFinanceRole(loan.financeRole || 'Diverifikasi');
+    setFinanceNama(loan.financeNama || 'Harijon');
+    setFinanceJabatan(loan.financeJabatan || 'Direktur Keuangan');
+    setDirekturRole(loan.direkturRole || 'Disetujui');
+    setDirekturNama(loan.direkturNama || 'Andi Nursyam Halid');
+    setDirekturJabatan(loan.direkturJabatan || 'Direktur Utama');
+    setAdditionalSigners(loan.additionalSigners ? [...loan.additionalSigners] : []);
+    setIsSignerConfigModalOpen(true);
+  };
+
+  const handleSaveSignerConfig = () => {
+    if (!targetLoanForSigners) return;
+    const updatedLoan: EmployeeLoan = {
+      ...targetLoanForSigners,
+      peminjamRole: peminjamRole.trim() || 'Diajukan',
+      peminjamNama: (namaKaryawan || targetLoanForSigners.namaKaryawan).trim(),
+      peminjamJabatan: (peminjamJabatan || targetLoanForSigners.peminjamJabatan || 'Karyawan').trim(),
+      atasanRole: atasanRole.trim() || 'Diverifikasi',
+      atasanNama: atasanNama.trim(),
+      atasanJabatan: atasanJabatan.trim(),
+      financeRole: financeRole.trim() || 'Diverifikasi',
+      financeNama: financeNama.trim(),
+      financeJabatan: financeJabatan.trim(),
+      direkturRole: direkturRole.trim() || 'Disetujui',
+      direkturNama: direkturNama.trim(),
+      direkturJabatan: direkturJabatan.trim(),
+      additionalSigners: [...additionalSigners],
+      updatedAt: new Date().toISOString()
+    };
+
+    const updatedList = loans.map(l => (l.id === updatedLoan.id ? updatedLoan : l));
+    handleUpdateLoans(updatedList);
+
+    if (targetLoanForPrint && targetLoanForPrint.id === updatedLoan.id) {
+      setTargetLoanForPrint(updatedLoan);
+    }
+
+    setIsSignerConfigModalOpen(false);
+  };
+
+  const handleAddAdditionalSigner = (preset?: { role?: string; nama?: string; jabatan?: string }) => {
+    const newSigner: LoanSigner = {
+      id: 'signer-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+      role: preset?.role || 'Disetujui',
+      nama: preset?.nama || '',
+      jabatan: preset?.jabatan || '',
+      tanggal: new Date().toISOString().split('T')[0]
+    };
+    setAdditionalSigners(prev => [...prev, newSigner]);
+  };
+
+  const handleUpdateAdditionalSigner = (id: string, field: keyof LoanSigner, value: string) => {
+    setAdditionalSigners(prev => prev.map(s => (s.id === id ? { ...s, [field]: value } : s)));
+  };
+
+  const handleRemoveAdditionalSigner = (id: string) => {
+    setAdditionalSigners(prev => prev.filter(s => s.id !== id));
   };
 
   const handleDeleteLoan = (loan: EmployeeLoan) => {
@@ -807,7 +907,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
 
       {/* MODAL 1: FORM PINJAMAN KARYAWAN (TAMBAH / EDIT) */}
       {isFormModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-3 overflow-y-auto">
+        <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/60 backdrop-blur-xs p-3 overflow-y-auto">
           <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[92vh] flex flex-col shadow-2xl border border-stone-200 animate-in fade-in zoom-in-95 duration-150">
             {/* Modal Header */}
             <div className="p-4 sm:p-5 border-b border-stone-200 flex items-center justify-between">
@@ -1109,27 +1209,140 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
               </div>
 
               {/* Penandatangan Form Resmi */}
-              <div className="p-3.5 bg-stone-50 border border-stone-200 rounded-2xl space-y-2">
-                <span className="text-[10px] font-mono uppercase font-bold text-stone-500 block">
-                  Penandatangan Resmi Sesuai Form:
-                </span>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
-                  <div className="p-2 bg-white rounded-lg border border-stone-200">
-                    <span className="text-[10px] text-stone-400 block font-bold">Persetujuan Atasan:</span>
-                    <strong className="text-stone-900 block">{atasanNama}</strong>
-                    <span className="text-[11px] text-stone-500">{atasanJabatan}</span>
+              <div className="p-3.5 bg-stone-50 border border-stone-200 rounded-2xl space-y-3">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div>
+                    <span className="text-[10.5px] font-mono uppercase font-bold text-stone-700 block">
+                      Penandatangan Resmi Sesuai Form:
+                    </span>
+                    <span className="text-[11px] text-stone-500">
+                      4 kolom baris atas + penanda tangan tambahan di baris bawah
+                    </span>
                   </div>
-                  <div className="p-2 bg-white rounded-lg border border-stone-200">
-                    <span className="text-[10px] text-stone-400 block font-bold">Persetujuan Finance:</span>
-                    <strong className="text-stone-900 block">{financeNama}</strong>
-                    <span className="text-[11px] text-stone-500">{financeJabatan}</span>
-                  </div>
-                  <div className="p-2 bg-white rounded-lg border border-stone-200">
-                    <span className="text-[10px] text-stone-400 block font-bold">Persetujuan Direktur:</span>
-                    <strong className="text-stone-900 block">{direkturNama}</strong>
-                    <span className="text-[11px] text-stone-500">{direkturJabatan}</span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleAddAdditionalSigner({ role: 'Disetujui', nama: 'H. ANDI NURSYAM HALID', jabatan: 'Direktur Utama' })}
+                      className="px-2.5 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                      title="Tambah preset penanda tangan Direktur Utama H. ANDI NURSYAM HALID"
+                    >
+                      <Plus size={12} />
+                      <span>+ Preset Dirut (H. ANDI NURSYAM HALID)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAddAdditionalSigner()}
+                      className="px-2.5 py-1 bg-stone-200 hover:bg-stone-300 text-stone-800 rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                    >
+                      <UserPlus size={12} />
+                      <span>+ Tambah Baru</span>
+                    </button>
                   </div>
                 </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+                  <div className="p-2.5 bg-white rounded-xl border border-stone-200 space-y-1">
+                    <span className="text-[10px] text-stone-500 block font-bold uppercase">Persetujuan Atasan:</span>
+                    <input
+                      type="text"
+                      value={atasanNama}
+                      onChange={(e) => setAtasanNama(e.target.value)}
+                      placeholder="Nama Atasan"
+                      className="w-full px-2 py-1 text-xs font-bold bg-stone-50 border border-stone-200 rounded-md focus:bg-white focus:outline-none"
+                    />
+                    <input
+                      type="text"
+                      value={atasanJabatan}
+                      onChange={(e) => setAtasanJabatan(e.target.value)}
+                      placeholder="Jabatan"
+                      className="w-full px-2 py-1 text-[11px] bg-stone-50 border border-stone-200 rounded-md focus:bg-white focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="p-2.5 bg-white rounded-xl border border-stone-200 space-y-1">
+                    <span className="text-[10px] text-stone-500 block font-bold uppercase">Persetujuan Finance:</span>
+                    <input
+                      type="text"
+                      value={financeNama}
+                      onChange={(e) => setFinanceNama(e.target.value)}
+                      placeholder="Nama Finance"
+                      className="w-full px-2 py-1 text-xs font-bold bg-stone-50 border border-stone-200 rounded-md focus:bg-white focus:outline-none"
+                    />
+                    <input
+                      type="text"
+                      value={financeJabatan}
+                      onChange={(e) => setFinanceJabatan(e.target.value)}
+                      placeholder="Jabatan"
+                      className="w-full px-2 py-1 text-[11px] bg-stone-50 border border-stone-200 rounded-md focus:bg-white focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="p-2.5 bg-white rounded-xl border border-stone-200 space-y-1">
+                    <span className="text-[10px] text-stone-500 block font-bold uppercase">Persetujuan Direktur:</span>
+                    <input
+                      type="text"
+                      value={direkturNama}
+                      onChange={(e) => setDirekturNama(e.target.value)}
+                      placeholder="Nama Direktur"
+                      className="w-full px-2 py-1 text-xs font-bold bg-stone-50 border border-stone-200 rounded-md focus:bg-white focus:outline-none"
+                    />
+                    <input
+                      type="text"
+                      value={direkturJabatan}
+                      onChange={(e) => setDirekturJabatan(e.target.value)}
+                      placeholder="Jabatan"
+                      className="w-full px-2 py-1 text-[11px] bg-stone-50 border border-stone-200 rounded-md focus:bg-white focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                {/* Additional Signers List in Form */}
+                {additionalSigners.length > 0 && (
+                  <div className="pt-2 border-t border-stone-200 space-y-2">
+                    <span className="text-[10px] font-bold text-amber-900 uppercase block">
+                      Penanda Tangan Tambahan ({additionalSigners.length} Orang - Ukuran 25% Berposisi di Tengah Bawah):
+                    </span>
+
+                    <div className="space-y-1.5">
+                      {additionalSigners.map((as, idx) => (
+                        <div key={as.id} className="p-2 bg-amber-50/70 border border-amber-200 rounded-xl flex items-center gap-2 text-xs">
+                          <span className="font-mono font-bold text-[10px] text-amber-800 bg-amber-200/80 px-1.5 py-0.5 rounded">
+                            #{idx + 1}
+                          </span>
+                          <input
+                            type="text"
+                            value={as.role}
+                            onChange={(e) => handleUpdateAdditionalSigner(as.id, 'role', e.target.value)}
+                            placeholder="Role (Disetujui)"
+                            className="w-24 px-2 py-1 bg-white border border-stone-300 rounded text-xs font-bold"
+                          />
+                          <input
+                            type="text"
+                            value={as.nama}
+                            onChange={(e) => handleUpdateAdditionalSigner(as.id, 'nama', e.target.value)}
+                            placeholder="Nama Lengkap"
+                            className="flex-1 px-2 py-1 bg-white border border-stone-300 rounded text-xs font-semibold"
+                          />
+                          <input
+                            type="text"
+                            value={as.jabatan}
+                            onChange={(e) => handleUpdateAdditionalSigner(as.id, 'jabatan', e.target.value)}
+                            placeholder="Jabatan"
+                            className="w-32 px-2 py-1 bg-white border border-stone-300 rounded text-xs"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveAdditionalSigner(as.id)}
+                            className="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 rounded cursor-pointer"
+                            title="Hapus"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Modal Buttons */}
@@ -1156,7 +1369,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
 
       {/* MODAL 2: CATAT PEMBAYARAN / POTONG GAJI */}
       {isPaymentModalOpen && targetLoanForPayment && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-3 overflow-y-auto">
+        <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/60 backdrop-blur-xs p-3 overflow-y-auto">
           <div className="bg-white rounded-3xl max-w-lg w-full shadow-2xl border border-stone-200 animate-in fade-in zoom-in-95 duration-150">
             <div className="p-4 sm:p-5 border-b border-stone-200 flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -1324,7 +1537,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
 
       {/* MODAL 3: RIWAYAT PEMBAYARAN & KARTU PIUTANG */}
       {isHistoryModalOpen && targetLoanForHistory && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-3 overflow-y-auto">
+        <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/60 backdrop-blur-xs p-3 overflow-y-auto">
           <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[90vh] flex flex-col shadow-2xl border border-stone-200 animate-in fade-in zoom-in-95 duration-150">
             <div className="p-4 sm:p-5 border-b border-stone-200 flex items-center justify-between">
               <div>
@@ -1445,7 +1658,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
 
       {/* MODAL 4: STUDIO PRATINJAU & CETAK DOKUMEN RESMI (TAMPILAN BARU SESUAI FORMAT NMSA) */}
       {isPrintModalOpen && targetLoanForPrint && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-stone-900/95 backdrop-blur-md text-white overflow-hidden animate-in fade-in duration-150 print:bg-white print:p-0 print:overflow-visible print:block">
+        <div className="fixed inset-0 z-[2000] flex flex-col bg-stone-900/95 backdrop-blur-md text-white overflow-hidden animate-in fade-in duration-150 print:bg-white print:p-0 print:overflow-visible print:block">
           {/* Top Fixed Floating Control Toolbar (Always visible, clean, never scrolls out of view) */}
           <header className="h-16 px-4 sm:px-6 bg-stone-950/90 border-b border-stone-800 flex items-center justify-between shrink-0 z-30 print:hidden select-none">
             {/* Left: Close & Document Meta */}
@@ -1528,22 +1741,35 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
               </button>
             </div>
 
-            {/* Right: Toggles & Print Buttons */}
+            {/* Right: Toggles, Signer Manager & Print Buttons */}
             <div className="flex items-center gap-2">
+              {/* Button: Atur Penanda Tangan */}
+              <button
+                type="button"
+                onClick={() => handleOpenSignerConfig(targetLoanForPrint)}
+                className="px-2.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer border bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30"
+                title="Tambah atau atur penanda tangan form ini"
+              >
+                <Users size={14} />
+                <span className="hidden sm:inline">Penanda Tangan</span>
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-500 text-stone-950 font-black">
+                  {4 + (targetLoanForPrint.additionalSigners?.length || 0)}
+                </span>
+              </button>
+
               {/* Toggle Kop Surat (Disamakan dengan Internal Memo) */}
               <button
                 type="button"
                 onClick={() => setShowKopSuratInPrint(!showKopSuratInPrint)}
                 className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer border ${
                   showKopSuratInPrint
-                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
-                    : 'bg-stone-800 text-stone-300 border-stone-700 hover:bg-stone-700'
+                    ? 'bg-stone-800 text-stone-300 border-stone-700 hover:bg-stone-700'
+                    : 'bg-stone-800/60 text-stone-500 border-stone-800 hover:bg-stone-800'
                 }`}
                 title="Nyalakan / Matikan Kop Surat (Matikan jika mencetak pada kertas blanko berkop)"
               >
                 <Building size={14} />
-                <span className="hidden lg:inline">{showKopSuratInPrint ? 'Kop Surat: ON' : 'Kop Surat: OFF (Blanko Fisik)'}</span>
-                <span className="lg:hidden">{showKopSuratInPrint ? 'Kop: ON' : 'Kop: OFF'}</span>
+                <span className="hidden lg:inline">{showKopSuratInPrint ? 'Kop: ON' : 'Kop: OFF (Blanko)'}</span>
               </button>
 
               {/* Toggle Riwayat Pembayaran */}
@@ -1558,7 +1784,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
                 title="Sertakan atau sembunyikan tabel rincian pembayaran cicilan"
               >
                 <Layers size={14} />
-                <span className="hidden xl:inline">{printWithLedger ? 'Riwayat Cicilan: YA' : 'Riwayat Cicilan: TIDAK'}</span>
+                <span className="hidden xl:inline">{printWithLedger ? 'Riwayat: YA' : 'Riwayat: TIDAK'}</span>
               </button>
 
               {/* Button: Buat Voucher Kas/Bank HO */}
@@ -1600,7 +1826,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
           </header>
 
           {/* Document Studio Canvas Workspace */}
-          <main className="flex-1 overflow-auto p-4 sm:p-8 flex justify-center items-start bg-stone-900/80 print:bg-white print:p-0 print:overflow-visible">
+          <main className="flex-1 overflow-auto p-4 sm:p-8 flex justify-center items-start bg-stone-900/80 print:bg-white print:p-0 print:overflow-visible relative">
             <div
               style={{
                 transform: `scale(${zoomLevel})`,
@@ -1616,7 +1842,421 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
                 showKopSurat={showKopSuratInPrint}
               />
             </div>
+
+            {/* Floating Quick Action Bar at bottom center for easy access when scrolling document */}
+            <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-stone-950/90 backdrop-blur-md border border-stone-800 rounded-full px-4 py-2 flex items-center gap-3 shadow-2xl print:hidden">
+              <button
+                type="button"
+                onClick={() => handleOpenSignerConfig(targetLoanForPrint)}
+                className="flex items-center gap-1.5 text-xs font-bold text-stone-300 hover:text-white px-2 py-1 rounded-lg hover:bg-stone-800 transition cursor-pointer"
+                title="Tambah atau atur penanda tangan form ini"
+              >
+                <Users size={14} className="text-amber-400" />
+                <span>Atur Penanda Tangan {targetLoanForPrint.additionalSigners?.length ? `(+${targetLoanForPrint.additionalSigners.length})` : ''}</span>
+              </button>
+              <div className="h-4 w-px bg-stone-700"></div>
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="flex items-center gap-1.5 px-3 py-1 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 font-black rounded-full text-xs shadow-md transition cursor-pointer active:scale-95"
+              >
+                <Printer size={14} />
+                <span>Cetak / PDF</span>
+              </button>
+              <div className="h-4 w-px bg-stone-700"></div>
+              <button
+                type="button"
+                onClick={() => setIsPrintModalOpen(false)}
+                className="text-stone-400 hover:text-white text-xs font-bold px-2 py-1 rounded-lg hover:bg-stone-800 transition cursor-pointer"
+              >
+                Tutup
+              </button>
+            </div>
           </main>
+        </div>
+      )}
+
+      {/* MODAL 5: PENGATURAN & PENAMBAHAN PENANDA TANGAN */}
+      {isSignerConfigModalOpen && targetLoanForSigners && (
+        <div className="fixed inset-0 z-[2200] flex items-center justify-center bg-black/80 backdrop-blur-sm p-3 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-3xl w-full max-h-[92vh] flex flex-col shadow-2xl border border-stone-200 animate-in fade-in zoom-in-95 duration-150 text-stone-900">
+            {/* Header */}
+            <div className="p-4 sm:p-5 border-b border-stone-200 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 bg-amber-100 text-amber-900 rounded-2xl">
+                  <Users size={20} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-stone-900">
+                    Pengaturan &amp; Penambahan Penanda Tangan Form
+                  </h3>
+                  <p className="text-xs text-stone-500">
+                    {targetLoanForSigners.nomorPinjaman} &bull; {targetLoanForSigners.namaKaryawan}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsSignerConfigModalOpen(false)}
+                className="p-1.5 text-stone-400 hover:text-stone-700 hover:bg-stone-100 rounded-xl transition cursor-pointer"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Content Area */}
+            <div className="p-4 sm:p-6 overflow-y-auto space-y-6">
+              {/* Bagian 1: 4 Penanda Tangan Utama (Baris Atas) */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-black uppercase tracking-wider text-stone-800 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-blue-600"></span>
+                    4 Penanda Tangan Utama (Baris Atas)
+                  </span>
+                  <span className="text-[11px] text-stone-500 font-mono">4 Kotak Sejajar Penuh (25% per kotak)</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  {/* Kolom 1: Peminjam / Diajukan */}
+                  <div className="p-3 bg-stone-50 rounded-2xl border border-stone-200 space-y-2">
+                    <div>
+                      <label className="block text-[10px] font-bold text-stone-600 uppercase mb-1">
+                        Judul Kotak 1:
+                      </label>
+                      <input
+                        type="text"
+                        value={peminjamRole}
+                        onChange={(e) => setPeminjamRole(e.target.value)}
+                        placeholder="Diajukan"
+                        className="w-full px-2.5 py-1 text-xs font-bold bg-white border border-stone-300 rounded-lg focus:ring-1 focus:ring-amber-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-stone-600 uppercase mb-1">
+                        Nama:
+                      </label>
+                      <input
+                        type="text"
+                        value={namaKaryawan}
+                        onChange={(e) => setNamaKaryawan(e.target.value)}
+                        className="w-full px-2.5 py-1 text-xs font-semibold bg-white border border-stone-300 rounded-lg focus:ring-1 focus:ring-amber-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-stone-600 uppercase mb-1">
+                        Jabatan:
+                      </label>
+                      <input
+                        type="text"
+                        value={peminjamJabatan}
+                        onChange={(e) => setPeminjamJabatan(e.target.value)}
+                        className="w-full px-2.5 py-1 text-xs bg-white border border-stone-300 rounded-lg focus:ring-1 focus:ring-amber-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Kolom 2: Diverifikasi / Persetujuan Atasan */}
+                  <div className="p-3 bg-stone-50 rounded-2xl border border-stone-200 space-y-2">
+                    <div>
+                      <label className="block text-[10px] font-bold text-stone-600 uppercase mb-1">
+                        Judul Kotak 2:
+                      </label>
+                      <input
+                        type="text"
+                        value={atasanRole}
+                        onChange={(e) => setAtasanRole(e.target.value)}
+                        placeholder="Diverifikasi"
+                        className="w-full px-2.5 py-1 text-xs font-bold bg-white border border-stone-300 rounded-lg focus:ring-1 focus:ring-amber-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-stone-600 uppercase mb-1">
+                        Nama:
+                      </label>
+                      <input
+                        type="text"
+                        value={atasanNama}
+                        onChange={(e) => setAtasanNama(e.target.value)}
+                        className="w-full px-2.5 py-1 text-xs font-semibold bg-white border border-stone-300 rounded-lg focus:ring-1 focus:ring-amber-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-stone-600 uppercase mb-1">
+                        Jabatan:
+                      </label>
+                      <input
+                        type="text"
+                        value={atasanJabatan}
+                        onChange={(e) => setAtasanJabatan(e.target.value)}
+                        className="w-full px-2.5 py-1 text-xs bg-white border border-stone-300 rounded-lg focus:ring-1 focus:ring-amber-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Kolom 3: Diverifikasi / Persetujuan Finance */}
+                  <div className="p-3 bg-stone-50 rounded-2xl border border-stone-200 space-y-2">
+                    <div>
+                      <label className="block text-[10px] font-bold text-stone-600 uppercase mb-1">
+                        Judul Kotak 3:
+                      </label>
+                      <input
+                        type="text"
+                        value={financeRole}
+                        onChange={(e) => setFinanceRole(e.target.value)}
+                        placeholder="Diverifikasi"
+                        className="w-full px-2.5 py-1 text-xs font-bold bg-white border border-stone-300 rounded-lg focus:ring-1 focus:ring-amber-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-stone-600 uppercase mb-1">
+                        Nama:
+                      </label>
+                      <input
+                        type="text"
+                        value={financeNama}
+                        onChange={(e) => setFinanceNama(e.target.value)}
+                        className="w-full px-2.5 py-1 text-xs font-semibold bg-white border border-stone-300 rounded-lg focus:ring-1 focus:ring-amber-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-stone-600 uppercase mb-1">
+                        Jabatan:
+                      </label>
+                      <input
+                        type="text"
+                        value={financeJabatan}
+                        onChange={(e) => setFinanceJabatan(e.target.value)}
+                        className="w-full px-2.5 py-1 text-xs bg-white border border-stone-300 rounded-lg focus:ring-1 focus:ring-amber-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Kolom 4: Disetujui / Persetujuan Direktur */}
+                  <div className="p-3 bg-stone-50 rounded-2xl border border-stone-200 space-y-2">
+                    <div>
+                      <label className="block text-[10px] font-bold text-stone-600 uppercase mb-1">
+                        Judul Kotak 4:
+                      </label>
+                      <input
+                        type="text"
+                        value={direkturRole}
+                        onChange={(e) => setDirekturRole(e.target.value)}
+                        placeholder="Disetujui"
+                        className="w-full px-2.5 py-1 text-xs font-bold bg-white border border-stone-300 rounded-lg focus:ring-1 focus:ring-amber-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-stone-600 uppercase mb-1">
+                        Nama:
+                      </label>
+                      <input
+                        type="text"
+                        value={direkturNama}
+                        onChange={(e) => setDirekturNama(e.target.value)}
+                        className="w-full px-2.5 py-1 text-xs font-semibold bg-white border border-stone-300 rounded-lg focus:ring-1 focus:ring-amber-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-stone-600 uppercase mb-1">
+                        Jabatan:
+                      </label>
+                      <input
+                        type="text"
+                        value={direkturJabatan}
+                        onChange={(e) => setDirekturJabatan(e.target.value)}
+                        className="w-full px-2.5 py-1 text-xs bg-white border border-stone-300 rounded-lg focus:ring-1 focus:ring-amber-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Bagian 2: Penanda Tangan Tambahan (Baris Bawah) */}
+              <div>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5">
+                  <div>
+                    <span className="text-xs font-black uppercase tracking-wider text-amber-900 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                      Penanda Tangan Tambahan (Baris Bawah)
+                    </span>
+                    <p className="text-[11px] text-stone-500 mt-0.5">
+                      Kotak di baris bawah berukuran sama (25%). Otomatis berposisi di tengah jika 1, 2, atau 3 orang, dan sejajar jika 4 orang.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => handleAddAdditionalSigner({ role: 'Disetujui', nama: 'H. ANDI NURSYAM HALID', jabatan: 'Direktur Utama' })}
+                      className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1"
+                      title="Tambah preset penanda tangan Direktur Utama H. ANDI NURSYAM HALID"
+                    >
+                      <Plus size={12} />
+                      <span>+ Preset Dirut (H. ANDI NURSYAM HALID)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleAddAdditionalSigner()}
+                      className="px-3 py-1 bg-stone-900 hover:bg-stone-800 text-white rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1 shadow-xs"
+                    >
+                      <UserPlus size={12} />
+                      <span>+ Tambah Baru</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* List of Additional Signers */}
+                {additionalSigners.length === 0 ? (
+                  <div className="p-6 bg-stone-50 border border-dashed border-stone-300 rounded-2xl text-center">
+                    <p className="text-xs text-stone-500 font-medium">
+                      Belum ada penanda tangan tambahan di baris bawah.
+                    </p>
+                    <p className="text-[11px] text-stone-400 mt-1">
+                      Klik tombol <strong>"+ Preset Dirut"</strong> atau <strong>"+ Tambah Baru"</strong> untuk menambahkan pejabat penanda tangan di baris kedua.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {additionalSigners.map((signer, idx) => (
+                      <div
+                        key={signer.id}
+                        className="p-3.5 bg-amber-50/60 border border-amber-200 rounded-2xl space-y-2.5 relative"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                            <span className="px-2 py-0.5 bg-amber-200 text-amber-900 rounded-md font-mono text-[10px]">
+                              #{idx + 1}
+                            </span>
+                            <span>Penanda Tangan Tambahan (Baris Bawah)</span>
+                          </span>
+
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveAdditionalSigner(signer.id)}
+                            className="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition cursor-pointer"
+                            title="Hapus penanda tangan ini"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 text-xs">
+                          <div>
+                            <label className="block text-[10px] font-bold text-stone-600 uppercase mb-1">
+                              Status / Role:
+                            </label>
+                            <input
+                              type="text"
+                              value={signer.role}
+                              onChange={(e) => handleUpdateAdditionalSigner(signer.id, 'role', e.target.value)}
+                              placeholder="Misal: Disetujui / Mengetahui"
+                              className="w-full px-2.5 py-1.5 bg-white border border-stone-300 rounded-xl font-bold focus:ring-1 focus:ring-amber-500 focus:outline-none"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] font-bold text-stone-600 uppercase mb-1">
+                              Nama Lengkap:
+                            </label>
+                            <input
+                              type="text"
+                              value={signer.nama}
+                              onChange={(e) => handleUpdateAdditionalSigner(signer.id, 'nama', e.target.value)}
+                              placeholder="Nama penanda tangan"
+                              className="w-full px-2.5 py-1.5 bg-white border border-stone-300 rounded-xl font-semibold focus:ring-1 focus:ring-amber-500 focus:outline-none"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] font-bold text-stone-600 uppercase mb-1">
+                              Jabatan:
+                            </label>
+                            <input
+                              type="text"
+                              value={signer.jabatan}
+                              onChange={(e) => handleUpdateAdditionalSigner(signer.id, 'jabatan', e.target.value)}
+                              placeholder="Misal: Direktur Utama"
+                              className="w-full px-2.5 py-1.5 bg-white border border-stone-300 rounded-xl focus:ring-1 focus:ring-amber-500 focus:outline-none"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] font-bold text-stone-600 uppercase mb-1">
+                              Tanggal (Opsional):
+                            </label>
+                            <input
+                              type="date"
+                              value={signer.tanggal || ''}
+                              onChange={(e) => handleUpdateAdditionalSigner(signer.id, 'tanggal', e.target.value)}
+                              className="w-full px-2.5 py-1.5 bg-white border border-stone-300 rounded-xl focus:ring-1 focus:ring-amber-500 focus:outline-none"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+
+                    {/* Simulation miniature */}
+                    <div className="p-3 bg-stone-100 rounded-2xl border border-stone-200">
+                      <span className="text-[10px] font-mono uppercase font-bold text-stone-600 block mb-1.5">
+                        Simulasi Posisi Kotak Form Resmi:
+                      </span>
+                      <div className="space-y-1.5 max-w-sm mx-auto">
+                        <div className="grid grid-cols-4 gap-1">
+                          <div className="bg-blue-200 border border-blue-400 py-1 text-[9px] font-bold text-center rounded">1</div>
+                          <div className="bg-blue-200 border border-blue-400 py-1 text-[9px] font-bold text-center rounded">2</div>
+                          <div className="bg-blue-200 border border-blue-400 py-1 text-[9px] font-bold text-center rounded">3</div>
+                          <div className="bg-blue-200 border border-blue-400 py-1 text-[9px] font-bold text-center rounded">4</div>
+                        </div>
+
+                        {additionalSigners.length > 0 && (
+                          <div className="flex justify-center">
+                            <div className={`grid gap-1 ${
+                              additionalSigners.length === 1 ? 'grid-cols-1 w-1/4' :
+                              additionalSigners.length === 2 ? 'grid-cols-2 w-2/4' :
+                              additionalSigners.length === 3 ? 'grid-cols-3 w-3/4' :
+                              'grid-cols-4 w-full'
+                            }`}>
+                              {additionalSigners.slice(0, 4).map((_, i) => (
+                                <div key={i} className="bg-amber-300 border border-amber-500 py-1 text-[9px] font-bold text-center rounded">
+                                  #{i + 1}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-stone-200 flex items-center justify-between shrink-0 bg-stone-50 rounded-b-3xl">
+              <span className="text-xs text-stone-500 font-mono">
+                Total Penanda Tangan: <strong>{4 + additionalSigners.length} Orang</strong>
+              </span>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsSignerConfigModalOpen(false)}
+                  className="px-4 py-2 text-xs font-bold text-stone-600 hover:bg-stone-200 rounded-xl transition cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveSignerConfig}
+                  className="px-5 py-2 text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white rounded-xl transition shadow-3xs cursor-pointer flex items-center gap-1.5"
+                >
+                  <Check size={15} />
+                  <span>Simpan &amp; Terapkan ke Form</span>
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

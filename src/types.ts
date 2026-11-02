@@ -593,6 +593,15 @@ export interface LoanPayment {
   createdAt: string;
 }
 
+export interface LoanSigner {
+  id: string;
+  role: string;       // e.g. "Diajukan", "Diverifikasi", "Disetujui", "Mengetahui"
+  nama: string;       // e.g. "H. ANDI NURSYAM HALID"
+  jabatan: string;    // e.g. "Direktur Utama"
+  tanggal?: string;   // e.g. "2026-11-02"
+  paraf?: string;
+}
+
 export interface EmployeeLoan {
   id: string;
   nomorPinjaman: string; // e.g. "PK-202611-001"
@@ -607,21 +616,28 @@ export interface EmployeeLoan {
   tanggalPengambilanPinjaman: string; // YYYY-MM-DD
   
   // Persetujuan / Penandatangan Form Resmi Sesuai Template PT NMSA
+  peminjamRole?: string; // Default: "Peminjam :" atau "Diajukan"
   peminjamNama: string;
   peminjamJabatan: string;
   peminjamTanggal?: string;
 
+  atasanRole?: string; // Default: "Persetujuan Atasan :" atau "Diverifikasi"
   atasanNama: string; // Default: "Andi Muhammad Rifki"
   atasanJabatan: string; // Default: "Direktur"
   atasanTanggal?: string;
 
+  financeRole?: string; // Default: "Persetujuan Finance :" atau "Diverifikasi"
   financeNama: string; // Default: "Harijon"
   financeJabatan: string; // Default: "Direktur Keuangan"
   financeTanggal?: string;
 
+  direkturRole?: string; // Default: "Persetujuan Direktur :" atau "Disetujui"
   direkturNama: string; // Default: "Andi Nursyam Halid"
   direkturJabatan: string; // Default: "Direktur Utama"
   direkturTanggal?: string;
+
+  // Penanda tangan tambahan di baris bawah (1, 2, 3 di tengah, 4 sejajar penuh)
+  additionalSigners?: LoanSigner[];
 
   catatan?: string;
   status: 'Menunggu Persetujuan' | 'Disetujui' | 'Dicairkan' | 'Belum Lunas' | 'Lunas' | 'Ditolak';

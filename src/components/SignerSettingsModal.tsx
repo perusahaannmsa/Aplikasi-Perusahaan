@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Save, RotateCcw, Check, UserCheck, Shield, CheckCircle2, Sliders } from 'lucide-react';
+import { X, Save, RotateCcw, UserCheck, Shield, CheckCircle2, Sliders, Plus, Trash2, Users } from 'lucide-react';
 
 export interface SignerConfigItem {
   title: string;
@@ -23,6 +23,17 @@ export interface SignerSettingsModalProps {
   onReset: () => void;
 }
 
+export const DEFAULT_SIGNER_POOL: SignerConfigItem[] = [
+  { title: 'Diajukan', name: 'Andi Dhiya Salsabila', role: 'Staff Keuangan', enabled: true },
+  { title: 'Diverifikasi', name: 'Sri Ekowati', role: 'Manager Keuangan', enabled: true },
+  { title: 'Diverifikasi', name: 'Andi Muhammad Rifki', role: 'Direktur', enabled: true },
+  { title: 'Disetujui', name: 'Harijon', role: 'Direktur Keuangan', enabled: true },
+  { title: 'Disetujui', name: 'H. Andi Nursyam Halid', role: 'Direktur Utama', enabled: true },
+  { title: 'Mengetahui', name: 'Komisaris Perusahaan', role: 'Komisaris Utama', enabled: true },
+  { title: 'Diperiksa', name: 'Internal Audit', role: 'Audit Internal', enabled: true },
+  { title: 'Disahkan', name: 'Dewan Direksi', role: 'Dewan Direksi', enabled: true },
+];
+
 export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
   isOpen,
   onClose,
@@ -43,7 +54,7 @@ export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
   React.useEffect(() => {
     if (isOpen) {
       setLocalF1(
-        f1Signers.map((s) => ({
+        (f1Signers && f1Signers.length > 0 ? f1Signers : DEFAULT_SIGNER_POOL.slice(0, 4)).map((s) => ({
           ...s,
           enabled: s.enabled !== false,
         }))
@@ -77,24 +88,55 @@ export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
     });
   };
 
-  const handleSetSignerCountF1 = (count: 2 | 3 | 4) => {
+  const handleSetSignerCountF1 = (count: number) => {
     setLocalF1((prev) => {
-      const updated = [...prev];
-      if (count === 4) {
-        return updated.map((s) => ({ ...s, enabled: true }));
-      } else if (count === 3) {
-        // Kolom 1 (Diajukan), Kolom 2 (Diverifikasi), Kolom 4 (Disetujui) aktif
+      let updated = [...prev];
+      // Expand array if needed up to count
+      while (updated.length < count && updated.length < DEFAULT_SIGNER_POOL.length) {
+        const nextDefault = DEFAULT_SIGNER_POOL[updated.length];
+        updated.push({ ...nextDefault, enabled: true });
+      }
+
+      if (count === 2) {
+        // Kolom 1 (Diajukan) dan Kolom 4 (Disetujui) atau kolom pertama dan terakhir
         return updated.map((s, idx) => ({
           ...s,
-          enabled: idx === 0 || idx === 1 || idx === 3,
+          enabled: idx === 0 || idx === (updated.length >= 4 ? 3 : updated.length - 1),
+        }));
+      } else if (count === 3) {
+        // Kolom 1, 2, 4 aktif
+        return updated.map((s, idx) => ({
+          ...s,
+          enabled: idx === 0 || idx === 1 || idx === (updated.length >= 4 ? 3 : 2),
         }));
       } else {
-        // 2 Signers: Kolom 1 (Diajukan), Kolom 4 (Disetujui)
+        // count = 4, 5, 6, 7, 8
         return updated.map((s, idx) => ({
           ...s,
-          enabled: idx === 0 || idx === 3,
+          enabled: idx < count,
         }));
       }
+    });
+  };
+
+  const handleAddSignerF1 = () => {
+    setLocalF1((prev) => {
+      if (prev.length >= 8) return prev;
+      const nextIdx = prev.length;
+      const defaultData = DEFAULT_SIGNER_POOL[nextIdx] || {
+        title: 'Mengetahui',
+        name: 'Penanda Tangan Baru',
+        role: 'Jabatan',
+        enabled: true,
+      };
+      return [...prev, { ...defaultData, enabled: true }];
+    });
+  };
+
+  const handleRemoveSignerF1 = (index: number) => {
+    setLocalF1((prev) => {
+      if (prev.length <= 2) return prev; // Minimal 2 kolom tersisa
+      return prev.filter((_, idx) => idx !== index);
     });
   };
 
@@ -125,13 +167,56 @@ export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
     ]);
   };
 
-  const handleApplyPreset = (presetType: 'nmsa_standard' | 'direksi_utama' | 'operasional') => {
+  const handleApplyPreset = (presetType: 'nmsa_standard' | 'direksi_utama' | '5_penanda_tangan' | '6_penanda_tangan' | '8_penanda_tangan' | 'operasional') => {
     if (presetType === 'nmsa_standard') {
       setLocalF1([
         { title: 'Diajukan', name: 'Andi Dhiya Salsabila', role: 'Staff Keuangan', enabled: true },
         { title: 'Diverifikasi', name: 'Sri Ekowati', role: 'Manager Keuangan', enabled: true },
         { title: 'Diverifikasi', name: 'Andi Muhammad Rifki', role: 'Direktur', enabled: true },
         { title: 'Disetujui', name: 'Harijon', role: 'Direktur Keuangan', enabled: true },
+      ]);
+      setLocalF2([
+        { title: 'Diajukan', name: 'Andi Dhiya Salsabila', role: 'Staff Keuangan', enabled: true },
+        { title: 'Diverifikasi', name: 'Sri Ekowati', role: 'Manager Keuangan', enabled: false },
+      ]);
+    } else if (presetType === '5_penanda_tangan') {
+      // 4 di atas + 1 di bawah tengah (Direktur Utama)
+      setLocalF1([
+        { title: 'Diajukan', name: 'Andi Dhiya Salsabila', role: 'Staff Keuangan', enabled: true },
+        { title: 'Diverifikasi', name: 'Sri Ekowati', role: 'Manager Keuangan', enabled: true },
+        { title: 'Diverifikasi', name: 'Andi Muhammad Rifki', role: 'Direktur', enabled: true },
+        { title: 'Disetujui', name: 'Harijon', role: 'Direktur Keuangan', enabled: true },
+        { title: 'Disetujui', name: 'H. Andi Nursyam Halid', role: 'Direktur Utama', enabled: true },
+      ]);
+      setLocalF2([
+        { title: 'Diajukan', name: 'Andi Dhiya Salsabila', role: 'Staff Keuangan', enabled: true },
+        { title: 'Diverifikasi', name: 'Sri Ekowati', role: 'Manager Keuangan', enabled: false },
+      ]);
+    } else if (presetType === '6_penanda_tangan') {
+      // 4 di atas + 2 di bawah tengah
+      setLocalF1([
+        { title: 'Diajukan', name: 'Andi Dhiya Salsabila', role: 'Staff Keuangan', enabled: true },
+        { title: 'Diverifikasi', name: 'Sri Ekowati', role: 'Manager Keuangan', enabled: true },
+        { title: 'Diverifikasi', name: 'Andi Muhammad Rifki', role: 'Direktur', enabled: true },
+        { title: 'Disetujui', name: 'Harijon', role: 'Direktur Keuangan', enabled: true },
+        { title: 'Disetujui', name: 'H. Andi Nursyam Halid', role: 'Direktur Utama', enabled: true },
+        { title: 'Mengetahui', name: 'Komisaris Perusahaan', role: 'Komisaris Utama', enabled: true },
+      ]);
+      setLocalF2([
+        { title: 'Diajukan', name: 'Andi Dhiya Salsabila', role: 'Staff Keuangan', enabled: true },
+        { title: 'Diverifikasi', name: 'Sri Ekowati', role: 'Manager Keuangan', enabled: false },
+      ]);
+    } else if (presetType === '8_penanda_tangan') {
+      // 4 di atas + 4 di bawah sejajar
+      setLocalF1([
+        { title: 'Diajukan', name: 'Andi Dhiya Salsabila', role: 'Staff Keuangan', enabled: true },
+        { title: 'Diverifikasi', name: 'Sri Ekowati', role: 'Manager Keuangan', enabled: true },
+        { title: 'Diverifikasi', name: 'Andi Muhammad Rifki', role: 'Direktur', enabled: true },
+        { title: 'Disetujui', name: 'Harijon', role: 'Direktur Keuangan', enabled: true },
+        { title: 'Disetujui', name: 'H. Andi Nursyam Halid', role: 'Direktur Utama', enabled: true },
+        { title: 'Mengetahui', name: 'Komisaris Perusahaan', role: 'Komisaris Utama', enabled: true },
+        { title: 'Diperiksa', name: 'Internal Audit', role: 'Audit Internal', enabled: true },
+        { title: 'Disahkan', name: 'Dewan Direksi', role: 'Dewan Direksi', enabled: true },
       ]);
       setLocalF2([
         { title: 'Diajukan', name: 'Andi Dhiya Salsabila', role: 'Staff Keuangan', enabled: true },
@@ -188,6 +273,8 @@ export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
     { name: 'H. Andi Nursyam Halid', role: 'Direktur Utama' },
     { name: 'Harijon', role: 'Direktur Keuangan' },
     { name: 'Nur Wahyudi', role: 'Staff Keuangan' },
+    { name: 'Komisaris Perusahaan', role: 'Komisaris Utama' },
+    { name: 'Internal Audit', role: 'Audit Internal' },
   ];
 
   const activeF1Count = localF1.filter((s) => s.enabled !== false).length;
@@ -195,7 +282,7 @@ export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto print:hidden">
-      <div className="bg-white rounded-2xl shadow-2xl border border-stone-200 w-full max-w-3xl overflow-hidden flex flex-col max-h-[94vh]">
+      <div className="bg-white rounded-2xl shadow-2xl border border-stone-200 w-full max-w-4xl overflow-hidden flex flex-col max-h-[94vh]">
         {/* Modal Header */}
         <div className="bg-stone-900 text-white px-5 py-3.5 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
@@ -203,9 +290,9 @@ export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
               <UserCheck size={18} />
             </div>
             <div>
-              <h3 className="text-sm font-bold tracking-tight">Atur Nama, Jabatan & Status Penanda Tangan</h3>
+              <h3 className="text-sm font-bold tracking-tight">Atur Nama, Jabatan & Penanda Tangan (2 - 8 Kolom)</h3>
               <p className="text-[11px] text-stone-400">
-                Pilih jumlah penanda tangan aktif, format kotak atau garis, serta ubah nama & jabatan
+                Tambah hingga 8 penanda tangan. Kolom 5-8 otomatis diposisikan simetris di baris bawah dengan ukuran kotak sama persis.
               </p>
             </div>
           </div>
@@ -231,11 +318,11 @@ export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
             >
               <span>Voucher F1</span>
               <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${
-                activeF1Count === 3
-                  ? 'bg-amber-100 text-amber-800'
+                activeF1Count >= 5
+                  ? 'bg-purple-100 text-purple-800'
                   : activeF1Count === 4
                   ? 'bg-emerald-100 text-emerald-800'
-                  : 'bg-blue-100 text-blue-800'
+                  : 'bg-amber-100 text-amber-800'
               }`}>
                 {activeF1Count} Kolom
               </span>
@@ -261,16 +348,30 @@ export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
             <button
               onClick={() => handleApplyPreset('nmsa_standard')}
               className="px-2 py-0.5 text-[10.5px] font-bold bg-white border border-stone-300 hover:border-amber-500 text-stone-700 rounded-md transition cursor-pointer"
-              title="Standar NMSA (Dhiya, Sri, Rifki, Harijon)"
+              title="Standar NMSA (4 Kolom)"
             >
-              Standar NMSA
+              Standar 4 Kolom
             </button>
             <button
-              onClick={() => handleApplyPreset('direksi_utama')}
+              onClick={() => handleApplyPreset('5_penanda_tangan')}
               className="px-2 py-0.5 text-[10.5px] font-bold bg-white border border-stone-300 hover:border-amber-500 text-stone-700 rounded-md transition cursor-pointer"
-              title="Direksi Utama (Dhiya, Sri, Nursyam, Harijon)"
+              title="5 Kolom (4 di atas + 1 Direktur Utama di bawah tengah)"
             >
-              Direktur Utama
+              5 Kolom (+ Dirut Bawah)
+            </button>
+            <button
+              onClick={() => handleApplyPreset('6_penanda_tangan')}
+              className="px-2 py-0.5 text-[10.5px] font-bold bg-white border border-stone-300 hover:border-amber-500 text-stone-700 rounded-md transition cursor-pointer"
+              title="6 Kolom (4 di atas + 2 di bawah tengah)"
+            >
+              6 Kolom (Direksi)
+            </button>
+            <button
+              onClick={() => handleApplyPreset('8_penanda_tangan')}
+              className="px-2 py-0.5 text-[10.5px] font-bold bg-white border border-stone-300 hover:border-amber-500 text-stone-700 rounded-md transition cursor-pointer"
+              title="8 Kolom (4 di atas + 4 di bawah sejajar)"
+            >
+              8 Kolom (Lengkap)
             </button>
             <button
               onClick={() => handleApplyPreset('operasional')}
@@ -325,108 +426,148 @@ export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
 
           {activeTab === 'f1' ? (
             <div className="space-y-3.5">
-              {/* Top Controls: Active Column Count Quick Select */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-stone-100/80 p-2.5 rounded-xl border border-stone-200">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-stone-800">
-                    Jumlah Kolom Aktif:
-                  </span>
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => handleSetSignerCountF1(4)}
-                      className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
-                        activeF1Count === 4
-                          ? 'bg-amber-600 text-white shadow-xs'
-                          : 'bg-white border border-stone-300 text-stone-700 hover:bg-stone-50'
-                      }`}
-                    >
-                      4 Kolom (Lengkap)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleSetSignerCountF1(3)}
-                      className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
-                        activeF1Count === 3
-                          ? 'bg-amber-600 text-white shadow-xs'
-                          : 'bg-white border border-stone-300 text-stone-700 hover:bg-stone-50'
-                      }`}
-                    >
-                      3 Kolom (3 Nama)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleSetSignerCountF1(2)}
-                      className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
-                        activeF1Count === 2
-                          ? 'bg-amber-600 text-white shadow-xs'
-                          : 'bg-white border border-stone-300 text-stone-700 hover:bg-stone-50'
-                      }`}
-                    >
-                      2 Kolom
-                    </button>
+              {/* Top Controls: Active Column Count Quick Select + Add Signer Button */}
+              <div className="bg-stone-100/90 p-3 rounded-xl border border-stone-200/90 space-y-2.5">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-2.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-bold text-stone-800 flex items-center gap-1">
+                      <Users size={14} className="text-amber-600" />
+                      Jumlah Kolom:
+                    </span>
+                    <div className="flex items-center gap-1 flex-wrap">
+                      {[2, 3, 4, 5, 6, 7, 8].map((num) => (
+                        <button
+                          key={num}
+                          type="button"
+                          onClick={() => handleSetSignerCountF1(num)}
+                          className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer flex items-center gap-1 ${
+                            activeF1Count === num
+                              ? 'bg-amber-600 text-white shadow-xs'
+                              : 'bg-white border border-stone-300 text-stone-700 hover:bg-stone-50 hover:border-amber-400'
+                          }`}
+                          title={`Atur tepat ${num} kolom penanda tangan aktif`}
+                        >
+                          <span>{num} Kolom</span>
+                          {num > 4 && (
+                            <span className={`text-[9px] px-1 py-0.2 rounded font-mono ${activeF1Count === num ? 'bg-amber-700 text-white' : 'bg-stone-100 text-stone-600'}`}>
+                              (2 Baris)
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
                   </div>
+
+                  {/* Button "+ Tambah Penanda Tangan" */}
+                  <button
+                    type="button"
+                    onClick={handleAddSignerF1}
+                    disabled={localF1.length >= 8}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                      localF1.length >= 8
+                        ? 'bg-stone-200 text-stone-400 border border-stone-300 cursor-not-allowed'
+                        : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
+                    }`}
+                    title={localF1.length >= 8 ? 'Maksimal 8 penanda tangan' : 'Tambah penanda tangan baru ke baris bawah'}
+                  >
+                    <Plus size={13} />
+                    <span>+ Tambah Penanda Tangan {localF1.length < 8 ? `(${localF1.length + 1})` : ''}</span>
+                  </button>
                 </div>
 
-                <div className="text-[11px] font-medium text-stone-600 flex items-center gap-1.5 self-end sm:self-center">
-                  <span className="font-bold text-amber-900 bg-amber-100/90 px-2 py-0.5 rounded border border-amber-300">
-                    {activeF1Count} dari 4 Kolom Aktif
-                  </span>
-                  <span>
-                    (Lebar dicetak {Math.round(100 / Math.max(1, activeF1Count))}% per kolom)
+                {/* Info Banner on placement and box sizes */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between text-[11px] gap-2 pt-1 border-t border-stone-200/70">
+                  <div className="flex items-center gap-1.5 text-stone-700 flex-wrap">
+                    <span className="font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
+                      {activeF1Count} Penanda Tangan Aktif
+                    </span>
+                    <span className="font-medium text-stone-600">
+                      {activeF1Count <= 4
+                        ? `(Baris 1: ${(100 / Math.max(1, activeF1Count)).toFixed(0)}% lebar per kotak)`
+                        : `(Baris 1: 4 kotak sejajar + Baris 2: ${activeF1Count - 4} kotak di bawah posisi tengah, ukuran kotak 25% sama persis)`}
+                    </span>
+                  </div>
+                  <span className="text-stone-500 font-mono text-[10.5px]">
+                    Total Kolom Terkonfigurasi: {localF1.length} / 8
                   </span>
                 </div>
               </div>
 
-              {/* 4 Columns Configuration Cards */}
+              {/* Columns Configuration Cards */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
                 {localF1.map((item, idx) => {
                   const isEnabled = item.enabled !== false;
+                  const isRow2 = idx >= 4;
                   return (
                     <div
                       key={idx}
-                      className={`p-3.5 rounded-xl border shadow-2xs space-y-2.5 transition ${
+                      className={`p-3.5 rounded-xl border shadow-2xs space-y-2.5 transition relative ${
                         isEnabled
-                          ? 'bg-stone-50/80 border-stone-200/90'
+                          ? isRow2
+                            ? 'bg-amber-50/50 border-amber-200/90'
+                            : 'bg-stone-50/80 border-stone-200/90'
                           : 'bg-stone-100/70 border-dashed border-stone-300 opacity-60'
                       }`}
                     >
-                      {/* Card Header with ON/OFF Toggle */}
+                      {/* Card Header with row info & buttons */}
                       <div className="flex items-center justify-between border-b border-stone-200/80 pb-1.5">
-                        <span className="text-xs font-bold text-stone-900 flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5">
                           <span
                             className={`w-5 h-5 rounded-full text-white text-[11px] font-black inline-flex items-center justify-center ${
-                              isEnabled ? 'bg-amber-500' : 'bg-stone-400'
+                              isEnabled ? (isRow2 ? 'bg-amber-600' : 'bg-amber-500') : 'bg-stone-400'
                             }`}
                           >
                             {idx + 1}
                           </span>
-                          Kolom {idx + 1}
-                        </span>
+                          <span className="text-xs font-bold text-stone-900">
+                            Kolom {idx + 1}
+                          </span>
+                          <span className={`text-[9.5px] px-1.5 py-0.2 rounded font-bold uppercase tracking-wider ${
+                            isRow2
+                              ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                              : 'bg-stone-200 text-stone-700'
+                          }`}>
+                            {isRow2 ? `Baris 2 (Bawah #${idx - 3})` : 'Baris 1 (Atas)'}
+                          </span>
+                        </div>
 
-                        {/* Toggle Aktif / Nonaktif */}
-                        <button
-                          type="button"
-                          onClick={() => handleToggleF1Enabled(idx)}
-                          className={`px-2 py-0.5 text-[10.5px] font-bold rounded-md transition flex items-center gap-1 cursor-pointer ${
-                            isEnabled
-                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 hover:bg-emerald-200'
-                              : 'bg-stone-200 text-stone-600 border border-stone-300 hover:bg-stone-300'
-                          }`}
-                          title={isEnabled ? 'Klik untuk menonaktifkan kolom ini' : 'Klik untuk mengaktifkan kolom ini'}
-                        >
-                          {isEnabled ? (
-                            <>
-                              <CheckCircle2 size={12} className="text-emerald-700" />
-                              <span>Kolom Aktif</span>
-                            </>
-                          ) : (
-                            <>
-                              <X size={12} className="text-stone-500" />
-                              <span>Nonaktif (Dilewati)</span>
-                            </>
+                        <div className="flex items-center gap-1.5">
+                          {/* Toggle Aktif / Nonaktif */}
+                          <button
+                            type="button"
+                            onClick={() => handleToggleF1Enabled(idx)}
+                            className={`px-2 py-0.5 text-[10.5px] font-bold rounded-md transition flex items-center gap-1 cursor-pointer ${
+                              isEnabled
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 hover:bg-emerald-200'
+                                : 'bg-stone-200 text-stone-600 border border-stone-300 hover:bg-stone-300'
+                            }`}
+                            title={isEnabled ? 'Klik untuk menonaktifkan kolom ini' : 'Klik untuk mengaktifkan kolom ini'}
+                          >
+                            {isEnabled ? (
+                              <>
+                                <CheckCircle2 size={12} className="text-emerald-700" />
+                                <span>Aktif</span>
+                              </>
+                            ) : (
+                              <>
+                                <X size={12} className="text-stone-500" />
+                                <span>Nonaktif</span>
+                              </>
+                            )}
+                          </button>
+
+                          {/* Delete Button (for extra columns beyond 4, or if user added columns) */}
+                          {localF1.length > 4 && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveSignerF1(idx)}
+                              className="p-1 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded transition cursor-pointer"
+                              title="Hapus kolom penanda tangan ini"
+                            >
+                              <Trash2 size={13} />
+                            </button>
                           )}
-                        </button>
+                        </div>
                       </div>
 
                       {!isEnabled && (
@@ -448,7 +589,7 @@ export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
                           className="w-full px-2.5 py-1.5 text-xs bg-white border border-stone-300 rounded-lg focus:outline-none focus:ring-1.5 focus:ring-amber-500 font-semibold"
                         />
                         <div className="flex flex-wrap gap-1 mt-1">
-                          {commonStatusPresets.slice(0, 5).map((preset) => (
+                          {commonStatusPresets.slice(0, 6).map((preset) => (
                             <button
                               key={preset}
                               type="button"
