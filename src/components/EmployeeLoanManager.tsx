@@ -8,7 +8,8 @@ import {
   generateNextLoanNumber,
   getSavedEmployeeLoans,
   saveEmployeeLoans,
-  INITIAL_SAMPLE_LOANS
+  INITIAL_SAMPLE_LOANS,
+  getSynchronizedAttendanceWorkers
 } from '../utils/loanUtils';
 import { EmployeeLoanDocument } from './EmployeeLoanDocument';
 import {
@@ -37,7 +38,11 @@ import {
   DollarSign,
   TrendingDown,
   ExternalLink,
-  Layers
+  Layers,
+  ZoomIn,
+  ZoomOut,
+  Maximize2,
+  Users
 } from 'lucide-react';
 
 interface EmployeeLoanManagerProps {
@@ -49,7 +54,7 @@ interface EmployeeLoanManagerProps {
 
 export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
   onBackToList,
-  workers = [],
+  workers: propWorkers = [],
   userProfile,
   onCreateVoucher
 }) => {
@@ -70,6 +75,23 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
   const [targetLoanForPrint, setTargetLoanForPrint] = useState<EmployeeLoan | null>(null);
   const [printWithLedger, setPrintWithLedger] = useState(true);
+  const [showKopSuratInPrint, setShowKopSuratInPrint] = useState(true);
+  const [zoomLevel, setZoomLevel] = useState<number>(0.85);
+
+  // Karyawan tersinkronisasi 100% dengan Modul Absensi Harian NMSA
+  const syncedWorkers = useMemo(() => {
+    return getSynchronizedAttendanceWorkers();
+  }, []);
+
+  const workers = useMemo(() => {
+    if (propWorkers && propWorkers.length > 0) {
+      const map = new Map<string, Worker>();
+      syncedWorkers.forEach(w => map.set(w.name.toLowerCase().trim(), w));
+      propWorkers.forEach(w => map.set(w.name.toLowerCase().trim(), w));
+      return Array.from(map.values());
+    }
+    return syncedWorkers;
+  }, [propWorkers, syncedWorkers]);
 
   // Form State
   const [nomorPinjaman, setNomorPinjaman] = useState('');
@@ -329,6 +351,8 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
   const handleOpenPrintModal = (loan: EmployeeLoan) => {
     setTargetLoanForPrint(loan);
     setPrintWithLedger(true);
+    setShowKopSuratInPrint(true);
+    setZoomLevel(0.85);
     setIsPrintModalOpen(true);
   };
 
@@ -842,52 +866,119 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                {/* Nama Karyawan */}
-                <div>
-                  <label className="block text-[11px] font-bold text-stone-700 uppercase mb-1">
-                    Nama Karyawan:
+              {/* Nama Karyawan & Divisi Tersinkronisasi dengan Absensi */}
+              <div className="space-y-2.5 p-3.5 bg-stone-50 border border-stone-200 rounded-2xl">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-bold text-stone-800 uppercase flex items-center gap-1.5">
+                    <Users size={14} className="text-amber-600" />
+                    <span>Nama Karyawan Peminjam (Tersinkron dengan Absensi NMSA):</span>
                   </label>
-                  <input
-                    type="text"
-                    required
-                    list="worker-suggestions"
-                    value={namaKaryawan}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setNamaKaryawan(val);
-                      // Auto-fill division if matched in workers
-                      const matched = workers.find(w => w.name.toLowerCase() === val.toLowerCase());
-                      if (matched && matched.role) {
-                        setDivisi(matched.role);
-                        setPeminjamJabatan(matched.role);
-                      }
-                    }}
-                    placeholder="Ketik atau pilih nama karyawan..."
-                    className="w-full px-3 py-2 text-xs font-bold bg-stone-50 border border-stone-300 rounded-xl focus:bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                  />
-                  <datalist id="worker-suggestions">
-                    {workers.map(w => (
-                      <option key={w.id} value={w.name}>{w.role ? `${w.name} (${w.role})` : w.name}</option>
-                    ))}
-                  </datalist>
+                  <span className="text-[10px] text-emerald-800 font-bold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                    ✓ {workers.length} Karyawan Aktif
+                  </span>
                 </div>
 
-                {/* Divisi / Jabatan */}
-                <div>
-                  <label className="block text-[11px] font-bold text-stone-700 uppercase mb-1">
-                    Divisi / Jabatan:
-                  </label>
-                  <input
-                    type="text"
-                    value={divisi}
-                    onChange={(e) => {
-                      setDivisi(e.target.value);
-                      setPeminjamJabatan(e.target.value);
-                    }}
-                    placeholder="Contoh: Operasional / Keuangan / Lapangan"
-                    className="w-full px-3 py-2 text-xs bg-stone-50 border border-stone-300 rounded-xl focus:bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                  />
+                {/* Quick Selection Chips dari Seluruh Karyawan Absensi */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1.5 no-scrollbar">
+                  {workers.map((w) => {
+                    const isSelected = namaKaryawan.toLowerCase().trim() === w.name.toLowerCase().trim();
+                    return (
+                      <button
+                        key={w.id || w.name}
+                        type="button"
+                        onClick={() => {
+                          setNamaKaryawan(w.name);
+                          let autoDiv = w.division || w.role || 'Operasional Lapangan';
+                          if (w.name.toLowerCase().includes('ekowati') || w.name.toLowerCase().includes('dhiya')) {
+                            autoDiv = 'Keuangan & Akuntansi';
+                          } else if (w.name.toLowerCase().includes('wahyudi') || w.name.toLowerCase().includes('faisal') || w.name.toLowerCase().includes('junaedi')) {
+                            autoDiv = 'Operasional Lapangan';
+                          }
+                          setDivisi(autoDiv);
+                          setPeminjamJabatan(w.role || 'Karyawan');
+                        }}
+                        className={`px-2.5 py-1 rounded-xl text-xs font-bold whitespace-nowrap transition flex items-center gap-1.5 cursor-pointer border ${
+                          isSelected
+                            ? 'bg-amber-500 text-stone-950 border-amber-600 shadow-2xs font-extrabold'
+                            : 'bg-white hover:bg-stone-100 text-stone-700 border-stone-300'
+                        }`}
+                      >
+                        <span className={`w-1.5 h-1.5 rounded-full ${isSelected ? 'bg-stone-950' : 'bg-emerald-500'}`}></span>
+                        <span>{w.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  {/* Text Input Autocomplete */}
+                  <div>
+                    <label className="block text-[10px] font-bold text-stone-600 uppercase mb-1">
+                      Ketik Nama Karyawan:
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      list="worker-suggestions"
+                      value={namaKaryawan}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setNamaKaryawan(val);
+                        const matched = workers.find(w => w.name.toLowerCase().trim() === val.toLowerCase().trim());
+                        if (matched) {
+                          let autoDiv = matched.division || matched.role || 'Operasional Lapangan';
+                          if (matched.name.toLowerCase().includes('ekowati') || matched.name.toLowerCase().includes('dhiya')) {
+                            autoDiv = 'Keuangan & Akuntansi';
+                          }
+                          setDivisi(autoDiv);
+                          setPeminjamJabatan(matched.role || 'Karyawan');
+                        }
+                      }}
+                      placeholder="Pilih di atas atau ketik nama..."
+                      className="w-full px-3 py-2 text-xs font-bold bg-white border border-stone-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                    />
+                    <datalist id="worker-suggestions">
+                      {workers.map(w => (
+                        <option key={w.id} value={w.name}>{w.role ? `${w.name} (${w.role})` : w.name}</option>
+                      ))}
+                    </datalist>
+                  </div>
+
+                  {/* Divisi / Jabatan */}
+                  <div>
+                    <label className="block text-[10px] font-bold text-stone-600 uppercase mb-1">
+                      Divisi / Posisi Pekerjaan:
+                    </label>
+                    <input
+                      type="text"
+                      value={divisi}
+                      onChange={(e) => {
+                        setDivisi(e.target.value);
+                        setPeminjamJabatan(e.target.value);
+                      }}
+                      placeholder="Contoh: Operasional / Keuangan / Lapangan"
+                      className="w-full px-3 py-2 text-xs bg-white border border-stone-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                    />
+                    {/* Quick Division Suggestions */}
+                    <div className="flex items-center gap-1 mt-1 text-[9.5px] text-stone-500">
+                      <span>Cepat:</span>
+                      <button
+                        type="button"
+                        onClick={() => { setDivisi('Operasional Lapangan'); setPeminjamJabatan('Staff Operasional'); }}
+                        className="hover:text-amber-800 underline cursor-pointer"
+                      >
+                        Operasional
+                      </button>
+                      <span>•</span>
+                      <button
+                        type="button"
+                        onClick={() => { setDivisi('Keuangan & Akuntansi'); setPeminjamJabatan('Staff Keuangan'); }}
+                        className="hover:text-amber-800 underline cursor-pointer"
+                      >
+                        Keuangan
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -1352,54 +1443,180 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
         </div>
       )}
 
-      {/* MODAL 4: PREVIEW & CETAK DOKUMEN (PERSIS FORM ASLI) */}
+      {/* MODAL 4: STUDIO PRATINJAU & CETAK DOKUMEN RESMI (TAMPILAN BARU SESUAI FORMAT NMSA) */}
       {isPrintModalOpen && targetLoanForPrint && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-2 sm:p-4 overflow-y-auto print:p-0 print:bg-white">
-          <div className="bg-white rounded-3xl max-w-4xl w-full max-h-[96vh] flex flex-col shadow-2xl border border-stone-200 print:shadow-none print:border-none print:max-h-none print:max-w-none print:rounded-none">
-            {/* Modal Print Toolbar */}
-            <div className="p-3.5 sm:p-4 border-b border-stone-200 flex items-center justify-between print:hidden bg-stone-50 rounded-t-3xl">
-              <div className="flex items-center gap-2">
-                <Printer className="text-amber-700 w-5 h-5" />
-                <span className="font-bold text-xs sm:text-sm text-stone-900">
-                  Pratinjau Cetak: FORM PINJAMAN KARYAWAN
-                </span>
-              </div>
+        <div className="fixed inset-0 z-50 flex flex-col bg-stone-900/95 backdrop-blur-md text-white overflow-hidden animate-in fade-in duration-150 print:bg-white print:p-0 print:overflow-visible print:block">
+          {/* Top Fixed Floating Control Toolbar (Always visible, clean, never scrolls out of view) */}
+          <header className="h-16 px-4 sm:px-6 bg-stone-950/90 border-b border-stone-800 flex items-center justify-between shrink-0 z-30 print:hidden select-none">
+            {/* Left: Close & Document Meta */}
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setIsPrintModalOpen(false)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-stone-800 hover:bg-stone-700 text-stone-200 rounded-xl text-xs font-bold transition cursor-pointer border border-stone-700"
+                title="Tutup Pratinjau & Kembali ke Daftar"
+              >
+                <ArrowLeft size={15} />
+                <span className="hidden sm:inline">Kembali</span>
+              </button>
 
-              <div className="flex items-center gap-2">
-                <label className="flex items-center gap-1.5 text-xs text-stone-700 cursor-pointer mr-2 select-none">
-                  <input
-                    type="checkbox"
-                    checked={printWithLedger}
-                    onChange={(e) => setPrintWithLedger(e.target.checked)}
-                    className="rounded text-amber-600 focus:ring-amber-500"
-                  />
-                  <span>Sertakan Kartu Pembayaran &amp; Cicilan</span>
-                </label>
-
-                <button
-                  type="button"
-                  onClick={() => window.print()}
-                  className="px-4 py-2 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-3xs cursor-pointer"
-                >
-                  <Printer size={14} />
-                  <span>Cetak / Simpan PDF</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setIsPrintModalOpen(false)}
-                  className="p-2 text-stone-400 hover:text-stone-600 hover:bg-stone-200 rounded-xl transition"
-                >
-                  <X size={18} />
-                </button>
+              <div className="border-l border-stone-800 pl-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-black tracking-wide text-white">
+                    FORM PINJAMAN KARYAWAN
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    {targetLoanForPrint.nomorPinjaman}
+                  </span>
+                </div>
+                <p className="text-[11px] text-stone-400 font-medium truncate max-w-[200px] sm:max-w-xs">
+                  {targetLoanForPrint.namaKaryawan} {targetLoanForPrint.divisi ? `• ${targetLoanForPrint.divisi}` : ''}
+                </p>
               </div>
             </div>
 
-            {/* Document Preview Container */}
-            <div className="p-4 sm:p-8 overflow-y-auto flex-1 bg-stone-200/50 print:p-0 print:bg-white">
-              <EmployeeLoanDocument loan={targetLoanForPrint} showPaymentLedger={printWithLedger} />
+            {/* Center: Zoom Controls & Scaler (Solves 'terlalu besar' problem) */}
+            <div className="hidden md:flex items-center gap-1 bg-stone-900 px-2 py-1 rounded-2xl border border-stone-800">
+              <button
+                type="button"
+                onClick={() => setZoomLevel(z => Math.max(0.5, +(z - 0.1).toFixed(2)))}
+                className="p-1.5 text-stone-300 hover:text-white hover:bg-stone-800 rounded-lg transition cursor-pointer"
+                title="Perkecil Tampilan (-)"
+              >
+                <ZoomOut size={15} />
+              </button>
+              
+              <button
+                type="button"
+                onClick={() => setZoomLevel(0.85)}
+                className="px-2.5 py-1 text-xs font-mono font-bold text-amber-400 hover:text-amber-300 transition cursor-pointer"
+                title="Reset Zoom ke 85% (Pas Layar)"
+              >
+                {Math.round(zoomLevel * 100)}%
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setZoomLevel(z => Math.min(1.4, +(z + 0.1).toFixed(2)))}
+                className="p-1.5 text-stone-300 hover:text-white hover:bg-stone-800 rounded-lg transition cursor-pointer"
+                title="Perbesar Tampilan (+)"
+              >
+                <ZoomIn size={15} />
+              </button>
+
+              <div className="h-4 w-px bg-stone-700 mx-1"></div>
+
+              <button
+                type="button"
+                onClick={() => setZoomLevel(0.8)}
+                className={`px-2 py-1 rounded-lg text-[10px] font-bold transition cursor-pointer ${
+                  zoomLevel === 0.8 ? 'bg-amber-500 text-stone-950 font-black' : 'text-stone-300 hover:bg-stone-800'
+                }`}
+                title="Skala Pas Layar Laptop/Monitor"
+              >
+                Pas Layar
+              </button>
+              <button
+                type="button"
+                onClick={() => setZoomLevel(1)}
+                className={`px-2 py-1 rounded-lg text-[10px] font-bold transition cursor-pointer ${
+                  zoomLevel === 1 ? 'bg-amber-500 text-stone-950 font-black' : 'text-stone-300 hover:bg-stone-800'
+                }`}
+                title="Skala 100% Ukuran Asli Cetak"
+              >
+                100%
+              </button>
             </div>
-          </div>
+
+            {/* Right: Toggles & Print Buttons */}
+            <div className="flex items-center gap-2">
+              {/* Toggle Kop Surat (Disamakan dengan Internal Memo) */}
+              <button
+                type="button"
+                onClick={() => setShowKopSuratInPrint(!showKopSuratInPrint)}
+                className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer border ${
+                  showKopSuratInPrint
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
+                    : 'bg-stone-800 text-stone-300 border-stone-700 hover:bg-stone-700'
+                }`}
+                title="Nyalakan / Matikan Kop Surat (Matikan jika mencetak pada kertas blanko berkop)"
+              >
+                <Building size={14} />
+                <span className="hidden lg:inline">{showKopSuratInPrint ? 'Kop Surat: ON' : 'Kop Surat: OFF (Blanko Fisik)'}</span>
+                <span className="lg:hidden">{showKopSuratInPrint ? 'Kop: ON' : 'Kop: OFF'}</span>
+              </button>
+
+              {/* Toggle Riwayat Pembayaran */}
+              <button
+                type="button"
+                onClick={() => setPrintWithLedger(!printWithLedger)}
+                className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer border ${
+                  printWithLedger
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                    : 'bg-stone-800 text-stone-400 border-stone-700 hover:bg-stone-700'
+                }`}
+                title="Sertakan atau sembunyikan tabel rincian pembayaran cicilan"
+              >
+                <Layers size={14} />
+                <span className="hidden xl:inline">{printWithLedger ? 'Riwayat Cicilan: YA' : 'Riwayat Cicilan: TIDAK'}</span>
+              </button>
+
+              {/* Button: Buat Voucher Kas/Bank HO */}
+              {onCreateVoucher && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsPrintModalOpen(false);
+                    onCreateVoucher(targetLoanForPrint);
+                  }}
+                  className="hidden sm:flex px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold transition items-center gap-1.5 cursor-pointer shadow-2xs border border-emerald-600"
+                  title="Buat draf Formulir Voucher Kas/Bank HO untuk pencairan pinjaman ini"
+                >
+                  <FileCheck size={14} />
+                  <span>+ Voucher HO</span>
+                </button>
+              )}
+
+              {/* Button: Print / Cetak Dokumen */}
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 font-black rounded-xl text-xs transition flex items-center gap-1.5 cursor-pointer shadow-lg active:scale-95"
+                title="Cetak langsung ke printer atau simpan sebagai PDF"
+              >
+                <Printer size={15} />
+                <span>Cetak / PDF</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsPrintModalOpen(false)}
+                className="p-1.5 text-stone-400 hover:text-white hover:bg-stone-800 rounded-xl transition cursor-pointer ml-1"
+                title="Tutup Modal"
+              >
+                <X size={20} />
+              </button>
+            </div>
+          </header>
+
+          {/* Document Studio Canvas Workspace */}
+          <main className="flex-1 overflow-auto p-4 sm:p-8 flex justify-center items-start bg-stone-900/80 print:bg-white print:p-0 print:overflow-visible">
+            <div
+              style={{
+                transform: `scale(${zoomLevel})`,
+                transformOrigin: 'top center',
+                transition: 'transform 0.15s cubic-bezier(0.4, 0, 0.2, 1)',
+                marginBottom: `${Math.max(40, (1 - zoomLevel) * 200)}px`
+              }}
+              className="print:transform-none print:m-0"
+            >
+              <EmployeeLoanDocument
+                loan={targetLoanForPrint}
+                showPaymentLedger={printWithLedger}
+                showKopSurat={showKopSuratInPrint}
+              />
+            </div>
+          </main>
         </div>
       )}
     </div>

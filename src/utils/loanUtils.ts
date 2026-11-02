@@ -1,6 +1,35 @@
-import { EmployeeLoan, LoanPayment } from '../types';
+import { EmployeeLoan, LoanPayment, Worker } from '../types';
+import { INITIAL_WORKERS } from '../constantsAbsen';
 
 export const STORAGE_KEY_EMPLOYEE_LOANS = 'nmsa_employee_loans_v1';
+
+/**
+ * Ambil daftar karyawan yang tersinkronisasi 100% dengan modul Absensi Harian NMSA
+ */
+export function getSynchronizedAttendanceWorkers(): Worker[] {
+  try {
+    const saved = localStorage.getItem("karyawan_uang_makan");
+    let workersList: Worker[] = saved ? JSON.parse(saved) : [];
+    
+    if (!Array.isArray(workersList) || workersList.length === 0) {
+      workersList = [...INITIAL_WORKERS];
+    } else {
+      // Pastikan seluruh 9 karyawan resmi dari INITIAL_WORKERS selalu ada
+      INITIAL_WORKERS.forEach(iw => {
+        const idx = workersList.findIndex(w => w.id === iw.id || w.name.toLowerCase().trim() === iw.name.toLowerCase().trim());
+        if (idx === -1) {
+          workersList.push(iw);
+        } else if (!workersList[idx].phoneNumber && iw.phoneNumber) {
+          workersList[idx].phoneNumber = iw.phoneNumber;
+        }
+      });
+    }
+
+    return workersList.filter(w => w && w.name && w.isActive !== false);
+  } catch (e) {
+    return [...INITIAL_WORKERS];
+  }
+}
 
 /**
  * Konversi angka nominal ke kalimat terbilang bahasa Indonesia

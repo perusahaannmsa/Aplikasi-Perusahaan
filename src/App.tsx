@@ -34,6 +34,7 @@ import { CompanySwitcherModal } from './components/CompanySwitcherModal';
 import { InternalMemoManager } from './components/InternalMemoManager';
 import { EmployeeLoanManager } from './components/EmployeeLoanManager';
 import { ThemeSelectorModal, AppTheme } from './components/ThemeSelectorModal';
+import { getSynchronizedAttendanceWorkers } from './utils/loanUtils';
 import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, syncInvoiceSubmissionToAgenda, formatDateIndonesian } from './utils';
 import { areNamesSimilar, toTitleCase } from './utils/nameConsolidation';
 import { 
@@ -3865,13 +3866,7 @@ export default function App() {
         {view === 'pinjaman' && (
           <EmployeeLoanManager
             onBackToList={() => setView('list')}
-            workers={pettyCashHolders.map(h => ({
-              id: `w-${h}`,
-              name: h,
-              role: 'Karyawan',
-              division: 'Operasional',
-              isActive: true
-            }))}
+            workers={getSynchronizedAttendanceWorkers()}
             userProfile={userProfile}
             onCreateVoucher={handleCreateVoucherFromLoan}
           />
