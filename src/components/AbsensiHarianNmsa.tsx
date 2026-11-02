@@ -803,6 +803,35 @@ export function AbsensiHarianNmsa({
   const [isCopyingData, setIsCopyingData] = useState<boolean>(false);
   const [copyModalActiveTab, setCopyModalActiveTab] = useState<'reports' | 'drive' | 'manual'>('reports');
 
+  // Dropdown menu state untuk header "Daftar Kehadiran Harian Uang Makan"
+  const [isAttendanceActionsOpen, setIsAttendanceActionsOpen] = useState<boolean>(false);
+  const attendanceActionsRef = useRef<HTMLDivElement>(null);
+
+  // Floating toast notification untuk status upload Google Drive (mengambang & otomatis hilang)
+  const [driveUploadFloatingToast, setDriveUploadFloatingToast] = useState<{
+    id: string;
+    reportId: string;
+    weekStart: string;
+    weekEnd: string;
+    pdfUrl?: string;
+    message: string;
+  } | null>(null);
+
+  // Auto-close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (attendanceActionsRef.current && !attendanceActionsRef.current.contains(event.target as Node)) {
+        setIsAttendanceActionsOpen(false);
+      }
+    };
+    if (isAttendanceActionsOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isAttendanceActionsOpen]);
+
   // Auto-reconstruct any missing weekly reports when attendance records are present
   useEffect(() => {
     if (attendanceRecords && attendanceRecords.length > 0) {
@@ -1492,66 +1521,7 @@ export function AbsensiHarianNmsa({
   useEffect(() => { weeklyReportsRef.current = weeklyReports; }, [weeklyReports]);
   useEffect(() => { pettyCashReportsRef.current = pettyCashReports; }, [pettyCashReports]);
 
-  // 1. On App Open: Trigger upload & update of Attendance PDF in Google Drive once initial state is ready
-  useEffect(() => {
-    if (!initialFetchDone || hasBackedUpOnOpenRef.current) return;
-
-    // Check if there is valid data before attempting backup
-    const hasData = (attendanceRecords || []).some((r: any) =>
-      r && r.attendance && Object.values(r.attendance).some((val) => Boolean(val))
-    );
-
-    if (hasData) {
-      hasBackedUpOnOpenRef.current = true;
-      const openTimer = setTimeout(() => {
-        googleDriveAutoBackup.backupAbsensi({
-          exportDate: new Date().toISOString(),
-          version: '2.0',
-          module: 'Absensi & Uang Makan Karyawan NMSA',
-          records: attendanceRecordsRef.current,
-          workers: workersRef.current,
-          signatures: signaturesRef.current,
-          weeklyReports: weeklyReportsRef.current,
-          pettyCashReports: pettyCashReportsRef.current
-        }).then(res => {
-          if (res.success) {
-            console.log('✓ [Buka Aplikasi] Absensi harian otomatis terunggah/terperbarui di Google Drive:', res.url);
-          }
-        }).catch(err => {
-          console.warn('Pencatatan auto-backup saat buka aplikasi:', err);
-        });
-      }, 1500);
-      return () => clearTimeout(openTimer);
-    }
-  }, [initialFetchDone, attendanceRecords]);
-
-  // 2. On App Close: Trigger upload & update of Attendance PDF before unload / pagehide (bound once)
-  useEffect(() => {
-    const handleAppClose = () => {
-      try {
-        const records = attendanceRecordsRef.current || [];
-        const hasData = records.some((r: any) =>
-          r && r.attendance && Object.values(r.attendance).some((val) => Boolean(val))
-        );
-        if (!hasData) return;
-
-        googleDriveAutoBackup.backupAbsensi({
-          exportDate: new Date().toISOString(),
-          records: records,
-          workers: workersRef.current,
-          signatures: signaturesRef.current
-        }).catch(err => console.warn("Pencadangan saat tutup aplikasi:", err));
-      } catch (e) {}
-    };
-
-    window.addEventListener('beforeunload', handleAppClose);
-    window.addEventListener('pagehide', handleAppClose);
-
-    return () => {
-      window.removeEventListener('beforeunload', handleAppClose);
-      window.removeEventListener('pagehide', handleAppClose);
-    };
-  }, []);
+  // Pengunggahan berkas absensi ke Google Drive diubah menjadi manual sesuai instruksi pengguna
 
   // Bulk WA broadcast panel
   const [showBulkWA, setShowBulkWA] = useState<boolean>(false);
@@ -3332,10 +3302,19 @@ export function AbsensiHarianNmsa({
       console.warn("Firebase sync notice:", fbErr);
     }
 
-    const driveInfo = newReport.pdfDriveUrl
-      ? "\n✓ Berkas PDF resmi telah berhasil disimpan dan terunggah langsung ke Google Drive Anda."
-      : "";
-    alert(`Sukses! Laporan uang makan periode ${weekStart} s/d ${weekEnd} (${reportId}) telah berhasil disimpan ke Riwayat Laporan Jumat dan tetap tersimpan seterusnya.${driveInfo}`);
+    setDriveUploadFloatingToast({
+      id: Date.now().toString(),
+      reportId,
+      weekStart,
+      weekEnd,
+      pdfUrl: newReport.pdfDriveUrl,
+      message: newReport.pdfDriveUrl
+        ? `Laporan periode ${weekStart} s/d ${weekEnd} (${reportId}) telah berhasil diunggah ke Google Drive!`
+        : `Laporan uang makan periode ${weekStart} s/d ${weekEnd} (${reportId}) berhasil disimpan!`
+    });
+    setTimeout(() => {
+      setDriveUploadFloatingToast(null);
+    }, 6000);
   };
 
   // Handler for manual deletion of Friday weekly reports
@@ -3512,7 +3491,19 @@ export function AbsensiHarianNmsa({
       autoReminderHour
     );
 
-    alert("Laporan mingguan berhasil diperbarui dengan data absensi terkini & disinkronkan ke Google Drive/Sheets!");
+    setDriveUploadFloatingToast({
+      id: Date.now().toString(),
+      reportId: updatedReport.id,
+      weekStart,
+      weekEnd,
+      pdfUrl: updatedReport.pdfDriveUrl,
+      message: updatedReport.pdfDriveUrl
+        ? `Laporan periode ${weekStart} s/d ${weekEnd} (${updatedReport.id}) berhasil diperbarui & diunggah ke Google Drive!`
+        : `Laporan periode ${weekStart} s/d ${weekEnd} (${updatedReport.id}) berhasil diperbarui!`
+    });
+    setTimeout(() => {
+      setDriveUploadFloatingToast(null);
+    }, 6000);
   };
 
   // --- Petty Cash PDF Handlers ---
@@ -4614,16 +4605,7 @@ export function AbsensiHarianNmsa({
       console.warn("Firebase sync notice:", fbErr);
     }
 
-    // Trigger auto-backup to Google Drive
-    try {
-      googleDriveAutoBackup.backupAbsensi({
-        records: updatedRecords,
-        workers,
-        signatures,
-        weekStartDate: weekStart,
-        weekEndDate: weekEnd,
-      }).catch(() => {});
-    } catch (_) {}
+    // Pengunggahan ke Google Drive dilakukan secara manual via menu tindakan
 
     if (notificationMsg) {
       console.log(notificationMsg);
@@ -8081,6 +8063,60 @@ export function AbsensiHarianNmsa({
               </div>
             </div>
 
+            {/* Floating Toast Notification untuk Bukti Laporan Terupload ke Google Drive (Mengambang & Otomatis Hilang) */}
+            <AnimatePresence>
+              {driveUploadFloatingToast && (
+                <motion.div
+                  initial={{ opacity: 0, y: -20, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -20, scale: 0.95 }}
+                  transition={{ duration: 0.25 }}
+                  className="fixed top-5 right-5 sm:top-6 sm:right-6 z-50 max-w-md w-[calc(100vw-2.5rem)] bg-gradient-to-r from-emerald-600 to-teal-700 text-white rounded-2xl shadow-2xl shadow-emerald-950/30 border border-emerald-400/50 p-4 backdrop-blur-md"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="p-2 rounded-xl bg-white/20 text-white shrink-0 mt-0.5 shadow-xs">
+                      <CheckCircle2 className="w-5 h-5 text-emerald-100" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-bold text-sm tracking-tight text-white">Laporan Tersimpan & Terupload</span>
+                        <span className="text-[10px] font-mono bg-white/20 px-1.5 py-0.5 rounded font-extrabold text-emerald-100">
+                          {driveUploadFloatingToast.reportId}
+                        </span>
+                      </div>
+                      <p className="text-xs text-emerald-100/95 mt-1 leading-snug">
+                        {driveUploadFloatingToast.message}
+                      </p>
+                      <div className="text-[11px] text-emerald-200 mt-1 font-medium">
+                        Periode: <strong>{driveUploadFloatingToast.weekStart} s/d {driveUploadFloatingToast.weekEnd}</strong>
+                      </div>
+                      {driveUploadFloatingToast.pdfUrl && (
+                        <div className="mt-2.5 pt-2 border-t border-white/20 flex items-center justify-between">
+                          <a
+                            href={driveUploadFloatingToast.pdfUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs font-bold text-white hover:text-emerald-100 underline flex items-center gap-1"
+                          >
+                            <span>Buka Berkas PDF di Google Drive</span>
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setDriveUploadFloatingToast(null)}
+                      className="text-white/70 hover:text-white p-1 rounded-lg hover:bg-white/10 transition cursor-pointer"
+                      title="Tutup Notifikasi"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
             {/* Status Message when Copying or Restoring Attendance */}
             {copyStatusMessage && (
               <div
@@ -8285,98 +8321,154 @@ export function AbsensiHarianNmsa({
                     Tarif Dasar: <strong className="text-slate-900">Rp {globalAllowance.toLocaleString("id-ID")}/Hari</strong>
                   </span>
                   
-                  {currentWeekReportLog ? (
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => {
-                          const activeWorkerIds = new Set(workers.filter(w => w.isActive).map(w => w.id));
-                          const liveRecords = attendanceRecords.filter((r) => activeWorkerIds.has(r.workerId));
-                          const liveReport: WeeklyReport = {
-                            id: "LIVE",
-                            weekStartDate: weekStart,
-                            weekEndDate: weekEnd,
-                            records: liveRecords,
-                            isSubmitted: false,
-                            submittedAt: new Date().toISOString(),
-                          };
-                          printWeeklyReportPDF(liveReport, workers, signatures);
-                        }}
-                        className="flex items-center gap-2 bg-white hover:bg-slate-50 border border-slate-300 font-bold text-xs text-slate-700 px-4 py-2 rounded-lg shadow-sm hover:shadow transition duration-150 cursor-pointer"
-                      >
-                        <FileCheck className="w-4 h-4 text-indigo-600" />
-                        <span>Cetak PDF Aktif</span>
-                      </button>
+                  {/* Dropdown Menu Tindakan & Laporan (Cetak PDF, TTD Online, Kirim ke Google Drive) */}
+                  <div className="relative" ref={attendanceActionsRef}>
+                    <button
+                      type="button"
+                      onClick={() => setIsAttendanceActionsOpen(prev => !prev)}
+                      className={`flex items-center gap-2 font-bold text-xs px-3.5 py-2 rounded-xl border transition-all duration-150 cursor-pointer shadow-xs ${
+                        isAttendanceActionsOpen
+                          ? "bg-slate-900 text-white border-slate-900 ring-2 ring-slate-900/10"
+                          : "bg-white hover:bg-slate-50 text-slate-800 border-slate-300 hover:border-slate-400"
+                      }`}
+                      title="Buka menu tindakan cetak PDF, tanda tangan online, dan kirim ke Google Drive"
+                    >
+                      <MoreVertical className="w-4 h-4 text-slate-500" />
+                      <span>Menu Tindakan & Laporan</span>
+                      {currentWeekReportLog && (
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-white shrink-0" title="Periode ini telah dilaporkan" />
+                      )}
+                      <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 ${isAttendanceActionsOpen ? "rotate-180" : ""}`} />
+                    </button>
 
-                      <button
-                        type="button"
-                        onClick={() => setShowSignatureModal(true)}
-                        className="flex items-center gap-1.5 bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 border border-blue-200 text-blue-900 font-bold text-xs px-3.5 py-2 rounded-lg shadow-2xs hover:shadow-xs transition duration-150 cursor-pointer"
-                        title="Buka studio tanda tangan online untuk paraf karyawan dan pengesahan staf keuangan"
-                      >
-                        <PenTool className="w-4 h-4 text-blue-600" />
-                        <span>Tanda Tangan Online</span>
-                        <span className="text-[10px] bg-blue-200/80 text-blue-950 px-2 py-0.5 rounded-full font-mono font-extrabold">
-                          {workers.filter(w => w.isActive && !!signatures[w.id]).length}/{workers.filter(w => w.isActive).length}
-                        </span>
-                      </button>
+                    {isAttendanceActionsOpen && (
+                      <div className="absolute right-0 top-full mt-2 w-72 sm:w-80 bg-white rounded-2xl shadow-xl border border-slate-200 p-2 z-40 animate-in fade-in zoom-in-95 duration-150">
+                        {/* Status ringkas dalam dropdown (tidak memenuhi header tampilan absensi) */}
+                        <div className={`px-3 py-2 mb-1.5 rounded-xl border flex items-center justify-between text-xs ${
+                          currentWeekReportLog 
+                            ? "bg-emerald-50/80 border-emerald-200 text-emerald-800" 
+                            : "bg-slate-50 border-slate-200 text-slate-600"
+                        }`}>
+                          <div className="flex items-center gap-1.5 font-semibold">
+                            {currentWeekReportLog ? (
+                              <>
+                                <CheckCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                <span>Telah Dilaporkan ({currentWeekReportLog.id})</span>
+                              </>
+                            ) : (
+                              <>
+                                <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                <span>Periode Belum Dilaporkan</span>
+                              </>
+                            )}
+                          </div>
+                          {currentWeekReportLog?.pdfDriveUrl && (
+                            <a
+                              href={currentWeekReportLog.pdfDriveUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[11px] font-bold text-emerald-700 hover:text-emerald-900 hover:underline flex items-center gap-0.5"
+                              title="Buka dokumen di Google Drive"
+                            >
+                              <span>Drive</span>
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
+                          )}
+                        </div>
 
-                      <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg text-xs font-semibold text-emerald-800">
-                        <CheckCircle className="w-4 h-4 text-emerald-600" />
-                        <span>Periode Ini Telah Dilaporkan ({currentWeekReportLog.id})</span>
+                        {/* Opsi 1: Cetak PDF Aktif */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsAttendanceActionsOpen(false);
+                            const activeWorkerIds = new Set(workers.filter(w => w.isActive).map(w => w.id));
+                            const liveRecords = attendanceRecords.filter((r) => activeWorkerIds.has(r.workerId));
+                            const liveReport: WeeklyReport = {
+                              id: "LIVE",
+                              weekStartDate: weekStart,
+                              weekEndDate: weekEnd,
+                              records: liveRecords,
+                              isSubmitted: false,
+                              submittedAt: new Date().toISOString(),
+                            };
+                            printWeeklyReportPDF(liveReport, workers, signatures);
+                          }}
+                          className="w-full flex items-start gap-3 p-2.5 rounded-xl hover:bg-slate-50 transition text-left cursor-pointer group"
+                        >
+                          <div className="p-2 rounded-lg bg-indigo-50 text-indigo-600 group-hover:bg-indigo-100 transition shrink-0 mt-0.5">
+                            <FileCheck className="w-4 h-4" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="font-bold text-xs text-slate-900 group-hover:text-indigo-600 transition">
+                              Cetak PDF Aktif
+                            </div>
+                            <div className="text-[11px] text-slate-500 leading-tight mt-0.5">
+                              Cetak atau simpan lembar presensi dan uang makan periode ini
+                            </div>
+                          </div>
+                        </button>
+
+                        {/* Opsi 2: Tanda Tangan Online */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsAttendanceActionsOpen(false);
+                            setShowSignatureModal(true);
+                          }}
+                          className="w-full flex items-start gap-3 p-2.5 rounded-xl hover:bg-slate-50 transition text-left cursor-pointer group"
+                        >
+                          <div className="p-2 rounded-lg bg-blue-50 text-blue-600 group-hover:bg-blue-100 transition shrink-0 mt-0.5">
+                            <PenTool className="w-4 h-4" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-1">
+                              <span className="font-bold text-xs text-slate-900 group-hover:text-blue-600 transition">
+                                Tanda Tangan Online
+                              </span>
+                              <span className="text-[10px] bg-blue-100 text-blue-800 font-mono font-bold px-1.5 py-0.5 rounded-md">
+                                {workers.filter(w => w.isActive && !!signatures[w.id]).length}/{workers.filter(w => w.isActive).length}
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-slate-500 leading-tight mt-0.5">
+                              Paraf digital karyawan dan pengesahan staf keuangan
+                            </div>
+                          </div>
+                        </button>
+
+                        {/* Opsi 3: Perbarui / Kirim Ulang Dokumen ke Google Drive (Manual) */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsAttendanceActionsOpen(false);
+                            handleSubmitFridayReport();
+                          }}
+                          className="w-full flex items-start gap-3 p-2.5 rounded-xl hover:bg-slate-50 transition text-left cursor-pointer group border-t border-slate-100 mt-1 pt-2"
+                        >
+                          <div className={`p-2 rounded-lg transition shrink-0 mt-0.5 ${
+                            currentWeekReportLog
+                              ? "bg-amber-50 text-amber-700 group-hover:bg-amber-100"
+                              : "bg-emerald-50 text-emerald-700 group-hover:bg-emerald-100"
+                          }`}>
+                            {currentWeekReportLog ? (
+                              <RefreshCw className="w-4 h-4" />
+                            ) : (
+                              <CloudUpload className="w-4 h-4" />
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className={`font-bold text-xs transition ${
+                              currentWeekReportLog ? "text-slate-900 group-hover:text-amber-700" : "text-slate-900 group-hover:text-emerald-700"
+                            }`}>
+                              {currentWeekReportLog ? "Perbarui / Kirim Ulang Dokumen ke Google Drive" : "Kirim Dokumen ke Google Drive (Manual)"}
+                            </div>
+                            <div className="text-[11px] text-slate-500 leading-tight mt-0.5">
+                              Unggah berkas PDF laporan resmi ke Google Drive secara manual
+                            </div>
+                          </div>
+                        </button>
                       </div>
-                      <button
-                        onClick={handleSubmitFridayReport}
-                        className="flex items-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 font-bold text-xs px-3 py-1.5 rounded-lg transition cursor-pointer shadow-2xs"
-                        title="Kirim ulang atau perbarui rekap laporan periode ini"
-                      >
-                        <RefreshCw className="w-3.5 h-3.5 text-indigo-600" />
-                        <span>Perbarui / Kirim Ulang</span>
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => {
-                          const activeWorkerIds = new Set(workers.filter(w => w.isActive).map(w => w.id));
-                          const liveRecords = attendanceRecords.filter((r) => activeWorkerIds.has(r.workerId));
-                          const liveReport: WeeklyReport = {
-                            id: "LIVE",
-                            weekStartDate: weekStart,
-                            weekEndDate: weekEnd,
-                            records: liveRecords,
-                            isSubmitted: false,
-                            submittedAt: new Date().toISOString(),
-                          };
-                          printWeeklyReportPDF(liveReport, workers, signatures);
-                        }}
-                        className="flex items-center gap-2 bg-white hover:bg-slate-50 border border-slate-300 font-bold text-xs text-slate-700 px-4 py-2 rounded-lg shadow-sm hover:shadow transition duration-150 cursor-pointer"
-                      >
-                        <FileCheck className="w-4 h-4 text-indigo-600" />
-                        <span>Cetak PDF Aktif</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setShowSignatureModal(true)}
-                        className="flex items-center gap-1.5 bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 border border-blue-200 text-blue-900 font-bold text-xs px-3.5 py-2 rounded-lg shadow-2xs hover:shadow-xs transition duration-150 cursor-pointer"
-                        title="Buka studio tanda tangan online untuk paraf karyawan dan pengesahan staf keuangan"
-                      >
-                        <PenTool className="w-4 h-4 text-blue-600" />
-                        <span>Tanda Tangan Online</span>
-                        <span className="text-[10px] bg-blue-200/80 text-blue-950 px-2 py-0.5 rounded-full font-mono font-extrabold">
-                          {workers.filter(w => w.isActive && !!signatures[w.id]).length}/{workers.filter(w => w.isActive).length}
-                        </span>
-                      </button>
-
-                      <button
-                        onClick={handleSubmitFridayReport}
-                        className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 font-bold text-xs text-white px-4 py-2 border border-transparent rounded-lg shadow-sm hover:shadow transition duration-150 cursor-pointer"
-                      >
-                        <Download className="w-4 h-4" />
-                        <span>Kirim Laporan Uang Makan Jumat</span>
-                      </button>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               </div>
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Submission, SubmissionItem, PettyCashReport, TransactionType, NpwpRecord, AgendaItem, Project, ProjectRabItem, ProjectExpense, InternalMemo } from './types';
+import { Submission, SubmissionItem, PettyCashReport, TransactionType, NpwpRecord, AgendaItem, Project, ProjectRabItem, ProjectExpense, InternalMemo, EmployeeLoan } from './types';
 import { INITIAL_SUBMISSIONS } from './data/initialData';
 import { INITIAL_AGENDA_ITEMS } from './data/initialAgenda';
 import { SubmissionsList } from './components/SubmissionsList';
@@ -32,6 +32,7 @@ import { Pph23BupotRecap } from './components/Pph23BupotRecap';
 import { ProjectBudgetRab } from './components/ProjectBudgetRab';
 import { CompanySwitcherModal } from './components/CompanySwitcherModal';
 import { InternalMemoManager } from './components/InternalMemoManager';
+import { EmployeeLoanManager } from './components/EmployeeLoanManager';
 import { ThemeSelectorModal, AppTheme } from './components/ThemeSelectorModal';
 import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, syncInvoiceSubmissionToAgenda, formatDateIndonesian } from './utils';
 import { areNamesSimilar, toTitleCase } from './utils/nameConsolidation';
@@ -69,7 +70,7 @@ import {
 } from './firebase';
 import { loadAttendanceFromFirestore } from './lib/firebaseAbsen';
 
-import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, ArrowLeftRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell, MessageSquare, Bot, Sparkles, BookOpen, Wrench, Building2, Plus } from 'lucide-react';
+import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, ArrowLeftRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell, MessageSquare, Bot, Sparkles, BookOpen, Wrench, Building2, Plus, HandCoins } from 'lucide-react';
 
 export default function App() {
   const [theme, setTheme] = useState<AppTheme>(() => {
@@ -829,7 +830,7 @@ export default function App() {
     };
   }, []);
 
-  const [view, setViewInternal] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab' | 'memo'>(() => {
+  const [view, setViewInternal] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab' | 'memo' | 'pinjaman'>(() => {
     try {
       const sp = new URLSearchParams(window.location.search);
       const h = window.location.hash;
@@ -845,19 +846,22 @@ export default function App() {
       ) {
         return 'absen';
       }
+      if (sp.get('view') === 'pinjaman' || sp.get('tab') === 'pinjaman') {
+        return 'pinjaman';
+      }
       const saved = sessionStorage.getItem('NUSANTARA_ACTIVE_VIEW');
       if (saved) return saved as any;
     } catch (e) {}
     return 'list';
   });
 
-  const [previousView, setPreviousView] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab' | 'memo'>('list');
+  const [previousView, setPreviousView] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab' | 'memo' | 'pinjaman'>('list');
 
   const [memoSubmissionTarget, setMemoSubmissionTarget] = useState<Submission | null>(null);
   const [targetAccurateSubmission, setTargetAccurateSubmission] = useState<Submission | null>(null);
 
   const setView = (
-    newView: 'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab' | 'memo',
+    newView: 'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab' | 'memo' | 'pinjaman',
     options?: { preservePrevious?: boolean }
   ) => {
     // ⚡ Proactively refresh and extend Google Drive token immediately when user clicks/switches to ANY menu
@@ -2369,6 +2373,43 @@ export default function App() {
     setView('form');
   };
 
+  // Handler to create a new Voucher HO draft directly from an Employee Loan disbursement request
+  const handleCreateVoucherFromLoan = (loan: EmployeeLoan) => {
+    const docKode = `VCR-${Date.now().toString().slice(-6)}`;
+    const newLoanSubmission: Submission = {
+      id: 'sub-loan-' + Date.now(),
+      lokasi: 'Lt.1',
+      tanggal: loan.tanggalPengambilanPinjaman || loan.tanggalPermohonan || new Date().toISOString().split('T')[0],
+      jenisPengajuan: 'Pinjaman Karyawan',
+      kode: docKode,
+      dibayarkanKepada: loan.namaKaryawan,
+      dibayarkanDengan: 'Cek/Transfer',
+      status: 'Belum Lunas',
+      notes: `Pencairan Pinjaman Karyawan No. ${loan.nomorPinjaman} atas nama ${loan.namaKaryawan} (${loan.divisi}). Alasan: ${loan.alasanPeminjaman}. Ket: ${loan.caraPembayaran}`,
+      dibuatOleh: userProfile ? userProfile.fullName : 'Nur Wahyudi',
+      disetujuiOleh: loan.financeNama || 'Harijon',
+      disetujuiJabatan: loan.financeJabatan || 'Direktur Keuangan',
+      diverifikasiOleh: loan.atasanNama || 'Andi Muhammad Rifki',
+      diverifikasiJabatan: loan.atasanJabatan || 'Direktur',
+      disetujuiOleh2: loan.direkturNama || 'Andi Nursyam Halid',
+      disetujuiJabatan2: loan.direkturJabatan || 'Direktur Utama',
+      items: [
+        {
+          id: 'item_loan_' + Date.now(),
+          no: 1,
+          item: `Pinjaman Karyawan: ${loan.namaKaryawan} (${loan.divisi})`,
+          jumlahVolume: '1 Paket',
+          total: loan.jumlahPinjaman,
+          keterangan: `No. Pinjaman ${loan.nomorPinjaman} - ${loan.caraPembayaran}`
+        }
+      ],
+      createdAt: new Date().toISOString()
+    };
+
+    setEditingSubmission(newLoanSubmission);
+    setView('form');
+  };
+
   // 1. Direct Absensi Harian NMSA (Highest Priority when worker opens attendance link from WhatsApp / Web)
   const searchParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
   const rawIdParam = (searchParams.get('id') || '').toLowerCase().trim();
@@ -3176,6 +3217,25 @@ export default function App() {
                         <span className="text-[9px] font-mono bg-amber-200 text-amber-900 px-1.5 rounded font-bold">Resmi</span>
                       </button>
 
+                      {/* 11. Pinjaman Karyawan & Perhitungan Cicilan */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsToolsDropdownOpen(false);
+                          setView('pinjaman');
+                        }}
+                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+                          view === 'pinjaman' ? 'bg-amber-100 text-amber-950 border border-amber-300 font-black' : 'text-stone-750 hover:bg-stone-100'
+                        }`}
+                        title="Form Pinjaman Karyawan Resmi PT NMSA, Pencatatan & Perhitungan Pembayaran Cicilan"
+                      >
+                        <div className="flex items-center gap-2">
+                          <HandCoins size={14} className="text-amber-600" />
+                          <span>Pinjaman Karyawan &amp; Cicilan</span>
+                        </div>
+                        <span className="text-[9px] font-mono bg-emerald-100 text-emerald-800 border border-emerald-300 px-1.5 rounded font-bold">Form Resmi</span>
+                      </button>
+
                       {/* 11. Pengaturan & Switcher Perusahaan */}
                       <button
                         type="button"
@@ -3796,6 +3856,21 @@ export default function App() {
             onBackToList={() => setView('list')}
             userProfile={userProfile}
             onCreateVoucher={handleCreateVoucherFromMemo}
+          />
+        )}
+
+        {/* VIEW 13: Modul Form Pinjaman Karyawan & Pencatatan / Perhitungan Pembayaran Cicilan */}
+        {view === 'pinjaman' && (
+          <EmployeeLoanManager
+            onBackToList={() => setView('list')}
+            workers={pettyCashHolders.map(h => ({
+              id: `w-${h}`,
+              name: h,
+              role: 'Karyawan',
+              division: 'Operasional'
+            }))}
+            userProfile={userProfile}
+            onCreateVoucher={handleCreateVoucherFromLoan}
           />
         )}
 

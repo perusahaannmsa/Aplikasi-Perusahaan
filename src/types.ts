@@ -577,3 +577,62 @@ export interface SavedKopSuratLink {
   isDefault?: boolean;
   createdAt?: string;
 }
+
+/* ============================================================================
+ * PINJAMAN KARYAWAN & RIWAYAT PEMBAYARAN TYPES
+ * ============================================================================ */
+export interface LoanPayment {
+  id: string;
+  tanggalBayar: string; // YYYY-MM-DD
+  jumlahBayar: number; // Nominal pembayaran dalam rupiah
+  metodePembayaran: 'Potong Gaji' | 'Transfer Bank' | 'Tunai' | 'Lainnya';
+  keterangan: string; // Misal: "Cicilan ke-1 Periode November 2026"
+  nomorBukti?: string;
+  diterimaOleh?: string; // Petugas Finance yang memverifikasi/mencatat
+  createdAt: string;
+}
+
+export interface EmployeeLoan {
+  id: string;
+  nomorPinjaman: string; // e.g. "PK-202611-001"
+  tanggalPermohonan: string; // YYYY-MM-DD
+  namaKaryawan: string;
+  divisi: string;
+  alasanPeminjaman: string;
+  jumlahPinjaman: number;
+  caraPembayaran: string; // e.g. "Potong Gaji Bulanan Rp 1.000.000 x 5 Bulan"
+  tenorBulan?: number; // e.g. 5
+  cicilanPerBulan?: number; // e.g. 1000000
+  tanggalPengambilanPinjaman: string; // YYYY-MM-DD
+  
+  // Persetujuan / Penandatangan Form Resmi Sesuai Template PT NMSA
+  peminjamNama: string;
+  peminjamJabatan: string;
+  peminjamTanggal?: string;
+
+  atasanNama: string; // Default: "Andi Muhammad Rifki"
+  atasanJabatan: string; // Default: "Direktur"
+  atasanTanggal?: string;
+
+  financeNama: string; // Default: "Harijon"
+  financeJabatan: string; // Default: "Direktur Keuangan"
+  financeTanggal?: string;
+
+  direkturNama: string; // Default: "Andi Nursyam Halid"
+  direkturJabatan: string; // Default: "Direktur Utama"
+  direkturTanggal?: string;
+
+  catatan?: string;
+  status: 'Menunggu Persetujuan' | 'Disetujui' | 'Dicairkan' | 'Belum Lunas' | 'Lunas' | 'Ditolak';
+
+  // Riwayat Catatan Pembayaran / Angsuran Cicilan
+  payments: LoanPayment[];
+
+  // Tautan ke Voucher Kas/Bank HO
+  linkedSubmissionId?: string;
+  linkedSubmissionKode?: string;
+
+  createdAt: string;
+  updatedAt?: string;
+}
+

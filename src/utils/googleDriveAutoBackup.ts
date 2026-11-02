@@ -49,18 +49,18 @@ export interface DriveAutoBackupSettings {
 }
 
 const DEFAULT_SETTINGS: DriveAutoBackupSettings = {
-  enabled: true,
-  frequency: 'on_change_and_daily',
+  enabled: false,
+  frequency: 'daily',
   lastBackupDate: '',
   lastBackupTime: '',
   uploadHour: '17:00',
   notifyOnSuccess: true,
-  autoSyncAbsen: true,
-  autoSyncSubmissions: true,
-  autoSyncNpwp: true,
-  autoSyncSppd: true,
-  autoSyncAgenda: true,
-  autoSyncFullDatabase: true,
+  autoSyncAbsen: false,
+  autoSyncSubmissions: false,
+  autoSyncNpwp: false,
+  autoSyncSppd: false,
+  autoSyncAgenda: false,
+  autoSyncFullDatabase: false,
   latestLinks: {}
 };
 
@@ -817,27 +817,17 @@ class GoogleDriveAutoBackupService {
   }
 
   /**
-   * Called when the app is opened: checks connection and auto-syncs attendance PDF to Google Drive
+   * Called when the app is opened: automatic background upload disabled per user requirement (manual only)
    */
   public async onAppOpen(): Promise<void> {
-    console.log('[Drive Auto-Backup] App opened: Triggering initial attendance sync to Google Drive...');
-    try {
-      await this.backupAbsensi();
-    } catch (e) {
-      console.warn('[Drive Auto-Backup] On app open sync warning:', e);
-    }
+    // Pengunggahan otomatis ke Google Drive dinonaktifkan (dioperasikan secara manual saja)
   }
 
   /**
-   * Called when the app is closing or unmounting: triggers final attendance sync to Google Drive
+   * Called when the app is closing: automatic background upload disabled per user requirement (manual only)
    */
   public async onAppClose(): Promise<void> {
-    console.log('[Drive Auto-Backup] App closing: Triggering final attendance sync to Google Drive...');
-    try {
-      await this.backupAbsensi();
-    } catch (e) {
-      console.warn('[Drive Auto-Backup] On app close sync warning:', e);
-    }
+    // Pengunggahan otomatis ke Google Drive dinonaktifkan (dioperasikan secara manual saja)
   }
 
   /**

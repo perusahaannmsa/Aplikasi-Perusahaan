@@ -9,7 +9,6 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
-import { execSync } from "child_process";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import { google } from "googleapis";
@@ -2321,6 +2320,9 @@ app.get("/api/unified-storage", (req, res) => {
         projectRab: state.projectRab || [],
         projectExpenses: state.projectExpenses || []
       },
+      menu_pinjaman_karyawan: {
+        employeeLoans: state.employeeLoans || []
+      },
       riwayat_audit_log: state.auditLogs || [],
       companySettings: state.companySettings || {},
       raw: state
@@ -2354,6 +2356,7 @@ app.post("/api/unified-storage", (req, res) => {
     if (incoming.accurateMappedReports !== undefined) state.accurateMappedReports = incoming.accurateMappedReports;
     if (incoming.auditLogs !== undefined) state.auditLogs = incoming.auditLogs;
     if (incoming.companySettings !== undefined) state.companySettings = incoming.companySettings;
+    if (incoming.employeeLoans !== undefined) state.employeeLoans = incoming.employeeLoans;
 
     writeState(state);
     res.json({
@@ -2365,9 +2368,39 @@ app.post("/api/unified-storage", (req, res) => {
         workers: (state.workers || []).length,
         npwp: (state.npwpRecords || []).length,
         sppd: (state.sppdRecords || []).length,
-        agenda: (state.agendaItems || []).length
+        agenda: (state.agendaItems || []).length,
+        employeeLoans: (state.employeeLoans || []).length
       }
     });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Dedicated Pinjaman Karyawan & Pembayaran Cicilan API Endpoints
+app.get("/api/employee-loans", (req, res) => {
+  try {
+    const state = readState();
+    res.json({ success: true, employeeLoans: state.employeeLoans || [] });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post("/api/employee-loans", (req, res) => {
+  try {
+    const state = readState();
+    const { employeeLoans } = req.body;
+    if (Array.isArray(employeeLoans)) {
+      state.employeeLoans = employeeLoans;
+      writeState(state);
+      return res.json({
+        success: true,
+        message: `Berhasil menyimpan ${employeeLoans.length} data pinjaman karyawan!`,
+        employeeLoans
+      });
+    }
+    return res.status(400).json({ success: false, error: "Format data employeeLoans tidak valid" });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -5230,26 +5263,6 @@ async function bootstrap() {
     });
   }
 
-  function freePortIfOccupied(port: number) {
-    try {
-      const output = execSync(`ss -lptn 'sport = :${port}'`, { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] });
-      const match = output.match(/pid=(\d+)/);
-      if (match && match[1]) {
-        const targetPid = parseInt(match[1], 10);
-        if (targetPid && targetPid !== process.pid && targetPid !== process.ppid) {
-          console.log(`[Startup] Port ${port} is occupied by previous process ${targetPid}. Reclaiming port...`);
-          try {
-            process.kill(targetPid, "SIGTERM");
-          } catch (_) {}
-          const start = Date.now();
-          while (Date.now() - start < 350) {}
-        }
-      }
-    } catch (_) {}
-  }
-
-  freePortIfOccupied(PORT);
-
   const serverInstance = app.listen(PORT, HOST, () => {
     console.log(`Server is running at http://${HOST === "0.0.0.0" ? "localhost" : HOST}:${PORT}`);
     // Boot up WhatsApp Bot service if local credentials or session backup exists
@@ -5300,8 +5313,7 @@ async function bootstrap() {
 
   serverInstance.on("error", (err: any) => {
     if (err && err.code === "EADDRINUSE") {
-      console.warn(`[Server] Port ${PORT} already bound by an active instance. Exiting secondary process gracefully.`);
-      process.exit(0);
+      console.warn(`[Server] Port ${PORT} already in use. Not starting a second server instance.`);
       return;
     }
     console.error(`[Server Listen Error] ${err?.message || err}`);
