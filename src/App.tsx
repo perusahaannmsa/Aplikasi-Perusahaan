@@ -2393,6 +2393,8 @@ export default function App() {
       diverifikasiJabatan: loan.atasanJabatan || 'Direktur',
       disetujuiOleh2: loan.direkturNama || 'Andi Nursyam Halid',
       disetujuiJabatan2: loan.direkturJabatan || 'Direktur Utama',
+      dibukukanOleh: 'Sri Ekowati',
+      dibukukanJabatan: 'Accounting',
       items: [
         {
           id: 'item_loan_' + Date.now(),
@@ -3867,7 +3869,8 @@ export default function App() {
               id: `w-${h}`,
               name: h,
               role: 'Karyawan',
-              division: 'Operasional'
+              division: 'Operasional',
+              isActive: true
             }))}
             userProfile={userProfile}
             onCreateVoucher={handleCreateVoucherFromLoan}

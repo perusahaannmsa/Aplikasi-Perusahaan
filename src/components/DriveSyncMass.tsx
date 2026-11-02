@@ -910,6 +910,7 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
 
         // Standardized name of transaction custom folder
         const txFolderName = getStandardDriveFolderName(sub);
+        const txBaseName = txFolderName;
         const legacyTxFolderName = getLegacyDriveFolderName(sub);
         const targetFolderId = await getOrCreateFolder(token, txFolderName, dayId);
 

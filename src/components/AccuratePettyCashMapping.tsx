@@ -2306,17 +2306,17 @@ ${coaPromptList}`;
       // E. Voucher Items Fallback (Ensures user is never blocked if document is purely image/scanned)
       if (mappedTxs.length === 0 && sub.items && Array.isArray(sub.items) && sub.items.length > 0) {
         mappedTxs = sub.items.map((item, idx) => {
-          const itemDesc = item.uraian || item.keterangan || (sub.notes ? `Petty Cash: ${sub.notes}` : 'Pengeluaran Operasional Site');
+          const itemDesc = (item as any).uraian || item.keterangan || item.item || (sub.notes ? `Petty Cash: ${sub.notes}` : 'Pengeluaran Operasional Site');
           const matched = autoMapTransactionToAccurate(itemDesc, accounts);
           return {
             id: `sub-item-${sub.id}-${idx}-${Date.now()}`,
             date: sub.tanggal || new Date().toISOString().substring(0, 10),
             description: itemDesc,
-            amount: Number(item.nominal || item.total || item.biaya) || 0,
+            amount: Number(item.nominal || item.total || (item as any).biaya) || 0,
             recipient: custodian,
             accurateAccountCode: matched.code,
             accurateAccountName: matched.name,
-            confidence: 'medium'
+            confidence: 'medium' as const
           };
         }).filter(t => t.amount > 0);
       }

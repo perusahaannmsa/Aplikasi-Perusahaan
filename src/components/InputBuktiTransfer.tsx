@@ -849,6 +849,8 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
         }
       }
 
+      let targetFolderId: string | undefined = undefined;
+
       if (token) {
         setSaveProgress('3/6. Menyusun struktur folder arsip di Google Drive...');
         let yearStr = '';
@@ -879,8 +881,6 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
           monthStr = `${mNum}. ${mName}`;
           dayStr = String(dateObj.getDate());
         }
-
-        let targetFolderId: string | undefined = undefined;
 
         try {
           setSaveProgress('3/6. Menyiapkan folder transaksi resmi di Google Drive...');

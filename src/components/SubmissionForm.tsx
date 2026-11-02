@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Submission, SubmissionItem, PaymentMethod, REQUIRED_TRANSACTION_DOCS, Project, ProjectRabItem } from '../types';
+import { Submission, SubmissionItem, PaymentMethod, REQUIRED_TRANSACTION_DOCS, Project, ProjectRabItem, CicilanPaymentRecord } from '../types';
 import { 
   googleDriveLogin, 
   getStoredGoogleDriveToken, 

@@ -188,6 +188,7 @@ export interface Worker {
   name: string;
   role: string;
   isActive: boolean;
+  division?: string;
   bankName?: string;
   bankAccount?: string;
   phoneNumber?: string;

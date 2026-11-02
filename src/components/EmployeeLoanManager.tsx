@@ -311,7 +311,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
         return {
           ...l,
           payments: nextPayments,
-          status: nextSummary.sisaPinjaman <= 0 ? 'Lunas' : 'Belum Lunas',
+          status: (nextSummary.sisaPinjaman <= 0 ? 'Lunas' : 'Belum Lunas') as EmployeeLoan['status'],
           updatedAt: new Date().toISOString()
         };
       }

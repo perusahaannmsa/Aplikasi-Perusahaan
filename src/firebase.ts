@@ -60,7 +60,7 @@ export interface FirestoreErrorInfo {
 
 // Global variable holding the active configuration
 let firebaseApp: FirebaseApp | null = null;
-let firestoreDb: Firestore | null = null;
+export let firestoreDb: Firestore | null = null;
 let firebaseAuth: Auth | null = null;
 let currentUser: User | null = null;
 
