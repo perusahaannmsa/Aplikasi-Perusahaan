@@ -19,7 +19,7 @@ import { SPPDRecord } from './SppdManager';
 import { SignerSettingsModal, SignerConfigItem } from './SignerSettingsModal';
 import { F1SignaturesBlock } from './F1SignaturesBlock';
 import { F2SignaturesBlock } from './F2SignaturesBlock';
-import { SlidersHorizontal, UserCheck } from 'lucide-react';
+import { SlidersHorizontal, UserCheck, ChevronDown, ChevronRight, Layout, Settings } from 'lucide-react';
 
 const STORAGE_KEY_F1_SIGNERS = 'nmsa_custom_f1_signers_config';
 const STORAGE_KEY_F2_SIGNERS = 'nmsa_custom_f2_signers_config';
@@ -1192,6 +1192,31 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
   const [attachmentOrderPreset, setAttachmentOrderPreset] = useState<'lampiran_first' | 'transfer_first' | 'petty_first' | 'custom'>('lampiran_first');
   const [customFileOrder, setCustomFileOrder] = useState<string[]>([]);
 
+  // Dropdown states for streamlined, tiered toolbar (Menu Bertingkat)
+  const [isTabDropdownOpen, setIsTabDropdownOpen] = useState(false);
+  const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
+  const [activeTieredSubmenu, setActiveTieredSubmenu] = useState<'f2' | 'layout' | 'ttd' | 'f1_signer' | 'f2_signer' | null>(null);
+
+  const tabDropdownRef = useRef<HTMLDivElement>(null);
+  const settingsMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (tabDropdownRef.current && !tabDropdownRef.current.contains(event.target as Node)) {
+        setIsTabDropdownOpen(false);
+      }
+      if (settingsMenuRef.current && !settingsMenuRef.current.contains(event.target as Node)) {
+        setIsSettingsMenuOpen(false);
+        setActiveTieredSubmenu(null);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
   // Sync deleted pages state when submission prop changes (reset local changes on save)
   useEffect(() => {
     setDeletedPageIds([]);
@@ -2290,259 +2315,694 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
         </div>
 
         {/* Row 2: Tab Selection & Layout Mode Selector & Status Lampiran */}
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-          {/* Tab Selection & Layout Mode */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-            <div className="flex bg-stone-100 p-1 rounded-xl border border-stone-200 flex-wrap gap-1">
-              <button
-                onClick={() => setActiveTab('both')}
-                className={`flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg transition ${
-                  activeTab === 'both' ? 'bg-white text-stone-900 shadow-xs' : 'text-stone-550 hover:text-stone-955'
-                }`}
-              >
-                <Layers size={13} />
-                {attachmentFiles.length > 0 ? `Cetak Semua (${isLoadingPages ? '...' : totalPagesCount} Hal)` : `Cetak Semua (${totalPagesCount} Hal)`}
-              </button>
-              <button
-                onClick={() => setActiveTab('pengajuan')}
-                className={`flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg transition ${
-                  activeTab === 'pengajuan' ? 'bg-white text-stone-900 shadow-xs' : 'text-stone-550 hover:text-stone-955'
-                }`}
-              >
-                <FileText size={13} />
-                Hanya Pengajuan ( F1 & F2 )
-              </button>
-              {isCicilan && (
-                <button
-                  onClick={() => setActiveTab('lembar_cicilan')}
-                  className={`flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg transition ${
-                    activeTab === 'lembar_cicilan' ? 'bg-amber-600 text-white shadow-xs' : 'text-stone-550 hover:text-stone-955'
-                  }`}
-                  title="Cetak Khusus Lembar Rincian Pembayaran Bertahap / Cicilan"
-                >
-                  <Receipt size={13} />
-                  Lembar Cicilan
-                </button>
-              )}
-              {effectiveSppdRecord && (
-                <button
-                  onClick={() => setActiveTab('sppd_sheet')}
-                  className={`flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg transition ${
-                    activeTab === 'sppd_sheet' ? 'bg-amber-500 text-stone-950 font-bold shadow-xs' : 'text-amber-800 bg-amber-50 hover:bg-amber-100'
-                  }`}
-                >
-                  <FileText size={13} />
-                  Form SPPD &amp; Visum
-                </button>
-              )}
-              <button
-                onClick={() => setActiveTab('pengeluaran')}
-                className={`flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg transition ${
-                  activeTab === 'pengeluaran' ? 'bg-white text-stone-900 shadow-xs' : 'text-stone-550 hover:text-stone-955'
-                }`}
-              >
-                <CheckCircle size={13} />
-                Hanya Bukti Bayar
-              </button>
-              {((submission.jenisPengajuan || '').toLowerCase().includes('gaji') || !!submission.salaryDetails) && (
-                <button
-                  onClick={() => setActiveTab('slip_gaji')}
-                  className={`flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg transition ${
-                    activeTab === 'slip_gaji' ? 'bg-amber-600 text-white shadow-xs' : 'bg-amber-100/70 text-amber-900 hover:bg-amber-200/80'
-                  }`}
-                >
-                  <Coins size={13} />
-                  Slip Gaji Karyawan
-                </button>
-              )}
-              {attachmentFiles.length > 0 && (
-                <button
-                  onClick={() => setActiveTab('lampiran')}
-                  className={`flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg transition ${
-                    activeTab === 'lampiran' ? 'bg-white text-stone-900 shadow-xs' : 'text-stone-555 hover:text-stone-955'
-                  }`}
-                >
-                  <Cloud size={13} className="text-amber-600" />
-                  Hanya Lampiran
-                </button>
-              )}
-            </div>
+        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+          {/* Toolbar Pilihan Dokumen & Menu Pengaturan Bertingkat */}
+          <div className="flex-1 min-w-0">
+            <div className="flex flex-wrap items-center justify-between gap-2.5 bg-stone-100/90 border border-stone-200/90 p-2 sm:p-2.5 rounded-2xl shadow-3xs">
+              {/* Sisi Kiri: Pilihan Dokumen yang Dicetak (Dropdown Tab) */}
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold text-stone-500 uppercase tracking-wider font-mono pl-1 hidden sm:inline">
+                  Dokumen:
+                </span>
 
-            {/* Layout Mode Selection & F2 Controls & F1 Verifier Selector */}
-            {(activeTab === 'both' || activeTab === 'pengajuan') && (
-              <div className="flex flex-wrap items-center gap-2">
-                {/* Toggle F2 */}
-                <div className="flex bg-stone-100 p-1 rounded-xl border border-stone-200 items-center gap-1 shadow-3xs">
-                  <span className="text-[10px] font-bold text-stone-500 px-2 uppercase font-mono hidden sm:inline">Formulir F2:</span>
+                <div className="relative" ref={tabDropdownRef}>
                   <button
                     type="button"
-                    onClick={() => {
-                      setShowF2(true);
-                      localStorage.setItem('nmsa_voucher_show_f2', 'true');
-                    }}
-                    className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer flex items-center gap-1 ${
-                      showF2 ? 'bg-amber-600 text-white shadow-3xs' : 'text-stone-500 hover:text-stone-850'
+                    onClick={() => setIsTabDropdownOpen((prev) => !prev)}
+                    className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition border cursor-pointer select-none ${
+                      isTabDropdownOpen
+                        ? 'bg-stone-900 text-white border-stone-900 shadow-sm'
+                        : 'bg-white hover:bg-stone-50 text-stone-850 border-stone-250 shadow-3xs'
                     }`}
-                    title="Aktifkan F2 (Formulir Pengajuan Dana)"
+                    title="Pilih lembar atau bagian dokumen yang ingin dicetak"
                   >
-                    <CheckCircle size={12} />
-                    <span>Aktifkan F2</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowF2(false);
-                      localStorage.setItem('nmsa_voucher_show_f2', 'false');
-                    }}
-                    className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer flex items-center gap-1 ${
-                      !showF2 ? 'bg-stone-800 text-white shadow-3xs' : 'text-stone-500 hover:text-stone-850'
-                    }`}
-                    title="Nonaktifkan F2 (Hanya 1 Lembar Bukti Pengeluaran Kas F1)"
-                  >
-                    <span>🚫 Non-Aktif F2 (1 Lembar)</span>
-                  </button>
-                </div>
+                    {activeTab === 'both' && <Layers size={14} className={isTabDropdownOpen ? 'text-white' : 'text-amber-600'} />}
+                    {activeTab === 'pengajuan' && <FileText size={14} className={isTabDropdownOpen ? 'text-white' : 'text-amber-600'} />}
+                    {activeTab === 'pengeluaran' && <CheckCircle size={14} className={isTabDropdownOpen ? 'text-white' : 'text-emerald-600'} />}
+                    {activeTab === 'lembar_cicilan' && <Receipt size={14} className={isTabDropdownOpen ? 'text-white' : 'text-amber-600'} />}
+                    {activeTab === 'sppd_sheet' && <FileText size={14} className={isTabDropdownOpen ? 'text-white' : 'text-amber-600'} />}
+                    {activeTab === 'slip_gaji' && <Coins size={14} className={isTabDropdownOpen ? 'text-white' : 'text-amber-600'} />}
+                    {activeTab === 'lampiran' && <Cloud size={14} className={isTabDropdownOpen ? 'text-white' : 'text-amber-600'} />}
 
-                {/* Layout Mode Selection */}
-                <div className="flex bg-stone-100 p-1 rounded-xl border border-stone-200 items-center gap-1 shadow-3xs">
-                  <span className="text-[10px] font-bold text-stone-500 px-2 uppercase font-mono hidden sm:inline">Layout:</span>
-                  <button
-                    type="button"
-                    onClick={() => setPrintLayoutMode('standard')}
-                    className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
-                      printLayoutMode === 'standard' ? 'bg-white text-stone-900 shadow-3xs' : 'text-stone-500 hover:text-stone-850'
-                    }`}
-                    title="Format Standar (100% Lebar)"
-                  >
-                    Standard (100%)
+                    <span className="font-semibold">
+                      {activeTab === 'both' && (attachmentFiles.length > 0 ? `Cetak Semua (${isLoadingPages ? '...' : totalPagesCount} Hal)` : `Cetak Semua (${totalPagesCount} Hal)`)}
+                      {activeTab === 'pengajuan' && 'Hanya Pengajuan ( F1 & F2 )'}
+                      {activeTab === 'pengeluaran' && 'Hanya Bukti Bayar'}
+                      {activeTab === 'lembar_cicilan' && 'Lembar Cicilan'}
+                      {activeTab === 'sppd_sheet' && 'Form SPPD & Visum'}
+                      {activeTab === 'slip_gaji' && 'Slip Gaji Karyawan'}
+                      {activeTab === 'lampiran' && 'Hanya Lampiran'}
+                    </span>
+                    <ChevronDown size={14} className={`transition-transform duration-200 ${isTabDropdownOpen ? 'rotate-180' : ''}`} />
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setPrintLayoutMode('compact_70')}
-                    className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
-                      printLayoutMode === 'compact_70' ? 'bg-amber-600 text-white shadow-3xs' : 'text-stone-500 hover:text-stone-850'
-                    }`}
-                    title="Format 100% Lebar Atas (50% Space Bawah)"
-                  >
-                    Separuh Atas
-                  </button>
-                  {showF2 && (
-                    <button
-                      type="button"
-                      onClick={() => setPrintLayoutMode('eco_1page')}
-                      className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
-                        printLayoutMode === 'eco_1page' ? 'bg-amber-600 text-white shadow-3xs' : 'text-stone-500 hover:text-stone-850'
-                      }`}
-                      title="Format Hemat Kertas: F1 (50% Atas) dan F2 (50% Bawah) digabung pas dalam 1 lembar A4"
-                    >
-                      🌱 Eco (F1+F2 1 Hal)
-                    </button>
+
+                  {/* Menu Pilihan Tab Dokumen */}
+                  {isTabDropdownOpen && (
+                    <div className="absolute left-0 top-full mt-1.5 w-72 bg-white rounded-2xl shadow-xl border border-stone-200 p-2 z-50 animate-in fade-in zoom-in-95 duration-100">
+                      <div className="text-[10px] font-bold text-stone-400 uppercase tracking-wider px-2.5 py-1.5 border-b border-stone-100 mb-1">
+                        Pilihan Lembar / Dokumen Cetak
+                      </div>
+                      <div className="space-y-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveTab('both');
+                            setIsTabDropdownOpen(false);
+                          }}
+                          className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs text-left transition cursor-pointer ${
+                            activeTab === 'both' ? 'bg-amber-50 text-amber-900 font-bold border border-amber-200' : 'text-stone-700 hover:bg-stone-50 font-medium'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <Layers size={14} className="text-amber-600 shrink-0" />
+                            <div>
+                              <div className="leading-tight">Cetak Semua</div>
+                              <div className="text-[10px] text-stone-400 font-normal">Seluruh voucher & lampiran berkas</div>
+                            </div>
+                          </div>
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-stone-100 text-stone-600 shrink-0">
+                            {isLoadingPages ? '...' : totalPagesCount} Hal
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveTab('pengajuan');
+                            setIsTabDropdownOpen(false);
+                          }}
+                          className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs text-left transition cursor-pointer ${
+                            activeTab === 'pengajuan' ? 'bg-amber-50 text-amber-900 font-bold border border-amber-200' : 'text-stone-700 hover:bg-stone-50 font-medium'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <FileText size={14} className="text-amber-600 shrink-0" />
+                            <div>
+                              <div className="leading-tight">Hanya Pengajuan ( F1 & F2 )</div>
+                              <div className="text-[10px] text-stone-400 font-normal">Formulir pengajuan dana & kas</div>
+                            </div>
+                          </div>
+                          {activeTab === 'pengajuan' && <Check size={14} className="text-amber-600" />}
+                        </button>
+
+                        {isCicilan && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActiveTab('lembar_cicilan');
+                              setIsTabDropdownOpen(false);
+                            }}
+                            className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs text-left transition cursor-pointer ${
+                              activeTab === 'lembar_cicilan' ? 'bg-amber-50 text-amber-900 font-bold border border-amber-200' : 'text-stone-700 hover:bg-stone-50 font-medium'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <Receipt size={14} className="text-amber-600 shrink-0" />
+                              <div>
+                                <div className="leading-tight">Lembar Cicilan</div>
+                                <div className="text-[10px] text-stone-400 font-normal">Rincian pembayaran bertahap</div>
+                              </div>
+                            </div>
+                            {activeTab === 'lembar_cicilan' && <Check size={14} className="text-amber-600" />}
+                          </button>
+                        )}
+
+                        {effectiveSppdRecord && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActiveTab('sppd_sheet');
+                              setIsTabDropdownOpen(false);
+                            }}
+                            className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs text-left transition cursor-pointer ${
+                              activeTab === 'sppd_sheet' ? 'bg-amber-50 text-amber-900 font-bold border border-amber-200' : 'text-stone-700 hover:bg-stone-50 font-medium'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <FileText size={14} className="text-amber-600 shrink-0" />
+                              <div>
+                                <div className="leading-tight">Form SPPD &amp; Visum</div>
+                                <div className="text-[10px] text-stone-400 font-normal">Surat tugas &amp; lembar visum dinas</div>
+                              </div>
+                            </div>
+                            {activeTab === 'sppd_sheet' && <Check size={14} className="text-amber-600" />}
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveTab('pengeluaran');
+                            setIsTabDropdownOpen(false);
+                          }}
+                          className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs text-left transition cursor-pointer ${
+                            activeTab === 'pengeluaran' ? 'bg-amber-50 text-amber-900 font-bold border border-amber-200' : 'text-stone-700 hover:bg-stone-50 font-medium'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <CheckCircle size={14} className="text-emerald-600 shrink-0" />
+                            <div>
+                              <div className="leading-tight">Hanya Bukti Bayar</div>
+                              <div className="text-[10px] text-stone-400 font-normal">Lembar bukti pengeluaran kas saja</div>
+                            </div>
+                          </div>
+                          {activeTab === 'pengeluaran' && <Check size={14} className="text-amber-600" />}
+                        </button>
+
+                        {((submission.jenisPengajuan || '').toLowerCase().includes('gaji') || !!submission.salaryDetails) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActiveTab('slip_gaji');
+                              setIsTabDropdownOpen(false);
+                            }}
+                            className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs text-left transition cursor-pointer ${
+                              activeTab === 'slip_gaji' ? 'bg-amber-50 text-amber-900 font-bold border border-amber-200' : 'text-stone-700 hover:bg-stone-50 font-medium'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <Coins size={14} className="text-amber-600 shrink-0" />
+                              <div>
+                                <div className="leading-tight">Slip Gaji Karyawan</div>
+                                <div className="text-[10px] text-stone-400 font-normal">Rincian slip gaji resmi</div>
+                              </div>
+                            </div>
+                            {activeTab === 'slip_gaji' && <Check size={14} className="text-amber-600" />}
+                          </button>
+                        )}
+
+                        {attachmentFiles.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActiveTab('lampiran');
+                              setIsTabDropdownOpen(false);
+                            }}
+                            className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs text-left transition cursor-pointer ${
+                              activeTab === 'lampiran' ? 'bg-amber-50 text-amber-900 font-bold border border-amber-200' : 'text-stone-700 hover:bg-stone-50 font-medium'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <Cloud size={14} className="text-amber-600 shrink-0" />
+                              <div>
+                                <div className="leading-tight">Hanya Lampiran</div>
+                                <div className="text-[10px] text-stone-400 font-normal">Berkas fisik &amp; bukti transaksi</div>
+                              </div>
+                            </div>
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-stone-100 text-stone-600 shrink-0">
+                              {attachmentFiles.length} Berkas
+                            </span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   )}
                 </div>
-
-                {/* Format Tanda Tangan: Tabel vs Garis */}
-                <div className="flex bg-stone-100 p-1 rounded-xl border border-stone-200 items-center gap-1 shadow-3xs">
-                  <span className="text-[10px] font-bold text-stone-500 px-2 uppercase font-mono hidden sm:inline">Format TTD:</span>
-                  <button
-                    type="button"
-                    onClick={() => setSignatureTableStyle('table')}
-                    className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
-                      signatureTableStyle === 'table' ? 'bg-amber-600 text-white shadow-3xs' : 'text-stone-500 hover:text-stone-850'
-                    }`}
-                    title="Format Tabel Kotak Lengkap"
-                  >
-                    ▦ Tabel Kotak
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSignatureTableStyle('line')}
-                    className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
-                      signatureTableStyle === 'line' ? 'bg-amber-600 text-white shadow-3xs' : 'text-stone-500 hover:text-stone-850'
-                    }`}
-                    title="Format Garis Terbuka"
-                  >
-                    ━ Garis Terbuka
-                  </button>
-                </div>
-
-                {/* Tombol Menu Atur Penanda Tangan (Manual & Permanen Hingga 8 Kolom) */}
-                <button
-                  type="button"
-                  onClick={() => setIsSignerModalOpen(true)}
-                  className="px-3 py-1 text-xs font-bold rounded-xl transition cursor-pointer bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white shadow-3xs flex items-center gap-1.5"
-                  title="Atur Nama, Jabatan, dan Status Penanda Tangan (Disetujui/Dibuat/Diverifikasi) secara Manual & Permanen (Hingga 8 Kolom)"
-                >
-                  <SlidersHorizontal size={13} />
-                  <span>Atur Penanda Tangan</span>
-                  <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-white/25 font-black">
-                    {f1Signers.filter((s) => s.enabled !== false).length} Kolom
-                  </span>
-                </button>
-
-                {/* Menu Diverifikasi F1 */}
-                <div className="flex bg-stone-100 p-1 rounded-xl border border-stone-200 items-center gap-1 shadow-3xs">
-                  <span className="text-[10px] font-bold text-stone-500 px-2 uppercase font-mono hidden sm:inline">Diverifikasi (F1):</span>
-                  <button
-                    type="button"
-                    onClick={() => handleSelectF1Verifier('rifki')}
-                    className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
-                      f1Verifier === 'rifki' ? 'bg-white text-stone-900 shadow-3xs' : 'text-stone-500 hover:text-stone-850'
-                    }`}
-                    title="Andi Muhammad Rifki (Direktur)"
-                  >
-                    Andi Muhammad Rifki
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSelectF1Verifier('nursyam')}
-                    className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
-                      f1Verifier === 'nursyam' ? 'bg-white text-stone-900 shadow-3xs' : 'text-stone-500 hover:text-stone-850'
-                    }`}
-                    title="Andi Nursyam Halid (Direktur Utama)"
-                  >
-                    Andi Nursyam Halid
-                  </button>
-                </div>
-
-                {/* Menu Disetujui F2 */}
-                <div className={`flex bg-stone-100 p-1 rounded-xl border border-stone-200 items-center gap-1 shadow-3xs ${!showF2 ? 'opacity-50' : ''}`}>
-                  <span className="text-[10px] font-bold text-stone-500 px-2 uppercase font-mono hidden sm:inline">Disetujui (F2):</span>
-                  <button
-                    type="button"
-                    disabled={!showF2}
-                    onClick={() => setF2ApprovedBy('harijon')}
-                    className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
-                      f2ApprovedBy === 'harijon' ? 'bg-white text-stone-900 shadow-3xs' : 'text-stone-500 hover:text-stone-850'
-                    }`}
-                    title="Harijon (Direktur Keuangan)"
-                  >
-                    Harijon
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!showF2}
-                    onClick={() => setF2ApprovedBy('nursyam')}
-                    className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
-                      f2ApprovedBy === 'nursyam' ? 'bg-white text-stone-900 shadow-3xs' : 'text-stone-500 hover:text-stone-850'
-                    }`}
-                    title="Andi Nursyam Halid (Direktur Utama)"
-                  >
-                    Andi Nursyam Halid
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!showF2}
-                    onClick={() => setF2ApprovedBy('none')}
-                    className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
-                      f2ApprovedBy === 'none' ? 'bg-amber-600 text-white shadow-3xs' : 'text-stone-500 hover:text-stone-850'
-                    }`}
-                    title="Tanpa Disetujui"
-                  >
-                    🚫 Tanpa Disetujui
-                  </button>
-                </div>
               </div>
-            )}
+
+              {/* Sisi Kanan: Menu Dropdown Bertingkat & Tombol Pintas TTD */}
+              {(activeTab === 'both' || activeTab === 'pengajuan') && (
+                <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+                  {/* Tombol Dropdown Bertingkat: Pengaturan & Format Cetak */}
+                  <div className="relative" ref={settingsMenuRef}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsSettingsMenuOpen((prev) => !prev);
+                        setActiveTieredSubmenu(null);
+                      }}
+                      className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition border cursor-pointer select-none ${
+                        isSettingsMenuOpen
+                          ? 'bg-amber-600 text-white border-amber-700 shadow-sm'
+                          : 'bg-white hover:bg-stone-50 text-stone-850 border-stone-250 shadow-3xs'
+                      }`}
+                      title="Menu bertingkat untuk mengatur tata letak, formulir F2, tanda tangan, dan verifikator"
+                    >
+                      <SlidersHorizontal size={14} className={isSettingsMenuOpen ? 'text-white' : 'text-amber-600'} />
+                      <span>Pengaturan &amp; Format Cetak</span>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold hidden sm:inline-block ${
+                        isSettingsMenuOpen ? 'bg-amber-700 text-white' : 'bg-stone-100 text-stone-600'
+                      }`}>
+                        {showF2 ? 'F2: Aktif' : 'F2: Non-Aktif'} • {printLayoutMode === 'standard' ? 'Standard' : printLayoutMode === 'compact_70' ? 'Separuh' : 'Eco'}
+                      </span>
+                      <ChevronDown size={14} className={`transition-transform duration-200 ${isSettingsMenuOpen ? 'rotate-180' : ''}`} />
+                    </button>
+
+                    {/* Dropdown Panel Utama (Tier 1) */}
+                    {isSettingsMenuOpen && (
+                      <div className="absolute right-0 top-full mt-1.5 w-72 sm:w-80 bg-white rounded-2xl shadow-xl border border-stone-200 p-2 z-50 animate-in fade-in zoom-in-95 duration-100 text-left">
+                        <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-stone-100 mb-1">
+                          <span className="text-[10px] font-bold text-stone-400 uppercase tracking-wider">
+                            Pengaturan &amp; Format Dokumen
+                          </span>
+                          <span className="text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded font-bold">
+                            Menu Bertingkat
+                          </span>
+                        </div>
+
+                        <div className="space-y-1">
+                          {/* Tier 1 Item 1: Formulir F2 */}
+                          <div
+                            className="relative"
+                            onMouseEnter={() => setActiveTieredSubmenu('f2')}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => setActiveTieredSubmenu(activeTieredSubmenu === 'f2' ? null : 'f2')}
+                              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${
+                                activeTieredSubmenu === 'f2'
+                                  ? 'bg-amber-50 text-amber-900 border border-amber-200'
+                                  : 'text-stone-700 hover:bg-stone-50'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2">
+                                <FileText size={14} className="text-amber-600 shrink-0" />
+                                <span>Formulir F2</span>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                                  showF2 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-stone-100 text-stone-600'
+                                }`}>
+                                  {showF2 ? 'Aktif' : 'Non-Aktif'}
+                                </span>
+                                <ChevronRight size={13} className="text-stone-400" />
+                              </div>
+                            </button>
+
+                            {/* Tier 2 Submenu: Formulir F2 */}
+                            {activeTieredSubmenu === 'f2' && (
+                              <div className="sm:absolute sm:right-full sm:top-0 sm:mr-1.5 w-full sm:w-64 bg-white rounded-xl shadow-xl border border-stone-200 p-2 z-55 mt-1 sm:mt-0 animate-in fade-in duration-100">
+                                <div className="text-[10px] font-bold text-stone-400 uppercase tracking-wider px-2 py-1 mb-1 border-b border-stone-100">
+                                  Opsi Formulir F2
+                                </div>
+                                <div className="space-y-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setShowF2(true);
+                                      localStorage.setItem('nmsa_voucher_show_f2', 'true');
+                                    }}
+                                    className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs text-left transition cursor-pointer ${
+                                      showF2 ? 'bg-amber-600 text-white font-bold shadow-3xs' : 'text-stone-700 hover:bg-stone-50'
+                                    }`}
+                                  >
+                                    <div>
+                                      <div className="font-bold flex items-center gap-1.5">
+                                        <CheckCircle size={12} />
+                                        <span>Aktifkan F2</span>
+                                      </div>
+                                      <div className={`text-[10px] ${showF2 ? 'text-amber-100' : 'text-stone-400'} font-normal`}>
+                                        2 Lembar: Pengeluaran + Pengajuan
+                                      </div>
+                                    </div>
+                                    {showF2 && <Check size={14} className="shrink-0" />}
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setShowF2(false);
+                                      localStorage.setItem('nmsa_voucher_show_f2', 'false');
+                                    }}
+                                    className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs text-left transition cursor-pointer ${
+                                      !showF2 ? 'bg-stone-850 text-white font-bold shadow-3xs' : 'text-stone-700 hover:bg-stone-50'
+                                    }`}
+                                  >
+                                    <div>
+                                      <div className="font-bold flex items-center gap-1.5">
+                                        <span>🚫 Non-Aktif F2</span>
+                                      </div>
+                                      <div className={`text-[10px] ${!showF2 ? 'text-stone-300' : 'text-stone-400'} font-normal`}>
+                                        Hanya 1 Lembar Bukti F1
+                                      </div>
+                                    </div>
+                                    {!showF2 && <Check size={14} className="shrink-0" />}
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Tier 1 Item 2: Tata Letak / Layout Mode */}
+                          <div
+                            className="relative"
+                            onMouseEnter={() => setActiveTieredSubmenu('layout')}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => setActiveTieredSubmenu(activeTieredSubmenu === 'layout' ? null : 'layout')}
+                              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${
+                                activeTieredSubmenu === 'layout'
+                                  ? 'bg-amber-50 text-amber-900 border border-amber-200'
+                                  : 'text-stone-700 hover:bg-stone-50'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2">
+                                <Layout size={14} className="text-amber-600 shrink-0" />
+                                <span>Tata Letak (Layout)</span>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-stone-100 text-stone-600">
+                                  {printLayoutMode === 'standard' ? 'Standard' : printLayoutMode === 'compact_70' ? 'Separuh' : 'Eco'}
+                                </span>
+                                <ChevronRight size={13} className="text-stone-400" />
+                              </div>
+                            </button>
+
+                            {/* Tier 2 Submenu: Layout Mode */}
+                            {activeTieredSubmenu === 'layout' && (
+                              <div className="sm:absolute sm:right-full sm:top-0 sm:mr-1.5 w-full sm:w-64 bg-white rounded-xl shadow-xl border border-stone-200 p-2 z-55 mt-1 sm:mt-0 animate-in fade-in duration-100">
+                                <div className="text-[10px] font-bold text-stone-400 uppercase tracking-wider px-2 py-1 mb-1 border-b border-stone-100">
+                                  Pilihan Tata Letak
+                                </div>
+                                <div className="space-y-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => setPrintLayoutMode('standard')}
+                                    className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs text-left transition cursor-pointer ${
+                                      printLayoutMode === 'standard' ? 'bg-amber-600 text-white font-bold shadow-3xs' : 'text-stone-700 hover:bg-stone-50'
+                                    }`}
+                                  >
+                                    <div>
+                                      <div className="font-bold">Standard (100%)</div>
+                                      <div className={`text-[10px] ${printLayoutMode === 'standard' ? 'text-amber-100' : 'text-stone-400'} font-normal`}>
+                                        Format dokumen lebar penuh
+                                      </div>
+                                    </div>
+                                    {printLayoutMode === 'standard' && <Check size={14} className="shrink-0" />}
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => setPrintLayoutMode('compact_70')}
+                                    className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs text-left transition cursor-pointer ${
+                                      printLayoutMode === 'compact_70' ? 'bg-amber-600 text-white font-bold shadow-3xs' : 'text-stone-700 hover:bg-stone-50'
+                                    }`}
+                                  >
+                                    <div>
+                                      <div className="font-bold">Separuh Atas</div>
+                                      <div className={`text-[10px] ${printLayoutMode === 'compact_70' ? 'text-amber-100' : 'text-stone-400'} font-normal`}>
+                                        50% Ruang atas dokumen
+                                      </div>
+                                    </div>
+                                    {printLayoutMode === 'compact_70' && <Check size={14} className="shrink-0" />}
+                                  </button>
+
+                                  {showF2 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setPrintLayoutMode('eco_1page')}
+                                      className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs text-left transition cursor-pointer ${
+                                        printLayoutMode === 'eco_1page' ? 'bg-amber-600 text-white font-bold shadow-3xs' : 'text-stone-700 hover:bg-stone-50'
+                                      }`}
+                                    >
+                                      <div>
+                                        <div className="font-bold">🌱 Eco (F1+F2 1 Lembar)</div>
+                                        <div className={`text-[10px] ${printLayoutMode === 'eco_1page' ? 'text-amber-100' : 'text-stone-400'} font-normal`}>
+                                          F1 &amp; F2 pas dalam 1 lembar A4
+                                        </div>
+                                      </div>
+                                      {printLayoutMode === 'eco_1page' && <Check size={14} className="shrink-0" />}
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Tier 1 Item 3: Format Tanda Tangan */}
+                          <div
+                            className="relative"
+                            onMouseEnter={() => setActiveTieredSubmenu('ttd')}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => setActiveTieredSubmenu(activeTieredSubmenu === 'ttd' ? null : 'ttd')}
+                              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${
+                                activeTieredSubmenu === 'ttd'
+                                  ? 'bg-amber-50 text-amber-900 border border-amber-200'
+                                  : 'text-stone-700 hover:bg-stone-50'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2">
+                                <CheckCircle size={14} className="text-amber-600 shrink-0" />
+                                <span>Format Tanda Tangan</span>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-stone-100 text-stone-600">
+                                  {signatureTableStyle === 'table' ? 'Tabel Kotak' : 'Garis'}
+                                </span>
+                                <ChevronRight size={13} className="text-stone-400" />
+                              </div>
+                            </button>
+
+                            {/* Tier 2 Submenu: Format TTD */}
+                            {activeTieredSubmenu === 'ttd' && (
+                              <div className="sm:absolute sm:right-full sm:top-0 sm:mr-1.5 w-full sm:w-64 bg-white rounded-xl shadow-xl border border-stone-200 p-2 z-55 mt-1 sm:mt-0 animate-in fade-in duration-100">
+                                <div className="text-[10px] font-bold text-stone-400 uppercase tracking-wider px-2 py-1 mb-1 border-b border-stone-100">
+                                  Gaya Tanda Tangan
+                                </div>
+                                <div className="space-y-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => setSignatureTableStyle('table')}
+                                    className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs text-left transition cursor-pointer ${
+                                      signatureTableStyle === 'table' ? 'bg-amber-600 text-white font-bold shadow-3xs' : 'text-stone-700 hover:bg-stone-50'
+                                    }`}
+                                  >
+                                    <div>
+                                      <div className="font-bold">▦ Tabel Kotak</div>
+                                      <div className={`text-[10px] ${signatureTableStyle === 'table' ? 'text-amber-100' : 'text-stone-400'} font-normal`}>
+                                        Format kotak berbingkai lengkap
+                                      </div>
+                                    </div>
+                                    {signatureTableStyle === 'table' && <Check size={14} className="shrink-0" />}
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => setSignatureTableStyle('line')}
+                                    className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs text-left transition cursor-pointer ${
+                                      signatureTableStyle === 'line' ? 'bg-amber-600 text-white font-bold shadow-3xs' : 'text-stone-700 hover:bg-stone-50'
+                                    }`}
+                                  >
+                                    <div>
+                                      <div className="font-bold">━ Garis Terbuka</div>
+                                      <div className={`text-[10px] ${signatureTableStyle === 'line' ? 'text-amber-100' : 'text-stone-400'} font-normal`}>
+                                        Format garis bawah terbuka minimalis
+                                      </div>
+                                    </div>
+                                    {signatureTableStyle === 'line' && <Check size={14} className="shrink-0" />}
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Tier 1 Item 4: Diverifikasi (F1) */}
+                          <div
+                            className="relative"
+                            onMouseEnter={() => setActiveTieredSubmenu('f1_signer')}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => setActiveTieredSubmenu(activeTieredSubmenu === 'f1_signer' ? null : 'f1_signer')}
+                              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${
+                                activeTieredSubmenu === 'f1_signer'
+                                  ? 'bg-amber-50 text-amber-900 border border-amber-200'
+                                  : 'text-stone-700 hover:bg-stone-50'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2">
+                                <UserCheck size={14} className="text-amber-600 shrink-0" />
+                                <span>Diverifikasi (F1)</span>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-stone-100 text-stone-600 max-w-[85px] truncate">
+                                  {f1Verifier === 'nursyam' ? 'Nursyam' : 'Rifki'}
+                                </span>
+                                <ChevronRight size={13} className="text-stone-400" />
+                              </div>
+                            </button>
+
+                            {/* Tier 2 Submenu: Diverifikasi F1 */}
+                            {activeTieredSubmenu === 'f1_signer' && (
+                              <div className="sm:absolute sm:right-full sm:top-0 sm:mr-1.5 w-full sm:w-64 bg-white rounded-xl shadow-xl border border-stone-200 p-2 z-55 mt-1 sm:mt-0 animate-in fade-in duration-100">
+                                <div className="text-[10px] font-bold text-stone-400 uppercase tracking-wider px-2 py-1 mb-1 border-b border-stone-100">
+                                  Pilihan Verifikator F1
+                                </div>
+                                <div className="space-y-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSelectF1Verifier('rifki')}
+                                    className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs text-left transition cursor-pointer ${
+                                      f1Verifier === 'rifki' ? 'bg-amber-600 text-white font-bold shadow-3xs' : 'text-stone-700 hover:bg-stone-50'
+                                    }`}
+                                  >
+                                    <div>
+                                      <div className="font-bold">Andi Muhammad Rifki</div>
+                                      <div className={`text-[10px] ${f1Verifier === 'rifki' ? 'text-amber-100' : 'text-stone-400'} font-normal`}>
+                                        Direktur
+                                      </div>
+                                    </div>
+                                    {f1Verifier === 'rifki' && <Check size={14} className="shrink-0" />}
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSelectF1Verifier('nursyam')}
+                                    className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs text-left transition cursor-pointer ${
+                                      f1Verifier === 'nursyam' ? 'bg-amber-600 text-white font-bold shadow-3xs' : 'text-stone-700 hover:bg-stone-50'
+                                    }`}
+                                  >
+                                    <div>
+                                      <div className="font-bold">Andi Nursyam Halid</div>
+                                      <div className={`text-[10px] ${f1Verifier === 'nursyam' ? 'text-amber-100' : 'text-stone-400'} font-normal`}>
+                                        Direktur Utama
+                                      </div>
+                                    </div>
+                                    {f1Verifier === 'nursyam' && <Check size={14} className="shrink-0" />}
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Tier 1 Item 5: Disetujui (F2) */}
+                          <div
+                            className="relative"
+                            onMouseEnter={() => {
+                              if (showF2) setActiveTieredSubmenu('f2_signer');
+                            }}
+                          >
+                            <button
+                              type="button"
+                              disabled={!showF2}
+                              onClick={() => {
+                                if (showF2) setActiveTieredSubmenu(activeTieredSubmenu === 'f2_signer' ? null : 'f2_signer');
+                              }}
+                              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${
+                                !showF2
+                                  ? 'opacity-40 cursor-not-allowed text-stone-400'
+                                  : activeTieredSubmenu === 'f2_signer'
+                                  ? 'bg-amber-50 text-amber-900 border border-amber-200'
+                                  : 'text-stone-700 hover:bg-stone-50'
+                              }`}
+                              title={!showF2 ? 'Aktifkan Formulir F2 untuk mengatur persetujuan F2' : 'Pilih penanda tangan persetujuan F2'}
+                            >
+                              <div className="flex items-center gap-2">
+                                <CheckCircle size={14} className="text-amber-600 shrink-0" />
+                                <span>Disetujui (F2)</span>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-stone-100 text-stone-600 max-w-[85px] truncate">
+                                  {!showF2 ? 'F2 Non-Aktif' : f2ApprovedBy === 'harijon' ? 'Harijon' : f2ApprovedBy === 'nursyam' ? 'Nursyam' : 'Tanpa Disetujui'}
+                                </span>
+                                <ChevronRight size={13} className="text-stone-400" />
+                              </div>
+                            </button>
+
+                            {/* Tier 2 Submenu: Disetujui F2 */}
+                            {showF2 && activeTieredSubmenu === 'f2_signer' && (
+                              <div className="sm:absolute sm:right-full sm:top-0 sm:mr-1.5 w-full sm:w-64 bg-white rounded-xl shadow-xl border border-stone-200 p-2 z-55 mt-1 sm:mt-0 animate-in fade-in duration-100">
+                                <div className="text-[10px] font-bold text-stone-400 uppercase tracking-wider px-2 py-1 mb-1 border-b border-stone-100">
+                                  Pilihan Penyetuju F2
+                                </div>
+                                <div className="space-y-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => setF2ApprovedBy('harijon')}
+                                    className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs text-left transition cursor-pointer ${
+                                      f2ApprovedBy === 'harijon' ? 'bg-amber-600 text-white font-bold shadow-3xs' : 'text-stone-700 hover:bg-stone-50'
+                                    }`}
+                                  >
+                                    <div>
+                                      <div className="font-bold">Harijon</div>
+                                      <div className={`text-[10px] ${f2ApprovedBy === 'harijon' ? 'text-amber-100' : 'text-stone-400'} font-normal`}>
+                                        Direktur Keuangan
+                                      </div>
+                                    </div>
+                                    {f2ApprovedBy === 'harijon' && <Check size={14} className="shrink-0" />}
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => setF2ApprovedBy('nursyam')}
+                                    className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs text-left transition cursor-pointer ${
+                                      f2ApprovedBy === 'nursyam' ? 'bg-amber-600 text-white font-bold shadow-3xs' : 'text-stone-700 hover:bg-stone-50'
+                                    }`}
+                                  >
+                                    <div>
+                                      <div className="font-bold">Andi Nursyam Halid</div>
+                                      <div className={`text-[10px] ${f2ApprovedBy === 'nursyam' ? 'text-amber-100' : 'text-stone-400'} font-normal`}>
+                                        Direktur Utama
+                                      </div>
+                                    </div>
+                                    {f2ApprovedBy === 'nursyam' && <Check size={14} className="shrink-0" />}
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => setF2ApprovedBy('none')}
+                                    className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs text-left transition cursor-pointer ${
+                                      f2ApprovedBy === 'none' ? 'bg-amber-600 text-white font-bold shadow-3xs' : 'text-stone-700 hover:bg-stone-50'
+                                    }`}
+                                  >
+                                    <div>
+                                      <div className="font-bold">🚫 Tanpa Disetujui</div>
+                                      <div className={`text-[10px] ${f2ApprovedBy === 'none' ? 'text-amber-100' : 'text-stone-400'} font-normal`}>
+                                        Hanya 1 TTD: Dibuat Oleh saja
+                                      </div>
+                                    </div>
+                                    {f2ApprovedBy === 'none' && <Check size={14} className="shrink-0" />}
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Divider */}
+                          <div className="border-t border-stone-150 my-1.5" />
+
+                          {/* Item Aksi Langsung: Atur Penanda Tangan Lengkap */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsSignerModalOpen(true);
+                              setIsSettingsMenuOpen(false);
+                              setActiveTieredSubmenu(null);
+                            }}
+                            className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold text-amber-900 bg-amber-50 hover:bg-amber-100/80 transition cursor-pointer border border-amber-200"
+                          >
+                            <div className="flex items-center gap-2">
+                              <SlidersHorizontal size={14} className="text-amber-600 shrink-0" />
+                              <span>Atur Kolom Penanda Tangan</span>
+                            </div>
+                            <span className="text-[10px] bg-amber-600 text-white font-extrabold px-2 py-0.5 rounded-full">
+                              {f1Signers.filter((s) => s.enabled !== false).length} Kolom
+                            </span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Direct Shortcut Button: Atur Penanda Tangan (5 Kolom) */}
+                  <button
+                    type="button"
+                    onClick={() => setIsSignerModalOpen(true)}
+                    className="px-3.5 py-2 text-xs font-bold rounded-xl transition cursor-pointer bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white shadow-3xs flex items-center gap-1.5 shrink-0"
+                    title="Atur Nama, Jabatan, dan Status Penanda Tangan (Disetujui/Dibuat/Diverifikasi) secara Manual &amp; Permanen (Hingga 8 Kolom)"
+                  >
+                    <SlidersHorizontal size={13} />
+                    <span>Atur Penanda Tangan</span>
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-white/25 font-black">
+                      {f1Signers.filter((s) => s.enabled !== false).length} Kolom
+                    </span>
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Status Lampiran & Reorder Control */}
