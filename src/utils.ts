@@ -711,22 +711,21 @@ export async function generateF1PdfBytes(
   curTableY = terbilangY - terbilangH - 12;
 
   // ================= 6. SIGNATURES BLOCK (4 SIGNERS: DIAJUKAN, DIVERIFIKASI, DIVERIFIKASI, DISETUJUI) =================
-  const blockW = contentWidth / 4;
-  const sigBoxH = 65;
-  const sigTopY = curTableY;
-
+  // ================= 6. SIGNATURES BLOCK (DYNAMIC 1 TO 8 SIGNERS) =================
   let signers = customSigners;
   if (!signers && typeof window !== 'undefined' && window.localStorage) {
     try {
       const saved = localStorage.getItem('nmsa_custom_f1_signers_config');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length === 4) signers = parsed;
+        if (Array.isArray(parsed) && parsed.length >= 1) {
+          signers = parsed.filter((s: any) => s.enabled !== false);
+        }
       }
     } catch (_) {}
   }
 
-  if (!signers || signers.length !== 4) {
+  if (!signers || signers.length === 0) {
     const applicantName = cleanSingleLine(
       (submission.diajukanOleh && submission.diajukanOleh !== 'Sri Ekowati')
         ? submission.diajukanOleh
@@ -766,26 +765,39 @@ export async function generateF1PdfBytes(
       { title: 'Disetujui', name: approverName, role: approverRole },
     ];
   } else {
-    signers = signers.map(s => ({
+    signers = signers.map((s: any) => ({
       title: cleanSingleLine(s.title),
       name: cleanSingleLine(s.name),
       role: cleanSingleLine(s.role),
     }));
   }
 
-  signers.forEach((s, idx) => {
-    const colX = margin + idx * blockW;
+  const isMultiRow = signers.length > 4;
+  const row1 = isMultiRow ? signers.slice(0, 4) : signers;
+  const row2 = isMultiRow ? signers.slice(4, 8) : [];
+
+  // Each standard signature box is strictly 25% of content width (contentWidth / 4)
+  const blockW = contentWidth / 4;
+  let currentSigY = curTableY;
+
+  // Render Row 1 (up to 4 signers)
+  const sigBoxH1 = isMultiRow ? 58 : 68;
+  const r1Count = row1.length;
+  const r1StartX = margin + (contentWidth - r1Count * blockW) / 2;
+
+  row1.forEach((s: any, idx: number) => {
+    const colX = r1StartX + idx * blockW;
 
     const titleW = fontBold.widthOfTextAtSize(s.title, 8.5);
     page.drawText(s.title, {
       x: colX + (blockW - titleW) / 2,
-      y: sigTopY,
+      y: currentSigY,
       size: 8.5,
       font: fontBold,
       color: rgb(0, 0, 0),
     });
 
-    const sigLineY = sigTopY - sigBoxH;
+    const sigLineY = currentSigY - sigBoxH1;
 
     const nameFontSize = 9.0;
     const nameW = fontBold.widthOfTextAtSize(s.name, nameFontSize);
@@ -814,9 +826,62 @@ export async function generateF1PdfBytes(
     });
   });
 
+  currentSigY = currentSigY - sigBoxH1 - 22;
+
+  // Render Row 2 if exists (Signers 5 - 8, with equal 25% box width and identical height as Row 1)
+  if (row2.length > 0) {
+    const r2Count = row2.length;
+    // Centered horizontally if 1, 2, or 3 signers, and each box has the EXACT SAME 25% width and identical height
+    const r2StartX = margin + (contentWidth - r2Count * blockW) / 2;
+    const sigBoxH2 = sigBoxH1; // Identical height to Row 1
+
+    row2.forEach((s: any, idx: number) => {
+      const colX = r2StartX + idx * blockW;
+
+      const titleW = fontBold.widthOfTextAtSize(s.title, 8.5);
+      page.drawText(s.title, {
+        x: colX + (blockW - titleW) / 2,
+        y: currentSigY,
+        size: 8.5,
+        font: fontBold,
+        color: rgb(0, 0, 0),
+      });
+
+      const sigLineY = currentSigY - sigBoxH2;
+
+      const nameFontSize = 9.0;
+      const nameW = fontBold.widthOfTextAtSize(s.name, nameFontSize);
+      page.drawText(s.name, {
+        x: colX + (blockW - nameW) / 2,
+        y: sigLineY + 3,
+        size: nameFontSize,
+        font: fontBold,
+        color: rgb(0, 0, 0),
+      });
+
+      page.drawLine({
+        start: { x: colX + 12, y: sigLineY },
+        end: { x: colX + blockW - 12, y: sigLineY },
+        thickness: 1.0,
+        color: rgb(0, 0, 0),
+      });
+
+      const roleW = fontRegular.widthOfTextAtSize(s.role, 7.5);
+      page.drawText(s.role, {
+        x: colX + (blockW - roleW) / 2,
+        y: sigLineY - 11,
+        size: 7.5,
+        font: fontRegular,
+        color: rgb(0, 0, 0),
+      });
+    });
+
+    currentSigY = currentSigY - sigBoxH2 - 18;
+  }
+
   // ================= 7. NOTES BLOCK =================
   if (submission.notes && submission.notes.trim() !== '') {
-    const noteTopY = sigTopY - sigBoxH - 24;
+    const noteTopY = currentSigY - 4;
     page.drawText('NOTE :', {
       x: margin,
       y: noteTopY,
@@ -850,7 +915,7 @@ export async function generateF1PdfBytes(
 
   if (isCicilan) {
     // 1. Subtle 1-line note on Page 1 (keeps F1 pristine and uncrowded)
-    const f1NoticeY = (submission.notes && submission.notes.trim() !== '') ? (sigTopY - sigBoxH - 52) : (sigTopY - sigBoxH - 24);
+    const f1NoticeY = (submission.notes && submission.notes.trim() !== '') ? (currentSigY - 42) : (currentSigY - 14);
     page.drawText('* Transaksi Pembayaran Bertahap / Cicilan (Rincian pembayaran lengkap pada Lembar ke-2)', {
       x: margin,
       y: Math.max(18, f1NoticeY),

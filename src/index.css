@@ -843,10 +843,46 @@ html, body {
   table {
     page-break-inside: auto !important;
     break-inside: auto !important;
-    width: 100% !important;
-    max-width: 100% !important;
     border-collapse: collapse !important;
     box-sizing: border-box !important;
+  }
+  table:not(.signature-sub-table):not([data-preserve-width]) {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+  .signature-sub-table {
+    box-sizing: border-box !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+  }
+  .signature-sub-table.table-w-25 {
+    width: 25% !important;
+    max-width: 25% !important;
+    min-width: 25% !important;
+  }
+  .signature-sub-table.table-w-50 {
+    width: 50% !important;
+    max-width: 50% !important;
+    min-width: 50% !important;
+  }
+  .signature-sub-table.table-w-75 {
+    width: 75% !important;
+    max-width: 75% !important;
+    min-width: 75% !important;
+  }
+  .signature-sub-table.table-w-100 {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+  .signature-sub-table.table-w-fixed-169 {
+    width: 169.078px !important;
+    max-width: 169.078px !important;
+    min-width: 169.078px !important;
+  }
+  .signature-sub-table.table-w-fixed-338 {
+    width: 338px !important;
+    max-width: 338px !important;
+    min-width: 338px !important;
   }
   table, table th, table td {
     box-sizing: border-box !important;

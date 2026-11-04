@@ -33,22 +33,20 @@ export const F1SignaturesBlock: React.FC<F1SignaturesBlockProps> = ({
   const row1 = isMultiRow ? displaySigners.slice(0, 4) : displaySigners;
   const row2 = isMultiRow ? displaySigners.slice(4, 8) : [];
 
-  // Height calculations based on density - proportional for 1 row vs 2 rows
+  // Height calculations based on density - equal for both rows (Row 1 and Row 2 have identical height and width)
   const getGapHeightClass = () => {
     if (isMultiRow) {
-      if (density === 'ultra_dense') return 'h-8 sm:h-9 print:h-8 min-h-[32px]';
-      if (density === 'dense') return 'h-10 sm:h-12 print:h-10 min-h-[40px]';
-      if (isCompact) return 'h-9 sm:h-10 print:h-9 min-h-[36px]';
-      return 'h-12 sm:h-14 print:h-12 min-h-[48px]';
+      if (density === 'ultra_dense') return 'h-12 sm:h-14 print:h-12 min-h-[48px]';
+      if (density === 'dense') return 'h-16 sm:h-18 print:h-16 min-h-[64px]';
+      if (isCompact) return 'h-14 sm:h-16 print:h-14 min-h-[56px]';
+      return 'h-20 sm:h-24 print:h-20 min-h-[80px]';
     }
-    if (density === 'ultra_dense') return 'h-10 sm:h-12 print:h-10 min-h-[40px]';
-    if (density === 'dense') return 'h-14 sm:h-16 print:h-14 min-h-[56px]';
+    if (density === 'ultra_dense') return 'h-12 sm:h-14 print:h-12 min-h-[48px]';
+    if (density === 'dense') return 'h-16 sm:h-20 print:h-16 min-h-[64px]';
     if (density === 'few_items') return 'h-24 sm:h-28 print:h-24 min-h-[96px]';
-    if (isCompact) return 'h-12 sm:h-14 print:h-12 min-h-[48px]';
+    if (isCompact) return 'h-14 sm:h-16 print:h-14 min-h-[56px]';
     return 'h-20 sm:h-24 print:h-20 min-h-[80px]';
   };
-
-  const gapHeight = getGapHeightClass();
 
   // Helper renderer for a single table row of signers
   const renderTableSigners = (
@@ -59,12 +57,14 @@ export const F1SignaturesBlock: React.FC<F1SignaturesBlockProps> = ({
   ) => {
     const itemCount = signerItems.length;
     const colWidth = `${(100 / itemCount).toFixed(3)}%`;
+    const gapHeight = getGapHeightClass();
 
     return (
-      <div className={`w-full ${isSecondRow ? 'flex justify-center mt-2 print:mt-1.5' : ''}`}>
+      <div className={`w-full ${isSecondRow ? 'flex justify-center text-center mt-2.5 print:mt-2' : ''}`}>
         <table
-          style={exactWidthPercent ? { width: exactWidthPercent } : undefined}
-          className={`border-collapse border-2 border-black text-center font-sans table-fixed box-border ${containerWidthClass}`}
+          data-preserve-width="true"
+          style={exactWidthPercent ? { width: exactWidthPercent, maxWidth: exactWidthPercent } : undefined}
+          className={`signature-sub-table border-collapse border-2 border-black text-center font-sans table-fixed box-border mx-auto ${containerWidthClass}`}
         >
           <colgroup>
             {signerItems.map((_, idx) => (
@@ -132,11 +132,13 @@ export const F1SignaturesBlock: React.FC<F1SignaturesBlockProps> = ({
     isSecondRow: boolean = false,
     exactWidthPercent?: string
   ) => {
+    const gapHeight = getGapHeightClass();
+
     return (
       <div className={`w-full ${isSecondRow ? 'flex justify-center mt-2.5 sm:mt-3 print:mt-2' : ''}`}>
         <div
-          style={exactWidthPercent ? { width: exactWidthPercent } : undefined}
-          className={`grid ${gridColsClass} gap-2 sm:gap-3 ${containerWidthClass} px-0.5 box-border`}
+          style={exactWidthPercent ? { width: exactWidthPercent, maxWidth: exactWidthPercent } : undefined}
+          className={`grid ${gridColsClass} gap-2 sm:gap-3 ${containerWidthClass} px-0.5 box-border mx-auto`}
         >
           {signerItems.map((signer, idx) => (
             <div
@@ -175,7 +177,7 @@ export const F1SignaturesBlock: React.FC<F1SignaturesBlockProps> = ({
       // 1 to 4 columns: Single table
       return (
         <div className={`w-full text-black ${density === 'ultra_dense' ? 'my-1' : 'my-2 sm:my-2.5 print:my-1.5'}`}>
-          {renderTableSigners(row1, 'w-full', false, '100%')}
+          {renderTableSigners(row1, 'table-w-100 w-full', false, '100%')}
         </div>
       );
     }
@@ -186,16 +188,16 @@ export const F1SignaturesBlock: React.FC<F1SignaturesBlockProps> = ({
     // Each box in Row 2 has the EXACT same 25% width as Row 1!
     const count2 = row2.length;
     const row2WidthClass =
-      count2 === 1 ? 'w-1/4' : count2 === 2 ? 'w-2/4' : count2 === 3 ? 'w-3/4' : 'w-full';
+      count2 === 1 ? 'table-w-25 w-1/4' : count2 === 2 ? 'table-w-50 w-2/4' : count2 === 3 ? 'table-w-75 w-3/4' : 'table-w-100 w-full';
     const row2WidthPercent =
       count2 === 1 ? '25%' : count2 === 2 ? '50%' : count2 === 3 ? '75%' : '100%';
 
     return (
       <div className={`w-full text-black ${density === 'ultra_dense' ? 'my-1' : 'my-2 sm:my-2.5 print:my-1.5'}`}>
         {/* Row 1: 4 Kolom Utama Sejajar */}
-        {renderTableSigners(row1, 'w-full', false, '100%')}
+        {renderTableSigners(row1, 'table-w-100 w-full', false, '100%')}
 
-        {/* Row 2: Kolom Tambahan (5 - 8), Berposisi Tengah Seimbang & Ukuran Kotak Sama Persis */}
+        {/* Row 2: Kolom Tambahan (5 - 8), Berposisi Tengah Seimbang & Ukuran Kotak Sama Persis (25% per kotak) */}
         {renderTableSigners(row2, row2WidthClass, true, row2WidthPercent)}
       </div>
     );

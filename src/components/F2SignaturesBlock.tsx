@@ -40,7 +40,10 @@ export const F2SignaturesBlock: React.FC<F2SignaturesBlockProps> = ({
     if (style === 'table') {
       return (
         <div className={`text-black w-full flex justify-center ${density === 'ultra_dense' ? 'my-1' : 'my-2 sm:my-2.5 print:my-1.5'}`}>
-          <table className="border-collapse border-2 border-black text-center font-sans table-fixed box-border w-[169.078px] max-w-full">
+          <table
+            data-preserve-width="true"
+            className="signature-sub-table table-w-fixed-169 border-collapse border-2 border-black text-center font-sans table-fixed box-border w-[169.078px] max-w-full mx-auto"
+          >
             <colgroup>
               <col style={{ width: '169.078px' }} />
             </colgroup>
@@ -98,7 +101,10 @@ export const F2SignaturesBlock: React.FC<F2SignaturesBlockProps> = ({
   if (style === 'table') {
     return (
       <div className={`text-black w-full flex justify-center ${density === 'ultra_dense' ? 'my-1' : 'my-2 sm:my-2.5 print:my-1.5'}`}>
-        <table className="border-collapse border-2 border-black text-center font-sans table-fixed box-border w-[338px] max-w-full">
+        <table
+          data-preserve-width="true"
+          className="signature-sub-table table-w-fixed-338 border-collapse border-2 border-black text-center font-sans table-fixed box-border w-[338px] max-w-full mx-auto"
+        >
           <colgroup>
             <col style={{ width: '169px' }} />
             <col style={{ width: '169px' }} />
