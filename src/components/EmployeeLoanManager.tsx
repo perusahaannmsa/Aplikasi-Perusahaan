@@ -485,6 +485,67 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
     setIsPrintModalOpen(true);
   };
 
+  // Dedicated Print Handler with Document Isolation
+  const handlePrintDocument = () => {
+    if (!targetLoanForPrint) return;
+    document.body.classList.add('is-printing-employee-loan');
+    const originalTitle = document.title;
+    const cleanNo = (targetLoanForPrint.nomorPinjaman || 'KARYAWAN').replace(/[^a-zA-Z0-9_-]/g, '_');
+    document.title = `FORM_PINJAMAN_${cleanNo}`;
+
+    const cleanup = () => {
+      document.body.classList.remove('is-printing-employee-loan');
+      document.title = originalTitle;
+      window.removeEventListener('afterprint', cleanup);
+    };
+
+    window.addEventListener('afterprint', cleanup);
+
+    setTimeout(() => {
+      window.print();
+      setTimeout(cleanup, 2500);
+    }, 150);
+  };
+
+  // Preview directly from form modal before or during editing
+  const handlePreviewFromFormModal = () => {
+    const previewLoan: EmployeeLoan = {
+      id: editingLoan?.id || 'preview-' + Date.now(),
+      nomorPinjaman: nomorPinjaman.trim() || 'PK-_____-____',
+      tanggalPermohonan,
+      namaKaryawan: namaKaryawan.trim(),
+      divisi: divisi.trim(),
+      alasanPeminjaman: alasanPeminjaman.trim(),
+      jumlahPinjaman: typeof jumlahPinjaman === 'number' ? jumlahPinjaman : 0,
+      tenorBulan,
+      cicilanPerBulan: typeof cicilanPerBulan === 'number' ? cicilanPerBulan : undefined,
+      caraPembayaran: caraPembayaran.trim(),
+      tanggalPengambilanPinjaman,
+      peminjamRole,
+      peminjamNama: namaKaryawan.trim(),
+      peminjamJabatan: peminjamJabatan.trim() || divisi.trim() || 'Karyawan',
+      atasanRole,
+      atasanNama,
+      atasanJabatan,
+      financeRole,
+      financeNama,
+      financeJabatan,
+      direkturRole,
+      direkturNama,
+      direkturJabatan,
+      additionalSigners: [...additionalSigners],
+      catatan: catatan.trim(),
+      status: loanStatus,
+      payments: editingLoan?.payments || [],
+      createdAt: editingLoan?.createdAt || new Date().toISOString()
+    };
+    setTargetLoanForPrint(previewLoan);
+    setPrintWithLedger(true);
+    setShowKopSuratInPrint(true);
+    setZoomLevel(0.85);
+    setIsPrintModalOpen(true);
+  };
+
   // Filtered Loans
   const filteredLoans = useMemo(() => {
     return loans.filter(l => {
@@ -1346,21 +1407,33 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
               </div>
 
               {/* Modal Buttons */}
-              <div className="pt-3 border-t border-stone-200 flex items-center justify-end gap-2">
+              <div className="pt-3 border-t border-stone-200 flex items-center justify-between gap-2 flex-wrap">
                 <button
                   type="button"
-                  onClick={() => setIsFormModalOpen(false)}
-                  className="px-4 py-2 text-xs font-bold text-stone-600 hover:bg-stone-100 rounded-xl transition cursor-pointer"
+                  onClick={handlePreviewFromFormModal}
+                  className="px-3.5 py-2 text-xs font-bold bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-xl transition cursor-pointer flex items-center gap-1.5 shadow-3xs"
+                  title="Lihat Pratinjau Form Cetak Resmi"
                 >
-                  Batal
+                  <Printer size={14} className="text-amber-700" />
+                  <span>Pratinjau &amp; Cetak Form</span>
                 </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white rounded-xl transition shadow-3xs cursor-pointer flex items-center gap-1.5"
-                >
-                  <Check size={15} />
-                  <span>{editingLoan ? 'Simpan Perubahan' : 'Simpan Pengajuan'}</span>
-                </button>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsFormModalOpen(false)}
+                    className="px-4 py-2 text-xs font-bold text-stone-600 hover:bg-stone-100 rounded-xl transition cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white rounded-xl transition shadow-3xs cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Check size={15} />
+                    <span>{editingLoan ? 'Simpan Perubahan' : 'Simpan Pengajuan'}</span>
+                  </button>
+                </div>
               </div>
             </form>
           </div>
@@ -1806,7 +1879,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
               {/* Button: Print / Cetak Dokumen */}
               <button
                 type="button"
-                onClick={() => window.print()}
+                onClick={handlePrintDocument}
                 className="px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 font-black rounded-xl text-xs transition flex items-center gap-1.5 cursor-pointer shadow-lg active:scale-95"
                 title="Cetak langsung ke printer atau simpan sebagai PDF"
               >
@@ -1857,7 +1930,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
               <div className="h-4 w-px bg-stone-700"></div>
               <button
                 type="button"
-                onClick={() => window.print()}
+                onClick={handlePrintDocument}
                 className="flex items-center gap-1.5 px-3 py-1 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 font-black rounded-full text-xs shadow-md transition cursor-pointer active:scale-95"
               >
                 <Printer size={14} />

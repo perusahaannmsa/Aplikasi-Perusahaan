@@ -701,6 +701,36 @@ html, body {
     object-fit: fill !important;
   }
 
+  /* Employee Loan Form Exact Format Print Isolation */
+  body.is-printing-employee-loan * {
+    visibility: hidden;
+  }
+  body.is-printing-employee-loan #employee-loan-printable-document,
+  body.is-printing-employee-loan #employee-loan-printable-document * {
+    visibility: visible;
+  }
+  body.is-printing-employee-loan #employee-loan-printable-document {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+    background: white !important;
+    transform: none !important;
+  }
+  body.is-printing-employee-loan #employee-loan-printable-document img {
+    max-width: 100% !important;
+    width: 100% !important;
+    height: auto !important;
+    display: block !important;
+    object-fit: fill !important;
+  }
+}
+
 /* Microsoft Word Exact Font & Paragraph Layout for Internal Memo */
 .memo-word-document {
   font-family: Calibri, 'Calibri (Body)', Aptos, 'Segoe UI', Arial, sans-serif !important;
@@ -785,6 +815,8 @@ html, body {
   color: #a8a29e;
   pointer-events: none;
 }
+
+@media print {
   #printable-submissions-table,
   .print-only-container {
     display: block !important;

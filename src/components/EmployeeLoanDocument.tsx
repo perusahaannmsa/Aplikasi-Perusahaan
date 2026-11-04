@@ -279,12 +279,14 @@ export const EmployeeLoanDocument: React.FC<EmployeeLoanDocumentProps> = ({
                 const count = rowSigners.length;
                 // Posisi dimulai dari tengah jika hanya 1, 2, dan 3.
                 // Jika 4 dibuat sejajar dengan 4 penanda tangan sebelumnya.
-                // Ukuran setiap kotak dipastikan sama persis (masing-masing 25% dari lebar kontainer).
-                const widthClass = count === 1 ? 'w-1/4' : count === 2 ? 'w-2/4' : count === 3 ? 'w-3/4' : 'w-full';
+                const widthStyle = `${Math.min(100, count * 25)}%`;
 
                 return (
                   <div key={rIdx} className="w-full flex justify-center">
-                    <table className={`border-[1.5px] border-black table-fixed border-collapse text-[10pt] print:text-[10pt] text-black ${widthClass}`}>
+                    <table 
+                      style={{ width: widthStyle }}
+                      className="border-[1.5px] border-black table-fixed border-collapse text-[10pt] print:text-[10pt] text-black"
+                    >
                       <thead>
                         <tr className="border-b border-black text-center font-bold">
                           {rowSigners.map((signer, sIdx) => (
