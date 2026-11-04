@@ -3236,33 +3236,18 @@ export function AbsensiHarianNmsa({
       driveUrl: existingForWeek?.driveUrl,
     };
 
-    // Export and local PDF download immediately
+    // Unggah berkas PDF & data resmi langsung ke Google Drive (cloud upload saja, tanpa mendownload ke perangkat lokal)
+    let driveErrorMessage = "";
     try {
-      const { generateWeeklyReportPDFBlob } = await import('../lib/attendanceSheetGenerator');
-      const pdfBlob = await generateWeeklyReportPDFBlob(newReport, workers, signatures);
-      const pdfUrl = URL.createObjectURL(pdfBlob);
-      const a = document.createElement("a");
-      a.href = pdfUrl;
-      a.download = `Rekap_Uang_Makan_${weekStart}_s.d._${weekEnd}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(pdfUrl), 5000);
-    } catch (pdfDownloadErr) {
-      console.warn("Direct PDF download fallback to print:", pdfDownloadErr);
-      printWeeklyReportPDF(newReport, workers, signatures);
-    }
-
-    // If connected to Google Drive, upload official PDF automatically!
-    if (isDriveConnected) {
-      try {
-        const driveRes = await googleDriveAutoBackup.backupWeeklyAttendanceReport(newReport, workers, signatures);
-        if (driveRes.success && driveRes.url) {
-          newReport.pdfDriveUrl = driveRes.url;
-        }
-      } catch (err: any) {
-        console.warn("Auto upload to Drive error:", err);
+      const driveRes = await googleDriveAutoBackup.backupWeeklyAttendanceReport(newReport, workers, signatures);
+      if (driveRes.success && driveRes.url) {
+        newReport.pdfDriveUrl = driveRes.url;
+      } else if (driveRes.error) {
+        driveErrorMessage = driveRes.error;
       }
+    } catch (err: any) {
+      console.warn("Upload ke Google Drive error:", err);
+      driveErrorMessage = err?.message || "Terjadi kesalahan upload Google Drive";
     }
 
     // Persist immediately to state and all storage keys without duplicates
@@ -3310,7 +3295,9 @@ export function AbsensiHarianNmsa({
       pdfUrl: newReport.pdfDriveUrl,
       message: newReport.pdfDriveUrl
         ? `Laporan periode ${weekStart} s/d ${weekEnd} (${reportId}) telah berhasil diunggah ke Google Drive!`
-        : `Laporan uang makan periode ${weekStart} s/d ${weekEnd} (${reportId}) berhasil disimpan!`
+        : (driveErrorMessage
+            ? `Laporan tersimpan di sistem. Catatan Drive: ${driveErrorMessage}`
+            : `Laporan uang makan periode ${weekStart} s/d ${weekEnd} (${reportId}) berhasil diperbarui!`)
     });
     setTimeout(() => {
       setDriveUploadFloatingToast(null);
