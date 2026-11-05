@@ -399,6 +399,23 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
     }
   }, [isOpen]);
 
+  // Active countdown timer for QR code validity (Baileys emits new QR every ~45-60s)
+  useEffect(() => {
+    if (!isOpen || status !== 'qr' || activeLinkMethod !== 'qr') {
+      return;
+    }
+    const timer = setInterval(() => {
+      setQrCountdown((prev) => {
+        if (prev <= 1) {
+          handleRefreshQr();
+          return 60;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [isOpen, status, activeLinkMethod]);
+
   // Sync submissions to server whenever modal opens so AI has latest state
   useEffect(() => {
     if (isOpen && submissions.length > 0) {
@@ -1275,12 +1292,18 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
 
                         {/* Countdown & Refresh Controls */}
                         <div className="w-full space-y-2">
-                          <div className="flex items-center justify-between text-[11px] font-mono text-emerald-900 bg-emerald-50/90 border border-emerald-200 px-3 py-1.5 rounded-lg">
+                          <div className={`flex items-center justify-between text-[11px] font-mono px-3 py-1.5 rounded-lg border transition ${
+                            qrCountdown <= 10
+                              ? 'bg-amber-100 text-amber-950 border-amber-300 animate-pulse'
+                              : 'bg-emerald-50/90 text-emerald-900 border-emerald-200'
+                          }`}>
                             <span className="flex items-center gap-1 font-bold">
-                              <Clock size={12} className="text-emerald-700" />
-                              <span>Status QR: Siap Dipindai</span>
+                              <Clock size={12} className={qrCountdown <= 10 ? 'text-amber-700' : 'text-emerald-700'} />
+                              <span>{qrCountdown <= 10 ? 'QR Segera Diperbarui...' : 'Status QR: Siap Dipindai'}</span>
                             </span>
-                            <span className="font-bold text-emerald-700">{qrCountdown} Detik</span>
+                            <span className={`font-bold ${qrCountdown <= 10 ? 'text-amber-800' : 'text-emerald-700'}`}>
+                              {qrCountdown} Detik
+                            </span>
                           </div>
 
                           <div className="flex items-center gap-2">

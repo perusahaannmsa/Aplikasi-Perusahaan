@@ -54,6 +54,17 @@ async function getDisconnectReason() {
   }
 }
 
+async function getFetchLatestBaileysVersion() {
+  try {
+    const pkg = await getBaileysModule();
+    if (typeof pkg.fetchLatestBaileysVersion === "function") return pkg.fetchLatestBaileysVersion;
+    if (pkg.default && typeof pkg.default.fetchLatestBaileysVersion === "function") return pkg.default.fetchLatestBaileysVersion;
+    return (pkg as any).fetchLatestBaileysVersion;
+  } catch (e) {
+    return null;
+  }
+}
+
 const AUTH_DIR = process.env.VERCEL ? path.join("/tmp", "auth_info_baileys") : path.join(process.cwd(), "auth_info_baileys");
 const BACKUP_FILE = process.env.VERCEL ? path.join("/tmp", "wa_session_backup.json") : path.join(process.cwd(), "wa_session_backup.json");
 const DATA_FILE = process.env.VERCEL ? path.join("/tmp", "data-store.json") : path.join(process.cwd(), "data-store.json");
@@ -311,14 +322,37 @@ export function getSafeHostOrigin(stateData?: any): string {
   return "https://ais-dev-grtpupgmszidexaiv2ievt-958431568317.asia-east1.run.app";
 }
 
-// Initialize/Start WhatsApp connection
-export async function initWhatsApp() {
+// Singleton promise lock to prevent concurrent duplicate socket initializations
+let initPromise: Promise<any> | null = null;
+
+// Initialize/Start WhatsApp connection (guarded by singleton mutex)
+export async function initWhatsApp(forceRestart = false): Promise<any> {
+  if (initPromise) {
+    return initPromise;
+  }
+  initPromise = _doInitWhatsApp(forceRestart).finally(() => {
+    initPromise = null;
+  });
+  return initPromise;
+}
+
+async function _doInitWhatsApp(forceRestart = false) {
   try {
     // Restore persistent session from backup if local folder is empty
     restoreAuthStateFromPersistentStore();
 
-    if (connectionStatus === "connected" && sock) {
+    if (!forceRestart && connectionStatus === "connected" && sock) {
       return sock;
+    }
+
+    if (forceRestart && sock) {
+      try {
+        sock.ev?.removeAllListeners?.("connection.update");
+        sock.ev?.removeAllListeners?.("creds.update");
+        sock.ev?.removeAllListeners?.("messages.upsert");
+        sock.end?.(undefined);
+      } catch (_) {}
+      sock = null;
     }
 
     connectionStatus = "connecting";
@@ -327,6 +361,7 @@ export async function initWhatsApp() {
     const makeWASocket = await getMakeWASocket();
     const useMultiFileAuthState = await getUseMultiFileAuthState();
     const DisconnectReason = await getDisconnectReason();
+    const fetchLatestBaileysVersion = await getFetchLatestBaileysVersion();
 
     console.log("Baileys integration checks:", {
       makeWASocketType: typeof makeWASocket,
@@ -342,6 +377,20 @@ export async function initWhatsApp() {
       throw new Error("makeWASocket is not a function. Check baileys bundle/import.");
     }
 
+    // Retrieve latest protocol version to prevent WhatsApp companion device pairing rejection
+    let waVersion: [number, number, number] | undefined = undefined;
+    if (typeof fetchLatestBaileysVersion === "function") {
+      try {
+        const vResult = await fetchLatestBaileysVersion();
+        if (vResult && Array.isArray(vResult.version)) {
+          waVersion = vResult.version as [number, number, number];
+          console.log(`[WhatsApp Bot] Menggunakan versi protokol WhatsApp Web: ${waVersion.join(".")} (isLatest: ${vResult.isLatest})`);
+        }
+      } catch (vErr) {
+        console.warn("[WhatsApp Bot] Tidak dapat mengambil versi WA terbaru, menggunakan default:", vErr);
+      }
+    }
+
     // Initialize Auth state folder
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
     const Browsers = await getBrowsers();
@@ -351,12 +400,17 @@ export async function initWhatsApp() {
       ? makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" }) as any)
       : state.keys;
 
-    const browserConfig = Browsers && typeof Browsers.ubuntu === "function"
-      ? Browsers.ubuntu("Chrome")
-      : ["Ubuntu", "Chrome", "22.04.4"];
+    // Use official WhatsApp Web Desktop browser identity (Mac OS / Windows Desktop)
+    // Avoid "Ubuntu" / "Chrome" server fingerprints which trigger WhatsApp Business companion linking rejection
+    const browserConfig = Browsers && typeof Browsers.macOS === "function"
+      ? Browsers.macOS("Desktop")
+      : Browsers && typeof Browsers.windows === "function"
+      ? Browsers.windows("Desktop")
+      : ["Mac OS", "Desktop", "14.4.1"];
 
-    // Create Socket with official Chrome browser header & cacheable keys
+    // Create Socket with official WhatsApp Web desktop header & cacheable keys
     sock = makeWASocket({
+      ...(waVersion ? { version: waVersion } : {}),
       auth: {
         creds: state.creds,
         keys: authKeys,
@@ -366,6 +420,11 @@ export async function initWhatsApp() {
       logger: pino({ level: "silent" }) as any,
       connectTimeoutMs: 60000,
       defaultQueryTimeoutMs: 60000,
+      keepAliveIntervalMs: 25000,
+      emitOwnEvents: false,
+      syncFullHistory: false,
+      markOnlineOnConnect: true,
+      generateHighQualityLinkPreview: false,
     });
 
     // Handle credential updates & persist to backup store
@@ -807,10 +866,11 @@ Silakan buka tautan di atas untuk mengakses menu absensi dan mencatat kehadiran 
       if (connection === "close") {
         const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
         const DisconnectReason = await getDisconnectReason();
-        const isLoggedOut = statusCode === DisconnectReason?.loggedOut;
-        const shouldReconnect = !isLoggedOut;
+        const isRestartRequired = statusCode === 515 || statusCode === DisconnectReason?.restartRequired;
+        const isLoggedOut = statusCode === 401 || statusCode === DisconnectReason?.loggedOut;
+        const isForbidden = statusCode === 403 || statusCode === DisconnectReason?.forbidden;
         
-        console.log(`[WhatsApp Bot] Connection closed. StatusCode: ${statusCode}, Should Reconnect: ${shouldReconnect}, Attempts: ${reconnectAttempts}`);
+        console.log(`[WhatsApp Bot] Connection closed. StatusCode: ${statusCode}, RestartRequired: ${isRestartRequired}, LoggedOut: ${isLoggedOut}, Attempts: ${reconnectAttempts}`);
         
         connectedUser = null;
         qrCodeDataUrl = null;
@@ -820,22 +880,37 @@ Silakan buka tautan di atas untuk mengakses menu absensi dan mencatat kehadiran 
           presenceKeepAliveTimer = null;
         }
 
-        if (shouldReconnect) {
-          reconnectAttempts++;
+        // 1. Critical for WhatsApp Web & WhatsApp Business: DisconnectReason 515 (restartRequired)
+        // This is emitted right after initial QR scan or pairing code handshake to finalize authentication keys.
+        // The client MUST reconnect immediately (< 300ms) or the phone times out with "Tidak dapat menautkan perangkat".
+        if (isRestartRequired) {
+          console.log("[WhatsApp Bot] Penautan WhatsApp meminta restart segera (515 restartRequired). Menghubungkan ulang dalam 250ms...");
+          reconnectAttempts = 0;
           connectionStatus = "connecting";
-          // Resilient progressive backoff: 3s, 5s, 8s, up to max 25s
-          const delay = Math.min(25000, 2000 + Math.min(reconnectAttempts, 8) * 2500);
-          console.log(`[WhatsApp Bot] Auto-reconnecting in ${Math.round(delay / 1000)}s (Percobaan #${reconnectAttempts})...`);
           setTimeout(() => {
-            initWhatsApp().catch((err) => console.error("Error in auto-reconnecting WhatsApp:", err));
-          }, delay);
-        } else {
+            initWhatsApp(true).catch((err) => console.error("Error in restartRequired reconnect:", err));
+          }, 250);
+          return;
+        }
+
+        // 2. Logged out, forbidden, or bad auth session
+        if (isLoggedOut || isForbidden) {
           connectionStatus = "disconnected";
-          lastError = "Sesi WhatsApp telah dikeluarkan (logged out) dari perangkat HP. Silakan scan ulang QR Code.";
+          lastError = "Sesi WhatsApp telah dikeluarkan (logged out) atau kedaluwarsa. Silakan scan ulang QR Code atau gunakan Kode Pairing.";
           cleanupAuthFolder();
           clearAuthBackup();
           reconnectAttempts = 0;
+          return;
         }
+
+        // 3. Normal transient disconnect (e.g. 408 timed out, 428 connection closed, network drop)
+        reconnectAttempts++;
+        connectionStatus = "connecting";
+        const delay = Math.min(15000, 1500 + Math.min(reconnectAttempts, 5) * 2000);
+        console.log(`[WhatsApp Bot] Auto-reconnecting in ${Math.round(delay / 1000)}s (Percobaan #${reconnectAttempts})...`);
+        setTimeout(() => {
+          initWhatsApp().catch((err) => console.error("Error in auto-reconnecting WhatsApp:", err));
+        }, delay);
       }
     });
 
@@ -861,10 +936,11 @@ function cleanupAuthFolder() {
 }
 
 // Disconnect/Logout WhatsApp
-export async function disconnectWhatsApp() {
+export async function disconnectWhatsApp(autoRestart = false) {
   try {
     qrCodeDataUrl = null;
     connectedUser = null;
+    connectionStatus = "disconnected";
     
     // Clear in data-store.json
     try {
@@ -895,22 +971,27 @@ export async function disconnectWhatsApp() {
 
     if (sock) {
       try {
-        await sock.logout();
+        sock.ev?.removeAllListeners?.("connection.update");
+        sock.ev?.removeAllListeners?.("creds.update");
+        sock.ev?.removeAllListeners?.("messages.upsert");
+        await sock.logout().catch(() => {});
       } catch (e) {
         // ignore logout errors if socket is already dead
       }
-      sock.end(undefined);
+      try {
+        sock.end?.(undefined);
+      } catch (e) {}
       sock = null;
     }
     
-    connectionStatus = "disconnected";
     cleanupAuthFolder();
     clearAuthBackup();
     
-    // Trigger a fresh connection after 1.5 seconds to regenerate a clean QR code
-    setTimeout(() => {
-      initWhatsApp();
-    }, 1500);
+    if (autoRestart) {
+      setTimeout(() => {
+        initWhatsApp(true);
+      }, 500);
+    }
 
     return { success: true, message: "Sesi WhatsApp berhasil diputuskan. Silakan hubungkan WhatsApp pribadi Anda." };
   } catch (err: any) {
@@ -968,30 +1049,23 @@ export async function requestWhatsAppPairingCode(phone: string): Promise<string>
     throw new Error("Nomor WhatsApp tidak valid. Masukkan nomor lengkap dengan kode area (misal: 0812xxxxxx).");
   }
 
-  // If already connected, disconnect old session first so user can pair their personal phone
+  // If already connected or switching phone, disconnect old session first cleanly
   if (connectionStatus === "connected" && sock) {
-    try {
-      await sock.logout();
-      sock.end(undefined);
-    } catch (e) {}
-    sock = null;
-    connectionStatus = "disconnected";
-    cleanupAuthFolder();
-    clearAuthBackup();
+    await disconnectWhatsApp(false);
   }
 
   // Ensure socket is initialized and alive
   if (!sock) {
-    await initWhatsApp();
+    await initWhatsApp(true);
   }
 
-  // Wait briefly for the socket connection to establish handshake with WhatsApp servers
-  for (let i = 0; i < 5; i++) {
-    if (connectionStatus === "qr" || connectionStatus === "connecting") {
-      await new Promise(r => setTimeout(r, 400));
+  // Wait for the socket connection to establish handshake with WhatsApp servers
+  for (let i = 0; i < 15; i++) {
+    if (sock && (connectionStatus === "qr" || connectionStatus === "connecting")) {
+      await new Promise(r => setTimeout(r, 200));
       break;
     }
-    await new Promise(r => setTimeout(r, 300));
+    await new Promise(r => setTimeout(r, 250));
   }
 
   console.log(`[WhatsApp Bot] Requesting pairing code for phone number: ${cleaned}`);

@@ -3793,16 +3793,28 @@ app.get("/api/wa/status", (req, res) => {
 app.post("/api/wa/refresh-qr", async (req, res) => {
   try {
     console.log("[WhatsApp Bot] Memperbarui QR Code atas permintaan pengguna...");
-    await disconnectWhatsApp();
-    setTimeout(async () => {
-      try {
-        await initWhatsApp();
-      } catch (e: any) {
-        console.error("Refresh QR init error:", e);
+    await disconnectWhatsApp(false);
+    await initWhatsApp(true);
+
+    // Wait up to 3 seconds to return the newly generated QR code directly to the frontend
+    let freshStatus = getWhatsAppStatus();
+    for (let i = 0; i < 15; i++) {
+      if (freshStatus.qr || freshStatus.status === "qr" || freshStatus.status === "connected") {
+        break;
       }
-    }, 400);
-    return res.json({ success: true, message: "QR Code sedang diperbarui, mohon tunggu beberapa detik..." });
+      await new Promise(r => setTimeout(r, 200));
+      freshStatus = getWhatsAppStatus();
+    }
+
+    return res.json({
+      success: true,
+      status: freshStatus.status,
+      qr: freshStatus.qr,
+      user: freshStatus.user,
+      message: "QR Code berhasil diperbarui."
+    });
   } catch (err: any) {
+    console.error("[Refresh QR Error]:", err);
     return res.json({ success: false, error: err.message || "Gagal memperbarui QR Code." });
   }
 });
