@@ -141,6 +141,10 @@ export interface Submission {
   projectAccountCode?: string;
   projectAccountName?: string;
 
+  // Employee Loan link (Pinjaman Karyawan)
+  loanId?: string;
+  loanNumber?: string;
+
   items: SubmissionItem[];
   createdAt: string;
   updatedAt?: string;

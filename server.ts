@@ -1776,17 +1776,38 @@ function readState() {
       if (parsed.waMethod === undefined) {
         parsed.waMethod = "desktop";
       }
+      if (parsed.masterAutoSendEnabled === undefined) {
+        parsed.masterAutoSendEnabled = true;
+      }
       if (parsed.autoReminderHour === undefined) {
         parsed.autoReminderHour = "09:00";
       }
       if (parsed.autoReminderEnabled === undefined) {
         parsed.autoReminderEnabled = true;
       }
+      if (parsed.enableAiAutoReply === undefined) {
+        parsed.enableAiAutoReply = true;
+      }
       if (!parsed.reminderActiveDays) {
         parsed.reminderActiveDays = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"];
       }
+      if (parsed.skipHolidays === undefined) {
+        parsed.skipHolidays = true;
+      }
+      if (parsed.skipWeekends === undefined) {
+        parsed.skipWeekends = true;
+      }
       if (parsed.requireFridaySignature === undefined) {
         parsed.requireFridaySignature = true;
+      }
+      if (parsed.allowLocationCheckin === undefined) {
+        parsed.allowLocationCheckin = true;
+      }
+      if (!parsed.autoReplyScope) {
+        parsed.autoReplyScope = "all";
+      }
+      if (!parsed.reminderTone) {
+        parsed.reminderTone = "standard";
       }
       if (!parsed.fridayVerifications) {
         parsed.fridayVerifications = {};
@@ -1848,10 +1869,17 @@ function readState() {
     projectRab: defaultProjectRab,
     projectExpenses: defaultProjectExpenses,
     waMethod: "desktop",
+    masterAutoSendEnabled: true,
     autoReminderHour: "09:00",
     autoReminderEnabled: true,
+    enableAiAutoReply: true,
     reminderActiveDays: ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"],
+    skipHolidays: true,
+    skipWeekends: true,
     requireFridaySignature: true,
+    allowLocationCheckin: true,
+    autoReplyScope: "all",
+    reminderTone: "standard",
     fridayVerifications: {},
     lastCronPing: "",
     lastCronStatus: "",
@@ -2017,10 +2045,17 @@ app.post("/api/shared-state", (req, res) => {
       companySettings,
       waSecuritySettings,
       waMethod,
+      masterAutoSendEnabled,
       autoReminderHour,
       autoReminderEnabled,
+      enableAiAutoReply,
       reminderActiveDays,
+      skipHolidays,
+      skipWeekends,
       requireFridaySignature,
+      allowLocationCheckin,
+      autoReplyScope,
+      reminderTone,
       fridayVerifications,
       lastCronPing,
       lastCronStatus,
@@ -2184,10 +2219,17 @@ app.post("/api/shared-state", (req, res) => {
       companySettings: companySettings !== undefined ? companySettings : currentState.companySettings,
       waSecuritySettings: waSecuritySettings !== undefined ? waSecuritySettings : currentState.waSecuritySettings,
       waMethod: waMethod !== undefined ? waMethod : currentState.waMethod,
+      masterAutoSendEnabled: masterAutoSendEnabled !== undefined ? masterAutoSendEnabled : currentState.masterAutoSendEnabled,
       autoReminderHour: autoReminderHour !== undefined ? autoReminderHour : currentState.autoReminderHour,
       autoReminderEnabled: autoReminderEnabled !== undefined ? autoReminderEnabled : currentState.autoReminderEnabled,
+      enableAiAutoReply: enableAiAutoReply !== undefined ? enableAiAutoReply : currentState.enableAiAutoReply,
       reminderActiveDays: reminderActiveDays !== undefined ? reminderActiveDays : currentState.reminderActiveDays,
+      skipHolidays: skipHolidays !== undefined ? skipHolidays : currentState.skipHolidays,
+      skipWeekends: skipWeekends !== undefined ? skipWeekends : currentState.skipWeekends,
       requireFridaySignature: requireFridaySignature !== undefined ? requireFridaySignature : currentState.requireFridaySignature,
+      allowLocationCheckin: allowLocationCheckin !== undefined ? allowLocationCheckin : currentState.allowLocationCheckin,
+      autoReplyScope: autoReplyScope !== undefined ? autoReplyScope : currentState.autoReplyScope,
+      reminderTone: reminderTone !== undefined ? reminderTone : currentState.reminderTone,
       fridayVerifications: fridayVerifications !== undefined ? { ...(currentState.fridayVerifications || {}), ...fridayVerifications } : (currentState.fridayVerifications || {}),
       lastCronPing: lastCronPing !== undefined ? lastCronPing : currentState.lastCronPing,
       lastCronStatus: lastCronStatus !== undefined ? lastCronStatus : currentState.lastCronStatus,
@@ -4415,6 +4457,58 @@ app.all(["/api/cron-reminder", "/api/cron/late-reminder"], async (req, res) => {
   const isTimeTrigger = currentHour > targetHour || (currentHour === targetHour && currentMinute >= targetMinute);
   const alreadySentToday = state.lastCronSentDate === todayYMD;
 
+  // Master Switch & Auto Reminder toggles check
+  if (!force) {
+    if (state.masterAutoSendEnabled === false) {
+      const statusMsg = "Pengiriman pesan otomatis dinonaktifkan (Master Switch OFF). WhatsApp tetap terhubung.";
+      state.lastCronStatus = statusMsg;
+      writeState(state);
+      return res.json({
+        success: true,
+        skipped: true,
+        reason: "master_disabled",
+        message: statusMsg
+      });
+    }
+
+    if (state.autoReminderEnabled === false) {
+      const statusMsg = "Pengingat absensi otomatis dinonaktifkan dalam menu pengaturan WhatsApp AI Assistant.";
+      state.lastCronStatus = statusMsg;
+      writeState(state);
+      return res.json({
+        success: true,
+        skipped: true,
+        reason: "reminder_disabled",
+        message: statusMsg
+      });
+    }
+
+    // Active day verification
+    const daysMap: Record<string, string> = {
+      Sunday: "Minggu",
+      Monday: "Senin",
+      Tuesday: "Selasa",
+      Wednesday: "Rabu",
+      Thursday: "Kamis",
+      Friday: "Jumat",
+      Saturday: "Sabtu"
+    };
+    const dayNameEn = new Date().toLocaleDateString("en-US", { timeZone: "Asia/Jakarta", weekday: "long" });
+    const dayNameId = daysMap[dayNameEn] || "Senin";
+    const activeDays = state.reminderActiveDays || ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"];
+    if (!activeDays.includes(dayNameId)) {
+      const statusMsg = `Dilewati otomatis: Hari ${dayNameId} tidak diaktifkan pada jadwal pengingat.`;
+      state.lastCronStatus = statusMsg;
+      writeState(state);
+      return res.json({
+        success: true,
+        skipped: true,
+        reason: "inactive_day",
+        message: statusMsg
+      });
+    }
+  }
+
   // Holiday and Weekend Check
   const holidayCheck = await checkIsHolidayOrWeekend(todayYMD);
 
@@ -4544,8 +4638,8 @@ app.all(["/api/cron-reminder", "/api/cron/late-reminder"], async (req, res) => {
   }
 });
 
-// GET /api/bot-reminder-settings (Fetch full reminder configuration & status)
-app.get("/api/bot-reminder-settings", (req, res) => {
+// GET /api/bot-reminder-settings & /api/wa/automation-settings (Fetch full automation configuration & status)
+app.get(["/api/bot-reminder-settings", "/api/wa/automation-settings"], (req, res) => {
   try {
     const state = readState();
     const waStatus = getWhatsAppStatus();
@@ -4562,10 +4656,17 @@ app.get("/api/bot-reminder-settings", (req, res) => {
 
     res.json({
       success: true,
+      masterAutoSendEnabled: state.masterAutoSendEnabled !== false,
       autoReminderHour: state.autoReminderHour || "09:00",
       autoReminderEnabled: state.autoReminderEnabled !== false,
+      enableAiAutoReply: state.enableAiAutoReply !== false,
       reminderActiveDays: state.reminderActiveDays || ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"],
+      skipHolidays: state.skipHolidays !== false,
+      skipWeekends: state.skipWeekends !== false,
       requireFridaySignature: state.requireFridaySignature !== false,
+      allowLocationCheckin: state.allowLocationCheckin !== false,
+      autoReplyScope: state.autoReplyScope || "all",
+      reminderTone: state.reminderTone || "standard",
       lastCronPing: state.lastCronPing || "",
       lastCronStatus: state.lastCronStatus || "",
       lastCronSentDate: state.lastCronSentDate || "",
@@ -4580,24 +4681,50 @@ app.get("/api/bot-reminder-settings", (req, res) => {
   }
 });
 
-// POST /api/bot-reminder-settings (Update reminder configuration)
-app.post("/api/bot-reminder-settings", (req, res) => {
+// POST /api/bot-reminder-settings & /api/wa/automation-settings (Update automation configuration)
+app.post(["/api/bot-reminder-settings", "/api/wa/automation-settings"], (req, res) => {
   try {
-    const { autoReminderHour, autoReminderEnabled, reminderActiveDays, requireFridaySignature } = req.body;
+    const { 
+      masterAutoSendEnabled,
+      autoReminderHour, 
+      autoReminderEnabled, 
+      enableAiAutoReply,
+      reminderActiveDays, 
+      skipHolidays,
+      skipWeekends,
+      requireFridaySignature,
+      allowLocationCheckin,
+      autoReplyScope,
+      reminderTone
+    } = req.body;
     const state = readState();
+    if (masterAutoSendEnabled !== undefined) state.masterAutoSendEnabled = masterAutoSendEnabled;
     if (autoReminderHour !== undefined) state.autoReminderHour = autoReminderHour;
     if (autoReminderEnabled !== undefined) state.autoReminderEnabled = autoReminderEnabled;
+    if (enableAiAutoReply !== undefined) state.enableAiAutoReply = enableAiAutoReply;
     if (reminderActiveDays !== undefined) state.reminderActiveDays = reminderActiveDays;
+    if (skipHolidays !== undefined) state.skipHolidays = skipHolidays;
+    if (skipWeekends !== undefined) state.skipWeekends = skipWeekends;
     if (requireFridaySignature !== undefined) state.requireFridaySignature = requireFridaySignature;
+    if (allowLocationCheckin !== undefined) state.allowLocationCheckin = allowLocationCheckin;
+    if (autoReplyScope !== undefined) state.autoReplyScope = autoReplyScope;
+    if (reminderTone !== undefined) state.reminderTone = reminderTone;
     writeState(state);
     res.json({
       success: true,
-      message: "Pengaturan jadwal pengingat bot WhatsApp berhasil disimpan ke server!",
+      message: "Pengaturan pesan otomatis WhatsApp berhasil disimpan ke server!",
       settings: {
+        masterAutoSendEnabled: state.masterAutoSendEnabled,
         autoReminderHour: state.autoReminderHour,
         autoReminderEnabled: state.autoReminderEnabled,
+        enableAiAutoReply: state.enableAiAutoReply,
         reminderActiveDays: state.reminderActiveDays,
-        requireFridaySignature: state.requireFridaySignature
+        skipHolidays: state.skipHolidays,
+        skipWeekends: state.skipWeekends,
+        requireFridaySignature: state.requireFridaySignature,
+        allowLocationCheckin: state.allowLocationCheckin,
+        autoReplyScope: state.autoReplyScope,
+        reminderTone: state.reminderTone
       }
     });
   } catch (err: any) {
@@ -4726,7 +4853,22 @@ function initBackgroundAutoReminder() {
   autoReminderTimer = setInterval(async () => {
     try {
       const state = readState();
+      if (state.masterAutoSendEnabled === false) return;
       if (state.autoReminderEnabled === false) return;
+
+      const daysMap: Record<string, string> = {
+        Sunday: "Minggu",
+        Monday: "Senin",
+        Tuesday: "Selasa",
+        Wednesday: "Rabu",
+        Thursday: "Kamis",
+        Friday: "Jumat",
+        Saturday: "Sabtu"
+      };
+      const dayNameEn = new Date().toLocaleDateString("en-US", { timeZone: "Asia/Jakarta", weekday: "long" });
+      const dayNameId = daysMap[dayNameEn] || "Senin";
+      const activeDays = state.reminderActiveDays || ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"];
+      if (!activeDays.includes(dayNameId)) return;
 
       const todayYMD = getJakartaDateStr();
       const jktTimeString = new Date().toLocaleTimeString("en-US", { timeZone: "Asia/Jakarta", hour12: false });
@@ -5309,17 +5451,18 @@ async function bootstrap() {
 
   const serverInstance = app.listen(PORT, HOST, () => {
     console.log(`Server is running at http://${HOST === "0.0.0.0" ? "localhost" : HOST}:${PORT}`);
-    // Boot up WhatsApp Bot service if local credentials or session backup exists
+    // Delay WhatsApp Bot service boot so Vite dev server stabilizes completely first
     setTimeout(() => {
       try {
         if (fs.existsSync(path.join(process.cwd(), "auth_info_baileys", "creds.json")) || hasAuthBackup()) {
-          console.log("[Startup] Kredensial / backup sesi WhatsApp terdeteksi, mengaktifkan bot...");
-          initWhatsApp().catch((err) => console.error("Error initializing WhatsApp Bot on startup:", err));
+          console.log("[Startup] Kredensial / backup sesi WhatsApp terdeteksi.");
+          // Only start socket connection gracefully in background
+          initWhatsApp().catch((err) => console.warn("Notice: WhatsApp Bot initialization postponed:", err?.message || err));
         }
-      } catch (e) {
-        console.warn("Could not check WhatsApp credentials on startup:", e);
+      } catch (e: any) {
+        console.warn("Could not check WhatsApp credentials on startup:", e?.message || e);
       }
-    }, 1000);
+    }, 10000);
 
     // Restore attendance & NPWP records from Firebase Firestore so data is NEVER lost across updates/restarts
     setTimeout(async () => {

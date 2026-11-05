@@ -37,7 +37,9 @@ import {
   Server,
   Settings,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Sliders,
+  Bell
 } from 'lucide-react';
 import { Submission } from '../types';
 import { apiFetch, getBackendBaseUrl, setBackendBaseUrl, buildApiUrl } from '../utils/backendApi';
@@ -69,16 +71,17 @@ export function safeString(val: any, fallback = ''): string {
 
 const TABS = [
   { id: 'connect' as const, number: 1, label: 'Tautkan WA', shortLabel: 'Tautkan WA', icon: QrCode },
-  { id: 'uptime' as const, number: 2, label: 'Keep-Alive 24/7', shortLabel: 'Keep-Alive', icon: Activity },
-  { id: 'security' as const, number: 3, label: 'Keamanan Voucher', shortLabel: 'Keamanan', icon: Lock },
-  { id: 'attendance' as const, number: 4, label: 'Broadcast Absen', shortLabel: 'Broadcast', icon: CalendarCheck },
-  { id: 'test' as const, number: 5, label: 'Chat AI Transaksi', shortLabel: 'Chat AI', icon: Bot },
-  { id: 'webhook' as const, number: 6, label: 'Webhook', shortLabel: 'Webhook', icon: Globe },
-  { id: 'server' as const, number: 7, label: 'Server Backend ⚙️', shortLabel: 'Backend ⚙️', icon: Server },
+  { id: 'automation' as const, number: 2, label: 'Pengaturan Pesan Otomatis ⚡', shortLabel: 'Pesan Otomatis ⚡', icon: Zap },
+  { id: 'uptime' as const, number: 3, label: 'Keep-Alive 24/7', shortLabel: 'Keep-Alive', icon: Activity },
+  { id: 'security' as const, number: 4, label: 'Keamanan Voucher', shortLabel: 'Keamanan', icon: Lock },
+  { id: 'attendance' as const, number: 5, label: 'Broadcast Absen', shortLabel: 'Broadcast', icon: CalendarCheck },
+  { id: 'test' as const, number: 6, label: 'Chat AI Transaksi', shortLabel: 'Chat AI', icon: Bot },
+  { id: 'webhook' as const, number: 7, label: 'Webhook', shortLabel: 'Webhook', icon: Globe },
+  { id: 'server' as const, number: 8, label: 'Server Backend ⚙️', shortLabel: 'Backend ⚙️', icon: Server },
 ];
 
 export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClose, submissions = [] }) => {
-  const [activeTab, setActiveTab] = useState<'connect' | 'uptime' | 'security' | 'attendance' | 'test' | 'webhook' | 'server'>('connect');
+  const [activeTab, setActiveTab] = useState<'connect' | 'automation' | 'uptime' | 'security' | 'attendance' | 'test' | 'webhook' | 'server'>('connect');
   
   // Vercel host detection
   const [isVercelHost, setIsVercelHost] = useState<boolean>(() => {
@@ -153,6 +156,43 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
   const [isTriggeringCron, setIsTriggeringCron] = useState<boolean>(false);
   const [cronResult, setCronResult] = useState<{ success: boolean; message: string } | null>(null);
 
+  // Automated Messaging Settings states
+  const [masterAutoSendEnabled, setMasterAutoSendEnabled] = useState<boolean>(true);
+  const [autoReminderEnabled, setAutoReminderEnabled] = useState<boolean>(true);
+  const [enableAiAutoReply, setEnableAiAutoReply] = useState<boolean>(true);
+  const [autoReminderHour, setAutoReminderHour] = useState<string>('09:00');
+  const [reminderActiveDays, setReminderActiveDays] = useState<string[]>(['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat']);
+  const [skipHolidays, setSkipHolidays] = useState<boolean>(true);
+  const [skipWeekends, setSkipWeekends] = useState<boolean>(true);
+  const [requireFridaySignature, setRequireFridaySignature] = useState<boolean>(true);
+  const [allowLocationCheckin, setAllowLocationCheckin] = useState<boolean>(true);
+  const [autoReplyScope, setAutoReplyScope] = useState<'all' | 'workers_only'>('all');
+  const [reminderTone, setReminderTone] = useState<'standard' | 'casual' | 'formal'>('standard');
+  const [isSavingAutomation, setIsSavingAutomation] = useState<boolean>(false);
+  const [automationSaveMsg, setAutomationSaveMsg] = useState<{ success: boolean; text: string } | null>(null);
+  const [isTriggeringManualReminder, setIsTriggeringManualReminder] = useState<boolean>(false);
+  const [manualReminderResult, setManualReminderResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [previewWorkerName, setPreviewWorkerName] = useState<string>('Bpk Faisal Zainuddin');
+  const [automationServerInfo, setAutomationServerInfo] = useState<{
+    serverTimeWIB: string;
+    lastCronPing: string;
+    lastCronStatus: string;
+    lastCronSentDate: string;
+    totalActiveWorkers: number;
+    pendingAttendanceCount: number;
+    waConnected: boolean;
+    waPhone: string | null;
+  }>({
+    serverTimeWIB: '',
+    lastCronPing: '',
+    lastCronStatus: '',
+    lastCronSentDate: '',
+    totalActiveWorkers: 0,
+    pendingAttendanceCount: 0,
+    waConnected: false,
+    waPhone: null
+  });
+
   // AI Sandbox test state
   const [testQuery, setTestQuery] = useState<string>('');
   const [testMessages, setTestMessages] = useState<Array<{ role: 'user' | 'assistant'; text: string; time: string }>>([
@@ -183,6 +223,138 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
       }
     } catch (e) {
       console.warn('Could not fetch keepalive stats:', e);
+    }
+  };
+
+  // Fetch full automated messaging settings from server
+  const fetchAutomationSettings = async () => {
+    try {
+      const res = await apiFetch('/api/bot-reminder-settings');
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        if (data.masterAutoSendEnabled !== undefined) setMasterAutoSendEnabled(data.masterAutoSendEnabled);
+        if (data.autoReminderEnabled !== undefined) setAutoReminderEnabled(data.autoReminderEnabled);
+        if (data.enableAiAutoReply !== undefined) setEnableAiAutoReply(data.enableAiAutoReply);
+        if (data.autoReminderHour) setAutoReminderHour(data.autoReminderHour);
+        if (data.reminderActiveDays) setReminderActiveDays(data.reminderActiveDays);
+        if (data.skipHolidays !== undefined) setSkipHolidays(data.skipHolidays);
+        if (data.skipWeekends !== undefined) setSkipWeekends(data.skipWeekends);
+        if (data.requireFridaySignature !== undefined) setRequireFridaySignature(data.requireFridaySignature);
+        if (data.allowLocationCheckin !== undefined) setAllowLocationCheckin(data.allowLocationCheckin);
+        if (data.autoReplyScope) setAutoReplyScope(data.autoReplyScope);
+        if (data.reminderTone) setReminderTone(data.reminderTone);
+        setAutomationServerInfo({
+          serverTimeWIB: data.serverTimeWIB || '',
+          lastCronPing: data.lastCronPing || '',
+          lastCronStatus: data.lastCronStatus || '',
+          lastCronSentDate: data.lastCronSentDate || '',
+          totalActiveWorkers: data.totalActiveWorkers || 0,
+          pendingAttendanceCount: data.pendingAttendanceCount || 0,
+          waConnected: !!data.waConnected,
+          waPhone: data.waPhone || null
+        });
+      }
+    } catch (err) {
+      console.warn('Gagal memuat pengaturan otomatis WhatsApp:', err);
+    }
+  };
+
+  // Save all automated messaging settings to server
+  const handleSaveAutomationSettings = async () => {
+    setIsSavingAutomation(true);
+    setAutomationSaveMsg(null);
+    try {
+      const payload = {
+        masterAutoSendEnabled,
+        autoReminderEnabled,
+        enableAiAutoReply,
+        autoReminderHour,
+        reminderActiveDays,
+        skipHolidays,
+        skipWeekends,
+        requireFridaySignature,
+        allowLocationCheckin,
+        autoReplyScope,
+        reminderTone
+      };
+      const res = await apiFetch('/api/bot-reminder-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        setAutomationSaveMsg({
+          success: true,
+          text: data.message || 'Pengaturan pesan otomatis WhatsApp berhasil disimpan ke server!'
+        });
+        fetchAutomationSettings();
+      } else {
+        setAutomationSaveMsg({
+          success: false,
+          text: data.error || 'Gagal menyimpan pengaturan ke server.'
+        });
+      }
+    } catch (err: any) {
+      setAutomationSaveMsg({
+        success: false,
+        text: err?.message || 'Terjadi kesalahan jaringan saat menyimpan pengaturan.'
+      });
+    } finally {
+      setIsSavingAutomation(false);
+    }
+  };
+
+  // Quick toggle master auto send switch
+  const handleToggleMasterAutoSend = async (newVal: boolean) => {
+    setMasterAutoSendEnabled(newVal);
+    try {
+      const res = await apiFetch('/api/bot-reminder-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ masterAutoSendEnabled: newVal })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        setAutomationSaveMsg({
+          success: true,
+          text: newVal 
+            ? 'Pengiriman pesan otomatis diaktifkan kembali.' 
+            : 'Pengiriman pesan otomatis berhasil DINONAKTIFKAN. WhatsApp tetap terhubung 100%.'
+        });
+        fetchAutomationSettings();
+      }
+    } catch (err) {
+      console.warn('Gagal toggle master auto send:', err);
+    }
+  };
+
+  // Manual test trigger for reminder
+  const handleTriggerManualReminder = async () => {
+    if (status !== 'connected') {
+      setManualReminderResult({
+        success: false,
+        message: 'WhatsApp belum terhubung. Silakan hubungkan WhatsApp di tab 1 terlebih dahulu.'
+      });
+      return;
+    }
+    setIsTriggeringManualReminder(true);
+    setManualReminderResult(null);
+    try {
+      const res = await apiFetch('/api/cron/late-reminder?force=true&markSent=false');
+      const data = await res.json().catch(() => ({}));
+      setManualReminderResult({
+        success: !!data.success,
+        message: data.message || (data.success ? 'Pengingat berhasil dikirim ke karyawan yang belum hadir!' : 'Gagal mengirim pengingat.')
+      });
+      fetchAutomationSettings();
+    } catch (err: any) {
+      setManualReminderResult({
+        success: false,
+        message: err.message || 'Terjadi gangguan jaringan saat memicu pengingat'
+      });
+    } finally {
+      setIsTriggeringManualReminder(false);
     }
   };
 
@@ -223,9 +395,23 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
     }
   };
 
-  const [qrCountdown, setQrCountdown] = useState<number>(60);
+  const [qrCountdown, setQrCountdown] = useState<number>(25);
+  const [isQrZoomed, setIsQrZoomed] = useState<boolean>(false);
 
-  // Fetch WhatsApp connection status from active server or saved personal account
+  // Active real-time countdown for QR rotation (25s cycle)
+  useEffect(() => {
+    if (!isOpen || activeLinkMethod !== 'qr' || status === 'connected') return;
+    const timer = setInterval(() => {
+      setQrCountdown((prev) => {
+        if (prev <= 1) {
+          fetchStatus();
+          return 25;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [isOpen, activeLinkMethod, status]);
   const fetchStatus = async () => {
     try {
       // 1. Check server status for real Baileys connection / live QR code
@@ -397,9 +583,11 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
       fetchStatus();
       fetchSecuritySettings();
       fetchKeepAliveStats();
+      fetchAutomationSettings();
       const interval = setInterval(() => {
         fetchStatus();
         fetchKeepAliveStats();
+        fetchAutomationSettings();
       }, 5000);
       return () => clearInterval(interval);
     }
@@ -751,7 +939,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
         </div>
 
         {/* Compact Status Indicator Bar */}
-        <div className="bg-emerald-50 border-b border-emerald-200 px-4 sm:px-5 py-1.5 flex items-center justify-between gap-2 text-[11px] text-emerald-950 shrink-0">
+        <div className="bg-emerald-50 border-b border-emerald-200 px-3.5 sm:px-5 py-1.5 flex items-center justify-between gap-2 text-[11px] text-emerald-950 shrink-0 flex-wrap">
           <div className="flex items-center gap-1.5 min-w-0">
             <ShieldCheck size={14} className="text-emerald-700 shrink-0" />
             <span className="truncate">
@@ -764,9 +952,40 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
               )}
             </span>
           </div>
-          <div className="flex items-center gap-1.5 shrink-0 font-mono text-[10px]">
-            <span className={`w-2 h-2 rounded-full ${status === 'connected' ? 'bg-emerald-500 animate-pulse' : status === 'qr' ? 'bg-amber-400 animate-ping' : 'bg-stone-400'}`} />
-            <span className="font-bold">{status === 'connected' ? 'TERHUBUNG' : status === 'qr' ? 'SCAN QR' : 'OFFLINE'}</span>
+          <div className="flex items-center gap-2 shrink-0 font-mono text-[10px]">
+            {status === 'connected' && (
+              <button
+                type="button"
+                onClick={() => setActiveTab('automation')}
+                className={`px-2 py-0.5 rounded-full font-bold flex items-center gap-1 cursor-pointer transition shadow-2xs ${
+                  masterAutoSendEnabled && autoReminderEnabled
+                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 hover:bg-emerald-200'
+                    : 'bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200'
+                }`}
+                title="Klik untuk buka Pengaturan Pesan Otomatis"
+              >
+                {masterAutoSendEnabled && autoReminderEnabled ? (
+                  <>
+                    <Zap size={10} className="text-emerald-600" />
+                    <span>Pesan Otomatis: AKTIF ({autoReminderHour} WIB)</span>
+                  </>
+                ) : !masterAutoSendEnabled ? (
+                  <>
+                    <Power size={10} className="text-amber-700" />
+                    <span>Pesan Otomatis: DINONAKTIFKAN (WA Terhubung)</span>
+                  </>
+                ) : (
+                  <>
+                    <Clock size={10} className="text-amber-700" />
+                    <span>Pengingat Absen: DIJEDA</span>
+                  </>
+                )}
+              </button>
+            )}
+            <div className="flex items-center gap-1.5 px-2 py-0.5 bg-white/80 rounded-full border border-stone-200">
+              <span className={`w-2 h-2 rounded-full ${status === 'connected' ? 'bg-emerald-500 animate-pulse' : status === 'qr' ? 'bg-amber-400 animate-ping' : 'bg-stone-400'}`} />
+              <span className="font-bold">{status === 'connected' ? 'TERHUBUNG' : status === 'qr' ? 'SCAN QR' : 'OFFLINE'}</span>
+            </div>
           </div>
         </div>
 
@@ -919,6 +1138,20 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                 <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto justify-end flex-wrap">
                   {status === 'connected' ? (
                     <>
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('automation')}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow-2xs border ${
+                          masterAutoSendEnabled && autoReminderEnabled
+                            ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border-emerald-300'
+                            : 'bg-amber-100 hover:bg-amber-200 text-amber-950 border-amber-300 font-extrabold'
+                        }`}
+                        title="Buka Pengaturan Pesan Otomatis"
+                      >
+                        <Zap size={13} className={masterAutoSendEnabled ? 'text-emerald-700' : 'text-amber-700'} />
+                        <span>{masterAutoSendEnabled ? 'Atur Pesan Otomatis ⚡' : 'Pesan Otomatis Dijeda ⏸️'}</span>
+                      </button>
+
                       <button
                         type="button"
                         onClick={() => {
@@ -1253,18 +1486,31 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                       
                       {/* Left: Live QR Code Card */}
                       <div className="p-4 sm:p-5 rounded-2xl border border-stone-200 bg-stone-50/70 flex flex-col items-center text-center space-y-3">
-                        <div className="flex items-center gap-2 text-xs font-black text-stone-900 uppercase tracking-wider">
-                          <QrCode size={16} className="text-stone-800" />
-                          <span>Pindai (Scan) QR Code WhatsApp</span>
+                        <div className="flex items-center justify-between w-full">
+                          <div className="flex items-center gap-2 text-xs font-black text-stone-900 uppercase tracking-wider">
+                            <QrCode size={16} className="text-stone-800" />
+                            <span>Pindai (Scan) QR Code WhatsApp</span>
+                          </div>
+
+                          {qrCode && (
+                            <button
+                              type="button"
+                              onClick={() => setIsQrZoomed(!isQrZoomed)}
+                              className="text-[11px] font-bold text-emerald-800 hover:text-emerald-950 flex items-center gap-1 cursor-pointer bg-white px-2.5 py-1 rounded-lg border border-stone-200 shadow-3xs"
+                              title={isQrZoomed ? "Perkecil ukuran QR" : "Perbesar ukuran QR"}
+                            >
+                              <span>{isQrZoomed ? "Perkecil" : "Perbesar QR"}</span>
+                            </button>
+                          )}
                         </div>
 
                         {/* Scannable QR Image Container */}
-                        <div className="w-60 h-60 bg-white p-3 rounded-2xl border-2 border-stone-300 shadow-md flex flex-col items-center justify-center relative">
+                        <div className={`${isQrZoomed ? 'w-72 h-72 sm:w-80 sm:h-80' : 'w-64 h-64'} bg-white p-4 rounded-2xl border-2 border-stone-300 shadow-md flex flex-col items-center justify-center relative transition-all duration-200`}>
                           {qrCode ? (
                             <img 
                               src={qrCode} 
                               alt="WhatsApp QR Code" 
-                              className="w-full h-full object-contain rounded-lg"
+                              className="w-full h-full object-contain rounded-lg select-all"
                             />
                           ) : (
                             <div className="flex flex-col items-center justify-center gap-2 p-3 text-center h-full">
@@ -1273,7 +1519,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                               </div>
                               <span className="font-bold text-xs text-stone-900">Tautkan Cepat Tanpa Scan</span>
                               <p className="text-[10px] text-stone-600 leading-snug">
-                                Di hosting Vercel (serverless), tautkan WhatsApp pribadi Anda langsung via <strong>Metode 1 (Nomor Telepon)</strong> tanpa perlu scan QR kamera.
+                                Jika scan kamera sulit fokus di layar, gunakan <strong>Metode 1 (Nomor Telepon)</strong> langsung tanpa kamera.
                               </p>
                               <button
                                 type="button"
@@ -1323,20 +1569,19 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                               <span>Refresh QR Baru</span>
                             </button>
 
-                            <a
-                              href="https://web.whatsapp.com"
-                              target="_blank"
-                              rel="noreferrer"
-                              className="py-1.5 px-3 bg-white hover:bg-stone-100 text-stone-700 rounded-lg text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1 border border-stone-300"
+                            <button
+                              type="button"
+                              onClick={() => setActiveLinkMethod('phone')}
+                              className="py-1.5 px-3 bg-white hover:bg-stone-100 text-emerald-800 rounded-lg text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1 border border-emerald-300 shadow-3xs"
                             >
-                              <ExternalLink size={13} />
-                              <span>Buka WhatsApp Web</span>
-                            </a>
+                              <Smartphone size={13} />
+                              <span>Tautkan via No HP</span>
+                            </button>
                           </div>
                         </div>
                       </div>
 
-                      {/* Right: Step-by-Step Scan Instructions */}
+                      {/* Right: Step-by-Step Scan Instructions & Troubleshooting */}
                       <div className="p-4 sm:p-5 rounded-2xl border border-stone-200 bg-white flex flex-col justify-between space-y-3">
                         <div className="space-y-3">
                           <div className="flex items-center gap-2 text-xs font-black text-stone-900 uppercase tracking-wider pb-1 border-b border-stone-200">
@@ -1344,7 +1589,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                             <span>Panduan Memindai (Scan) QR:</span>
                           </div>
 
-                          <ol className="space-y-2.5 text-[11px] text-stone-700">
+                          <ol className="space-y-2 text-[11px] text-stone-700">
                             <li className="flex items-start gap-2">
                               <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-800 font-bold font-mono text-[10px] flex items-center justify-center shrink-0 mt-0.5">
                                 1
@@ -1358,7 +1603,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                                 2
                               </span>
                               <span>
-                                Ketuk menu <strong>Titik Tiga (⋮)</strong> di sudut kanan atas atau <strong>Pengaturan ⚙️</strong>.
+                                Ketuk menu <strong>Titik Tiga (⋮)</strong> di sudut kanan atas (Android) atau <strong>Pengaturan ⚙️</strong> (iPhone).
                               </span>
                             </li>
                             <li className="flex items-start gap-2">
@@ -1374,25 +1619,32 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                                 4
                               </span>
                               <span>
-                                Arahkan kamera ponsel Anda ke kotak kode QR di samping kiri.
-                              </span>
-                            </li>
-                            <li className="flex items-start gap-2">
-                              <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-800 font-bold font-mono text-[10px] flex items-center justify-center shrink-0 mt-0.5">
-                                5
-                              </span>
-                              <span>
-                                Tunggu beberapa detik hingga proses sinkronisasi selesai dan status berubah menjadi <strong>TERHUBUNG</strong>.
+                                Arahkan kamera HP ke kode QR di samping kiri dengan jarak sekitar 20-30 cm.
                               </span>
                             </li>
                           </ol>
                         </div>
 
-                        <div className="p-3 bg-stone-50 rounded-xl border border-stone-200 text-[10.5px] text-stone-600">
-                          <span className="font-bold text-stone-800 block">Kamera bermasalah atau buram?</span>
-                          <span>
-                            Gunakan <strong>Metode 1 (Tautkan Nomor Telepon / Kode Pairing 8 Digit)</strong> di tab atas untuk menghubungkan tanpa kamera.
+                        {/* Troubleshooting & Camera Workaround Card */}
+                        <div className="p-3 bg-amber-50/90 rounded-xl border border-amber-200 text-[10.5px] text-amber-950 space-y-1.5">
+                          <span className="font-bold text-amber-900 flex items-center gap-1.5">
+                            <AlertCircle size={13} className="text-amber-700 shrink-0" />
+                            <span>Mengapa QR Tidak Terbaca di WhatsApp Anda?</span>
                           </span>
+                          <ul className="list-disc list-inside space-y-0.5 text-stone-700">
+                            <li><strong>Silau / Pantulan Layar:</strong> Pastikan layar laptop cukup terang dan tidak memantulkan lampu ruangan langsung ke lensa kamera HP.</li>
+                            <li><strong>Jarak Kamera:</strong> Jangan terlalu dekat ke layar laptop. Mundurkan ponsel sekitar 25-35 cm agar lensa autofocus mengunci barcode.</li>
+                            <li><strong>Solusi 100% Berhasil Tanpa Kamera:</strong> Gunakan <strong>Metode 1 (Kode Pairing 8 Digit)</strong> di tab atas. Cukup masukkan no HP Anda dan ketik 8 angka resmi dari WhatsApp!</li>
+                          </ul>
+
+                          <button
+                            type="button"
+                            onClick={() => setActiveLinkMethod('phone')}
+                            className="mt-1 w-full py-1.5 px-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5 shadow-3xs"
+                          >
+                            <Key size={13} />
+                            <span>Gunakan Kode Pairing 8 Digit Saja (Bebas Masalah Kamera)</span>
+                          </button>
                         </div>
                       </div>
 
@@ -1426,7 +1678,722 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
             </div>
           )}
 
-          {/* TAB 2: KEEP-ALIVE 24/7 & UPTIMEROBOT GUIDE */}
+          {/* TAB 2: PENGATURAN PESAN OTOMATIS WHATSAPP (LENGKAP) */}
+          {activeTab === 'automation' && (
+            <div className="space-y-4">
+              
+              {/* Header Banner */}
+              <div className="p-3.5 bg-gradient-to-r from-emerald-950 via-teal-950 to-stone-900 text-white rounded-xl shadow-md border border-emerald-800/40 space-y-2">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 flex items-center justify-center shrink-0">
+                      <Zap size={20} className="text-emerald-400" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-black text-white flex items-center gap-2">
+                        <span>Pusat Pengaturan Pesan Otomatis WhatsApp Bot</span>
+                        <span className="px-2 py-0.5 rounded-full text-[9.5px] font-mono font-bold uppercase tracking-wider bg-emerald-500/30 text-emerald-200 border border-emerald-400/30">
+                          Kontrol Penuh
+                        </span>
+                      </h3>
+                      <p className="text-[11px] text-emerald-200/80">
+                        Kelola jadwal kirim pengingat absensi mandiri, balasan AI, dan kontrol penonaktifan pesan otomatis saat WhatsApp tetap terhubung.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`px-2.5 py-1 rounded-full text-xs font-bold border flex items-center gap-1.5 shadow-2xs ${
+                      status === 'connected'
+                        ? 'bg-emerald-500/20 text-emerald-200 border-emerald-400/40'
+                        : 'bg-stone-700/60 text-stone-300 border-stone-600'
+                    }`}>
+                      <span className={`w-2 h-2 rounded-full ${status === 'connected' ? 'bg-emerald-400 animate-pulse' : 'bg-stone-400'}`} />
+                      <span>{status === 'connected' ? 'WhatsApp Terhubung' : 'WhatsApp Terputus'}</span>
+                    </span>
+
+                    <span className={`px-2.5 py-1 rounded-full text-xs font-black border flex items-center gap-1.5 shadow-2xs ${
+                      masterAutoSendEnabled && autoReminderEnabled
+                        ? 'bg-emerald-400 text-emerald-950 border-emerald-300'
+                        : !masterAutoSendEnabled
+                        ? 'bg-amber-400 text-amber-950 border-amber-300'
+                        : 'bg-yellow-300 text-yellow-950 border-yellow-200'
+                    }`}>
+                      <Zap size={12} />
+                      <span>
+                        {masterAutoSendEnabled && autoReminderEnabled
+                          ? `OTOMATIS AKTIF (${autoReminderHour} WIB)`
+                          : !masterAutoSendEnabled
+                          ? 'OTOMATIS DINONAKTIFKAN'
+                          : 'PENGINGAT DIJEDA'}
+                      </span>
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Master Control Hero Card (Fitur Utama: Nonaktifkan pesan otomatis saat WA tetap terhubung) */}
+              <div className={`p-4 sm:p-5 rounded-2xl border transition-all shadow-sm ${
+                masterAutoSendEnabled
+                  ? 'bg-gradient-to-br from-emerald-50/90 via-white to-teal-50/80 border-emerald-300 ring-1 ring-emerald-500/10'
+                  : 'bg-gradient-to-br from-amber-50/90 via-white to-orange-50/80 border-amber-300 ring-2 ring-amber-500/20 shadow-md'
+              }`}>
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div className="flex items-start gap-3.5">
+                    <div className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 shadow-xs transition-colors ${
+                      masterAutoSendEnabled
+                        ? 'bg-emerald-600 text-white ring-4 ring-emerald-500/20'
+                        : 'bg-amber-500 text-white ring-4 ring-amber-500/20 animate-pulse'
+                    }`}>
+                      {masterAutoSendEnabled ? <Zap size={24} /> : <Power size={24} />}
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h4 className="text-sm sm:text-base font-black text-stone-900 tracking-tight">
+                          Master Pengiriman Pesan Otomatis
+                        </h4>
+                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${
+                          masterAutoSendEnabled
+                            ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                            : 'bg-amber-100 text-amber-900 border-amber-300'
+                        }`}>
+                          {masterAutoSendEnabled ? 'Aktif Beroperasi' : 'Dinonaktifkan Sementara'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-stone-600 leading-relaxed max-w-2xl">
+                        {masterAutoSendEnabled ? (
+                          <>
+                            Sistem sedang <strong>aktif mengirimkan pesan otomatis</strong> (pengingat absensi harian dan respon AI). Bot akan otomatis mengeksekusi pesan sesuai jadwal jam yang ditentukan.
+                          </>
+                        ) : (
+                          <>
+                            <strong className="text-amber-800">WhatsApp Anda tetap terhubung 100%!</strong> Pengiriman pesan otomatis telah dinonaktifkan. Sistem tidak akan mengirimkan pesan pengingat absensi maupun membalas chat secara otomatis. Anda dapat menggunakan WhatsApp seperti biasa tanpa gangguan bot.
+                          </>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Primary Toggle Switch Button */}
+                  <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+                    <button
+                      type="button"
+                      onClick={() => handleToggleMasterAutoSend(!masterAutoSendEnabled)}
+                      className={`px-4 py-2.5 rounded-xl font-bold text-xs transition cursor-pointer flex items-center gap-2 shadow-xs ${
+                        masterAutoSendEnabled
+                          ? 'bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 hover:border-amber-400'
+                          : 'bg-emerald-700 hover:bg-emerald-800 text-white shadow-emerald-700/20 ring-2 ring-emerald-500/30'
+                      }`}
+                    >
+                      {masterAutoSendEnabled ? (
+                        <>
+                          <Power size={15} className="text-amber-700" />
+                          <span>Nonaktifkan Pesan Otomatis</span>
+                        </>
+                      ) : (
+                        <>
+                          <Zap size={15} className="text-emerald-300 animate-pulse" />
+                          <span>Aktifkan Pesan Otomatis</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Sub-status alert banner when disabled */}
+                {!masterAutoSendEnabled && (
+                  <div className="mt-3.5 p-3 rounded-xl bg-amber-100/80 border border-amber-300/80 text-amber-950 text-xs flex items-center gap-2.5">
+                    <AlertCircle size={16} className="text-amber-700 shrink-0" />
+                    <span className="leading-snug">
+                      <strong>Status Terkunci:</strong> Seluruh cron pinger, pengingat pagi/siang, dan auto-reply chat AI dilewati otomatis hingga Anda mengaktifkannya kembali. Akun WhatsApp yang tertaut tidak akan keluar/logout.
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Grid 2 Columns: Setting Cards */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                
+                {/* CARD 1: PENGINGAT ABSENSI MANDIRI HARIAN */}
+                <div className={`p-4 rounded-xl border bg-white space-y-3.5 transition-opacity ${
+                  !masterAutoSendEnabled ? 'opacity-70 bg-stone-50/50' : 'border-stone-200'
+                }`}>
+                  <div className="flex items-center justify-between pb-2 border-b border-stone-100">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 rounded-lg bg-emerald-100 text-emerald-800">
+                        <CalendarCheck size={16} />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black text-stone-900">1. Pengingat Absensi Harian</h4>
+                        <p className="text-[10px] text-stone-500">Notifikasi presensi ke karyawan yang belum absen</p>
+                      </div>
+                    </div>
+                    
+                    <button
+                      type="button"
+                      disabled={!masterAutoSendEnabled}
+                      onClick={() => setAutoReminderEnabled(!autoReminderEnabled)}
+                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden disabled:opacity-40 disabled:cursor-not-allowed ${
+                        autoReminderEnabled && masterAutoSendEnabled ? 'bg-emerald-600' : 'bg-stone-300'
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
+                          autoReminderEnabled && masterAutoSendEnabled ? 'translate-x-4' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  {/* Jam Pengiriman Pengingat */}
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-bold text-stone-700 flex items-center justify-between">
+                      <span className="flex items-center gap-1">
+                        <Clock size={12} className="text-emerald-700" />
+                        Jam Pengiriman Pesan Pengingat:
+                      </span>
+                      <span className="font-mono font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                        {autoReminderHour} WIB
+                      </span>
+                    </label>
+
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="time"
+                        value={autoReminderHour}
+                        disabled={!masterAutoSendEnabled || !autoReminderEnabled}
+                        onChange={(e) => setAutoReminderHour(e.target.value)}
+                        className="px-2.5 py-1.5 border border-stone-300 rounded-lg text-xs font-mono font-bold bg-white focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
+                      />
+                      <div className="flex items-center gap-1 overflow-x-auto flex-wrap">
+                        {['07:30', '08:00', '08:30', '09:00', '09:30', '10:00'].map((preset) => (
+                          <button
+                            key={preset}
+                            type="button"
+                            disabled={!masterAutoSendEnabled || !autoReminderEnabled}
+                            onClick={() => setAutoReminderHour(preset)}
+                            className={`px-2 py-1 text-[10px] font-mono font-bold rounded-md transition cursor-pointer disabled:opacity-40 ${
+                              autoReminderHour === preset
+                                ? 'bg-emerald-700 text-white'
+                                : 'bg-stone-100 text-stone-700 hover:bg-stone-200'
+                            }`}
+                          >
+                            {preset}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Hari Pengiriman Aktif */}
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[11px] font-bold text-stone-700">
+                        Hari Pengiriman Aktif:
+                      </label>
+                      <div className="flex gap-1">
+                        <button
+                          type="button"
+                          disabled={!masterAutoSendEnabled || !autoReminderEnabled}
+                          onClick={() => setReminderActiveDays(['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat'])}
+                          className="text-[9.5px] font-bold text-emerald-700 hover:underline disabled:opacity-40 cursor-pointer"
+                        >
+                          Senin-Jumat
+                        </button>
+                        <span className="text-stone-300">|</span>
+                        <button
+                          type="button"
+                          disabled={!masterAutoSendEnabled || !autoReminderEnabled}
+                          onClick={() => setReminderActiveDays(['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'])}
+                          className="text-[9.5px] font-bold text-emerald-700 hover:underline disabled:opacity-40 cursor-pointer"
+                        >
+                          Senin-Sabtu
+                        </button>
+                        <span className="text-stone-300">|</span>
+                        <button
+                          type="button"
+                          disabled={!masterAutoSendEnabled || !autoReminderEnabled}
+                          onClick={() => setReminderActiveDays(['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'])}
+                          className="text-[9.5px] font-bold text-emerald-700 hover:underline disabled:opacity-40 cursor-pointer"
+                        >
+                          Semua Hari
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5">
+                      {['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'].map((day) => {
+                        const isSelected = reminderActiveDays.includes(day);
+                        return (
+                          <button
+                            key={day}
+                            type="button"
+                            disabled={!masterAutoSendEnabled || !autoReminderEnabled}
+                            onClick={() => {
+                              if (isSelected) {
+                                if (reminderActiveDays.length > 1) {
+                                  setReminderActiveDays(reminderActiveDays.filter(d => d !== day));
+                                }
+                              } else {
+                                setReminderActiveDays([...reminderActiveDays, day]);
+                              }
+                            }}
+                            className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer border disabled:opacity-40 ${
+                              isSelected
+                                ? 'bg-emerald-600 text-white border-emerald-700 shadow-2xs'
+                                : 'bg-stone-50 text-stone-600 border-stone-200 hover:bg-stone-100'
+                            }`}
+                          >
+                            {day}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Pengecualian Hari Libur & Akhir Pekan */}
+                  <div className="space-y-2 pt-2 border-t border-stone-100">
+                    <label className="flex items-center gap-2 cursor-pointer text-xs text-stone-700">
+                      <input
+                        type="checkbox"
+                        checked={skipHolidays}
+                        disabled={!masterAutoSendEnabled || !autoReminderEnabled}
+                        onChange={(e) => setSkipHolidays(e.target.checked)}
+                        className="rounded-sm border-stone-300 text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span>Lewati otomatis saat <strong>Hari Libur Nasional Indonesia</strong></span>
+                    </label>
+
+                    <label className="flex items-center gap-2 cursor-pointer text-xs text-stone-700">
+                      <input
+                        type="checkbox"
+                        checked={skipWeekends}
+                        disabled={!masterAutoSendEnabled || !autoReminderEnabled}
+                        onChange={(e) => setSkipWeekends(e.target.checked)}
+                        className="rounded-sm border-stone-300 text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span>Lewati otomatis saat <strong>Hari Sabtu &amp; Minggu</strong></span>
+                    </label>
+
+                    <label className="flex items-center gap-2 cursor-pointer text-xs text-stone-700">
+                      <input
+                        type="checkbox"
+                        checked={requireFridaySignature}
+                        disabled={!masterAutoSendEnabled || !autoReminderEnabled}
+                        onChange={(e) => setRequireFridaySignature(e.target.checked)}
+                        className="rounded-sm border-stone-300 text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span>Wajibkan <strong>Tanda Tangan Digital Khusus Hari Jumat</strong> (Verifikasi Kehadiran)</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* CARD 2: BALASAN CHAT AI & RESPON PESAN MASUK */}
+                <div className={`p-4 rounded-xl border bg-white space-y-3.5 transition-opacity ${
+                  !masterAutoSendEnabled ? 'opacity-70 bg-stone-50/50' : 'border-stone-200'
+                }`}>
+                  <div className="flex items-center justify-between pb-2 border-b border-stone-100">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 rounded-lg bg-teal-100 text-teal-800">
+                        <Bot size={16} />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black text-stone-900">2. Balasan Chat AI &amp; Respon Masuk</h4>
+                        <p className="text-[10px] text-stone-500">Balasan otomatis pertanyaan voucher &amp; presensi GPS</p>
+                      </div>
+                    </div>
+                    
+                    <button
+                      type="button"
+                      disabled={!masterAutoSendEnabled}
+                      onClick={() => setEnableAiAutoReply(!enableAiAutoReply)}
+                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden disabled:opacity-40 disabled:cursor-not-allowed ${
+                        enableAiAutoReply && masterAutoSendEnabled ? 'bg-teal-600' : 'bg-stone-300'
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
+                          enableAiAutoReply && masterAutoSendEnabled ? 'translate-x-4' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  {/* Penjelasan Balasan AI */}
+                  <div className="p-2.5 rounded-lg bg-stone-50 border border-stone-200 text-xs space-y-1.5">
+                    <div className="flex items-center gap-1.5 font-bold text-stone-800 text-[11px]">
+                      <Sparkles size={13} className="text-teal-600" />
+                      <span>Mode Operasi Balasan Otomatis:</span>
+                    </div>
+                    <p className="text-[11px] text-stone-600 leading-relaxed">
+                      {enableAiAutoReply && masterAutoSendEnabled ? (
+                        <>Asisten AI Gemini akan menjawab pertanyaan chat masuk seputar info voucher transaksi, klaim kas kecil, dan tautan absen mandiri secara otomatis.</>
+                      ) : (
+                        <span className="text-amber-800 font-medium">
+                          Balasan AI dinonaktifkan. Bot tidak akan membalas chat masuk secara otomatis, sehingga Anda dapat membalas chat langsung dari HP atau WhatsApp Web Anda.
+                        </span>
+                      )}
+                    </p>
+                  </div>
+
+                  {/* Target Cakupan Respon AI */}
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-bold text-stone-700 block">
+                      Target Cakupan Respon Chat Masuk:
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        disabled={!masterAutoSendEnabled || !enableAiAutoReply}
+                        onClick={() => setAutoReplyScope('all')}
+                        className={`p-2.5 rounded-xl border text-left transition cursor-pointer disabled:opacity-40 ${
+                          autoReplyScope === 'all'
+                            ? 'bg-teal-50 border-teal-400 text-teal-950 font-bold shadow-2xs'
+                            : 'bg-stone-50 border-stone-200 text-stone-700 hover:bg-stone-100'
+                        }`}
+                      >
+                        <span className="text-xs block">Semua Pengirim</span>
+                        <span className="text-[10px] text-stone-500 font-normal">Karyawan &amp; Kontak Umum</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={!masterAutoSendEnabled || !enableAiAutoReply}
+                        onClick={() => setAutoReplyScope('workers_only')}
+                        className={`p-2.5 rounded-xl border text-left transition cursor-pointer disabled:opacity-40 ${
+                          autoReplyScope === 'workers_only'
+                            ? 'bg-teal-50 border-teal-400 text-teal-950 font-bold shadow-2xs'
+                            : 'bg-stone-50 border-stone-200 text-stone-700 hover:bg-stone-100'
+                        }`}
+                      >
+                        <span className="text-xs block">Khusus Karyawan</span>
+                        <span className="text-[10px] text-stone-500 font-normal">Hanya nomor terdaftar</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Presensi Otomatis via Share Location */}
+                  <div className="pt-2 border-t border-stone-100 space-y-2">
+                    <label className="flex items-start gap-2 cursor-pointer text-xs text-stone-700">
+                      <input
+                        type="checkbox"
+                        checked={allowLocationCheckin}
+                        disabled={!masterAutoSendEnabled}
+                        onChange={(e) => setAllowLocationCheckin(e.target.checked)}
+                        className="rounded-sm border-stone-300 text-teal-600 focus:ring-teal-500 mt-0.5"
+                      />
+                      <div>
+                        <span className="font-bold text-stone-900 block">Izinkan Presensi via Share Location WhatsApp</span>
+                        <span className="text-[10.5px] text-stone-500 leading-normal block">
+                          Jika karyawan membagikan lokasi GPS kantor (maks 150m) langsung ke chat bot WhatsApp, status "Hadir" akan dicatat otomatis.
+                        </span>
+                      </div>
+                    </label>
+                  </div>
+
+                  {/* Gaya Nada Pesan / Tone */}
+                  <div className="pt-2 border-t border-stone-100 space-y-1.5">
+                    <label className="text-[11px] font-bold text-stone-700 block">
+                      Gaya &amp; Nada Pesan Pengingat (Tone):
+                    </label>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {[
+                        { id: 'standard' as const, label: 'Standar Resmi', desc: 'Rapi & Jelas' },
+                        { id: 'casual' as const, label: 'Kasual Santai', desc: 'Ramah & Akrab' },
+                        { id: 'formal' as const, label: 'Format HRD', desc: 'Tegas & Disiplin' }
+                      ].map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          disabled={!masterAutoSendEnabled || !autoReminderEnabled}
+                          onClick={() => setReminderTone(item.id)}
+                          className={`p-2 rounded-lg border text-center transition cursor-pointer disabled:opacity-40 ${
+                            reminderTone === item.id
+                              ? 'bg-emerald-50 border-emerald-500 text-emerald-950 font-bold shadow-2xs'
+                              : 'bg-stone-50 border-stone-200 text-stone-600 hover:bg-stone-100'
+                          }`}
+                        >
+                          <span className="text-xs block">{item.label}</span>
+                          <span className="text-[9.5px] text-stone-500">{item.desc}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                </div>
+
+              </div>
+
+              {/* CARD 3: LIVE PREVIEW PESAN WHATSAPP PENGINGAT */}
+              <div className="p-4 rounded-xl border border-stone-200 bg-white space-y-3">
+                <div className="flex items-center justify-between flex-wrap gap-2 pb-2 border-b border-stone-100">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 rounded-lg bg-emerald-100 text-emerald-800">
+                      <Smartphone size={16} />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-black text-stone-900">3. Live Preview Tampilan Pesan WhatsApp</h4>
+                      <p className="text-[10px] text-stone-500">Simulasi pesan pengingat yang akan diterima karyawan di WhatsApp</p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-bold text-stone-600">Simulasi Karyawan:</span>
+                    <select
+                      value={previewWorkerName}
+                      onChange={(e) => setPreviewWorkerName(e.target.value)}
+                      className="px-2 py-1 text-xs border border-stone-300 rounded-lg bg-white font-medium"
+                    >
+                      <option value="Bpk Faisal Zainuddin">Bpk Faisal Zainuddin (W01)</option>
+                      <option value="Ibu Sri Ekowati">Ibu Sri Ekowati (W02)</option>
+                      <option value="Deasy">Deasy (W03)</option>
+                      <option value="Andi Dhiya Salsabila">Andi Dhiya Salsabila (W04)</option>
+                      <option value="Addrian Firmansyah">Addrian Firmansyah (W05)</option>
+                      <option value="Nur Wahyudi">Nur Wahyudi (W06)</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* WhatsApp Chat Container Mockup */}
+                <div className="rounded-xl border border-stone-300 overflow-hidden bg-[#efeae2] shadow-inner max-w-2xl mx-auto">
+                  {/* WhatsApp Chat Header */}
+                  <div className="bg-[#075e54] text-white px-3.5 py-2 flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-full bg-emerald-400 text-emerald-950 font-black flex items-center justify-center text-xs shadow-xs">
+                        WA
+                      </div>
+                      <div>
+                        <div className="font-bold flex items-center gap-1">
+                          <span>PT NMSA WhatsApp Bot</span>
+                          <CheckCircle2 size={11} className="text-emerald-300 fill-emerald-300 text-white" />
+                        </div>
+                        <div className="text-[9.5px] text-emerald-100 opacity-90">Bot Presensi &amp; Layanan Terpadu</div>
+                      </div>
+                    </div>
+                    <span className="text-[10px] text-emerald-100 font-mono">
+                      {autoReminderHour} WIB
+                    </span>
+                  </div>
+
+                  {/* Message Bubble */}
+                  <div className="p-3.5 space-y-2">
+                    <div className="bg-white rounded-lg p-3 text-xs shadow-xs max-w-lg space-y-2 text-stone-850 border border-stone-200/50 relative">
+                      <div className="font-mono text-[9px] text-emerald-700 font-bold uppercase tracking-wider bg-emerald-50 px-2 py-0.5 rounded-sm inline-block">
+                        Mode: {reminderTone.toUpperCase()} • Jadwal: {autoReminderHour} WIB
+                      </div>
+
+                      <div className="whitespace-pre-wrap leading-relaxed font-sans text-xs text-stone-800">
+                        {reminderTone === 'casual' ? (
+                          <>
+                            Pagi rekan <strong>{previewWorkerName}</strong>! ☀️👋<br /><br />
+                            Yuk sempatkan presensi mandiri Anda hari ini agar klaim uang makan dan kehadiran kerja terekam rapi.<br /><br />
+                            👉 <strong>Buka Link Presensi Mandiri:</strong><br />
+                            <span className="text-teal-700 underline font-mono text-[11px] break-all">
+                              {typeof window !== 'undefined' ? `${window.location.origin}/?view=absen&workerId=W01&quick=true` : 'https://pt-nmsa.com/?view=absen'}
+                            </span><br /><br />
+                            📍 <em>Tips:</em> Anda juga bisa langsung membagikan lokasi kantor (<strong>Share Location</strong>) ke WhatsApp ini untuk absensi hadir instan.<br /><br />
+                            Semangat bekerja dan sukses selalu! 💪🚀<br />
+                            <em>PT Nusantara Mineral Sukses Abadi</em>
+                          </>
+                        ) : reminderTone === 'formal' ? (
+                          <>
+                            <strong>PEMBERITAHUAN RESMI SISTEM KEHADIRAN PT NMSA</strong><br /><br />
+                            Yth. Saudara/i <strong>{previewWorkerName}</strong>,<br /><br />
+                            Hingga pukul <strong>{autoReminderHour} WIB</strong> hari ini, catatan presensi kehadiran harian Anda belum terdaftar di sistem operasional PT NMSA.<br /><br />
+                            Mohon segera melakukan konfirmasi kehadiran melalui tautan resmi:<br />
+                            👉 <span className="text-teal-700 underline font-mono text-[11px] break-all">
+                              {typeof window !== 'undefined' ? `${window.location.origin}/?view=absen&workerId=W01&quick=true` : 'https://pt-nmsa.com/?view=absen'}
+                            </span><br /><br />
+                            Jika berhalangan hadir (Sakit/Izin/Cuti), mohon segera menyampaikan konfirmasi keterangan kepada Admin.<br /><br />
+                            Demikian disampaikan untuk menjadi perhatian bersama.<br />
+                            <em>HRD &amp; General Affairs PT NMSA</em>
+                          </>
+                        ) : (
+                          <>
+                            Halo <strong>{previewWorkerName}</strong>,<br /><br />
+                            Pengingat presensi mandiri harian PT NMSA untuk hari ini.<br />
+                            Catatan presensi Anda belum terekam di sistem.<br /><br />
+                            👉 <strong>Silakan isi kehadiran sekarang melalui tautan berikut:</strong><br />
+                            <span className="text-teal-700 underline font-mono text-[11px] break-all">
+                              {typeof window !== 'undefined' ? `${window.location.origin}/?view=absen&workerId=W01&quick=true` : 'https://pt-nmsa.com/?view=absen'}
+                            </span><br /><br />
+                            📍 <strong>Catatan Absensi:</strong> Buka tautan di atas untuk foto selfie &amp; tanda tangan di lokasi, atau cukup <strong>Share Location</strong> ke WhatsApp ini jika berada di kantor.<br /><br />
+                            Terima kasih atas kerja samanya! ☀️<br />
+                            <em>Manajemen PT Nusantara Mineral Sukses Abadi</em>
+                          </>
+                        )}
+                      </div>
+
+                      <div className="flex items-center justify-end gap-1 text-[9.5px] text-stone-400 pt-1 font-mono">
+                        <span>{autoReminderHour}</span>
+                        <CheckCheck size={13} className="text-teal-600" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex justify-center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const origin = typeof window !== 'undefined' ? window.location.origin : 'https://pt-nmsa.com';
+                      const link = `${origin}/?view=absen&workerId=W01&quick=true`;
+                      const txt = `Halo *${previewWorkerName}*,\n\nPengingat presensi mandiri harian PT NMSA.\nSilakan isi kehadiran sekarang melalui tautan:\n👉 ${link}\n\nTerima kasih! ☀️\n_PT Nusantara Mineral Sukses Abadi_`;
+                      handleCopy(txt, 'preview-msg');
+                    }}
+                    className="px-3 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    {copiedKey === 'preview-msg' ? <Check size={13} className="text-emerald-600" /> : <Copy size={13} />}
+                    <span>{copiedKey === 'preview-msg' ? 'Teks Tersalin!' : 'Salin Contoh Teks Pengingat'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* CARD 4: STATUS EKSEKUSI SERVER & DIAGNOSTIK CRON */}
+              <div className="p-4 rounded-xl border border-stone-200 bg-stone-50/70 space-y-3">
+                <div className="flex items-center justify-between flex-wrap gap-2 pb-2 border-b border-stone-200">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 rounded-lg bg-stone-200 text-stone-800">
+                      <Server size={16} />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-black text-stone-900">4. Diagnostik Server &amp; Riwayat Pemicu Jadwal (Cron)</h4>
+                      <p className="text-[10px] text-stone-500">Status daemon otomatis dan histori eksekusi pengingat</p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={isTriggeringManualReminder || status !== 'connected'}
+                    onClick={handleTriggerManualReminder}
+                    className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                  >
+                    <SendHorizontal size={13} className={isTriggeringManualReminder ? 'animate-spin' : ''} />
+                    <span>{isTriggeringManualReminder ? 'Mengirim...' : '⚡ Uji Coba Pengingat Sekarang'}</span>
+                  </button>
+                </div>
+
+                {/* Manual Trigger Status Result */}
+                {manualReminderResult && (
+                  <div className={`p-3 rounded-xl border text-xs flex items-center justify-between gap-2 shadow-2xs ${
+                    manualReminderResult.success
+                      ? 'bg-emerald-100 border-emerald-300 text-emerald-950 font-bold'
+                      : 'bg-rose-100 border-rose-300 text-rose-950 font-bold'
+                  }`}>
+                    <span>{manualReminderResult.message}</span>
+                    <button
+                      type="button"
+                      onClick={() => setManualReminderResult(null)}
+                      className="px-2 py-0.5 rounded-md hover:bg-black/10 cursor-pointer font-black"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+
+                {/* Stat Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  <div className="p-2.5 bg-white rounded-xl border border-stone-200 space-y-1">
+                    <span className="text-[10px] text-stone-500 font-bold uppercase block">Waktu Server WIB</span>
+                    <span className="text-xs font-mono font-bold text-stone-850 block truncate">
+                      {automationServerInfo.serverTimeWIB || 'Memuat...'}
+                    </span>
+                  </div>
+
+                  <div className="p-2.5 bg-white rounded-xl border border-stone-200 space-y-1">
+                    <span className="text-[10px] text-stone-500 font-bold uppercase block">Ping Cron Terakhir</span>
+                    <span className="text-xs font-mono font-bold text-stone-850 block truncate">
+                      {automationServerInfo.lastCronPing || 'Belum ada ping'}
+                    </span>
+                  </div>
+
+                  <div className="p-2.5 bg-white rounded-xl border border-stone-200 space-y-1">
+                    <span className="text-[10px] text-stone-500 font-bold uppercase block">Status Hari Ini</span>
+                    <span className={`text-xs font-mono font-bold block truncate ${
+                      automationServerInfo.lastCronSentDate ? 'text-emerald-700' : 'text-stone-600'
+                    }`}>
+                      {automationServerInfo.lastCronSentDate ? `Sudah Terkirim (${automationServerInfo.lastCronSentDate})` : 'Belum Dieksekusi'}
+                    </span>
+                  </div>
+
+                  <div className="p-2.5 bg-white rounded-xl border border-stone-200 space-y-1">
+                    <span className="text-[10px] text-stone-500 font-bold uppercase block">Karyawan Belum Hadir</span>
+                    <span className="text-xs font-mono font-black text-rose-700 block">
+                      {automationServerInfo.pendingAttendanceCount} Karyawan
+                    </span>
+                  </div>
+                </div>
+
+                {/* Log Status Message */}
+                {automationServerInfo.lastCronStatus && (
+                  <div className="p-2.5 bg-white rounded-lg border border-stone-200 text-xs flex items-center gap-2">
+                    <span className="text-[10px] font-bold uppercase bg-stone-100 text-stone-700 px-2 py-0.5 rounded-sm">Log Bot:</span>
+                    <span className="text-stone-700 font-mono text-[11px] truncate">{automationServerInfo.lastCronStatus}</span>
+                  </div>
+                )}
+
+                {/* Cron Webhook URL */}
+                <div className="p-2.5 bg-white rounded-lg border border-stone-200 flex items-center justify-between gap-2 text-xs">
+                  <div className="min-w-0">
+                    <span className="text-[10px] text-stone-500 font-bold block uppercase">URL Webhook Cron Pengingat (External Pinger):</span>
+                    <span className="text-[11px] font-mono text-stone-700 truncate select-all block">
+                      {typeof window !== 'undefined' ? `${window.location.origin}/api/cron-reminder` : '/api/cron-reminder'}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const url = typeof window !== 'undefined' ? `${window.location.origin}/api/cron-reminder` : '';
+                      handleCopy(url, 'cron-url');
+                    }}
+                    className="px-2.5 py-1 bg-stone-100 hover:bg-stone-200 text-stone-800 rounded-lg text-xs font-bold transition flex items-center gap-1 shrink-0 cursor-pointer"
+                  >
+                    {copiedKey === 'cron-url' ? <Check size={12} className="text-emerald-600" /> : <Copy size={12} />}
+                    <span>Salin</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* SAVE ACTION BAR */}
+              <div className="pt-2 sticky bottom-0 bg-white/95 backdrop-blur-xs py-2 border-t border-stone-200 flex flex-col sm:flex-row items-center justify-between gap-3">
+                {/* Feedback message */}
+                <div className="text-xs min-h-[24px] flex items-center">
+                  {automationSaveMsg && (
+                    <div className={`p-2 rounded-lg text-xs font-bold flex items-center gap-2 ${
+                      automationSaveMsg.success ? 'bg-emerald-100 text-emerald-900 border border-emerald-300' : 'bg-rose-100 text-rose-900 border border-rose-300'
+                    }`}>
+                      {automationSaveMsg.success ? <CheckCircle2 size={14} className="text-emerald-700" /> : <AlertCircle size={14} className="text-rose-700" />}
+                      <span>{automationSaveMsg.text}</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 w-full sm:w-auto">
+                  <button
+                    type="button"
+                    onClick={fetchAutomationSettings}
+                    className="px-3 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5"
+                  >
+                    <RefreshCw size={13} />
+                    <span>Muat Ulang</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isSavingAutomation}
+                    onClick={handleSaveAutomationSettings}
+                    className="flex-1 sm:flex-initial px-5 py-2.5 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-xl text-xs font-black transition cursor-pointer flex items-center justify-center gap-2 shadow-md shadow-emerald-700/20"
+                  >
+                    <Check size={15} className={isSavingAutomation ? 'animate-spin' : ''} />
+                    <span>{isSavingAutomation ? 'Menyimpan Pengaturan...' : '💾 Simpan Pengaturan Pesan Otomatis'}</span>
+                  </button>
+                </div>
+              </div>
+
+            </div>
+          )}
+
+          {/* TAB 3: KEEP-ALIVE 24/7 & UPTIMEROBOT GUIDE */}
           {activeTab === 'uptime' && (
             <div className="space-y-4">
               <div className="p-3.5 bg-gradient-to-r from-emerald-950 to-teal-900 text-white rounded-xl shadow-md border border-emerald-800/40 space-y-2">

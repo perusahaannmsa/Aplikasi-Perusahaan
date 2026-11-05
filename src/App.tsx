@@ -34,7 +34,7 @@ import { CompanySwitcherModal } from './components/CompanySwitcherModal';
 import { InternalMemoManager } from './components/InternalMemoManager';
 import { EmployeeLoanManager } from './components/EmployeeLoanManager';
 import { ThemeSelectorModal, AppTheme } from './components/ThemeSelectorModal';
-import { getSynchronizedAttendanceWorkers } from './utils/loanUtils';
+import { getSynchronizedAttendanceWorkers, getSavedEmployeeLoans, saveEmployeeLoans } from './utils/loanUtils';
 import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, syncInvoiceSubmissionToAgenda, formatDateIndonesian } from './utils';
 import { areNamesSimilar, toTitleCase } from './utils/nameConsolidation';
 import { 
@@ -2382,12 +2382,16 @@ export default function App() {
       lokasi: 'Lt.1',
       tanggal: loan.tanggalPengambilanPinjaman || loan.tanggalPermohonan || new Date().toISOString().split('T')[0],
       jenisPengajuan: 'Pinjaman Karyawan',
+      loanId: loan.id,
+      loanNumber: loan.nomorPinjaman,
       kode: docKode,
       dibayarkanKepada: loan.namaKaryawan,
       dibayarkanDengan: 'Cek/Transfer',
       status: 'Belum Lunas',
-      notes: `Pencairan Pinjaman Karyawan No. ${loan.nomorPinjaman} atas nama ${loan.namaKaryawan} (${loan.divisi}). Alasan: ${loan.alasanPeminjaman}. Ket: ${loan.caraPembayaran}`,
+      notes: `Pencairan Pinjaman Karyawan No. ${loan.nomorPinjaman} atas nama ${loan.namaKaryawan} (${loan.divisi || 'Karyawan'}). Alasan: ${loan.alasanPeminjaman || '-'}. Skema: ${loan.caraPembayaran || '-'}`,
       dibuatOleh: userProfile ? userProfile.fullName : 'Nur Wahyudi',
+      diajukanOleh: loan.namaKaryawan,
+      diajukanJabatan: loan.peminjamJabatan || 'Karyawan',
       disetujuiOleh: loan.financeNama || 'Harijon',
       disetujuiJabatan: loan.financeJabatan || 'Direktur Keuangan',
       diverifikasiOleh: loan.atasanNama || 'Andi Muhammad Rifki',
@@ -2400,14 +2404,33 @@ export default function App() {
         {
           id: 'item_loan_' + Date.now(),
           no: 1,
-          item: `Pinjaman Karyawan: ${loan.namaKaryawan} (${loan.divisi})`,
+          item: `Pinjaman Karyawan: ${loan.namaKaryawan} (${loan.divisi || 'Karyawan'})`,
           jumlahVolume: '1 Paket',
           total: loan.jumlahPinjaman,
-          keterangan: `No. Pinjaman ${loan.nomorPinjaman} - ${loan.caraPembayaran}`
+          keterangan: `No. Pinjaman ${loan.nomorPinjaman} - ${loan.caraPembayaran || '-'}`
         }
       ],
       createdAt: new Date().toISOString()
     };
+
+    // Update loan record with the linked voucher
+    try {
+      const currentLoans = getSavedEmployeeLoans();
+      const updatedLoans = currentLoans.map(l => {
+        if (l.id === loan.id || l.nomorPinjaman === loan.nomorPinjaman) {
+          return {
+            ...l,
+            linkedSubmissionId: newLoanSubmission.id,
+            linkedSubmissionKode: newLoanSubmission.kode,
+            status: l.status === 'Menunggu Persetujuan' ? 'Disetujui' : l.status
+          };
+        }
+        return l;
+      });
+      saveEmployeeLoans(updatedLoans);
+    } catch (loanErr) {
+      console.warn('Notice updating linked loan:', loanErr);
+    }
 
     setEditingSubmission(newLoanSubmission);
     setView('form');
@@ -3538,6 +3561,7 @@ export default function App() {
             onOpenConsolidateModal={() => setIsConsolidateNamesModalOpen(true)}
             onOpenPph23View={() => setView('pph23')}
             onOpenRabView={() => setView('rab')}
+            onOpenLoanManager={() => setView('pinjaman')}
             onSelect={(sub, initialTab) => {
               try { sessionStorage.setItem('sublist_scrollPos', window.scrollY.toString()); } catch (e) {}
               triggerGoogleDriveAutoRefresh('lihat-transaksi', true, true).catch(() => {});
@@ -3869,6 +3893,11 @@ export default function App() {
             workers={getSynchronizedAttendanceWorkers()}
             userProfile={userProfile}
             onCreateVoucher={handleCreateVoucherFromLoan}
+            submissions={submissions}
+            onViewSubmission={(sub) => {
+              setEditingSubmission(sub);
+              setView('form');
+            }}
           />
         )}
 

@@ -51,13 +51,17 @@ interface EmployeeLoanManagerProps {
   workers?: Worker[];
   userProfile?: any;
   onCreateVoucher?: (loan: EmployeeLoan) => void;
+  submissions?: Submission[];
+  onViewSubmission?: (sub: Submission) => void;
 }
 
 export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
   onBackToList,
   workers: propWorkers = [],
   userProfile,
-  onCreateVoucher
+  onCreateVoucher,
+  submissions = [],
+  onViewSubmission
 }) => {
   const [loans, setLoans] = useState<EmployeeLoan[]>(() => getSavedEmployeeLoans());
   const [searchQuery, setSearchQuery] = useState('');
@@ -793,6 +797,14 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
             filteredLoans.map((loan) => {
               const summary = calculateLoanSummary(loan);
               const payments = loan.payments || [];
+              const linkedVoucher = submissions.find(s => 
+                (loan.linkedSubmissionId && s.id === loan.linkedSubmissionId) ||
+                (loan.linkedSubmissionKode && s.kode === loan.linkedSubmissionKode) ||
+                (s.loanId && s.loanId === loan.id) ||
+                (s.loanNumber && s.loanNumber === loan.nomorPinjaman) ||
+                (s.notes && s.notes.includes(loan.nomorPinjaman)) ||
+                (s.items && s.items.some(it => it.keterangan && it.keterangan.includes(loan.nomorPinjaman)))
+              );
 
               return (
                 <div
@@ -857,6 +869,32 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
                           </>
                         )}
                       </div>
+
+                      {/* Linked Voucher HO Badge & Status */}
+                      {linkedVoucher && (
+                        <div className="pt-1.5 flex items-center gap-2 flex-wrap">
+                          <div className="inline-flex items-center gap-2 px-2.5 py-1 bg-emerald-50 border border-emerald-300 rounded-xl text-xs shadow-3xs">
+                            <FileCheck size={13} className="text-emerald-700 shrink-0" />
+                            <span className="text-stone-600 font-medium">Voucher HO:</span>
+                            <span className="font-mono font-black text-emerald-950">{linkedVoucher.kode}</span>
+                            <span className={`px-2 py-0.5 rounded-full text-[9.5px] font-bold uppercase ${
+                              linkedVoucher.status === 'Lunas' ? 'bg-emerald-200 text-emerald-900 border border-emerald-300' : 'bg-amber-100 text-amber-900 border border-amber-300'
+                            }`}>
+                              {linkedVoucher.status === 'Lunas' ? 'LUNAS (SUDAH DIBAYAR)' : 'BELUM DIBAYAR'}
+                            </span>
+                            {onViewSubmission && (
+                              <button
+                                type="button"
+                                onClick={() => onViewSubmission(linkedVoucher)}
+                                className="text-emerald-800 hover:text-emerald-950 font-bold ml-1 underline flex items-center gap-1 cursor-pointer"
+                              >
+                                <span>Buka Dokumen</span>
+                                <ExternalLink size={10} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     {/* Middle: Kalkulasi Finansial & Progress */}
@@ -903,6 +941,33 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
 
                     {/* Right: Action Buttons */}
                     <div className="flex flex-row lg:flex-col items-center lg:items-stretch gap-1.5 shrink-0 self-end lg:self-center w-full lg:w-auto pt-2 lg:pt-0 border-t lg:border-t-0 border-stone-100">
+                      {/* Direct Voucher HO Creation or Open Action */}
+                      {linkedVoucher ? (
+                        onViewSubmission && (
+                          <button
+                            type="button"
+                            onClick={() => onViewSubmission(linkedVoucher)}
+                            className="flex-1 lg:flex-none px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-3xs cursor-pointer"
+                            title={`Buka Formulir Voucher HO ${linkedVoucher.kode}`}
+                          >
+                            <FileCheck size={13} className="text-emerald-700" />
+                            <span>Voucher {linkedVoucher.kode}</span>
+                          </button>
+                        )
+                      ) : (
+                        onCreateVoucher && (
+                          <button
+                            type="button"
+                            onClick={() => onCreateVoucher(loan)}
+                            className="flex-1 lg:flex-none px-3 py-1.5 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-md shadow-amber-600/20 cursor-pointer"
+                            title="Buat Voucher Transaksi HO untuk pencairan pinjaman ini"
+                          >
+                            <FileText size={13} />
+                            <span>+ Buat Voucher HO</span>
+                          </button>
+                        )
+                      )}
+
                       {summary.sisaPinjaman > 0 && (
                         <button
                           type="button"

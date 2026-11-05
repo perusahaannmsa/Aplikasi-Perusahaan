@@ -468,6 +468,11 @@ async function _doInitWhatsApp(forceRestart = false) {
             continue;
           }
           
+          const masterAutoSend = state.masterAutoSendEnabled !== false;
+          const aiAutoReply = state.enableAiAutoReply !== false;
+          const allowLocationCheckin = state.allowLocationCheckin !== false;
+          const autoReplyScope = state.autoReplyScope || "all";
+
           const workers = state.workers || [];
           
           // Normalize phone function
@@ -483,7 +488,8 @@ async function _doInitWhatsApp(forceRestart = false) {
           });
           
           if (!worker) {
-            continue;
+            // If sender is not a registered worker and masterAutoSend is off, completely ignore
+            if (!masterAutoSend) continue;
           }
           
           // Get current date in Jakarta timezone (YYYY-MM-DD)
@@ -613,6 +619,11 @@ Silakan pilih alasan ketidakhadiran Anda hari ini dengan membalas pesan ini meng
               await sock.sendMessage(senderJid, { text: responseText });
             }
           } else if (messageText) {
+            // If automated message sending is paused, do not reply automatically
+            if (!masterAutoSend) {
+              continue;
+            }
+
             const cleanMsg = messageText.toLowerCase().trim();
             const isMenuKeyword = cleanMsg === "menu" || cleanMsg === "bantuan" || cleanMsg === "help";
             
@@ -753,11 +764,11 @@ ${attendanceUrl}
    • *Alpa* (Tidak Hadir)
 4️⃣ 🤖 *Tanya AI Bisnis*: Anda juga dapat bertanya seputar info pengeluaran, voucher, atau petty cash!`;
               await sock.sendMessage(senderJid, { text: responseText });
-            } else {
+            } else if (aiAutoReply) {
               // Route to Gemini AI Knowledge for business/transaction queries
               await handleBusinessAiQuery(messageText, senderJid, workerName);
             }
-          } else if (messageText && !worker) {
+          } else if (messageText && !worker && masterAutoSend) {
             // General query from an unlisted number or admin
             const cleanMsg = messageText.toLowerCase().trim();
             const isAttendanceLinkQuery = 
@@ -783,7 +794,7 @@ Berikut tautan resmi Portal Presensi Mandiri PT NMSA:
 
 Silakan buka tautan di atas untuk mengakses menu absensi dan mencatat kehadiran harian.`;
               await sock.sendMessage(senderJid, { text: responseText });
-            } else {
+            } else if (aiAutoReply && autoReplyScope !== "workers_only") {
               await handleBusinessAiQuery(messageText, senderJid);
             }
           }

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Submission, ActivityLog } from '../types';
 import { formatRupiah, formatDateIndonesian, isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, sortSubmissionsDescending } from '../utils';
 import { getVoucherShareLink } from '../utils/appLinks';
-import { Search, Eye, Edit2, Trash2, Calendar, MapPin, DollarSign, Plus, Copy, RefreshCw, Cloud, FileText, Database, History, FileSpreadsheet, CheckCircle, AlertCircle, Printer, Check, ExternalLink, Coins, User, Bell, ChevronDown, Sparkles, Share2, Send, MoreVertical, Receipt, Building2, X, AlertTriangle, Info, Layers, Filter } from 'lucide-react';
+import { Search, Eye, Edit2, Trash2, Calendar, MapPin, DollarSign, Plus, Copy, RefreshCw, Cloud, FileText, Database, History, FileSpreadsheet, CheckCircle, AlertCircle, Printer, Check, ExternalLink, Coins, User, Bell, ChevronDown, Sparkles, Share2, Send, MoreVertical, Receipt, Building2, X, AlertTriangle, Info, Layers, Filter, CreditCard } from 'lucide-react';
 import { loadActivityLogsFromFirestore, isFirebaseConfigured, triggerGoogleDriveAutoRefresh } from '../firebase';
 import { LiveClock } from './LiveClock';
 import { normalizeText } from '../utils/duplicateDetector';
@@ -14,6 +14,7 @@ interface SubmissionsListProps {
   onEdit: (submission: Submission) => void;
   onOpenSppdEditor?: (submission: Submission) => void;
   onOpenSppdManager?: () => void;
+  onOpenLoanManager?: () => void;
   onDelete: (id: string) => void;
   onDuplicate: (submission: Submission) => void;
   onAddNew: () => void;
@@ -35,6 +36,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   onEdit,
   onOpenSppdEditor,
   onOpenSppdManager,
+  onOpenLoanManager,
   onDelete,
   onDuplicate,
   onAddNew,
@@ -1625,6 +1627,21 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                           </span>
                         )}
 
+                        {(sub.loanNumber || sub.jenisPengajuan === 'Pinjaman Karyawan' || sub.notes?.includes('PK-')) && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (onOpenLoanManager) onOpenLoanManager();
+                            }}
+                            className="inline-flex items-center gap-1 text-[9px] font-mono bg-blue-700 hover:bg-blue-800 text-white font-black px-2 py-0.5 rounded-md shadow-3xs uppercase tracking-wider cursor-pointer"
+                            title="Buka Modul Pinjaman Karyawan"
+                          >
+                            <CreditCard size={10} />
+                            <span>Pinjaman: {sub.loanNumber || 'PK'}</span>
+                          </button>
+                        )}
+
                         {(() => {
                           const displayFileObj = (sub.googleDriveFiles || []).find(f => !f.isF1 && !f.isF2 && !f.isBuktiPembayaran) || 
                                                  (sub.googleDriveFileUrl && !sub.googleDriveFileName?.startsWith('F1 -') && !sub.googleDriveFileName?.startsWith('F2 -') ? { url: sub.googleDriveFileUrl, name: sub.googleDriveFileName } : null) || 
@@ -1797,6 +1814,21 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                               <span className="inline-block text-[9px] font-mono bg-violet-600 text-white font-black px-2 py-0.5 rounded-md shadow-3xs uppercase tracking-wider" title={`Custodian: ${sub.pettyCashCustodian}`}>
                                 Petty Cash
                               </span>
+                            )}
+
+                            {(sub.loanNumber || sub.jenisPengajuan === 'Pinjaman Karyawan' || sub.notes?.includes('PK-')) && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (onOpenLoanManager) onOpenLoanManager();
+                                }}
+                                className="inline-flex items-center gap-1 text-[9px] font-mono bg-blue-700 hover:bg-blue-800 text-white font-black px-2 py-0.5 rounded-md shadow-3xs uppercase tracking-wider cursor-pointer"
+                                title="Buka Modul Pinjaman Karyawan"
+                              >
+                                <CreditCard size={10} />
+                                <span>Pinjaman: {sub.loanNumber || 'PK'}</span>
+                              </button>
                             )}
 
 
