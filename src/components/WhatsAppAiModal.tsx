@@ -228,20 +228,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
   // Fetch WhatsApp connection status from active server or saved personal account
   const fetchStatus = async () => {
     try {
-      // 1. Check if user has explicitly connected their own personal WhatsApp
-      const savedPhone = typeof window !== 'undefined' ? localStorage.getItem('nmsa_wa_phone') : null;
-      const isCustomConnected = typeof window !== 'undefined' && localStorage.getItem('nmsa_wa_connected') === 'true';
-      if (isCustomConnected && savedPhone) {
-        setStatus('connected');
-        setConnectedUser({
-          id: `${savedPhone}@s.whatsapp.net`,
-          name: localStorage.getItem('nmsa_wa_name') || `WhatsApp Pribadi (${savedPhone})`
-        });
-        setErrorMessage(null);
-        return;
-      }
-
-      // 2. Check server status for real Baileys connection / QR code
+      // 1. Check server status for real Baileys connection / live QR code
       const res = await apiFetch('/api/wa/status');
       if (res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -249,6 +236,12 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
           setStatus('connected');
           setConnectedUser(data.user);
           setQrCode(null);
+          setErrorMessage(null);
+          return;
+        }
+        if (data.status === 'qr' && data.qr) {
+          setQrCode(data.qr);
+          setStatus('qr');
           setErrorMessage(null);
           return;
         }
@@ -261,6 +254,19 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
         if (data.status) {
           setStatus(data.status);
         }
+      }
+
+      // 2. Check if user has explicitly connected their own personal WhatsApp in localStorage
+      const savedPhone = typeof window !== 'undefined' ? localStorage.getItem('nmsa_wa_phone') : null;
+      const isCustomConnected = typeof window !== 'undefined' && localStorage.getItem('nmsa_wa_connected') === 'true';
+      if (isCustomConnected && savedPhone && status === 'disconnected') {
+        setStatus('connected');
+        setConnectedUser({
+          id: `${savedPhone}@s.whatsapp.net`,
+          name: localStorage.getItem('nmsa_wa_name') || `WhatsApp Pribadi (${savedPhone})`
+        });
+        setErrorMessage(null);
+        return;
       }
 
       // 3. Fallback: Check Firebase Firestore (for Vercel serverless syncing with active backend)

@@ -7805,7 +7805,7 @@
       "submissionCode": "BKK-NMSA/VIII/26/1036"
     }
   ],
-  "attendancePin": "2550",
+  "attendancePin": "2551",
   "signatures": {},
   "pettyCashHolders": [
     "Suryo Pranoto",
@@ -41702,15 +41702,16 @@
   ],
   "requireFridaySignature": true,
   "fridayVerifications": {},
-  "lastCronPing": "",
-  "lastCronStatus": "Gagal mengirim pengingat otomatis (Sistem Internal): WhatsApp Bot belum terhubung.",
+  "lastCronPing": "2026-11-05 13.03.20 WIB",
+  "lastCronStatus": "Pengingat otomatis dilewati: WhatsApp Bot belum terhubung.",
   "lastCronSentDate": "",
   "adminUsername": "admin",
   "adminPassword": "admin123",
   "adminToken": "c82bbb9c-0fdf-4204-a16a-154bd888762d",
-  "lastPinDate": "2026-11-04",
+  "lastPinDate": "2026-11-05",
   "bankStatements": [],
   "internalMemos": [],
   "waConnected": false,
-  "waUser": null
+  "waUser": null,
+  "lastHostOrigin": "http://localhost:3000"
 }

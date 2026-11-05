@@ -24,7 +24,8 @@ import {
   generateBusinessAiReply,
   recordKeepAlivePing,
   getKeepAliveInfo,
-  hasAuthBackup
+  hasAuthBackup,
+  isWhatsAppConnected
 } from "./server/wa-bot";
 import { getDynamicReminderMessage } from "./src/utils/reminderMessageGenerator";
 
@@ -3875,7 +3876,13 @@ app.post("/api/wa/send-test", async (req, res) => {
   }
   const { phone, message } = req.body;
   if (!phone || !message) {
-    return res.status(400).json({ error: "Nomor WhatsApp dan pesan wajib diisi." });
+    return res.status(400).json({ success: false, error: "Nomor WhatsApp dan pesan wajib diisi." });
+  }
+  if (!isWhatsAppConnected()) {
+    return res.status(400).json({ 
+      success: false, 
+      error: "WhatsApp belum terhubung. Silakan pindai QR code atau tautkan nomor telepon terlebih dahulu." 
+    });
   }
   const result = await sendWhatsAppMessage(phone, message);
   res.json(result);
@@ -4380,8 +4387,8 @@ app.get("/api/check-holiday", async (req, res) => {
   });
 });
 
-// GET /api/cron-reminder (UptimeRobot automated pinger & manual click trigger)
-app.get("/api/cron-reminder", async (req, res) => {
+// GET /api/cron-reminder & /api/cron/late-reminder (UptimeRobot automated pinger & manual click trigger)
+app.all(["/api/cron-reminder", "/api/cron/late-reminder"], async (req, res) => {
   const force = req.query.force === "true";
   const state = readState();
   const todayYMD = getJakartaDateStr();
@@ -4432,13 +4439,13 @@ app.get("/api/cron-reminder", async (req, res) => {
     console.log(`Cron execution triggered: force=${force}, isTimeTrigger=${isTimeTrigger}, alreadySentToday=${alreadySentToday}`);
     
     // Check WhatsApp connection status
-    const waStatus = getWhatsAppStatus();
-    if (waStatus.status !== "connected") {
-      state.lastCronStatus = `Gagal mengirim pengingat otomatis: WhatsApp Bot belum terhubung/scan.`;
+    if (!isWhatsAppConnected()) {
+      state.lastCronStatus = `Pengingat otomatis dilewati: WhatsApp Bot belum terhubung.`;
       writeState(state);
-      return res.status(500).json({ 
+      return res.json({ 
         success: false, 
-        message: "Gagal: WhatsApp Bot belum terhubung. Silakan hubungkan via scan QR code di menu pengaturan admin terlebih dahulu." 
+        message: "Pengingat dilewati: WhatsApp Bot belum terhubung. Silakan hubungkan WhatsApp di menu pengaturan terlebih dahulu.",
+        notConnected: true
       });
     }
 
@@ -4471,6 +4478,12 @@ app.get("/api/cron-reminder", async (req, res) => {
     const hostOrigin = req.protocol + "://" + req.get("host");
 
     for (const worker of absentWorkers) {
+      if (!isWhatsAppConnected()) {
+        errors.push("Koneksi WhatsApp terputus. Sisa antrean pengingat dihentikan.");
+        console.warn("[Cron Late Reminder] WhatsApp disconnected during broadcast. Halting remaining queue.");
+        break;
+      }
+
       if (!worker.phoneNumber) {
         failedCount++;
         continue;
@@ -4490,11 +4503,14 @@ app.get("/api/cron-reminder", async (req, res) => {
       } else {
         failedCount++;
         if (result.error) errors.push(result.error);
+        if (!isWhatsAppConnected()) {
+          console.warn("[Cron Late Reminder] WhatsApp disconnected after delivery failure. Halting remaining queue.");
+          break;
+        }
       }
 
-      // Anti-Spam Safe Rate Limiting: 1.5 to 2.5 seconds delay per message to prevent WhatsApp rate-limit while ensuring fast completion without HTTP timeout
-      const safeDelay = Math.floor(Math.random() * 1000) + 1500;
-      await new Promise(r => setTimeout(r, safeDelay));
+      // Safe delay between messages
+      await new Promise(r => setTimeout(r, 1200));
     }
 
     state.lastCronStatus = `Berhasil mengirim pengingat ke ${sentCount} karyawan.${failedCount > 0 ? ` Gagal: ${failedCount} karyawan.` : ""}`;
@@ -4594,12 +4610,12 @@ app.post("/api/trigger-bot-reminder", async (req, res) => {
   try {
     const state = readState();
     const todayYMD = getJakartaDateStr();
-    const waStatus = getWhatsAppStatus();
     
-    if (waStatus.status !== "connected") {
-      return res.status(500).json({ 
+    if (!isWhatsAppConnected()) {
+      return res.json({ 
         success: false, 
-        message: "Gagal: WhatsApp Bot belum terhubung. Silakan scan QR code WhatsApp terlebih dahulu." 
+        message: "Pengingat belum dapat dikirim: WhatsApp Bot belum terhubung. Silakan hubungkan WhatsApp di menu pengaturan terlebih dahulu.",
+        notConnected: true
       });
     }
 
@@ -4629,6 +4645,12 @@ app.post("/api/trigger-bot-reminder", async (req, res) => {
     const fridayParam = isFriday ? "&friday=true" : "";
 
     for (const worker of absentWorkers) {
+      if (!isWhatsAppConnected()) {
+        errors.push("Koneksi WhatsApp terputus. Sisa pengiriman dihentikan.");
+        console.warn("[Trigger Bot Reminder] WhatsApp disconnected during broadcast, halted.");
+        break;
+      }
+
       if (!worker.phoneNumber) {
         failedCount++;
         continue;
@@ -4643,10 +4665,13 @@ app.post("/api/trigger-bot-reminder", async (req, res) => {
       } else {
         failedCount++;
         if (result.error) errors.push(result.error);
+        if (!isWhatsAppConnected()) {
+          break;
+        }
       }
 
       // Safe delay between messages
-      await new Promise(r => setTimeout(r, 1500));
+      await new Promise(r => setTimeout(r, 1200));
     }
 
     state.lastCronStatus = `Pengingat manual terkirim ke ${sentCount} karyawan.${failedCount > 0 ? ` Gagal: ${failedCount} karyawan.` : ""}`;
@@ -4722,8 +4747,7 @@ function initBackgroundAutoReminder() {
           return;
         }
 
-        const waStatus = getWhatsAppStatus();
-        if (waStatus.status !== "connected") {
+        if (!isWhatsAppConnected()) {
           return;
         }
 
@@ -4748,12 +4772,20 @@ function initBackgroundAutoReminder() {
         let sentCount = 0;
 
         for (const worker of absentWorkers) {
+          if (!isWhatsAppConnected()) {
+            console.log(`[AutoReminder Daemon] WhatsApp disconnected during broadcast, halted remaining queue.`);
+            break;
+          }
           if (!worker.phoneNumber) continue;
           const loginUrl = `${hostOrigin}/?view=absen&workerId=${encodeURIComponent(worker.id)}&id=${encodeURIComponent(worker.id)}&quick=true${fridayParam}`;
           const message = getRandomReminderMessage(worker.name, loginUrl, worker.id, todayYMD);
           const result = await sendWhatsAppMessage(worker.phoneNumber, message);
-          if (result.success) sentCount++;
-          await new Promise(r => setTimeout(r, 1500));
+          if (result.success) {
+            sentCount++;
+          } else if (!isWhatsAppConnected()) {
+            break;
+          }
+          await new Promise(r => setTimeout(r, 1200));
         }
 
         state.lastCronSentDate = todayYMD;

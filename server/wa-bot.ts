@@ -249,29 +249,33 @@ export function getKeepAliveInfo() {
   };
 }
 
+// Check if live WhatsApp WebSocket connection is open and active
+export function isWhatsAppConnected(): boolean {
+  return connectionStatus === "connected" && sock !== null;
+}
+
 // Check status helper
 export function getWhatsAppStatus() {
   const hasLocalCreds = fs.existsSync(path.join(AUTH_DIR, "creds.json"));
   const hasBackup = hasAuthBackup();
-  let effectiveStatus = connectionStatus;
   let effectiveUser = connectedUser;
 
-  // If no in-memory user yet, check persistent data-store.json for user-linked WhatsApp
+  // Retrieve user info from data-store if not present in memory
   if (!effectiveUser) {
     try {
       const dsPath = path.join(process.cwd(), "data-store.json");
       if (fs.existsSync(dsPath)) {
         const ds = JSON.parse(fs.readFileSync(dsPath, "utf-8"));
-        if (ds.waConnected && ds.waUser) {
+        if (ds.waUser) {
           effectiveUser = ds.waUser;
-          effectiveStatus = "connected";
         }
       }
     } catch (e) {}
   }
 
   return {
-    status: effectiveStatus,
+    status: connectionStatus,
+    isConnected: isWhatsAppConnected(),
     qr: qrCodeDataUrl,
     user: effectiveUser,
     error: lastError,
@@ -1003,8 +1007,8 @@ export async function disconnectWhatsApp(autoRestart = false) {
 // Send Message helper with Anti-Spam Protections
 export async function sendWhatsAppMessage(phoneNumber: string, text: string): Promise<{ success: boolean; error?: string }> {
   try {
-    if (connectionStatus !== "connected" || !sock) {
-      throw new Error("WhatsApp bot is not connected.");
+    if (!isWhatsAppConnected()) {
+      return { success: false, error: "WhatsApp bot is not connected." };
     }
 
     const jid = formatToWaJid(phoneNumber);
@@ -1012,27 +1016,46 @@ export async function sendWhatsAppMessage(phoneNumber: string, text: string): Pr
     
     // Enhanced Anti-Spam Simulation: Realistic human typing presence
     try {
-      await sock.presenceSubscribe(jid);
-      await sock.sendPresenceUpdate('composing', jid);
-      // Realistic typing delay calculated based on message length with random jitter (2.5s - 5s)
-      const baseDelay = Math.min(5000, Math.max(2500, text.length * 20));
-      const typingJitter = Math.floor(Math.random() * 1500);
-      await new Promise(r => setTimeout(r, baseDelay + typingJitter));
-      await sock.sendPresenceUpdate('paused', jid);
+      if (sock) {
+        await sock.presenceSubscribe(jid).catch(() => {});
+        await sock.sendPresenceUpdate('composing', jid).catch(() => {});
+        const baseDelay = Math.min(3000, Math.max(1200, text.length * 15));
+        const typingJitter = Math.floor(Math.random() * 800);
+        await new Promise(r => setTimeout(r, baseDelay + typingJitter));
+        await sock.sendPresenceUpdate('paused', jid).catch(() => {});
+      }
     } catch (e) {
       // ignore presence errors
     }
 
+    if (!isWhatsAppConnected()) {
+      return { success: false, error: "WhatsApp bot is not connected." };
+    }
+
     await sock.sendMessage(jid, { text });
 
-    // Anti-spam post-send jitter delay to prevent rapid-fire pattern detection by WhatsApp
-    const postSendDelay = 3000 + Math.floor(Math.random() * 3000);
+    // Anti-spam post-send jitter delay
+    const postSendDelay = 1500 + Math.floor(Math.random() * 1500);
     await new Promise(r => setTimeout(r, postSendDelay));
 
     return { success: true };
   } catch (err: any) {
-    console.error(`Failed to send WhatsApp message to ${phoneNumber}:`, err);
-    return { success: false, error: err.message || "Unknown error" };
+    const isConnectionClosed = 
+      err?.output?.statusCode === 428 || 
+      err?.message?.includes("Connection Closed") || 
+      err?.message?.includes("Precondition Required");
+
+    if (isConnectionClosed) {
+      console.warn(`[WhatsApp Bot] Connection closed while sending message to ${phoneNumber}. Scheduling reconnect...`);
+      connectionStatus = "connecting";
+      setTimeout(() => {
+        initWhatsApp().catch(() => {});
+      }, 500);
+      return { success: false, error: "Connection Closed (428 Precondition Required)" };
+    }
+
+    console.warn(`[WhatsApp Bot] Could not deliver message to ${phoneNumber}:`, err?.message || err);
+    return { success: false, error: err?.message || "Delivery failed" };
   }
 }
 
