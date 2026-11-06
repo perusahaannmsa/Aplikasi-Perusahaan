@@ -17,6 +17,11 @@ import { SppdIntegration, SppdRecord } from './SppdIntegration';
 import { Trash2, Plus, ArrowLeft, Save, AlertCircle, Sparkles, Cloud, Loader2, FileText, Coins, FileUp, ExternalLink, GitBranch, X, Calculator, Percent, Tag, Receipt, CalendarX, CalendarCheck, AlertTriangle, Calendar, CheckSquare, Clock, FolderKanban, Building2, CheckCircle2, ChevronDown, ChevronUp, Eye, Info, Layers, Check } from 'lucide-react';
 import { generateF1PdfBytes, generateF2PdfBytes, formatDateIndonesian, convertImageToPdf, formatRupiah, analyzeVolumeInput, checkIsHolidayOrWeekend, getNextWorkday, getPreviousWorkday, formatDateWithDayIndonesian, getDefaultTransactionDate, HolidayCheckResult, calculateTaxDueDate } from '../utils';
 import { areNamesSimilar, toTitleCase } from '../utils/nameConsolidation';
+import {
+  PettyCashCustodiansConfig,
+  loadPettyCashCustodians,
+  getCustodiansForJenis
+} from '../utils/pettyCashCustodians';
 import { 
   findDuplicateItemIndices, 
   removeDuplicateItems, 
@@ -34,6 +39,7 @@ interface SubmissionFormProps {
   onSave: (submission: Submission) => Promise<void> | void;
   onCancel: () => void;
   pettyCashHolders?: string[];
+  custodiansConfig?: PettyCashCustodiansConfig;
   onOpenManageHolders?: () => void;
   onOpenConsolidateModal?: () => void;
 }
@@ -374,6 +380,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
   onSave,
   onCancel,
   pettyCashHolders = [],
+  custodiansConfig: custodiansConfigProp,
   onOpenManageHolders,
   onOpenConsolidateModal,
 }) => {
@@ -416,10 +423,32 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
   const [rekeningTujuan, setRekeningTujuan] = useState(initialSubmission?.rekeningTujuan || '');
   const [notes, setNotes] = useState('');
 
-  // Effective petty cash holders master list
-  const effectiveHolders = (pettyCashHolders && pettyCashHolders.length > 0)
-    ? pettyCashHolders
-    : ['Suryo Pranoto', 'Muhammad Akbar', 'Nurul Izza', 'Andi Dhiya Salsabila'];
+  // Organized petty cash custodians (Lapangan & Kantor Pusat)
+  const [custodiansConfig, setCustodiansConfig] = useState<PettyCashCustodiansConfig>(() => {
+    if (custodiansConfigProp) return custodiansConfigProp;
+    return loadPettyCashCustodians();
+  });
+
+  useEffect(() => {
+    if (custodiansConfigProp) {
+      setCustodiansConfig(custodiansConfigProp);
+    }
+  }, [custodiansConfigProp]);
+
+  // Dynamically resolve petty cash classification and valid custodians strictly based on jenisPengajuan
+  const categoryInfo = useMemo(() => {
+    return getCustodiansForJenis(jenisPengajuan, custodiansConfig);
+  }, [jenisPengajuan, custodiansConfig]);
+
+  // Effective petty cash holders for this current form:
+  // When Jenis is Petty Cash Lapangan -> ONLY Lapangan custodians (Suryo Pranoto, Usmar, Andi Hasnawi, etc.)
+  // When Jenis is Petty Cash Kantor Pusat -> ONLY Pusat custodians (Andi Dhiya Salsabila, Deasy Annisa Syahdane, etc.)
+  // When Jenis is generic Petty Cash -> all registered custodians
+  // When NOT Petty Cash -> empty (no petty cash custodians)
+  const effectiveHolders = useMemo(() => {
+    if (!categoryInfo.isPettyCash) return [];
+    return categoryInfo.custodians;
+  }, [categoryInfo]);
 
   // Invoice fields
   const [isInvoice, setIsInvoice] = useState(false);
@@ -517,28 +546,42 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
     return Array.from(map.values()).sort((a, b) => a.localeCompare(b));
   }, [submissions, effectiveHolders]);
 
-  // Auto-detect transaction classification (Petty Cash, SPPD, Invoice, Salary, or Standard)
+  // Auto-detect transaction classification and auto-switch custodian to category default
   useEffect(() => {
     const jenisLower = (jenisPengajuan || '').toLowerCase();
     const kodeLower = (kode || '').toLowerCase();
 
-    const isPC = jenisLower.includes('petty cash') || jenisLower.includes('kas kecil');
+    const catInfo = getCustodiansForJenis(jenisPengajuan, custodiansConfig);
+    const isPC = catInfo.isPettyCash || jenisLower.includes('petty cash') || jenisLower.includes('kas kecil');
     setIsPettyCash(isPC);
 
     const isS = jenisLower.includes('perjalanan dinas') || jenisLower.includes('sppd');
     setIsSppd(isS);
 
-    if (isPC && !pettyCashCustodian) {
-      const defHolder = effectiveHolders[0] || 'Suryo Pranoto';
-      setPettyCashCustodian(defHolder);
-      if (!dibayarkanKepada) {
-        setDibayarkanKepada(defHolder);
+    if (isPC) {
+      const allowedHolders = catInfo.custodians.length > 0 ? catInfo.custodians : effectiveHolders;
+      const currentVal = (dibayarkanKepada || '').trim();
+
+      // Check if current value already belongs to this category
+      const matched = allowedHolders.find(
+        h => h.toLowerCase() === currentVal.toLowerCase() || areNamesSimilar(h, currentVal).isMatch
+      );
+
+      // If empty or belongs to a different category, update to category default
+      if (!currentVal || !matched) {
+        const targetDef = catInfo.defaultCustodian || allowedHolders[0] || 'Suryo Pranoto';
+        setPettyCashCustodian(targetDef);
+        setDibayarkanKepada(targetDef);
+      } else if (matched && matched !== currentVal) {
+        // Snap to canonical title case
+        setPettyCashCustodian(matched);
+        setDibayarkanKepada(matched);
       }
     }
 
     const isInv = jenisLower.includes('invoice') || jenisLower.includes('tagihan') || kodeLower.includes('inv');
     setIsInvoice(isInv);
-  }, [jenisPengajuan, kode, effectiveHolders]);
+  }, [jenisPengajuan, kode, custodiansConfig, effectiveHolders]);
   // Signatures
   const [dibuatOleh, setDibuatOleh] = useState(() => localStorage.getItem('NUSANTARA_DEFAULT_CREATOR_NAME') || 'Nur Wahyudi');
   const [disetujuiOleh, setDisetujuiOleh] = useState(() => localStorage.getItem('NUSANTARA_DEFAULT_APPROVER_NAME') || '');
@@ -2695,6 +2738,32 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
             <datalist id="preset-jenis">
               {jenisOptions.map(j => <option key={j} value={j} />)}
             </datalist>
+            <div className="flex items-center gap-1.5 mt-1.5">
+              <button
+                type="button"
+                onClick={() => setJenisPengajuan('Petty Cash Lapangan')}
+                className={`text-[10px] font-bold px-2 py-0.5 rounded-md transition cursor-pointer border ${
+                  jenisPengajuan.toLowerCase().includes('lapangan')
+                    ? 'bg-emerald-600 text-white border-emerald-700 shadow-3xs'
+                    : 'bg-stone-50 hover:bg-emerald-50 text-stone-600 hover:text-emerald-800 border-stone-200'
+                }`}
+                title="Pilih Petty Cash Lapangan"
+              >
+                📍 Lapangan
+              </button>
+              <button
+                type="button"
+                onClick={() => setJenisPengajuan('Petty Cash Kantor Pusat')}
+                className={`text-[10px] font-bold px-2 py-0.5 rounded-md transition cursor-pointer border ${
+                  (jenisPengajuan.toLowerCase().includes('pusat') || jenisPengajuan.toLowerCase().includes('ho'))
+                    ? 'bg-amber-600 text-white border-amber-700 shadow-3xs'
+                    : 'bg-stone-50 hover:bg-amber-50 text-stone-600 hover:text-amber-900 border-stone-200'
+                }`}
+                title="Pilih Petty Cash Kantor Pusat"
+              >
+                🏢 Kantor Pusat
+              </button>
+            </div>
           </div>
 
           {/* Kode */}
@@ -2849,33 +2918,51 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
             />
             <datalist id="preset-penerima">
               {isPettyCash 
-                ? Array.from(new Set([...effectiveHolders, ...recipientHistory])).map(p => <option key={p} value={p} />)
+                ? effectiveHolders.map(p => <option key={p} value={p} />)
                 : recipientHistory.map(p => <option key={p} value={p} />)
               }
             </datalist>
 
-            {/* Quick chips for Petty Cash Custodians right inside Dibayarkan Kepada */}
-            {isPettyCash && (
+            {/* Quick chips for Petty Cash Custodians strictly matching category */}
+            {isPettyCash && effectiveHolders.length > 0 && (
               <div className="flex flex-wrap items-center gap-1.5 mt-2">
-                <span className="text-[10px] text-stone-500 font-mono font-semibold">Pilih Cepat:</span>
-                {effectiveHolders.map((holder, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => {
-                      setDibayarkanKepada(holder);
-                      setPettyCashCustodian(holder);
-                    }}
-                    className={`px-2 py-0.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1 ${
-                      dibayarkanKepada === holder
-                        ? 'bg-amber-600 text-white shadow-3xs'
-                        : 'bg-stone-100 hover:bg-amber-100 text-stone-700 hover:text-amber-900 border border-stone-200'
-                    }`}
-                  >
-                    <span>👤</span>
-                    <span>{holder}</span>
-                  </button>
-                ))}
+                <div className="flex items-center gap-1">
+                  <span className="text-[10px] text-stone-500 font-mono font-bold">Pilih Cepat:</span>
+                  <span className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border ${
+                    categoryInfo.category === 'lapangan'
+                      ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                      : categoryInfo.category === 'pusat'
+                      ? 'bg-amber-50 text-amber-900 border-amber-300'
+                      : 'bg-stone-100 text-stone-700 border-stone-250'
+                  }`}>
+                    {categoryInfo.category === 'lapangan' ? '📍 Lapangan' : categoryInfo.category === 'pusat' ? '🏢 Kantor Pusat' : 'Petty Cash'}
+                  </span>
+                </div>
+                {effectiveHolders.map((holder, idx) => {
+                  const isSelected = (dibayarkanKepada || '').trim().toLowerCase() === holder.toLowerCase() ||
+                                     (pettyCashCustodian || '').trim().toLowerCase() === holder.toLowerCase();
+                  return (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => {
+                        setDibayarkanKepada(holder);
+                        setPettyCashCustodian(holder);
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                        isSelected
+                          ? categoryInfo.category === 'lapangan'
+                            ? 'bg-emerald-700 text-white shadow-3xs ring-2 ring-emerald-500'
+                            : 'bg-amber-600 text-white shadow-3xs ring-2 ring-amber-500'
+                          : 'bg-stone-100 hover:bg-amber-100 text-stone-700 hover:text-amber-900 border border-stone-200'
+                      }`}
+                    >
+                      <span className="text-xs">👤</span>
+                      <span>{holder}</span>
+                      {isSelected && <span className="text-[10px]">✓</span>}
+                    </button>
+                  );
+                })}
               </div>
             )}
 

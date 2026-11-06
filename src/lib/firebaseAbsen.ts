@@ -8,7 +8,7 @@ import {
   User,
   signOut
 } from "firebase/auth";
-import { ensureValidDriveToken, setGoogleDriveToken, getStoredGoogleDriveToken, getActiveGoogleDriveAccount, getOrRenewDriveToken } from "../firebase";
+import { ensureValidDriveToken, setGoogleDriveToken, getStoredGoogleDriveToken, getActiveGoogleDriveAccount, getOrRenewDriveToken, isFirestoreQuotaExceeded, markFirestoreQuotaExceeded } from "../firebase";
 import firebaseAppletConfig from "../../firebase-applet-config.json";
 
 // Initialize Firebase with unified applet credentials & target database
@@ -183,6 +183,11 @@ export const saveAttendanceToFirestore = async (
   workersList: any[],
   weeklyReportsList?: any[]
 ): Promise<boolean> => {
+  // If Firestore daily quota is exceeded, bypass immediately to prevent Grpc Write Stream errors
+  if (isFirestoreQuotaExceeded()) {
+    return false;
+  }
+
   // If remote Firestore rules recently rejected writes, avoid spamming RPC streams
   if (Date.now() - lastFirestorePermissionDeniedTime < 180000) {
     return false;
@@ -237,8 +242,15 @@ export const saveAttendanceToFirestore = async (
     return true;
 
   } catch (err: any) {
-    const isPermissionDenied = err?.code === 'permission-denied' || String(err?.message).includes('PERMISSION_DENIED');
-    if (isPermissionDenied) {
+    markFirestoreQuotaExceeded(err);
+    const errStr = String(err?.message || err?.code || err || '');
+    const isPermissionDenied = err?.code === 'permission-denied' || errStr.includes('PERMISSION_DENIED');
+    const isQuotaExceeded = err?.code === 'resource-exhausted' || errStr.includes('RESOURCE_EXHAUSTED') || errStr.includes('Quota exceeded');
+
+    if (isQuotaExceeded) {
+      lastFirestorePermissionDeniedTime = Date.now() + 60 * 60 * 1000 - 180000; // 60 min cooldown
+      console.warn("⚠️ [Firestore Attendance] Kuota harian gratis Firestore telah tercapai (RESOURCE_EXHAUSTED). Menggunakan penyimpanan lokal & server.");
+    } else if (isPermissionDenied) {
       lastFirestorePermissionDeniedTime = Date.now();
       console.warn("⚠️ [Firestore Attendance] Izin tulis ditolak (PERMISSION_DENIED). Menggunakan penyimpanan lokal & server sementara.");
     } else {

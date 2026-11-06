@@ -611,12 +611,13 @@ export const saveCompanyProfileToFirestore = async (company: Partial<CompanyProf
   setActiveCompanyId(cleanId);
 
   // Sync to Firestore if configured
-  if (isFirebaseConfigured() && firestoreDb) {
+  if (isFirebaseConfigured() && firestoreDb && !isFirestoreQuotaExceeded()) {
     try {
       const companyRef = doc(firestoreDb, 'companies', cleanId);
       await setDoc(companyRef, cleanUndefined(payload), { merge: true });
       console.log(`🏬 Profil perusahaan [${cleanCode} - ${cleanId}] berhasil disimpan di Firestore.`);
     } catch (err: any) {
+      markFirestoreQuotaExceeded(err);
       console.warn('Penyimpanan ke Firestore menemui kendala, tersimpan di cache lokal:', err);
     }
   }
@@ -633,7 +634,7 @@ export const switchUserCompany = async (
   localStorage.setItem('NUSANTARA_ACTIVE_COMPANY_ID', cleanId);
   localStorage.setItem('NUSANTARA_ACTIVE_COMPANY_NAME', companyName);
 
-  if (isFirebaseConfigured() && firestoreDb && uid) {
+  if (isFirebaseConfigured() && firestoreDb && uid && !isFirestoreQuotaExceeded()) {
     try {
       const userRef = doc(firestoreDb, 'users', uid);
       await setDoc(userRef, {
@@ -643,6 +644,7 @@ export const switchUserCompany = async (
       }, { merge: true });
       console.log(`👤 User [${uid}] company switched to [${cleanId} - ${companyName}]`);
     } catch (e) {
+      markFirestoreQuotaExceeded(e);
       console.warn('Silent user company update warning:', e);
     }
   }
@@ -763,10 +765,68 @@ export const isFirebaseConfigured = (): boolean => {
   return true;
 };
 
+// Circuit breaker when Firestore daily free quota (Spark Plan) is exhausted
+let lastQuotaExceededTime = 0;
+const QUOTA_COOLDOWN_MS = 60 * 60 * 1000; // 60 minutes cooldown before testing write again (Firestore free quota is daily)
+
+export const isFirestoreQuotaExceeded = (): boolean => {
+  if (lastQuotaExceededTime === 0) {
+    try {
+      const stored = localStorage.getItem('nmsa_fs_quota_exceeded') || sessionStorage.getItem('nmsa_fs_quota_exceeded');
+      if (stored) {
+        const ts = parseInt(stored, 10);
+        if (Date.now() - ts < QUOTA_COOLDOWN_MS) {
+          lastQuotaExceededTime = ts;
+          return true;
+        }
+      }
+    } catch (_) {}
+    return false;
+  }
+  return Date.now() - lastQuotaExceededTime < QUOTA_COOLDOWN_MS;
+};
+
+export const markFirestoreQuotaExceeded = (err?: any) => {
+  const errStr = String(err?.message || err?.code || err || '');
+  const isQuota = 
+    err?.code === 'resource-exhausted' ||
+    errStr.includes('RESOURCE_EXHAUSTED') ||
+    errStr.includes('Quota exceeded') ||
+    errStr.includes('quota exceeded') ||
+    errStr.includes('resource-exhausted');
+
+  if (isQuota) {
+    if (!isFirestoreQuotaExceeded()) {
+      console.warn('⚠️ [Firestore Quota Guard] Kuota harian gratis Firebase (Spark Plan) telah tercapai (RESOURCE_EXHAUSTED). Mengalihkan operasi tulis ke penyimpanan lokal dan backend server sementara.');
+    }
+    lastQuotaExceededTime = Date.now();
+    try {
+      localStorage.setItem('nmsa_fs_quota_exceeded', String(lastQuotaExceededTime));
+      sessionStorage.setItem('nmsa_fs_quota_exceeded', String(lastQuotaExceededTime));
+      window.dispatchEvent(new CustomEvent('firestore-quota-exceeded'));
+    } catch (_) {}
+  }
+};
+
+export const resetFirestoreQuotaCooldown = () => {
+  lastQuotaExceededTime = 0;
+  try {
+    localStorage.removeItem('nmsa_fs_quota_exceeded');
+    sessionStorage.removeItem('nmsa_fs_quota_exceeded');
+    window.dispatchEvent(new CustomEvent('firestore-quota-reset'));
+  } catch (_) {}
+};
+
 // Custom Firestore standard error reporter
 function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errStr = error instanceof Error ? error.message : String(error);
+  const isQuota = (error as any)?.code === 'resource-exhausted' || errStr.includes('RESOURCE_EXHAUSTED') || errStr.includes('Quota exceeded');
+  if (isQuota) {
+    markFirestoreQuotaExceeded(error);
+  }
+
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: errStr,
     authInfo: {
       userId: currentUser?.uid || 'ANONYMOUS_CLIENT_DASHBOARD',
       email: currentUser?.email || null,
@@ -778,8 +838,10 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
     operationType,
     path
   };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+  console.warn('Firestore Notice: ', JSON.stringify(errInfo));
+  if (!isQuota) {
+    throw new Error(JSON.stringify(errInfo));
+  }
 }
 
 // Firebase Auth API Wrappers
@@ -812,7 +874,7 @@ export const ensureUserProfile = async (
   user: User,
   defaults: { companyId?: string; companyName?: string } = {}
 ): Promise<void> => {
-  if (!firestoreDb || !user) return;
+  if (!firestoreDb || !user || isFirestoreQuotaExceeded()) return;
   try {
     const docRef = doc(firestoreDb, 'users', user.uid);
     const snap = await getDoc(docRef);
@@ -836,6 +898,7 @@ export const ensureUserProfile = async (
       }
     }
   } catch (err) {
+    markFirestoreQuotaExceeded(err);
     console.warn('Failed to ensure user profile in Firestore:', err);
   }
 };
@@ -989,7 +1052,7 @@ export const saveAuthorizedDriveEmails = async (_emails: string[]): Promise<void
     localStorage.setItem('NUSANTARA_AUTHORIZED_DRIVES', JSON.stringify(cleanList));
 
     const compId = activeCompanyId || 'nmsa';
-    if (firestoreDb && compId) {
+    if (firestoreDb && compId && !isFirestoreQuotaExceeded()) {
       const companyRef = doc(firestoreDb, 'companies', compId);
       await setDoc(companyRef, {
         authorizedDriveEmails: cleanList,
@@ -998,6 +1061,7 @@ export const saveAuthorizedDriveEmails = async (_emails: string[]): Promise<void
       }, { merge: true });
     }
   } catch (e) {
+    markFirestoreQuotaExceeded(e);
     console.error('Failed to save authorized drive emails:', e);
   }
 };
@@ -1018,7 +1082,7 @@ export const setMasterDriveEmail = async (email: string): Promise<void> => {
     localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', clean);
 
     const compId = activeCompanyId || 'nmsa';
-    if (firestoreDb && compId) {
+    if (firestoreDb && compId && !isFirestoreQuotaExceeded()) {
       const companyRef = doc(firestoreDb, 'companies', compId);
       await setDoc(companyRef, {
         masterDriveEmail: clean,
@@ -1035,6 +1099,7 @@ export const setMasterDriveEmail = async (email: string): Promise<void> => {
       }));
     }
   } catch (e) {
+    markFirestoreQuotaExceeded(e);
     console.error('Failed to set master drive email:', e);
   }
 };
@@ -1213,7 +1278,7 @@ export const saveConnectedDrives = async (drives: ConnectedDrive[]) => {
 
     // Persist to Firestore under company document to share with all users and all menus of this company!
     const targetCompId = activeCompanyId || 'nmsa';
-    if (firestoreDb && targetCompId) {
+    if (firestoreDb && targetCompId && !isFirestoreQuotaExceeded()) {
       try {
         const companyRef = doc(firestoreDb, 'companies', targetCompId);
         await setDoc(companyRef, {
@@ -1222,6 +1287,7 @@ export const saveConnectedDrives = async (drives: ConnectedDrive[]) => {
         }, { merge: true });
         console.log(`☁️ Synced Google Drive credentials to Firestore for company: ${targetCompId}`);
       } catch (fsErr) {
+        markFirestoreQuotaExceeded(fsErr);
         console.warn('Firestore Google Drive credentials sync notice:', fsErr);
       }
     }
@@ -1562,7 +1628,7 @@ export const saveCompanySettingsToFirestore = async (
   }
 
   // 2. Persist to Firestore under companies collection so ALL devices and computers sync automatically
-  if (firestoreDb && compId) {
+  if (firestoreDb && compId && !isFirestoreQuotaExceeded()) {
     try {
       const companyRef = doc(firestoreDb, 'companies', compId);
       const cleanPayload = cleanUndefined({
@@ -1572,6 +1638,7 @@ export const saveCompanySettingsToFirestore = async (
       await setDoc(companyRef, cleanPayload, { merge: true });
       console.log(`☁️ [Cloud Sync] Pengaturan berhasil disimpan ke Firestore (${compId}):`, Object.keys(partialSettings));
     } catch (fsErr) {
+      markFirestoreQuotaExceeded(fsErr);
       console.warn('Firestore company settings sync notice:', fsErr);
     }
   }
@@ -2272,6 +2339,11 @@ export const saveSubmissionToFirestore = async (
     throw new Error('Firebase is not initialized.');
   }
 
+  if (isFirestoreQuotaExceeded()) {
+    console.log(`ℹ️ [Firestore Quota Guard] Operasi simpan submission ${submission.id} ke Firestore dilewati sementara karena batas kuota gratis harian (Spark Plan) tercapai. Data tersimpan aman di penyimpanan lokal & server.`);
+    return;
+  }
+
   const path = `submissions`;
   try {
     // Map our rich React types to their exact expected database fields
@@ -2286,6 +2358,7 @@ export const saveSubmissionToFirestore = async (
     await setDoc(doc(firestoreDb, path, submission.id), cleanedPayload);
     console.log(`☁️ Submission ${submission.id} mapped and saved in Firestore under company ${userCompanyId}.`);
   } catch (error) {
+    markFirestoreQuotaExceeded(error);
     handleFirestoreError(error, OperationType.WRITE, `${path}/${submission.id}`);
   }
 };
@@ -2297,6 +2370,11 @@ export const saveSubmissionsBatchToFirestore = async (
   userCompanyName: string = 'PT Nusantara Mineral Sukses Abadi'
 ): Promise<{ success: boolean; count: number }> => {
   if (!isFirebaseConfigured() || !firestoreDb || submissions.length === 0) {
+    return { success: false, count: 0 };
+  }
+
+  if (isFirestoreQuotaExceeded()) {
+    console.log(`ℹ️ [Firestore Quota Guard] Batch update ${submissions.length} submissions ke Firestore dilewati sementara karena kuota harian tercapai.`);
     return { success: false, count: 0 };
   }
 
@@ -2325,6 +2403,7 @@ export const saveSubmissionsBatchToFirestore = async (
       totalSaved += chunk.length;
       console.log(`☁️ Batch saved ${chunk.length} submissions to Firestore.`);
     } catch (err) {
+      markFirestoreQuotaExceeded(err);
       console.warn('Batch write error in Firestore:', err);
     }
   }
@@ -2338,11 +2417,17 @@ export const deleteSubmissionFromFirestore = async (id: string): Promise<void> =
     throw new Error('Firebase is not initialized.');
   }
 
+  if (isFirestoreQuotaExceeded()) {
+    console.log(`ℹ️ [Firestore Quota Guard] Operasi hapus submission ${id} ke Firestore dilewati karena kuota harian tercapai.`);
+    return;
+  }
+
   const path = `submissions`;
   try {
     await deleteDoc(doc(firestoreDb, path, id));
     console.log(`☁️ Submission ${id} deleted from Firestore.`);
   } catch (error) {
+    markFirestoreQuotaExceeded(error);
     handleFirestoreError(error, OperationType.DELETE, `${path}/${id}`);
   }
 };
@@ -2435,12 +2520,13 @@ export const saveActivityLogToFirestore = async (
     console.warn('Failed to save log to localStorage:', e);
   }
 
-  // 2. Write to Firestore if connected
-  if (isFirebaseConfigured() && firestoreDb) {
+  // 2. Write to Firestore if connected and quota permits
+  if (isFirebaseConfigured() && firestoreDb && !isFirestoreQuotaExceeded()) {
     const path = 'activity_logs';
     try {
       await setDoc(doc(firestoreDb, path, logId), logPayload);
     } catch (err) {
+      markFirestoreQuotaExceeded(err);
       console.warn('Silent write logs rejection - failed to save log to Firestore:', err);
     }
   }
@@ -2588,7 +2674,7 @@ export const saveNpwpRecordsToFirestore = async (records: NpwpRecord[]): Promise
     }).catch(() => {});
   } catch {}
 
-  if (!isFirebaseConfigured() || !firestoreDb) return;
+  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return;
 
   const path = 'npwp_records';
   try {
@@ -2607,6 +2693,7 @@ export const saveNpwpRecordsToFirestore = async (records: NpwpRecord[]): Promise
 
     console.log(`☁️ ${records.length} NPWP records synced to Firestore.`);
   } catch (error) {
+    markFirestoreQuotaExceeded(error);
     console.warn('Gagal menyimpan NPWP ke Firestore:', error);
   }
 };
@@ -2630,12 +2717,13 @@ export const saveAccurateMappingToFirestore = async (mappingData: any): Promise<
     console.warn('Gagal menyimpan pemetaan Accurate ke localStorage:', e);
   }
 
-  if (!isFirebaseConfigured() || !firestoreDb) return;
+  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return;
 
   try {
     await setDoc(doc(firestoreDb, 'accurate_mappings', docId), cleanUndefined(payload));
     console.log(`☁️ Accurate mapping report ${docId} saved to Firestore.`);
   } catch (error) {
+    markFirestoreQuotaExceeded(error);
     console.warn('Gagal menyimpan pemetaan Accurate ke Firestore:', error);
   }
 };
@@ -2653,12 +2741,13 @@ export const deleteAccurateMappingFromFirestore = async (id: string): Promise<vo
     console.warn('Gagal menghapus pemetaan Accurate dari localStorage:', e);
   }
 
-  if (!isFirebaseConfigured() || !firestoreDb) return;
+  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return;
 
   try {
     await deleteDoc(doc(firestoreDb, 'accurate_mappings', id));
     console.log(`🗑️ Accurate mapping ${id} deleted from Firestore.`);
   } catch (error) {
+    markFirestoreQuotaExceeded(error);
     console.warn('Gagal menghapus pemetaan Accurate dari Firestore:', error);
   }
 };
@@ -2727,12 +2816,13 @@ export const saveAbsenDataToFirestore = async (absenData: any): Promise<void> =>
     console.warn('Gagal menyimpan data Absen ke localStorage:', e);
   }
 
-  if (!isFirebaseConfigured() || !firestoreDb) return;
+  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return;
 
   try {
     await setDoc(doc(firestoreDb, 'absen_records', docId), cleanUndefined(payload));
     console.log(`☁️ Absen record ${docId} saved to Firestore.`);
   } catch (error) {
+    markFirestoreQuotaExceeded(error);
     console.warn('Gagal menyimpan data Absen ke Firestore:', error);
   }
 };
@@ -2786,21 +2876,24 @@ export const deleteNpwpRecordFromFirestore = async (id: string): Promise<void> =
       }).catch(() => {});
 
       // Mirror to companies/nmsa
-      if (firestoreDb) {
+      if (firestoreDb && !isFirestoreQuotaExceeded()) {
         setDoc(doc(firestoreDb, 'companies', 'nmsa'), {
           npwpRecords: cleanUndefined(remaining),
           updatedAt: new Date().toISOString()
-        }, { merge: true }).catch(() => {});
+        }, { merge: true }).catch((err) => {
+          markFirestoreQuotaExceeded(err);
+        });
       }
     }
   } catch (e) {
     console.warn('Gagal menghapus NPWP dari localStorage:', e);
   }
 
-  if (!isFirebaseConfigured() || !firestoreDb) return;
+  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return;
   try {
     await deleteDoc(doc(firestoreDb, 'npwp_records', id));
   } catch (error) {
+    markFirestoreQuotaExceeded(error);
     console.warn('Gagal menghapus NPWP dari Firestore:', error);
   }
 };
@@ -2854,7 +2947,7 @@ export const saveSppdRecordsToFirestore = async (records: any[]): Promise<void> 
     console.warn('Gagal menyimpan SPPD ke localStorage:', e);
   }
 
-  if (!isFirebaseConfigured() || !firestoreDb) return;
+  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return;
 
   const path = 'sppd_records';
   try {
@@ -2894,16 +2987,18 @@ export const saveSppdRecordsToFirestore = async (records: any[]): Promise<void> 
     }
     console.log(`☁️ ${records.length} SPPD records synced to Firestore.`);
   } catch (error) {
+    markFirestoreQuotaExceeded(error);
     console.warn('Gagal menyimpan SPPD ke Firestore:', error);
   }
 };
 
 // Delete single SPPD record from Firestore
 export const deleteSppdRecordFromFirestore = async (id: string): Promise<void> => {
-  if (!isFirebaseConfigured() || !firestoreDb) return;
+  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return;
   try {
     await deleteDoc(doc(firestoreDb, 'sppd_records', id));
   } catch (error) {
+    markFirestoreQuotaExceeded(error);
     console.warn('Gagal menghapus SPPD dari Firestore:', error);
   }
 };
@@ -2932,7 +3027,7 @@ export const clearFirebaseConfig = () => {
 
 // --- Internal Memo Firestore Cloud Methods ---
 export const saveInternalMemoToFirestore = async (memo: InternalMemo): Promise<void> => {
-  if (!isFirebaseConfigured() || !firestoreDb) return;
+  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return;
   try {
     const docRef = doc(firestoreDb, 'internal_memos', memo.id);
     const cleaned = cleanUndefined({
@@ -2942,6 +3037,7 @@ export const saveInternalMemoToFirestore = async (memo: InternalMemo): Promise<v
     await setDoc(docRef, cleaned, { merge: true });
     console.log(`☁️ Internal Memo ${memo.id} (${memo.nomorMemo}) successfully saved to Firestore.`);
   } catch (err) {
+    markFirestoreQuotaExceeded(err);
     console.warn('Failed to save internal memo to Firestore:', err);
   }
 };
@@ -2965,12 +3061,13 @@ export const getInternalMemosFromFirestore = async (): Promise<InternalMemo[]> =
 };
 
 export const deleteInternalMemoFromFirestore = async (id: string): Promise<void> => {
-  if (!isFirebaseConfigured() || !firestoreDb) return;
+  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return;
   try {
     const docRef = doc(firestoreDb, 'internal_memos', id);
     await deleteDoc(docRef);
     console.log(`☁️ Internal Memo ${id} deleted from Firestore.`);
   } catch (err) {
+    markFirestoreQuotaExceeded(err);
     console.warn('Failed to delete internal memo from Firestore:', err);
   }
 };

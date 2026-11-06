@@ -20,6 +20,12 @@ import { GoogleDriveSettingsModal } from './components/GoogleDriveSettingsModal'
 import { AbsensiHarianNmsa } from './components/AbsensiHarianNmsa';
 import { PettyCashHoldersModal } from './components/PettyCashHoldersModal';
 import { ConsolidateNamesModal } from './components/ConsolidateNamesModal';
+import {
+  PettyCashCustodiansConfig,
+  loadPettyCashCustodians,
+  savePettyCashCustodians,
+  getAllPettyCashHolders
+} from './utils/pettyCashCustodians';
 import { NpwpManager } from './components/NpwpManager';
 import { AccuratePettyCashMapping } from './components/AccuratePettyCashMapping';
 import { AccountMappingContainer } from './components/AccountMappingContainer';
@@ -67,11 +73,13 @@ import {
   subscribeToCompanySettingsFromFirestore,
   saveCompanySettingsToFirestore,
   switchUserCompany,
-  setActiveCompanyId
+  setActiveCompanyId,
+  isFirestoreQuotaExceeded,
+  resetFirestoreQuotaCooldown
 } from './firebase';
 import { loadAttendanceFromFirestore } from './lib/firebaseAbsen';
 
-import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, ArrowLeftRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell, MessageSquare, Bot, Sparkles, BookOpen, Wrench, Building2, Plus, HandCoins } from 'lucide-react';
+import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, ArrowLeftRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell, MessageSquare, Bot, Sparkles, BookOpen, Wrench, Building2, Plus, HandCoins, ExternalLink } from 'lucide-react';
 
 export default function App() {
   const [theme, setTheme] = useState<AppTheme>(() => {
@@ -133,22 +141,14 @@ export default function App() {
     }
   });
 
-  // Petty Cash master state
+  // Petty Cash master state organized by category (Lapangan & Kantor Pusat)
+  const [pettyCashCustodiansConfig, setPettyCashCustodiansConfig] = useState<PettyCashCustodiansConfig>(() => {
+    return loadPettyCashCustodians();
+  });
+
   const [pettyCashHolders, setPettyCashHolders] = useState<string[]>(() => {
-    const defaultHolders: string[] = [];
-    try {
-      const stored = localStorage.getItem('petty_cash_holders_v2');
-      if (!stored || stored === 'undefined' || stored === 'null') return defaultHolders;
-      const parsed = JSON.parse(stored);
-      if (Array.isArray(parsed)) return parsed.filter(Boolean);
-      if (parsed && typeof parsed === 'object' && Array.isArray(parsed.updatedPettyCashHolders)) {
-        localStorage.setItem('petty_cash_holders_v2', JSON.stringify(parsed.updatedPettyCashHolders));
-        return parsed.updatedPettyCashHolders.filter(Boolean);
-      }
-      return defaultHolders;
-    } catch (e) {
-      return defaultHolders;
-    }
+    const config = loadPettyCashCustodians();
+    return getAllPettyCashHolders(config);
   });
 
   const [pettyCashReports, setPettyCashReports] = useState<PettyCashReport[]>(() => {
@@ -235,6 +235,13 @@ export default function App() {
 
   const [isHoldersModalOpen, setIsHoldersModalOpen] = useState(false);
   const [isConsolidateNamesModalOpen, setIsConsolidateNamesModalOpen] = useState(false);
+  const [showQuotaBanner, setShowQuotaBanner] = useState<boolean>(() => isFirestoreQuotaExceeded());
+
+  useEffect(() => {
+    const handler = () => setShowQuotaBanner(true);
+    window.addEventListener('firestore-quota-exceeded', handler);
+    return () => window.removeEventListener('firestore-quota-exceeded', handler);
+  }, []);
 
   // Real-time Cloud Firestore subscription & Shared State sync across all computers/devices
   useEffect(() => {
@@ -491,12 +498,9 @@ export default function App() {
     };
   }, []);
 
-  // Auto-sync Petty Cash submissions into pettyCashReports & pettyCashHolders
+  // Auto-sync Petty Cash submissions into pettyCashReports
   useEffect(() => {
     if (!submissions || submissions.length === 0) return;
-
-    let holdersChanged = false;
-    let newHoldersList = [...pettyCashHolders];
 
     let reportsChanged = false;
     let updatedReports = [...pettyCashReports];
@@ -505,14 +509,7 @@ export default function App() {
       const isPC = isPettyCashSubmission(sub);
 
       if (isPC) {
-        const custodianName = getPettyCashCustodian(sub, newHoldersList) || 'Suryo Pranoto';
-        
-        // 1. Ensure custodian is registered in pettyCashHolders - avoid adding duplicates or similar variations
-        const alreadyRegisteredOrSimilar = newHoldersList.some(h => areNamesSimilar(h, custodianName).isMatch);
-        if (custodianName && !alreadyRegisteredOrSimilar) {
-          newHoldersList.push(toTitleCase(custodianName));
-          holdersChanged = true;
-        }
+        const custodianName = getPettyCashCustodian(sub, pettyCashHolders) || 'Suryo Pranoto';
 
         // 2. Ensure submission has a corresponding PettyCashReport
         const totalExp = sub.items ? sub.items.reduce((acc, it) => acc + (it.total || 0), 0) : 0;
@@ -582,27 +579,22 @@ export default function App() {
       }
     });
 
-    if (holdersChanged) {
-      setPettyCashHolders(newHoldersList);
-      localStorage.setItem('petty_cash_holders_v2', JSON.stringify(newHoldersList));
-    }
-
     if (reportsChanged) {
       setPettyCashReports(updatedReports);
       localStorage.setItem('petty_cash_reports', JSON.stringify(updatedReports));
     }
 
-    if (holdersChanged || reportsChanged) {
+    if (reportsChanged) {
       fetch('/api/shared-state', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          pettyCashHolders: newHoldersList,
+          pettyCashHolders,
           pettyCashReports: updatedReports
         })
       }).catch(err => console.warn('Sync shared state error:', err));
     }
-  }, [submissions]);
+  }, [submissions, pettyCashHolders]);
 
   // Sync all submissions to backend memory & data-store for WhatsApp AI Bot
   useEffect(() => {
@@ -614,6 +606,28 @@ export default function App() {
       }).catch(err => console.warn('Sync submissions to server error:', err));
     }
   }, [submissions]);
+
+  const handleSaveCustodiansConfig = async (newConfig: PettyCashCustodiansConfig) => {
+    setPettyCashCustodiansConfig(newConfig);
+    savePettyCashCustodians(newConfig);
+    const flat = getAllPettyCashHolders(newConfig);
+    setPettyCashHolders(flat);
+    try {
+      await fetch('/api/shared-state', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pettyCashHolders: flat, pettyCashCustodians: newConfig, pettyCashReports })
+      });
+      await fetch('/api/unified-storage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pettyCashHolders: flat, pettyCashCustodians: newConfig })
+      });
+      await saveCompanySettingsToFirestore({ pettyCashHolders: flat, pettyCashCustodians: newConfig } as any);
+    } catch (err) {
+      console.error('Gagal sinkronisasi master list pemegang petty cash:', err);
+    }
+  };
 
   const handleSavePettyCashHolders = async (newHolders: string[]) => {
     setPettyCashHolders(newHolders);
@@ -3546,6 +3560,53 @@ export default function App() {
       onPostponeOneDay={handlePostponeAgenda}
     />
 
+    {/* FIRESTORE QUOTA EXCEEDED INFORMATIONAL NOTICE */}
+    {showQuotaBanner && (
+      <div className="bg-gradient-to-r from-amber-500/15 via-orange-500/10 to-amber-500/15 border-b border-amber-300 px-4 py-2.5 text-xs text-amber-950 font-sans print:hidden animate-fade-in shadow-3xs">
+        <div className="max-w-[1600px] mx-auto flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="p-1 px-2 rounded-md bg-amber-500 text-stone-950 font-black text-[10px] uppercase font-mono shrink-0">
+              Info Kuota Cloud
+            </span>
+            <span className="leading-snug text-xs text-stone-800">
+              <strong>Batas kuota harian gratis Firebase (Spark Plan) telah tercapai.</strong> Seluruh data Anda 100% aman dan otomatis disimpan di penyimpanan lokal &amp; server sinkronisasi internal. Kuota gratis Firebase akan direset secara otomatis besok hari.
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 flex-wrap">
+            <a
+              href="https://console.firebase.google.com/project/pencatatan-voucher-perusahaan/firestore/databases/(default)/data?openUpgradeDialog=true"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-[11px] transition inline-flex items-center gap-1 shadow-3xs cursor-pointer"
+            >
+              <span>Upgrade / Buka Console</span>
+              <ExternalLink size={12} />
+            </a>
+            <a
+              href="https://firebase.google.com/pricing#cloud-firestore"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-2.5 py-1 bg-stone-100 hover:bg-stone-200 text-stone-800 border border-stone-300 rounded-lg font-bold text-[11px] transition inline-flex items-center gap-1 shadow-3xs cursor-pointer"
+            >
+              <span>Dokumentasi Biaya</span>
+              <ExternalLink size={12} />
+            </a>
+            <button
+              type="button"
+              onClick={() => {
+                resetFirestoreQuotaCooldown();
+                setShowQuotaBanner(false);
+              }}
+              className="p-1 hover:bg-amber-200/70 rounded-md text-amber-900 transition cursor-pointer"
+              title="Tutup pemberitahuan"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
       {/* MAIN CONTAINER */}
       <main className="flex-1 max-w-[1600px] w-full mx-auto px-3 sm:px-6 lg:px-8 py-5 sm:py-8 pb-24 md:pb-8">
         
@@ -3646,6 +3707,7 @@ export default function App() {
             projects={projects}
             projectRab={projectRab}
             pettyCashHolders={pettyCashHolders}
+            custodiansConfig={pettyCashCustodiansConfig}
             onOpenManageHolders={() => setIsHoldersModalOpen(true)}
             onOpenConsolidateModal={() => setIsConsolidateNamesModalOpen(true)}
             onSave={handleSaveSubmission}
@@ -3938,6 +4000,8 @@ export default function App() {
         isOpen={isHoldersModalOpen}
         onClose={() => setIsHoldersModalOpen(false)}
         holders={pettyCashHolders}
+        custodiansConfig={pettyCashCustodiansConfig}
+        onSaveConfig={handleSaveCustodiansConfig}
         onSaveHolders={handleSavePettyCashHolders}
         onOpenConsolidation={() => setIsConsolidateNamesModalOpen(true)}
       />

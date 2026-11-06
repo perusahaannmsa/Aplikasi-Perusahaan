@@ -83,7 +83,7 @@ import { triggerExcelDownload } from "../lib/excelGenerator";
 import { triggerAttendanceExcelDownload, printWeeklyReportPDF, generateAttendanceExcelBlob } from "../lib/attendanceSheetGenerator";
 import { getOrCreateFolder, getOrCreateNestedFolder, uploadFileToDrive, exportAttendanceToGoogleSheet } from "../lib/googleWorkspaceAbsen";
 import { initAuth, googleSignIn, googleSignOut, getFreshGoogleToken, saveGoogleToken, saveAttendanceToFirestore, loadAttendanceFromFirestore, subscribeToAttendanceFromFirestore } from "../lib/firebaseAbsen";
-import { saveSubmissionToFirestore, saveAbsenDataToFirestore, ensureValidDriveToken, getActiveGoogleDriveAccount, getConnectedDrives, executeDriveApiWithAutoRefresh, getOrRenewDriveToken, triggerGoogleDriveAutoRefresh } from "../firebase";
+import { saveSubmissionToFirestore, saveAbsenDataToFirestore, ensureValidDriveToken, getActiveGoogleDriveAccount, getConnectedDrives, executeDriveApiWithAutoRefresh, getOrRenewDriveToken, triggerGoogleDriveAutoRefresh, isFirestoreQuotaExceeded, markFirestoreQuotaExceeded } from "../firebase";
 import { googleDriveAutoBackup, BackupSyncLog, DriveAutoBackupSettings } from "../utils/googleDriveAutoBackup";
 import { SignaturePad } from "./SignaturePad";
 import { OnlineSignatureModal } from "./OnlineSignatureModal";
@@ -3278,13 +3278,16 @@ export function AbsensiHarianNmsa({
     );
 
     // Synchronize to Firebase
-    try {
-      const { db, cleanDataForFirestore } = await import('../lib/firebaseAbsen');
-      const { doc, setDoc } = await import('firebase/firestore');
-      await setDoc(doc(db, "attendance", `rep_${newReport.id}`), cleanDataForFirestore(newReport), { merge: true });
-      await saveAttendanceToFirestore(attendanceRecords, workers, updatedReports);
-    } catch (fbErr) {
-      console.warn("Firebase sync notice:", fbErr);
+    if (!isFirestoreQuotaExceeded()) {
+      try {
+        const { db, cleanDataForFirestore } = await import('../lib/firebaseAbsen');
+        const { doc, setDoc } = await import('firebase/firestore');
+        await setDoc(doc(db, "attendance", `rep_${newReport.id}`), cleanDataForFirestore(newReport), { merge: true });
+        await saveAttendanceToFirestore(attendanceRecords, workers, updatedReports);
+      } catch (fbErr) {
+        markFirestoreQuotaExceeded(fbErr);
+        console.warn("Firebase sync notice:", fbErr);
+      }
     }
 
     setDriveUploadFloatingToast({
@@ -3331,13 +3334,16 @@ export function AbsensiHarianNmsa({
       });
     } catch (e) {}
 
-    try {
-      const { db } = await import('../lib/firebaseAbsen');
-      const { doc, deleteDoc } = await import('firebase/firestore');
-      await deleteDoc(doc(db, "attendance", `rep_${id}`));
-      await saveAttendanceToFirestore(attendanceRecords, workers, updated);
-    } catch (fbErr) {
-      console.warn("Could not remove report from Firebase:", fbErr);
+    if (!isFirestoreQuotaExceeded()) {
+      try {
+        const { db } = await import('../lib/firebaseAbsen');
+        const { doc, deleteDoc } = await import('firebase/firestore');
+        await deleteDoc(doc(db, "attendance", `rep_${id}`));
+        await saveAttendanceToFirestore(attendanceRecords, workers, updated);
+      } catch (fbErr) {
+        markFirestoreQuotaExceeded(fbErr);
+        console.warn("Could not remove report from Firebase:", fbErr);
+      }
     }
 
     await syncStateToServer(
@@ -3456,13 +3462,16 @@ export function AbsensiHarianNmsa({
       localStorage.setItem("weekly_reports", JSON.stringify(updatedList));
     } catch (e) {}
 
-    try {
-      const { db, cleanDataForFirestore } = await import('../lib/firebaseAbsen');
-      const { doc, setDoc } = await import('firebase/firestore');
-      await setDoc(doc(db, "attendance", `rep_${updatedReport.id}`), cleanDataForFirestore(updatedReport), { merge: true });
-      await saveAttendanceToFirestore(attendanceRecords, workers, updatedList);
-    } catch (fbErr) {
-      console.warn("Firebase update notice:", fbErr);
+    if (!isFirestoreQuotaExceeded()) {
+      try {
+        const { db, cleanDataForFirestore } = await import('../lib/firebaseAbsen');
+        const { doc, setDoc } = await import('firebase/firestore');
+        await setDoc(doc(db, "attendance", `rep_${updatedReport.id}`), cleanDataForFirestore(updatedReport), { merge: true });
+        await saveAttendanceToFirestore(attendanceRecords, workers, updatedList);
+      } catch (fbErr) {
+        markFirestoreQuotaExceeded(fbErr);
+        console.warn("Firebase update notice:", fbErr);
+      }
     }
 
     await syncStateToServer(
@@ -4575,21 +4584,24 @@ export function AbsensiHarianNmsa({
     );
 
     // Synchronize to Firebase Firestore
-    try {
-      const { db, cleanDataForFirestore } = await import('../lib/firebaseAbsen');
-      const { doc, setDoc } = await import('firebase/firestore');
-      if (reconstructedReport) {
-        await setDoc(doc(db, "attendance", `rep_${reconstructedReport.id}`), cleanDataForFirestore(reconstructedReport), { merge: true });
+    if (!isFirestoreQuotaExceeded()) {
+      try {
+        const { db, cleanDataForFirestore } = await import('../lib/firebaseAbsen');
+        const { doc, setDoc } = await import('firebase/firestore');
+        if (reconstructedReport) {
+          await setDoc(doc(db, "attendance", `rep_${reconstructedReport.id}`), cleanDataForFirestore(reconstructedReport), { merge: true });
+        }
+        await saveAttendanceToFirestore(updatedRecords, workers, updatedReports);
+        await saveAbsenDataToFirestore({
+          workers,
+          records: updatedRecords,
+          weeklyReports: updatedReports,
+          signatures,
+        });
+      } catch (fbErr) {
+        markFirestoreQuotaExceeded(fbErr);
+        console.warn("Firebase sync notice:", fbErr);
       }
-      await saveAttendanceToFirestore(updatedRecords, workers, updatedReports);
-      await saveAbsenDataToFirestore({
-        workers,
-        records: updatedRecords,
-        weeklyReports: updatedReports,
-        signatures,
-      });
-    } catch (fbErr) {
-      console.warn("Firebase sync notice:", fbErr);
     }
 
     // Pengunggahan ke Google Drive dilakukan secara manual via menu tindakan
@@ -8049,60 +8061,6 @@ export function AbsensiHarianNmsa({
                 </button>
               </div>
             </div>
-
-            {/* Floating Toast Notification untuk Bukti Laporan Terupload ke Google Drive (Mengambang & Otomatis Hilang) */}
-            <AnimatePresence>
-              {driveUploadFloatingToast && (
-                <motion.div
-                  initial={{ opacity: 0, y: -20, scale: 0.95 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: -20, scale: 0.95 }}
-                  transition={{ duration: 0.25 }}
-                  className="fixed top-5 right-5 sm:top-6 sm:right-6 z-50 max-w-md w-[calc(100vw-2.5rem)] bg-gradient-to-r from-emerald-600 to-teal-700 text-white rounded-2xl shadow-2xl shadow-emerald-950/30 border border-emerald-400/50 p-4 backdrop-blur-md"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="p-2 rounded-xl bg-white/20 text-white shrink-0 mt-0.5 shadow-xs">
-                      <CheckCircle2 className="w-5 h-5 text-emerald-100" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="font-bold text-sm tracking-tight text-white">Laporan Tersimpan & Terupload</span>
-                        <span className="text-[10px] font-mono bg-white/20 px-1.5 py-0.5 rounded font-extrabold text-emerald-100">
-                          {driveUploadFloatingToast.reportId}
-                        </span>
-                      </div>
-                      <p className="text-xs text-emerald-100/95 mt-1 leading-snug">
-                        {driveUploadFloatingToast.message}
-                      </p>
-                      <div className="text-[11px] text-emerald-200 mt-1 font-medium">
-                        Periode: <strong>{driveUploadFloatingToast.weekStart} s/d {driveUploadFloatingToast.weekEnd}</strong>
-                      </div>
-                      {driveUploadFloatingToast.pdfUrl && (
-                        <div className="mt-2.5 pt-2 border-t border-white/20 flex items-center justify-between">
-                          <a
-                            href={driveUploadFloatingToast.pdfUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs font-bold text-white hover:text-emerald-100 underline flex items-center gap-1"
-                          >
-                            <span>Buka Berkas PDF di Google Drive</span>
-                            <ExternalLink className="w-3.5 h-3.5" />
-                          </a>
-                        </div>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setDriveUploadFloatingToast(null)}
-                      className="text-white/70 hover:text-white p-1 rounded-lg hover:bg-white/10 transition cursor-pointer"
-                      title="Tutup Notifikasi"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
 
             {/* Status Message when Copying or Restoring Attendance */}
             {copyStatusMessage && (
@@ -12890,6 +12848,62 @@ export function AbsensiHarianNmsa({
         onCopyAttendance={handleApplyCopiedAttendance}
         onOpenGoogleDriveSettings={() => setShowAutoBackupModal(true)}
       />
+
+      {/* Floating Toast Notification untuk Bukti Laporan Terupload ke Google Drive (Tampil utuh di bawah navbar) */}
+      <AnimatePresence>
+        {driveUploadFloatingToast && (
+          <motion.div
+            initial={{ opacity: 0, y: -15, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -15, scale: 0.96 }}
+            transition={{ duration: 0.22, ease: "easeOut" }}
+            className="fixed top-20 right-4 sm:top-24 sm:right-6 z-[9999] max-w-md w-[calc(100vw-2rem)] bg-gradient-to-r from-emerald-700 via-emerald-800 to-teal-900 text-white rounded-2xl shadow-2xl shadow-emerald-950/50 border-2 border-emerald-400/60 p-4 backdrop-blur-md"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="p-2.5 rounded-xl bg-white/20 text-white shrink-0 mt-0.5 shadow-sm border border-white/20">
+                <CheckCircle2 className="w-5 h-5 text-emerald-200" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="font-black text-sm tracking-tight text-white">
+                    Laporan Tersimpan &amp; Terupload
+                  </span>
+                  <span className="text-[10px] font-mono bg-white/20 px-2 py-0.5 rounded font-extrabold text-emerald-100 border border-white/25">
+                    {driveUploadFloatingToast.reportId}
+                  </span>
+                </div>
+                <p className="text-xs text-emerald-100 mt-1 leading-snug font-medium">
+                  {driveUploadFloatingToast.message}
+                </p>
+                <div className="text-[11px] text-emerald-200 mt-1.5 font-medium bg-black/20 px-2.5 py-1 rounded-lg border border-white/10 inline-block">
+                  Periode: <strong className="text-white">{driveUploadFloatingToast.weekStart} s/d {driveUploadFloatingToast.weekEnd}</strong>
+                </div>
+                {driveUploadFloatingToast.pdfUrl && (
+                  <div className="mt-2.5 pt-2 border-t border-white/20 flex items-center justify-between">
+                    <a
+                      href={driveUploadFloatingToast.pdfUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs font-bold text-white hover:text-emerald-200 underline decoration-emerald-300 flex items-center gap-1.5 bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-xl transition cursor-pointer"
+                    >
+                      <span>Buka Berkas PDF di Google Drive</span>
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setDriveUploadFloatingToast(null)}
+                className="text-white/70 hover:text-white p-1 rounded-lg hover:bg-white/15 transition cursor-pointer shrink-0"
+                title="Tutup Notifikasi"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
     </div>
   );
