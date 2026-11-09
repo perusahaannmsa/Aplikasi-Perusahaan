@@ -9,7 +9,9 @@ import {
   getSavedEmployeeLoans,
   saveEmployeeLoans,
   INITIAL_SAMPLE_LOANS,
-  getSynchronizedAttendanceWorkers
+  getSynchronizedAttendanceWorkers,
+  syncLoansWithSubmissions,
+  determineLoanCategory
 } from '../utils/loanUtils';
 import { EmployeeLoanDocument } from './EmployeeLoanDocument';
 import {
@@ -66,6 +68,9 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
   const [loans, setLoans] = useState<EmployeeLoan[]>(() => getSavedEmployeeLoans());
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [categoryFilter, setCategoryFilter] = useState<'all' | 'karyawan' | 'perusahaan'>('all');
+  const [expandedDisbursements, setExpandedDisbursements] = useState<Record<string, boolean>>({});
+  const [syncMessage, setSyncMessage] = useState<string>('');
 
   // Modals state
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
@@ -102,12 +107,39 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
   const [nomorPinjaman, setNomorPinjaman] = useState('');
   const [tanggalPermohonan, setTanggalPermohonan] = useState(() => new Date().toISOString().split('T')[0]);
   const [namaKaryawan, setNamaKaryawan] = useState('');
+  const [loanCategory, setLoanCategory] = useState<'karyawan' | 'perusahaan'>('karyawan');
   const [divisi, setDivisi] = useState('');
   const [alasanPeminjaman, setAlasanPeminjaman] = useState('');
   const [jumlahPinjaman, setJumlahPinjaman] = useState<number | ''>('');
   const [tenorBulan, setTenorBulan] = useState<number>(5);
   const [cicilanPerBulan, setCicilanPerBulan] = useState<number | ''>('');
   const [caraPembayaran, setCaraPembayaran] = useState('');
+
+  // Auto-sync transaksi Voucher Kas/Bank HO ke Modul Pinjaman
+  useEffect(() => {
+    if (submissions && submissions.length > 0) {
+      const { syncedLoans, newLoansCount, accumulatedCount } = syncLoansWithSubmissions(loans, submissions, workers);
+      if (newLoansCount > 0 || accumulatedCount > 0) {
+        setLoans(syncedLoans);
+        saveEmployeeLoans(syncedLoans);
+        setSyncMessage(`⚡ Tersinkron otomatis ${newLoansCount} pinjaman baru & ${accumulatedCount} voucher terakumulasi`);
+        const timer = setTimeout(() => setSyncMessage(''), 6000);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [submissions, workers]);
+
+  const handleManualSyncSubmissions = () => {
+    if (!submissions || submissions.length === 0) {
+      alert('Tidak ada transaksi voucher pengeluaran kas yang ditemukan.');
+      return;
+    }
+    const { syncedLoans, newLoansCount, accumulatedCount } = syncLoansWithSubmissions(loans, submissions, workers);
+    setLoans(syncedLoans);
+    saveEmployeeLoans(syncedLoans);
+    setSyncMessage(`✅ Sinkronisasi Selesai: ${newLoansCount} pinjaman baru ditambahkan, ${accumulatedCount} voucher terakumulasi.`);
+    setTimeout(() => setSyncMessage(''), 6000);
+  };
   const [tanggalPengambilanPinjaman, setTanggalPengambilanPinjaman] = useState(() => new Date().toISOString().split('T')[0]);
   const [peminjamJabatan, setPeminjamJabatan] = useState('');
   const [atasanNama, setAtasanNama] = useState('Andi Muhammad Rifki');
@@ -180,6 +212,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
     setAdditionalSigners([]);
     setCatatan('Disetujui. Pembayaran angsuran dipotong melalui slip gaji bulanan.');
     setLoanStatus('Belum Lunas');
+    setLoanCategory('karyawan');
     setIsFormModalOpen(true);
   };
 
@@ -188,6 +221,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
     setNomorPinjaman(loan.nomorPinjaman);
     setTanggalPermohonan(loan.tanggalPermohonan);
     setNamaKaryawan(loan.namaKaryawan);
+    setLoanCategory(loan.category || determineLoanCategory(loan.namaKaryawan, undefined, workers));
     setDivisi(loan.divisi);
     setAlasanPeminjaman(loan.alasanPeminjaman);
     setJumlahPinjaman(loan.jumlahPinjaman);
@@ -215,7 +249,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
   const handleSaveLoanForm = (e: React.FormEvent) => {
     e.preventDefault();
     if (!namaKaryawan.trim()) {
-      alert('Mohon isi nama karyawan peminjam.');
+      alert(loanCategory === 'karyawan' ? 'Mohon isi nama karyawan peminjam.' : 'Mohon isi nama perusahaan / rekanan peminjam.');
       return;
     }
     const numAmount = Number(jumlahPinjaman) || 0;
@@ -232,6 +266,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
             nomorPinjaman: nomorPinjaman.trim() || l.nomorPinjaman,
             tanggalPermohonan,
             namaKaryawan: namaKaryawan.trim(),
+            category: loanCategory,
             divisi: divisi.trim(),
             alasanPeminjaman: alasanPeminjaman.trim(),
             jumlahPinjaman: numAmount,
@@ -266,16 +301,17 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
         nomorPinjaman: nomorPinjaman.trim() || generateNextLoanNumber(loans),
         tanggalPermohonan,
         namaKaryawan: namaKaryawan.trim(),
-        divisi: divisi.trim(),
+        category: loanCategory,
+        divisi: divisi.trim() || (loanCategory === 'karyawan' ? 'Operasional Lapangan' : 'Rekanan Perusahaan / Pihak Ketiga'),
         alasanPeminjaman: alasanPeminjaman.trim(),
         jumlahPinjaman: numAmount,
         tenorBulan: Number(tenorBulan) || undefined,
         cicilanPerBulan: Number(cicilanPerBulan) || undefined,
-        caraPembayaran: caraPembayaran.trim(),
+        caraPembayaran: caraPembayaran.trim() || `Potong Gaji / Angsuran Bulanan`,
         tanggalPengambilanPinjaman,
         peminjamRole: peminjamRole.trim() || 'Diajukan',
         peminjamNama: namaKaryawan.trim(),
-        peminjamJabatan: peminjamJabatan.trim() || 'Karyawan',
+        peminjamJabatan: peminjamJabatan.trim() || (loanCategory === 'karyawan' ? 'Karyawan' : 'Pimpinan Rekanan'),
         atasanRole: atasanRole.trim() || 'Diverifikasi',
         atasanNama: atasanNama.trim() || 'Andi Muhammad Rifki',
         atasanJabatan: atasanJabatan.trim() || 'Direktur',
@@ -550,6 +586,21 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
     setIsPrintModalOpen(true);
   };
 
+  // Category Counts
+  const categoryCounts = useMemo(() => {
+    let allCount = loans.length;
+    let karyawanCount = 0;
+    let perusahaanCount = 0;
+
+    loans.forEach(l => {
+      const cat = l.category || determineLoanCategory(l.namaKaryawan, undefined, workers);
+      if (cat === 'karyawan') karyawanCount++;
+      else perusahaanCount++;
+    });
+
+    return { allCount, karyawanCount, perusahaanCount };
+  }, [loans, workers]);
+
   // Filtered Loans
   const filteredLoans = useMemo(() => {
     return loans.filter(l => {
@@ -558,6 +609,10 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
       if (statusFilter === 'cicilan' && summary.effectiveStatus !== 'Dalam Cicilan') return false;
       if (statusFilter === 'belum_bayar' && summary.effectiveStatus !== 'Belum Dibayar') return false;
       if (statusFilter === 'pending' && summary.effectiveStatus !== 'Menunggu Persetujuan') return false;
+
+      const cat = l.category || determineLoanCategory(l.namaKaryawan, undefined, workers);
+      if (categoryFilter === 'karyawan' && cat !== 'karyawan') return false;
+      if (categoryFilter === 'perusahaan' && cat !== 'perusahaan') return false;
 
       if (!searchQuery.trim()) return true;
       const q = searchQuery.toLowerCase();
@@ -569,7 +624,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
         (l.caraPembayaran && l.caraPembayaran.toLowerCase().includes(q))
       );
     });
-  }, [loans, searchQuery, statusFilter]);
+  }, [loans, searchQuery, statusFilter, categoryFilter, workers]);
 
   // Overall Totals
   const overallStats = useMemo(() => {
@@ -654,6 +709,94 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
             >
               <Plus size={16} />
               <span>+ Buat Permohonan Baru</span>
+            </button>
+          </div>
+        </div>
+
+        {/* SYNC NOTIFICATION BANNER */}
+        {syncMessage && (
+          <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl text-emerald-850 text-xs font-bold flex items-center justify-between gap-2 shadow-xs">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+              <span>{syncMessage}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSyncMessage('')}
+              className="text-emerald-600 hover:text-emerald-850 text-xs font-mono"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* PRIMARY CATEGORY TABS (Semua vs Pinjaman Karyawan vs Pinjaman Perusahaan) */}
+        <div className="bg-white border border-stone-200/90 rounded-2xl p-3 shadow-xs flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setCategoryFilter('all')}
+              className={`px-4 py-2 text-xs font-bold rounded-xl transition flex items-center gap-2 cursor-pointer ${
+                categoryFilter === 'all'
+                  ? 'bg-stone-900 text-white shadow-sm'
+                  : 'bg-stone-100 hover:bg-stone-200 text-stone-700'
+              }`}
+            >
+              <CreditCard size={15} />
+              <span>Semua Pinjaman</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-md font-mono ${
+                categoryFilter === 'all' ? 'bg-stone-700 text-white' : 'bg-stone-200 text-stone-800'
+              }`}>
+                {categoryCounts.allCount}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setCategoryFilter('karyawan')}
+              className={`px-4 py-2 text-xs font-bold rounded-xl transition flex items-center gap-2 cursor-pointer ${
+                categoryFilter === 'karyawan'
+                  ? 'bg-amber-600 text-white shadow-sm'
+                  : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200'
+              }`}
+            >
+              <User size={15} />
+              <span>Pinjaman Karyawan</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-md font-mono ${
+                categoryFilter === 'karyawan' ? 'bg-amber-800 text-white' : 'bg-amber-200 text-amber-900'
+              }`}>
+                {categoryCounts.karyawanCount}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setCategoryFilter('perusahaan')}
+              className={`px-4 py-2 text-xs font-bold rounded-xl transition flex items-center gap-2 cursor-pointer ${
+                categoryFilter === 'perusahaan'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200'
+              }`}
+            >
+              <Building size={15} />
+              <span>Pinjaman Perusahaan</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-md font-mono ${
+                categoryFilter === 'perusahaan' ? 'bg-indigo-800 text-white' : 'bg-indigo-200 text-indigo-900'
+              }`}>
+                {categoryCounts.perusahaanCount}
+              </span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleManualSyncSubmissions}
+              className="px-3.5 py-2 text-xs font-bold rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 transition flex items-center gap-1.5 cursor-pointer shadow-3xs"
+              title="Sinkronkan ulang seluruh transaksi voucher pengeluaran kas/bank berjenis pinjaman dan akumulasikan saldo peminjam yang sama"
+            >
+              <RefreshCw size={13} className="text-amber-700" />
+              <span>Sinkronkan Voucher Kas</span>
             </button>
           </div>
         </div>
@@ -818,6 +961,20 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
                         <span className="font-mono font-bold text-xs bg-stone-100 border border-stone-200 text-stone-800 px-2 py-0.5 rounded-md">
                           {loan.nomorPinjaman}
                         </span>
+
+                        {/* Kategori Badge: Perusahaan vs Karyawan */}
+                        {((loan.category || determineLoanCategory(loan.namaKaryawan, undefined, workers)) === 'perusahaan') ? (
+                          <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-900 border border-indigo-300 flex items-center gap-1 shadow-3xs">
+                            <Building size={11} className="text-indigo-700" />
+                            <span>Pinjaman Perusahaan</span>
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1 shadow-3xs">
+                            <User size={11} className="text-amber-700" />
+                            <span>Pinjaman Karyawan</span>
+                          </span>
+                        )}
+
                         <span className={`text-[10.5px] font-bold px-2.5 py-0.5 rounded-full border flex items-center gap-1 ${
                           summary.effectiveStatus === 'Lunas'
                             ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
@@ -870,8 +1027,52 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
                         )}
                       </div>
 
+                      {/* Riwayat Akumulasi Transaksi Voucher Kas/Bank HO */}
+                      {loan.disbursements && loan.disbursements.length > 0 && (
+                        <div className="pt-2">
+                          <button
+                            type="button"
+                            onClick={() => setExpandedDisbursements(prev => ({ ...prev, [loan.id]: !prev[loan.id] }))}
+                            className="text-[11px] font-bold text-amber-850 hover:text-amber-950 flex items-center gap-1.5 cursor-pointer bg-amber-50/80 hover:bg-amber-100 px-2.5 py-1 rounded-xl border border-amber-300/80 transition shadow-3xs"
+                          >
+                            <Layers size={13} className="text-amber-700" />
+                            <span>
+                              {loan.disbursements.length > 1
+                                ? `Terakumulasi dari ${loan.disbursements.length} transaksi voucher (Total: ${formatRupiah(loan.jumlahPinjaman)})`
+                                : `Terhubung dengan Voucher Kas ${loan.disbursements[0].kodeDokumen || '-'}`}
+                            </span>
+                            <ChevronRight size={13} className={`transform transition-transform ${expandedDisbursements[loan.id] ? 'rotate-90' : ''}`} />
+                          </button>
+
+                          {expandedDisbursements[loan.id] && (
+                            <div className="mt-2 bg-stone-50 rounded-xl p-3 border border-stone-200 space-y-1.5 text-xs font-mono">
+                              <div className="font-bold text-stone-700 text-[10px] uppercase tracking-wide">
+                                Rincian Transaksi Voucher Terakumulasi:
+                              </div>
+                              {loan.disbursements.map((d, dIdx) => (
+                                <div key={d.id || dIdx} className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 py-1.5 border-b border-stone-200/60 last:border-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="text-stone-500">{d.tanggal}</span>
+                                    <span className="font-bold text-stone-900 bg-white px-1.5 py-0.5 rounded border border-stone-200">{d.kodeDokumen || '-'}</span>
+                                    <span className="text-stone-600 truncate max-w-xs">{d.keterangan || '-'}</span>
+                                  </div>
+                                  <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+                                    <span className="font-bold text-stone-900">{formatRupiah(d.jumlah)}</span>
+                                    <span className={`text-[9px] px-1.5 py-0.5 rounded font-sans font-bold ${
+                                      d.statusPembayaran === 'Lunas' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                                    }`}>
+                                      {d.statusPembayaran || 'Tercatat'}
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                       {/* Linked Voucher HO Badge & Status */}
-                      {linkedVoucher && (
+                      {linkedVoucher && (!loan.disbursements || loan.disbursements.length <= 1) && (
                         <div className="pt-1.5 flex items-center gap-2 flex-wrap">
                           <div className="inline-flex items-center gap-2 px-2.5 py-1 bg-emerald-50 border border-emerald-300 rounded-xl text-xs shadow-3xs">
                             <FileCheck size={13} className="text-emerald-700 shrink-0" />
@@ -1092,16 +1293,74 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
                 </div>
               </div>
 
-              {/* Nama Karyawan & Divisi Tersinkronisasi dengan Absensi */}
+              {/* Kategori Pinjaman: Karyawan vs Perusahaan */}
+              <div>
+                <label className="block text-[11px] font-bold text-stone-700 uppercase mb-1.5">
+                  Kategori Pinjaman:
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLoanCategory('karyawan');
+                      if (divisi.includes('Rekanan') || divisi.includes('Perusahaan')) {
+                        setDivisi('Operasional Lapangan');
+                      }
+                    }}
+                    className={`px-3 py-2 text-xs font-bold rounded-xl border flex items-center justify-center gap-2 cursor-pointer transition ${
+                      loanCategory === 'karyawan'
+                        ? 'bg-amber-600 text-white border-amber-600 shadow-3xs'
+                        : 'bg-white text-stone-700 border-stone-300 hover:bg-stone-50'
+                    }`}
+                  >
+                    <User size={14} />
+                    <span>Pinjaman Karyawan</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLoanCategory('perusahaan');
+                      if (!divisi || divisi.includes('Operasional') || divisi.includes('Keuangan')) {
+                        setDivisi('Rekanan Perusahaan / Pihak Ketiga');
+                      }
+                      if (!peminjamJabatan || peminjamJabatan === 'Karyawan') {
+                        setPeminjamJabatan('Pimpinan / Penanggung Jawab');
+                      }
+                    }}
+                    className={`px-3 py-2 text-xs font-bold rounded-xl border flex items-center justify-center gap-2 cursor-pointer transition ${
+                      loanCategory === 'perusahaan'
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-3xs'
+                        : 'bg-white text-stone-700 border-stone-300 hover:bg-stone-50'
+                    }`}
+                  >
+                    <Building size={14} />
+                    <span>Pinjaman Perusahaan</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Nama Peminjam & Divisi */}
               <div className="space-y-2.5 p-3.5 bg-stone-50 border border-stone-200 rounded-2xl">
                 <div className="flex items-center justify-between">
                   <label className="text-[11px] font-bold text-stone-800 uppercase flex items-center gap-1.5">
-                    <Users size={14} className="text-amber-600" />
-                    <span>Nama Karyawan Peminjam (Tersinkron dengan Absensi NMSA):</span>
+                    {loanCategory === 'karyawan' ? (
+                      <>
+                        <Users size={14} className="text-amber-600" />
+                        <span>Nama Karyawan Peminjam (Tersinkron dengan Absensi NMSA):</span>
+                      </>
+                    ) : (
+                      <>
+                        <Building size={14} className="text-indigo-600" />
+                        <span>Nama Perusahaan / Pihak Ketiga Rekanan:</span>
+                      </>
+                    )}
                   </label>
-                  <span className="text-[10px] text-emerald-800 font-bold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                    ✓ {workers.length} Karyawan Aktif
-                  </span>
+                  {loanCategory === 'karyawan' && (
+                    <span className="text-[10px] text-emerald-800 font-bold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                      ✓ {workers.length} Karyawan Aktif
+                    </span>
+                  )}
                 </div>
 
                 {/* Quick Selection Chips dari Seluruh Karyawan Absensi */}

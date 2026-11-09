@@ -2501,13 +2501,31 @@ export function AbsensiHarianNmsa({
   // 1b. ⚡ REAL-TIME INSTANT SYNC (Komputer ⇄ HP) via Cloud Firestore onSnapshot (100% Gratis)
   useEffect(() => {
     const unsub = subscribeToAttendanceFromFirestore((cloudData) => {
-      // Jika pengguna baru saja mengklik di layar ini dalam 400ms, jangan overwrite local touch
-      if (Date.now() - lastUserInteractionTimeRef.current < 400) {
+      // Jika pengguna baru saja mengklik di layar ini dalam 30 detik (30000ms), jangan overwrite local touch
+      if (Date.now() - lastUserInteractionTimeRef.current < 30000) {
         return;
       }
       if (cloudData.attendanceRecords && cloudData.attendanceRecords.length > 0) {
         setAttendanceRecords((prevLocal) => {
-          if (JSON.stringify(prevLocal) === JSON.stringify(cloudData.attendanceRecords)) {
+          // Pembersihan komparasi: hanya bandingkan tanggal hadir aktif (true) dan status custom
+          const serializeClean = (recs: any[]) => {
+            return (recs || []).map(r => {
+              const cleanAtt: Record<string, boolean> = {};
+              if (r && r.attendance) {
+                Object.entries(r.attendance).forEach(([k, v]) => {
+                  if (v === true) cleanAtt[k] = true;
+                });
+              }
+              return {
+                workerId: r.workerId,
+                att: cleanAtt,
+                cs: r.customStatus || {},
+                rs: r.reasons || {}
+              };
+            }).sort((a, b) => (a.workerId || '').localeCompare(b.workerId || ''));
+          };
+
+          if (JSON.stringify(serializeClean(prevLocal)) === JSON.stringify(serializeClean(cloudData.attendanceRecords))) {
             return prevLocal;
           }
           console.log(`⚡ [Realtime Sync] Menerima pembaruan absensi instan dari perangkat lain (${cloudData.attendanceRecords.length} records)`);
@@ -2963,7 +2981,7 @@ export function AbsensiHarianNmsa({
     }
   };
 
-  // Ensure record structure exists for each active worker for current week, and prune deleted workers
+  // Ensure record structure exists for each active worker, and prune deleted workers
   useEffect(() => {
     const activeWorkers = workers.filter((w) => w.isActive);
     const workerIds = new Set(workers.map((w) => w.id));
@@ -2971,50 +2989,26 @@ export function AbsensiHarianNmsa({
     setAttendanceRecords((prev) => {
       let updated = false;
       // Filter out records of workers that no longer exist in workers list
-      let newRecords = prev.filter((r) => workerIds.has(r.workerId));
+      const newRecords = prev.filter((r) => workerIds.has(r.workerId));
       if (newRecords.length !== prev.length) {
         updated = true;
       }
 
       activeWorkers.forEach((worker) => {
         const matchIdx = newRecords.findIndex((r) => r.workerId === worker.id);
-
         if (matchIdx === -1) {
-          const initialAttendance: { [date: string]: boolean } = {};
-          weekDates.forEach((date) => {
-            initialAttendance[date] = false; // default is absent
-          });
-
           newRecords.push({
             workerId: worker.id,
-            attendance: initialAttendance,
-            dailyAllowance: globalAllowance,
+            attendance: {},
+            dailyAllowance: globalAllowance || 25000,
           });
           updated = true;
-        } else {
-          // Ensure all weekDates exist in this worker's attendance record
-          let dateAdded = false;
-          const currentRecord = newRecords[matchIdx];
-          const updatedAtt = { ...(currentRecord.attendance || {}) };
-          weekDates.forEach((date) => {
-            if (updatedAtt[date] === undefined) {
-              updatedAtt[date] = false;
-              dateAdded = true;
-            }
-          });
-          if (dateAdded) {
-            newRecords[matchIdx] = {
-              ...currentRecord,
-              attendance: updatedAtt,
-            };
-            updated = true;
-          }
         }
       });
 
       return updated ? newRecords : prev;
     });
-  }, [weekStart, workers, globalAllowance]);
+  }, [workers, globalAllowance]);
 
   // --- Handlers ---
   const handleToggleAttendance = (workerId: string, date: string) => {
@@ -3024,7 +3018,19 @@ export function AbsensiHarianNmsa({
       workerId,
       date,
     });
-    const updated = attendanceRecords.map((r) => {
+
+    let base = [...attendanceRecords];
+    if (!base.some(r => r.workerId === workerId)) {
+      base.push({
+        workerId,
+        attendance: {},
+        customStatus: {},
+        reasons: {},
+        dailyAllowance: globalAllowance || 25000,
+      });
+    }
+
+    const updated = base.map((r) => {
       if (r.workerId === workerId) {
         const isCurrentlyPresent = Boolean(r.attendance && r.attendance[date]);
         const nextVal = !isCurrentlyPresent;
@@ -3081,7 +3087,21 @@ export function AbsensiHarianNmsa({
         date,
       });
     });
-    const updated = attendanceRecords.map((r) => {
+
+    let base = [...attendanceRecords];
+    workers.forEach((w) => {
+      if (!base.some(r => r.workerId === w.id)) {
+        base.push({
+          workerId: w.id,
+          attendance: {},
+          customStatus: {},
+          reasons: {},
+          dailyAllowance: globalAllowance || 25000,
+        });
+      }
+    });
+
+    const updated = base.map((r) => {
       const newAttendance = { ...(r.attendance || {}) };
       const newCustomStatus = { ...(r.customStatus || {}) };
       const newReasons = { ...(r.reasons || {}) };
@@ -3129,7 +3149,19 @@ export function AbsensiHarianNmsa({
         date: d,
       });
     });
-    const updated = attendanceRecords.map((r) => {
+
+    let base = [...attendanceRecords];
+    if (!base.some(r => r.workerId === workerId)) {
+      base.push({
+        workerId,
+        attendance: {},
+        customStatus: {},
+        reasons: {},
+        dailyAllowance: globalAllowance || 25000,
+      });
+    }
+
+    const updated = base.map((r) => {
       if (r.workerId === workerId) {
         const newAttMap = { ...(r.attendance || {}) };
         const newCustomStatus = { ...(r.customStatus || {}) };

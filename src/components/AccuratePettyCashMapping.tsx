@@ -1521,8 +1521,30 @@ export function AccuratePettyCashMapping({
           if (!row || !Array.isArray(row) || row.length === 0) continue;
 
           const descStr = String(row[descColIdx] || '').trim();
-          const amountRaw = String(row[amountColIdx] || '').replace(/[^0-9.-]/g, '');
-          const amountVal = parseFloat(amountRaw) || 0;
+          
+          // Robust amount parsing (handles formatted currency, Rp, comma/dot decimals)
+          let amountVal = 0;
+          if (typeof row[amountColIdx] === 'number') {
+            amountVal = Math.abs(row[amountColIdx]);
+          } else {
+            let cleanAmt = String(row[amountColIdx] || '').replace(/Rp\.?\s*/gi, '').replace(/\s+/g, '');
+            if (cleanAmt.includes(',') && cleanAmt.includes('.')) {
+              cleanAmt = cleanAmt.replace(/\./g, '').replace(',', '.');
+            } else if (cleanAmt.includes('.') && !cleanAmt.includes(',')) {
+              const parts = cleanAmt.split('.');
+              if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+                cleanAmt = cleanAmt.replace(/\./g, '');
+              }
+            } else if (cleanAmt.includes(',') && !cleanAmt.includes('.')) {
+              const parts = cleanAmt.split(',');
+              if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+                cleanAmt = cleanAmt.replace(/,/g, '');
+              } else {
+                cleanAmt = cleanAmt.replace(',', '.');
+              }
+            }
+            amountVal = parseFloat(cleanAmt) || 0;
+          }
 
           // Skip header repeats or empty descriptions/amounts
           if (!descStr || amountVal <= 0 || descStr.toLowerCase().includes('total') || descStr.toLowerCase().includes('saldo')) {
@@ -1530,7 +1552,16 @@ export function AccuratePettyCashMapping({
           }
 
           let dateStr = String(row[dateColIdx] || '').trim();
-          if (!dateStr || dateStr.toLowerCase().includes('tanggal')) {
+          const excelDateNum = Number(row[dateColIdx]);
+          // Convert Excel serial dates (e.g. 45233)
+          if (!isNaN(excelDateNum) && excelDateNum > 35000 && excelDateNum < 65000) {
+            try {
+              const d = new Date(Math.round((excelDateNum - 25569) * 86400 * 1000));
+              if (!isNaN(d.getTime())) {
+                dateStr = d.toISOString().split('T')[0];
+              }
+            } catch (_) {}
+          } else if (!dateStr || dateStr.toLowerCase().includes('tanggal')) {
             dateStr = new Date().toISOString().split('T')[0];
           }
 
@@ -1604,7 +1635,7 @@ export function AccuratePettyCashMapping({
   const callGeminiDirectClient = async (cleanB64: string, mime: string, coaAccounts: AccurateAccount[]) => {
     try {
       const directKey = atob('QVEuQWI4Uk42TElMbWJIRmhRcDE3aEZJd2tqSlZuY2lmSi11Nm5qOElCdkdCVzVqVjFTYlE=');
-      const models = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-3.6-flash'];
+      const models = ['gemini-2.5-flash', 'gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
 
       const coaPromptList = coaAccounts && Array.isArray(coaAccounts)
         ? coaAccounts.map((a: any) => `- Kode ${a.code}: ${a.name} (Kategori: ${a.category || 'Biaya'}${a.keywords ? `, Kata kunci: ${a.keywords.join(', ')}` : ''})`).join('\n')
@@ -3125,6 +3156,21 @@ ${coaPromptList}`;
           <div className="space-y-4">
             <div 
               onClick={() => fileInputRef.current?.click()}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              onDragEnter={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                  handleFileSelect(e.dataTransfer.files[0]);
+                }
+              }}
               className="border-2 border-dashed border-stone-300 hover:border-emerald-500 bg-stone-50/70 hover:bg-emerald-50/30 rounded-3xl p-8 text-center cursor-pointer transition flex flex-col items-center justify-center space-y-3 group"
             >
               <input

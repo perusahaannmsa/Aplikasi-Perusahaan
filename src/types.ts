@@ -606,11 +606,22 @@ export interface LoanSigner {
   paraf?: string;
 }
 
+export interface LoanDisbursement {
+  id?: string;
+  submissionId?: string;
+  kodeDokumen?: string;
+  tanggal: string;
+  jumlah: number;
+  keterangan?: string;
+  statusPembayaran?: string;
+}
+
 export interface EmployeeLoan {
   id: string;
   nomorPinjaman: string; // e.g. "PK-202611-001"
   tanggalPermohonan: string; // YYYY-MM-DD
   namaKaryawan: string;
+  category?: 'karyawan' | 'perusahaan'; // Kategori Pinjaman: 'karyawan' atau 'perusahaan'
   divisi: string;
   alasanPeminjaman: string;
   jumlahPinjaman: number;
@@ -648,6 +659,9 @@ export interface EmployeeLoan {
 
   // Riwayat Catatan Pembayaran / Angsuran Cicilan
   payments: LoanPayment[];
+
+  // Riwayat Akumulasi Pencairan Transaksi Pinjaman (Voucher Kas/Bank HO)
+  disbursements?: LoanDisbursement[];
 
   // Tautan ke Voucher Kas/Bank HO
   linkedSubmissionId?: string;

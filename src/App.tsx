@@ -40,7 +40,7 @@ import { CompanySwitcherModal } from './components/CompanySwitcherModal';
 import { InternalMemoManager } from './components/InternalMemoManager';
 import { EmployeeLoanManager } from './components/EmployeeLoanManager';
 import { ThemeSelectorModal, AppTheme } from './components/ThemeSelectorModal';
-import { getSynchronizedAttendanceWorkers, getSavedEmployeeLoans, saveEmployeeLoans } from './utils/loanUtils';
+import { getSynchronizedAttendanceWorkers, getSavedEmployeeLoans, saveEmployeeLoans, isLoanSubmission, syncLoansWithSubmissions } from './utils/loanUtils';
 import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, syncInvoiceSubmissionToAgenda, formatDateIndonesian } from './utils';
 import { areNamesSimilar, toTitleCase } from './utils/nameConsolidation';
 import { 
@@ -1932,6 +1932,17 @@ export default function App() {
         }).catch(err => console.warn('Sync error:', err));
       } catch (e) {
         console.warn('Gagal sinkronisasi laporan petty cash:', e);
+      }
+    }
+
+    // If this submission is a Loan transaction (Pinjaman Karyawan / Perusahaan), automatically sync & accumulate
+    if (isLoanSubmission(savedSub)) {
+      try {
+        const currentLoans = getSavedEmployeeLoans();
+        const { syncedLoans } = syncLoansWithSubmissions(currentLoans, [savedSub, ...submissions]);
+        saveEmployeeLoans(syncedLoans);
+      } catch (loanSyncErr) {
+        console.warn('Gagal sinkronisasi transaksi pinjaman:', loanSyncErr);
       }
     }
 
