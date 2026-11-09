@@ -45,9 +45,9 @@ interface GoogleDriveSettingsModalProps {
 
 export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> = ({ isOpen, onClose }) => {
   const [drives, setDrives] = useState<ConnectedDrive[]>([]);
-  const [authorizedEmails, setAuthorizedEmails] = useState<string[]>([LOCKED_MASTER_DRIVE_EMAIL]);
+  const [authorizedEmails, setAuthorizedEmails] = useState<string[]>(() => getAuthorizedDriveEmails());
   const [newEmailInput, setNewEmailInput] = useState('');
-  const [masterEmail, setMasterEmail] = useState<string>(LOCKED_MASTER_DRIVE_EMAIL);
+  const [masterEmail, setMasterEmail] = useState<string>(() => getMasterDriveEmail());
   const [isConnecting, setIsConnecting] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -142,7 +142,7 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
   const handleConnectDriveAccount = async (emailHint?: string) => {
     setIsConnecting(true);
     try {
-      const targetEmail = LOCKED_MASTER_DRIVE_EMAIL;
+      const targetEmail = emailHint || masterEmail || getMasterDriveEmail() || 'penyimpanandrivenmsa1@gmail.com';
       const result = await googleDriveLogin(targetEmail, false);
       if (result.accessToken) {
         await loadData();

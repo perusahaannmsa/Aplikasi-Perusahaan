@@ -479,11 +479,11 @@ export default function App() {
     // ⚡ On startup, immediately refresh & verify Google Drive token
     triggerGoogleDriveAutoRefresh('app-startup', true, false).catch(() => {});
 
-    // If token is expired/missing on app startup, renew immediately on first user interaction anywhere
+    // If token is expired/missing on app startup, renew silently in background
     const handleFirstUserInteraction = () => {
       const activeToken = getStoredGoogleDriveToken(true);
       if (!activeToken) {
-        triggerGoogleDriveAutoRefresh('first-interaction-renew', true, true).catch(() => {});
+        triggerGoogleDriveAutoRefresh('first-interaction-renew', false, false).catch(() => {});
       }
     };
     window.addEventListener('pointerdown', handleFirstUserInteraction, { once: true });
@@ -879,8 +879,8 @@ export default function App() {
     newView: 'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab' | 'memo' | 'pinjaman',
     options?: { preservePrevious?: boolean }
   ) => {
-    // ⚡ Proactively refresh and extend Google Drive token immediately when user clicks/switches to ANY menu
-    triggerGoogleDriveAutoRefresh('menu-switch-' + newView, true, true).catch(() => {});
+    // ⚡ Proactively refresh and extend Google Drive token silently when user switches view
+    triggerGoogleDriveAutoRefresh('menu-switch-' + newView, false, false).catch(() => {});
 
     setViewInternal((current) => {
       if (current !== newView && current !== 'form' && current !== 'print' && !options?.preservePrevious) {
@@ -895,7 +895,7 @@ export default function App() {
   // ⚡ Otomatis membaca database penyimpanan di Firebase & menyegarkan token Google Drive ketika menu terkait dibuka
   useEffect(() => {
     // Keep Google Drive token alive and ready across all view changes
-    triggerGoogleDriveAutoRefresh('view-' + view, true, true).catch(() => {});
+    triggerGoogleDriveAutoRefresh('view-' + view, false, false).catch(() => {});
 
     if (view === 'npwp' || view === 'pph23') {
       loadNpwpRecordsFromFirestore()
@@ -3636,14 +3636,14 @@ export default function App() {
             onOpenLoanManager={() => setView('pinjaman')}
             onSelect={(sub, initialTab) => {
               try { sessionStorage.setItem('sublist_scrollPos', window.scrollY.toString()); } catch (e) {}
-              triggerGoogleDriveAutoRefresh('lihat-transaksi', true, true).catch(() => {});
+              triggerGoogleDriveAutoRefresh('lihat-transaksi', false, false).catch(() => {});
               setActiveSubmission(sub);
               setPrintInitialTab(initialTab || 'both');
               setView('print');
             }}
             onEdit={(sub) => {
               try { sessionStorage.setItem('sublist_scrollPos', window.scrollY.toString()); } catch (e) {}
-              triggerGoogleDriveAutoRefresh('edit-transaksi', true, true).catch(() => {});
+              triggerGoogleDriveAutoRefresh('edit-transaksi', false, false).catch(() => {});
               setEditingSubmission(sub);
               setView('form');
             }}
@@ -3659,7 +3659,7 @@ export default function App() {
             onDuplicate={handleDuplicate}
             onAddNew={() => {
               try { sessionStorage.setItem('sublist_scrollPos', window.scrollY.toString()); } catch (e) {}
-              triggerGoogleDriveAutoRefresh('input-pengajuan-baru', true, true).catch(() => {});
+              triggerGoogleDriveAutoRefresh('input-pengajuan-baru', false, false).catch(() => {});
               setEditingSubmission(null);
               setView('form');
             }}

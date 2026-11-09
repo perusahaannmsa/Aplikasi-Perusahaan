@@ -229,7 +229,7 @@ export function SppdAccountMapping({
       if (drives.length > 0 && drives[0].email) {
         setDriveAccount({ email: drives[0].email });
       } else {
-        const lastEmail = localStorage.getItem('NUSANTARA_LAST_ACTIVE_EMAIL') || LOCKED_MASTER_DRIVE_EMAIL;
+        const lastEmail = localStorage.getItem('NUSANTARA_LAST_ACTIVE_EMAIL') || getMasterDriveEmail();
         const token = getStoredGoogleDriveToken();
         if (token) {
           setDriveAccount({ email: lastEmail });
@@ -242,9 +242,10 @@ export function SppdAccountMapping({
   const handleConnectGoogleDrive = async () => {
     try {
       setIsDriveConnecting(true);
-      const res = await googleDriveLogin(LOCKED_MASTER_DRIVE_EMAIL, true);
+      const target = getMasterDriveEmail();
+      const res = await googleDriveLogin(target, true);
       if (res && res.accessToken) {
-        setDriveAccount({ email: (res as any).user?.email || LOCKED_MASTER_DRIVE_EMAIL });
+        setDriveAccount({ email: (res as any).user?.email || target });
         setSuccessMessage('Google Drive Master terhubung secara otomatis ke seluruh modul!');
       }
     } catch (err: any) {

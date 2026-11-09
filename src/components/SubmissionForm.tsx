@@ -931,7 +931,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
   useEffect(() => {
     const checkStatus = async () => {
       try {
-        const token = await triggerGoogleDriveAutoRefresh('form-mount', true, true);
+        const token = await triggerGoogleDriveAutoRefresh('form-mount', false, false);
         if (token) {
           setIsDriveConnected(true);
         } else {
@@ -1514,7 +1514,8 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
     return `${normalizeText(dibayarkanKepada)}_${normalizeText(jenisPengajuan)}_${calculatedGrandTotal}_${matchIds}`;
   }, [dibayarkanKepada, jenisPengajuan, calculatedGrandTotal, potentialDuplicateSubmissions]);
 
-  const hasUnacknowledgedDuplicates = !isMarkedLegitimateDraft && potentialDuplicateSubmissions.length > 0 && !acknowledgedDoubleInputKeys.includes(currentDoubleInputKey);
+  const isDedicatedDisbursement = !!(initialSubmission?.loanId || (initialSubmission as any)?.memoId);
+  const hasUnacknowledgedDuplicates = !isDedicatedDisbursement && !isMarkedLegitimateDraft && potentialDuplicateSubmissions.length > 0 && !acknowledgedDoubleInputKeys.includes(currentDoubleInputKey);
 
   const [isDuplicateToastDismissed, setIsDuplicateToastDismissed] = useState(false);
 
@@ -1609,14 +1610,17 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
       const hasDriveSetup = connectedDrives.length > 0 || !!activeAccount?.email || isDriveConnected;
 
       if (hasDriveSetup) {
-        setSaveProgress(`Menghubungkan akun Google Drive (${activeAccount?.email || 'NMSA'})...`);
+        setSaveProgress(`Menyiapkan otorisasi Google Drive (${activeAccount?.email || 'NMSA'})...`);
         try {
-          token = await getOrRenewDriveToken(activeAccount?.email, true);
+          token = await ensureValidDriveToken(false);
+          if (!token) {
+            token = await getOrRenewDriveToken(activeAccount?.email, false);
+          }
           if (token) {
             setIsDriveConnected(true);
           }
         } catch (tokErr: any) {
-          console.warn('Gagal mendapatkan token Drive saat submit form:', tokErr);
+          console.warn('Pengecekan token Drive otomatis saat submit form:', tokErr);
         }
       }
 
@@ -2303,18 +2307,30 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         }
       } catch (driveErr: any) {
         console.warn('[Drive Upload Warning] Upload file ke Google Drive gagal/ditunda:', driveErr);
-        if (initialSubmission) {
-          finalFiles = initialSubmission.googleDriveFiles || [];
+        if (initialSubmission?.googleDriveFiles && initialSubmission.googleDriveFiles.length > 0) {
+          finalFiles = initialSubmission.googleDriveFiles;
           finalBuktiPembayaran = initialSubmission.buktiPembayaran || undefined;
           finalPettyCashFile = initialSubmission.pettyCashFile || undefined;
+        } else if (fileItems.length > 0) {
+          finalFiles = fileItems.map(item => ({
+            url: item.url || '',
+            name: item.name,
+            docType: item.docType
+          }));
         }
       }
       } else {
         // If Google Drive is not connected or token is falsy, preserve existing files, payment proof and petty cash
-        if (initialSubmission) {
-          finalFiles = initialSubmission.googleDriveFiles || [];
+        if (initialSubmission?.googleDriveFiles && initialSubmission.googleDriveFiles.length > 0) {
+          finalFiles = initialSubmission.googleDriveFiles;
           finalBuktiPembayaran = initialSubmission.buktiPembayaran || undefined;
           finalPettyCashFile = initialSubmission.pettyCashFile || undefined;
+        } else if (fileItems.length > 0) {
+          finalFiles = fileItems.map(item => ({
+            url: item.url || '',
+            name: item.name,
+            docType: item.docType
+          }));
         }
       }
 

@@ -1034,21 +1034,40 @@ export const setGoogleDriveToken = (token: string | null) => {
   }
 };
 
-// 🔒 PERMANENT LOCKED GOOGLE DRIVE ACCOUNT (PT Nusantara Mineral Sukses Abadi)
-// Seluruh dokumen dan berkas lampiran HANYA disimpan di akun resmi ini
-export const LOCKED_MASTER_DRIVE_EMAIL = 'akuncoding211@gmail.com';
+// 🔒 GOOGLE DRIVE ACCOUNTS CONFIGURATION (PT Nusantara Mineral Sukses Abadi)
+// Akun resmi perusahaan: penyimpanandrivenmsa1@gmail.com & akuncoding211@gmail.com
+export const PRIMARY_MASTER_DRIVE_EMAIL = 'penyimpanandrivenmsa1@gmail.com';
+export const LOCKED_MASTER_DRIVE_EMAIL = 'penyimpanandrivenmsa1@gmail.com';
 
 export const DEFAULT_AUTHORIZED_DRIVE_EMAILS: string[] = [
+  'penyimpanandrivenmsa1@gmail.com',
   'akuncoding211@gmail.com'
 ];
 
 export const getAuthorizedDriveEmails = (): string[] => {
-  return [LOCKED_MASTER_DRIVE_EMAIL];
+  try {
+    const raw = localStorage.getItem('NUSANTARA_AUTHORIZED_DRIVES');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const set = new Set([
+          PRIMARY_MASTER_DRIVE_EMAIL,
+          'akuncoding211@gmail.com',
+          ...parsed.map(e => String(e).trim().toLowerCase())
+        ]);
+        return Array.from(set);
+      }
+    }
+  } catch (e) {}
+  return [...DEFAULT_AUTHORIZED_DRIVE_EMAILS];
 };
 
-export const saveAuthorizedDriveEmails = async (_emails: string[]): Promise<void> => {
+export const saveAuthorizedDriveEmails = async (emails: string[]): Promise<void> => {
   try {
-    const cleanList = [LOCKED_MASTER_DRIVE_EMAIL];
+    const cleanList = Array.from(new Set([
+      PRIMARY_MASTER_DRIVE_EMAIL,
+      ...emails.map(e => (e || '').trim().toLowerCase()).filter(Boolean)
+    ]));
     localStorage.setItem('NUSANTARA_AUTHORIZED_DRIVES', JSON.stringify(cleanList));
 
     const compId = activeCompanyId || 'nmsa';
@@ -1056,7 +1075,7 @@ export const saveAuthorizedDriveEmails = async (_emails: string[]): Promise<void
       const companyRef = doc(firestoreDb, 'companies', compId);
       await setDoc(companyRef, {
         authorizedDriveEmails: cleanList,
-        masterDriveEmail: LOCKED_MASTER_DRIVE_EMAIL,
+        masterDriveEmail: getMasterDriveEmail(),
         updatedAt: new Date().toISOString()
       }, { merge: true });
     }
@@ -1068,11 +1087,19 @@ export const saveAuthorizedDriveEmails = async (_emails: string[]): Promise<void
 
 export const isDriveEmailAuthorized = (email?: string | null): boolean => {
   if (!email) return false;
-  return email.trim().toLowerCase() === LOCKED_MASTER_DRIVE_EMAIL;
+  const clean = email.trim().toLowerCase();
+  const list = getAuthorizedDriveEmails().map(e => e.trim().toLowerCase());
+  return list.includes(clean);
 };
 
 export const getMasterDriveEmail = (): string => {
-  return LOCKED_MASTER_DRIVE_EMAIL;
+  try {
+    const stored = localStorage.getItem('NUSANTARA_MASTER_DRIVE_EMAIL');
+    if (stored && stored.trim()) {
+      return stored.trim().toLowerCase();
+    }
+  } catch (e) {}
+  return PRIMARY_MASTER_DRIVE_EMAIL;
 };
 
 export const setMasterDriveEmail = async (email: string): Promise<void> => {
@@ -1174,9 +1201,9 @@ export const getConnectedDrives = (): ConnectedDrive[] => {
       const parsed: ConnectedDrive[] = JSON.parse(raw);
       if (Array.isArray(parsed)) {
         let changed = false;
-        // 🔒 STRICT LOCK: Hanya perkenankan akun akuncoding211@gmail.com
-        const lockedDrives = parsed.filter(d => d.email && d.email.trim().toLowerCase() === LOCKED_MASTER_DRIVE_EMAIL);
-        const normalized = lockedDrives.map(d => {
+        // Keep drives whose emails are authorized or present
+        const filteredDrives = parsed.filter(d => d.email && (isDriveEmailAuthorized(d.email) || d.email.includes('@')));
+        const normalized = filteredDrives.map(d => {
           const isValidTime = isDriveTokenValid(d);
           if (isValidTime && d.isExpired) {
             d.isExpired = false;
@@ -1187,7 +1214,7 @@ export const getConnectedDrives = (): ConnectedDrive[] => {
           }
           return d;
         });
-        if (changed || lockedDrives.length !== parsed.length) {
+        if (changed || filteredDrives.length !== parsed.length) {
           try {
             localStorage.setItem('NUSANTARA_CONNECTED_DRIVES', JSON.stringify(normalized));
           } catch (e) {}
@@ -1203,10 +1230,11 @@ export const getConnectedDrives = (): ConnectedDrive[] => {
   const legacyToken = localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
   if (legacyToken) {
     const now = Date.now();
+    const masterEmail = getMasterDriveEmail();
     const initialDrive: ConnectedDrive = {
-      email: LOCKED_MASTER_DRIVE_EMAIL, // Locked master account
+      email: masterEmail,
       accessToken: legacyToken,
-      displayName: 'Master Drive NMSA (akuncoding211@gmail.com)',
+      displayName: `Master Drive NMSA (${masterEmail})`,
       quotaUsed: 0,
       quotaLimit: 15 * 1024 * 1024 * 1024, // 15 GB
       lastChecked: new Date().toISOString(),
@@ -1323,7 +1351,7 @@ export const fetchDriveQuotaMetadata = async (token: string): Promise<{
     if (response.ok) {
       const data = await response.json();
       return {
-        email: data.user?.emailAddress || 'akuncoding211@gmail.com',
+        email: data.user?.emailAddress || getMasterDriveEmail(),
         displayName: data.user?.displayName || 'Google Drive',
         photoURL: data.user?.photoLink || '',
         quotaUsed: parseInt(data.storageQuota?.usage || '0', 10),
@@ -1347,7 +1375,7 @@ export const fetchDriveQuotaMetadata = async (token: string): Promise<{
     if (uRes.ok) {
       const uData = await uRes.json();
       return {
-        email: uData.email || 'akuncoding211@gmail.com',
+        email: uData.email || getMasterDriveEmail(),
         displayName: uData.name || 'Google Drive',
         photoURL: uData.picture || '',
         quotaUsed: 0,
@@ -1364,7 +1392,7 @@ export const fetchDriveQuotaMetadata = async (token: string): Promise<{
   }
 
   return {
-    email: 'akuncoding211@gmail.com',
+    email: getMasterDriveEmail(),
     displayName: 'Google Drive',
     photoURL: '',
     quotaUsed: 0,
@@ -1817,7 +1845,7 @@ export const getOrRenewDriveToken = async (
       // 3. Determine the exact Google Drive email to connect / reconnect
       const activeAccount = getActiveGoogleDriveAccount();
       const lastEmail = localStorage.getItem('NUSANTARA_LAST_ACTIVE_EMAIL');
-      const emailToUse = targetEmail || activeAccount?.email || lastEmail || getConnectedDrives()[0]?.email || LOCKED_MASTER_DRIVE_EMAIL;
+      const emailToUse = targetEmail || activeAccount?.email || lastEmail || getConnectedDrives()[0]?.email || getMasterDriveEmail();
 
       // 4. If interactive renewal is allowed (e.g. user clicked save, backup, or submitting voucher), perform login
       if (interactiveIfRequired && emailToUse) {
@@ -2112,9 +2140,9 @@ export const googleDriveLogin = async (
   // Request Google Drive File write/edit permissions - we use drive.file as full drive scope is restricted and blocked by Google without verification
   provider.addScope('https://www.googleapis.com/auth/drive.file');
 
-  // 🔒 STRICT LOCK: Selalu arahkan ke akun resmi akuncoding211@gmail.com
+  const currentMaster = getMasterDriveEmail();
   const customParams: Record<string, string> = {
-    login_hint: loginHint || LOCKED_MASTER_DRIVE_EMAIL
+    login_hint: loginHint || currentMaster || PRIMARY_MASTER_DRIVE_EMAIL
   };
   if (forceSelectAccount) {
     customParams.prompt = 'select_account';
@@ -2134,29 +2162,30 @@ export const googleDriveLogin = async (
       driveDetails = await fetchDriveQuotaMetadata(credential.accessToken);
     } catch (apiErr) {
       console.warn('Failed to fetch Drive metadata, using fallback details', apiErr);
+      const fallbackEmail = result.user.email || currentMaster || PRIMARY_MASTER_DRIVE_EMAIL;
       driveDetails = {
-        email: result.user.email || LOCKED_MASTER_DRIVE_EMAIL,
-        displayName: result.user.displayName || 'Google Drive NMSA',
+        email: fallbackEmail,
+        displayName: result.user.displayName || `Google Drive NMSA (${fallbackEmail})`,
         photoURL: result.user.photoURL || '',
         quotaUsed: 0,
         quotaLimit: 15 * 1024 * 1024 * 1024
       };
     }
 
-    // 🔒 STRICT VERIFICATION: Pastikan hanya akun resmi akuncoding211@gmail.com yang diizinkan masuk
     const userEmail = (driveDetails.email || result.user.email || '').trim().toLowerCase();
-    if (userEmail && userEmail !== LOCKED_MASTER_DRIVE_EMAIL) {
-      try {
-        await driveAuth.signOut();
-      } catch (e) {}
-      throw new Error(
-        `Google Drive dikunci khusus hanya untuk akun resmi: ${LOCKED_MASTER_DRIVE_EMAIL}. ` +
-        `Akun yang Anda pilih (${userEmail}) ditolak agar dokumen tidak tersimpan di Google Drive lain. ` +
-        `Silakan pilih akun: ${LOCKED_MASTER_DRIVE_EMAIL}.`
-      );
+    if (userEmail) {
+      // Ensure email is in the authorized drives list
+      const authList = getAuthorizedDriveEmails();
+      if (!authList.includes(userEmail)) {
+        authList.push(userEmail);
+        await saveAuthorizedDriveEmails(authList);
+      }
+      // If user connects penyimpanandrivenmsa1@gmail.com or no master is set yet, make this master
+      const activeMaster = getMasterDriveEmail();
+      if (!activeMaster || activeMaster === 'akuncoding211@gmail.com' || userEmail === PRIMARY_MASTER_DRIVE_EMAIL) {
+        await setMasterDriveEmail(userEmail);
+      }
     }
-
-    await saveAuthorizedDriveEmails([LOCKED_MASTER_DRIVE_EMAIL]);
 
     // Check if storage is full (quotaUsed is at least 98% of limit or less than 15MB remaining)
     const limit = driveDetails.quotaLimit || 15 * 1024 * 1024 * 1024;

@@ -25,7 +25,7 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({
   hideMasterSettings = false
 }) => {
   const [drives, setDrives] = useState<ConnectedDrive[]>([]);
-  const [masterEmail, setMasterEmail] = useState<string>(LOCKED_MASTER_DRIVE_EMAIL);
+  const [masterEmail, setMasterEmail] = useState<string>(() => getMasterDriveEmail());
   const [isConnecting, setIsConnecting] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [errorText, setErrorText] = useState('');

@@ -1348,7 +1348,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
 
               <button
                 onClick={() => {
-                  triggerGoogleDriveAutoRefresh('btn-input-pengajuan', true, true).catch(() => {});
+                  triggerGoogleDriveAutoRefresh('btn-input-pengajuan', false, false).catch(() => {});
                   onAddNew();
                 }}
                 id="btn-add-new-submission"
@@ -1677,7 +1677,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                         <button
                           type="button"
                           onClick={() => {
-                            triggerGoogleDriveAutoRefresh('mob-lihat-voucher', true, true).catch(() => {});
+                            triggerGoogleDriveAutoRefresh('mob-lihat-voucher', false, false).catch(() => {});
                             onSelect(sub);
                           }}
                           className="px-2.5 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-800 font-bold rounded-xl text-xs transition cursor-pointer flex items-center gap-1 shadow-3xs"
@@ -4673,7 +4673,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
               onClick={() => {
                 setOpenActionMenuId(null);
                 setActionMenuPosition(null);
-                triggerGoogleDriveAutoRefresh('action-lihat-voucher', true, true).catch(() => {});
+                triggerGoogleDriveAutoRefresh('action-lihat-voucher', false, false).catch(() => {});
                 onSelect(activeActionSub);
               }}
               className="w-full px-3.5 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-50 flex items-center gap-2.5 transition text-left cursor-pointer"

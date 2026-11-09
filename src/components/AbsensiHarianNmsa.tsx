@@ -1874,7 +1874,7 @@ export function AbsensiHarianNmsa({
   useEffect(() => {
     const fetchUnifiedDriveToken = async () => {
       try {
-        const token = await triggerGoogleDriveAutoRefresh("menu-absensi-mount", true, true);
+        const token = await triggerGoogleDriveAutoRefresh("menu-absensi-mount", false, false);
         if (token) {
           localStorage.setItem("g_access_token", token);
           setGoogleToken(token);

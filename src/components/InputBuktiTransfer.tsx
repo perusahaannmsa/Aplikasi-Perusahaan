@@ -838,9 +838,12 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
       const hasDriveSetup = connectedDrives.length > 0 || !!activeAccount?.email || isDriveConnected;
 
       if (hasDriveSetup) {
-        setSaveProgress(`2/6. Menghubungkan akun Google Drive resmi (${activeAccount?.email || 'akuncoding211@gmail.com'})...`);
+        setSaveProgress(`2/6. Menghubungkan akun Google Drive resmi (${activeAccount?.email || 'NMSA'})...`);
         try {
-          token = await getOrRenewDriveToken(activeAccount?.email, true);
+          token = await ensureValidDriveToken(false);
+          if (!token) {
+            token = await getOrRenewDriveToken(activeAccount?.email, false);
+          }
           if (token) {
             setIsDriveConnected(true);
           }
