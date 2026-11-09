@@ -12,7 +12,7 @@
     "build:pages": "vite build",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "./node_modules/.bin/tsc --noEmit"
   },
   "dependencies": {
     "@e965/xlsx": "^0.20.3",
