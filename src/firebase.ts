@@ -909,6 +909,8 @@ export const logoutFromFirebase = async (): Promise<void> => {
   currentUser = null;
 };
 
+let isDrivePopupConnecting = false;
+
 export const getFirebaseUser = (): User | null => {
   return currentUser;
 };
@@ -917,7 +919,14 @@ export const registerAuthChangeListener = (callback: (user: User | null) => void
   if (!firebaseAuth) {
     return () => {};
   }
-  return onAuthStateChanged(firebaseAuth, callback);
+  return onAuthStateChanged(firebaseAuth, (user) => {
+    if (isDrivePopupConnecting) {
+      console.log('🛡️ Menahan perubahan user portal saat menghubungkan token Google Drive.');
+      return;
+    }
+    currentUser = user;
+    callback(user);
+  });
 };
 
 // ═════════ GOOGLE DRIVE / OAUTH PERSISTENCE UTILITIES ═════════
@@ -1044,6 +1053,41 @@ export const DEFAULT_AUTHORIZED_DRIVE_EMAILS: string[] = [
   'akuncoding211@gmail.com'
 ];
 
+/**
+ * Flexible mode allows any Google account to be linked and used as a storage target.
+ * Default is TRUE so users are never blocked or rejected when connecting their accounts.
+ */
+export const isDriveFlexibleMode = (): boolean => {
+  try {
+    const raw = localStorage.getItem('NUSANTARA_DRIVE_FLEXIBLE_MODE');
+    if (raw !== null) {
+      return raw === 'true';
+    }
+  } catch (e) {}
+  return true;
+};
+
+export const setDriveFlexibleMode = async (enabled: boolean): Promise<void> => {
+  try {
+    localStorage.setItem('NUSANTARA_DRIVE_FLEXIBLE_MODE', String(enabled));
+    const compId = activeCompanyId || 'nmsa';
+    if (firestoreDb && compId && !isFirestoreQuotaExceeded()) {
+      const companyRef = doc(firestoreDb, 'companies', compId);
+      await setDoc(companyRef, {
+        driveFlexibleMode: enabled,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+    }
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('nusantara-drive-updated', {
+        detail: { flexibleMode: enabled }
+      }));
+    }
+  } catch (e) {
+    console.warn('Failed to save flexible mode state:', e);
+  }
+};
+
 export const getAuthorizedDriveEmails = (): string[] => {
   try {
     const raw = localStorage.getItem('NUSANTARA_AUTHORIZED_DRIVES');
@@ -1052,7 +1096,6 @@ export const getAuthorizedDriveEmails = (): string[] => {
       if (Array.isArray(parsed) && parsed.length > 0) {
         const set = new Set([
           PRIMARY_MASTER_DRIVE_EMAIL,
-          'akuncoding211@gmail.com',
           ...parsed.map(e => String(e).trim().toLowerCase())
         ]);
         return Array.from(set);
@@ -1085,8 +1128,69 @@ export const saveAuthorizedDriveEmails = async (emails: string[]): Promise<void>
   }
 };
 
+export const addAuthorizedDriveEmail = async (email: string): Promise<string[]> => {
+  const clean = (email || '').trim().toLowerCase();
+  if (!clean || !clean.includes('@') || !clean.includes('.')) {
+    throw new Error('Alamat email Google tidak valid (contoh: akun@gmail.com).');
+  }
+  const current = getAuthorizedDriveEmails();
+  if (!current.includes(clean)) {
+    current.push(clean);
+    await saveAuthorizedDriveEmails(current);
+  }
+  return current;
+};
+
+export const updateAuthorizedDriveEmail = async (oldEmail: string, newEmail: string): Promise<string[]> => {
+  const cleanOld = (oldEmail || '').trim().toLowerCase();
+  const cleanNew = (newEmail || '').trim().toLowerCase();
+  if (!cleanNew || !cleanNew.includes('@') || !cleanNew.includes('.')) {
+    throw new Error('Alamat email Google baru tidak valid (contoh: akun@gmail.com).');
+  }
+  const current = getAuthorizedDriveEmails();
+  const index = current.findIndex(e => e.toLowerCase() === cleanOld);
+  if (index !== -1) {
+    current[index] = cleanNew;
+  } else if (!current.includes(cleanNew)) {
+    current.push(cleanNew);
+  }
+  await saveAuthorizedDriveEmails(current);
+
+  if (getMasterDriveEmail().toLowerCase() === cleanOld) {
+    await setMasterDriveEmail(cleanNew);
+  }
+
+  // Update in connected drives if matching
+  const drives = getConnectedDrives();
+  let changed = false;
+  drives.forEach(d => {
+    if (d.email.toLowerCase() === cleanOld) {
+      d.email = cleanNew;
+      changed = true;
+    }
+  });
+  if (changed) {
+    await saveConnectedDrives(drives);
+  }
+
+  return current;
+};
+
+export const removeAuthorizedDriveEmail = async (emailToRemove: string): Promise<string[]> => {
+  const clean = (emailToRemove || '').trim().toLowerCase();
+  const current = getAuthorizedDriveEmails();
+  const updated = current.filter(e => e.toLowerCase() !== clean);
+  await saveAuthorizedDriveEmails(updated);
+  if (getMasterDriveEmail().toLowerCase() === clean && updated.length > 0) {
+    await setMasterDriveEmail(updated[0]);
+  }
+  return updated;
+};
+
 export const isDriveEmailAuthorized = (email?: string | null): boolean => {
   if (!email) return false;
+  // If flexible mode is active, any valid email format is authorized!
+  if (isDriveFlexibleMode()) return email.includes('@');
   const clean = email.trim().toLowerCase();
   const list = getAuthorizedDriveEmails().map(e => e.trim().toLowerCase());
   return list.includes(clean);
@@ -1398,6 +1502,79 @@ export const fetchDriveQuotaMetadata = async (token: string): Promise<{
     quotaUsed: 0,
     quotaLimit: 15 * 1024 * 1024 * 1024
   };
+};
+
+/**
+ * Connect Google Drive directly using a manual OAuth Access Token or Authorization Code.
+ * Validates the token immediately with Google Drive API and persists the connection.
+ */
+export const connectDriveWithManualToken = async (
+  tokenInput: string,
+  targetEmailHint?: string
+): Promise<ConnectedDrive> => {
+  const cleanToken = (tokenInput || '').trim().replace(/^Bearer\s+/i, '');
+  if (!cleanToken) {
+    throw new Error('Kode token Google Drive tidak boleh kosong.');
+  }
+
+  // 1. Validate token with Google Drive API
+  let meta: any = null;
+  try {
+    meta = await fetchDriveQuotaMetadata(cleanToken);
+  } catch (err: any) {
+    console.error('Manual token validation error:', err);
+    throw new Error(
+      'Kode token Google Drive tidak valid atau sudah kedaluwarsa.\n' +
+      'Pastikan Anda memasukkan Access Token Google yang masih aktif (biasanya berawalan "ya29.").'
+    );
+  }
+
+  const email = (meta.email || targetEmailHint || getMasterDriveEmail() || 'google-drive@nmsa.com').trim().toLowerCase();
+  const now = Date.now();
+  const newDrive: ConnectedDrive = {
+    email: email,
+    accessToken: cleanToken,
+    displayName: meta.displayName || `Google Drive (${email})`,
+    photoURL: meta.photoURL || '',
+    quotaUsed: meta.quotaUsed || 0,
+    quotaLimit: meta.quotaLimit || 15 * 1024 * 1024 * 1024,
+    lastChecked: new Date().toISOString(),
+    isExpired: false,
+    issuedAt: now,
+    expiresAt: now + TOKEN_LIFESPAN_MS
+  };
+
+  // 2. Auto-whitelist email so it is accepted
+  try {
+    const list = getAuthorizedDriveEmails();
+    if (!list.includes(email)) {
+      list.push(email);
+      await saveAuthorizedDriveEmails(list);
+    }
+  } catch (e) {}
+
+  // 3. Update connected drives list
+  const currentDrives = getConnectedDrives();
+  const idx = currentDrives.findIndex(d => d.email.toLowerCase() === email.toLowerCase());
+  if (idx !== -1) {
+    currentDrives[idx] = newDrive;
+  } else {
+    currentDrives.push(newDrive);
+  }
+
+  await saveConnectedDrives(currentDrives);
+  localStorage.setItem('g_access_token', cleanToken);
+  localStorage.setItem('g_access_token_time', Date.now().toString());
+  localStorage.setItem('g_user_email', email);
+  localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', email);
+
+  // If no master exists, set this as master
+  const currentMaster = getMasterDriveEmail();
+  if (!currentMaster) {
+    await setMasterDriveEmail(email);
+  }
+
+  return newDrive;
 };
 
 export const refreshAllDrivesQuota = async (): Promise<ConnectedDrive[]> => {
@@ -2118,54 +2295,60 @@ export const googleDriveLogin = async (
     throw new Error('Database autentikasi belum beroperasi.');
   }
 
-  // To prevent changing the currently logged-in portal user (which swaps user profiles,
-  // causing data loss or falling back to default lists), we initialize a completely separate,
-  // isolated secondary Firebase Auth instance solely for handling the Google Drive popup credentials!
-  let driveAuthApp: FirebaseApp;
-  try {
-    const existingApps = getApps();
-    const found = existingApps.find(a => a.name === 'nmsa-drive-auth');
-    if (found) {
-      driveAuthApp = found;
-    } else {
-      driveAuthApp = initializeApp(config, 'nmsa-drive-auth');
-    }
-  } catch (err) {
-    console.warn('Fallback to default firebase app for drive auth:', err);
-    driveAuthApp = firebaseApp || (getApps().length > 0 ? getApps()[0] : initializeApp(config));
-  }
-
-  const driveAuth = getAuth(driveAuthApp);
+  // Use primary auth instance to guarantee popup postMessage resolution!
+  const targetAuth = firebaseAuth || getAuth();
   const provider = new GoogleAuthProvider();
-  // Request Google Drive File write/edit permissions - we use drive.file as full drive scope is restricted and blocked by Google without verification
+  // Request Google Drive File write/edit permissions
   provider.addScope('https://www.googleapis.com/auth/drive.file');
 
-  const currentMaster = getMasterDriveEmail();
-  const customParams: Record<string, string> = {
-    login_hint: loginHint || currentMaster || PRIMARY_MASTER_DRIVE_EMAIL
-  };
+  const customParams: Record<string, string> = {};
+  if (loginHint) {
+    customParams.login_hint = loginHint;
+  }
   if (forceSelectAccount) {
     customParams.prompt = 'select_account';
   }
   provider.setCustomParameters(customParams);
-  
+
+  // Set timeout protection (45 seconds) so it NEVER spins indefinitely!
+  const TIMEOUT_MS = 45000;
+  let timeoutTimer: any = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutTimer = setTimeout(() => {
+      reject(new Error(
+        'Waktu tunggu koneksi Google Drive habis (45 detik).\n\n' +
+        'Penyebab umum: Jendela pop-up login ditutup, diblokir browser, atau domain belum diizinkan.\n\n' +
+        'SOLUSI INSTAN: Anda dapat menggunakan fitur "Input Token Manual" untuk menyambungkan Google Drive dalam hitungan detik tanpa perlu pop-up!'
+      ));
+    }, TIMEOUT_MS);
+  });
+
+  isDrivePopupConnecting = true;
+  const savedPortalUser = currentUser;
+
   try {
-    const result = await signInWithPopup(driveAuth, provider);
+    const result = await Promise.race([
+      signInWithPopup(targetAuth, provider),
+      timeoutPromise
+    ]);
+
+    if (timeoutTimer) clearTimeout(timeoutTimer);
+
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {
       throw new Error('Sesi otentikasi Google gagal menyuplai kunci akses (Access Token).');
     }
-    
+
     // Fetch detailed metadata from Drive API for accurate storage & user matching
     let driveDetails = null;
     try {
       driveDetails = await fetchDriveQuotaMetadata(credential.accessToken);
     } catch (apiErr) {
       console.warn('Failed to fetch Drive metadata, using fallback details', apiErr);
-      const fallbackEmail = result.user.email || currentMaster || PRIMARY_MASTER_DRIVE_EMAIL;
+      const fallbackEmail = result.user.email || loginHint || getMasterDriveEmail() || 'google-drive@nmsa.com';
       driveDetails = {
         email: fallbackEmail,
-        displayName: result.user.displayName || `Google Drive NMSA (${fallbackEmail})`,
+        displayName: result.user.displayName || `Google Drive (${fallbackEmail})`,
         photoURL: result.user.photoURL || '',
         quotaUsed: 0,
         quotaLimit: 15 * 1024 * 1024 * 1024
@@ -2174,20 +2357,23 @@ export const googleDriveLogin = async (
 
     const userEmail = (driveDetails.email || result.user.email || '').trim().toLowerCase();
     if (userEmail) {
-      // Ensure email is in the authorized drives list
-      const authList = getAuthorizedDriveEmails();
-      if (!authList.includes(userEmail)) {
-        authList.push(userEmail);
-        await saveAuthorizedDriveEmails(authList);
-      }
-      // If user connects penyimpanandrivenmsa1@gmail.com or no master is set yet, make this master
+      // Auto-whitelist email so it is NEVER blocked
+      try {
+        const authList = getAuthorizedDriveEmails();
+        if (!authList.includes(userEmail)) {
+          authList.push(userEmail);
+          await saveAuthorizedDriveEmails(authList);
+        }
+      } catch (e) {}
+
+      // If no master exists, make this master
       const activeMaster = getMasterDriveEmail();
-      if (!activeMaster || activeMaster === 'akuncoding211@gmail.com' || userEmail === PRIMARY_MASTER_DRIVE_EMAIL) {
+      if (!activeMaster) {
         await setMasterDriveEmail(userEmail);
       }
     }
 
-    // Check if storage is full (quotaUsed is at least 98% of limit or less than 15MB remaining)
+    // Check if storage is full
     const limit = driveDetails.quotaLimit || 15 * 1024 * 1024 * 1024;
     const used = driveDetails.quotaUsed || 0;
     const remains = limit - used;
@@ -2199,17 +2385,9 @@ export const googleDriveLogin = async (
       window.alert(
         `Penyimpanan Google Drive "${driveDetails.email}" telah penuh (Terisi: ${usedGB} GB dari ${limitGB} GB).\n\nSilakan pilih akun Google Drive cadangan atau akun Google ke-2 Anda untuk melanjutkan penyimpanan secara otomatis tanpa hambatan.`
       );
-
-      // Clean up drive auth session before switching
-      try {
-        await driveAuth.signOut();
-      } catch (e) {}
-
-      // Recursively connect backup/second account by forcing account selector
-      return googleDriveLogin(undefined, true);
     }
 
-    // Store as last active email since it has available storage space
+    // Store as last active email
     localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', driveDetails.email);
 
     // Load existing connected drives list
@@ -2245,25 +2423,36 @@ export const googleDriveLogin = async (
 
     return { user: result.user, accessToken: credential.accessToken, driveDetails };
   } catch (error: any) {
+    if (timeoutTimer) clearTimeout(timeoutTimer);
+
+    if (error?.code === 'auth/popup-closed-by-user' || String(error?.message).includes('popup-closed-by-user')) {
+      throw new Error('Jendela pop-up Google ditutup sebelum login selesai. Silakan klik Sambungkan kembali atau gunakan "Input Token Manual".');
+    }
+    if (error?.code === 'auth/cancelled-popup-request' || String(error?.message).includes('cancelled-popup-request')) {
+      throw new Error('Permintaan pop-up Google dibatalkan karena ada jendela otentikasi lain.');
+    }
+    if (error?.code === 'auth/popup-blocked' || String(error?.message).includes('popup-blocked')) {
+      throw new Error('Jendela pop-up Google diblokir oleh browser. Silakan izinkan pop-up (Pop-ups Allowed) di pengaturan browser Anda atau gunakan tombol "Input Token Manual".');
+    }
     if (error?.code === 'auth/unauthorized-domain' || String(error?.message).includes('unauthorized-domain')) {
-      const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'aplikasi-perusahaan.onrender.com';
+      const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
       console.warn(`[Firebase Auth] Domain '${currentHost}' belum terdaftar di Authorized Domains.`);
       throw new Error(
         `Domain aplikasi ini (${currentHost}) belum didaftarkan di Firebase Authentication Authorized Domains.\n\n` +
-        `Langkah mengatasinya:\n` +
-        `1. Buka Firebase Console (https://console.firebase.google.com/)\n` +
-        `2. Pilih project: pencatatan-voucher-perusahaan\n` +
-        `3. Masuk ke menu: Authentication -> Settings -> tab "Authorized domains"\n` +
-        `4. Klik tombol "Add domain" lalu masukkan: ${currentHost}\n` +
-        `5. Klik Save / Simpan, kemudian coba klik Hubungkan Akun Google Drive kembali.`
+        `SOLUSI INSTAN (TANPA BUKA FIREBASE CONSOLE):\n` +
+        `Gunakan tombol "Input Token Manual" di menu Google Drive untuk menghubungkan akun Google Anda secara instan!`
       );
-    }
-    if (error?.code === 'auth/popup-blocked' || String(error?.message).includes('popup-blocked')) {
-      console.warn('Google Auth popup was blocked by browser. User interaction required.');
-      throw new Error('Jendela pop-up login Google diblokir oleh browser. Silakan izinkan pop-up (Pop-ups Allowed) di pengaturan browser Anda lalu klik Hubungkan Akun kembali.');
     }
     console.error('Error Google Drive connection:', error);
     throw error;
+  } finally {
+    if (timeoutTimer) clearTimeout(timeoutTimer);
+    setTimeout(() => {
+      isDrivePopupConnecting = false;
+      if (savedPortalUser) {
+        currentUser = savedPortalUser;
+      }
+    }, 1000);
   }
 };
 

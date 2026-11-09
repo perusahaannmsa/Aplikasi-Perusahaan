@@ -12,7 +12,7 @@ import {
   getDriveRemainingMinutes,
   LOCKED_MASTER_DRIVE_EMAIL
 } from '../firebase';
-import { Cloud, Plus, Trash2, ShieldCheck, RefreshCw, AlertTriangle, HardDrive, Star, Settings } from 'lucide-react';
+import { Cloud, Plus, Trash2, ShieldCheck, RefreshCw, AlertTriangle, HardDrive, Star, Settings, Key, ArrowRight } from 'lucide-react';
 import { GoogleDriveSettingsModal } from './GoogleDriveSettingsModal';
 
 interface DriveAccountsManagerProps {
@@ -27,9 +27,14 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({
   const [drives, setDrives] = useState<ConnectedDrive[]>([]);
   const [masterEmail, setMasterEmail] = useState<string>(() => getMasterDriveEmail());
   const [isConnecting, setIsConnecting] = useState(false);
+  const [connectingEmail, setConnectingEmail] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [errorText, setErrorText] = useState('');
+  
+  // Modal states
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [modalTab, setModalTab] = useState<'whitelist' | 'manual-token' | 'overview'>('whitelist');
+  const [modalTargetEmail, setModalTargetEmail] = useState<string>('');
 
   const loadDrives = () => {
     const list = getConnectedDrives();
@@ -61,6 +66,7 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({
   const handleConnectNewDrive = async () => {
     setErrorText('');
     setIsConnecting(true);
+    setConnectingEmail(null);
     try {
       const result = await googleDriveLogin(undefined, true);
       if (result.accessToken) {
@@ -68,15 +74,17 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({
       }
     } catch (err: any) {
       console.error(err);
-      setErrorText(`Gagal menghubungkan Google Drive: ${err.message || err}`);
+      setErrorText(err.message || String(err));
     } finally {
       setIsConnecting(false);
+      setConnectingEmail(null);
     }
   };
 
   const handleReconnectDrive = async (email?: string) => {
     setErrorText('');
     setIsConnecting(true);
+    setConnectingEmail(email || null);
     try {
       const result = await googleDriveLogin(email, true);
       if (result.accessToken) {
@@ -84,10 +92,22 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({
       }
     } catch (err: any) {
       console.error(err);
-      setErrorText(`Gagal menyambungkan ulang Google Drive: ${err.message || err}`);
+      setErrorText(err.message || String(err));
     } finally {
       setIsConnecting(false);
+      setConnectingEmail(null);
     }
+  };
+
+  const handleOpenManualTokenModal = (email?: string) => {
+    setModalTargetEmail(email || masterEmail || '');
+    setModalTab('manual-token');
+    setIsSettingsModalOpen(true);
+  };
+
+  const handleOpenWhitelistModal = () => {
+    setModalTab('whitelist');
+    setIsSettingsModalOpen(true);
   };
 
   const handleRemoveDrive = (emailToRemove: string) => {
@@ -133,15 +153,27 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({
         </div>
 
         {!hideMasterSettings && (
-          <button
-            type="button"
-            onClick={() => setIsSettingsModalOpen(true)}
-            className="inline-flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100/80 border border-amber-300 text-amber-900 text-xs font-bold px-3 py-1.5 rounded-xl transition cursor-pointer shadow-3xs"
-            title="Buka Pengaturan Master Google Drive & Whitelist"
-          >
-            <Settings size={13} className="text-amber-700" />
-            <span>Pengaturan Master & Whitelist</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => handleOpenManualTokenModal()}
+              className="inline-flex items-center gap-1.5 bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-300 text-emerald-900 text-xs font-bold px-3 py-1.5 rounded-xl transition cursor-pointer shadow-3xs"
+              title="Input token Google Drive manual (bebas muter)"
+            >
+              <Key size={13} className="text-emerald-700" />
+              <span>Input Token Manual</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleOpenWhitelistModal}
+              className="inline-flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100/80 border border-amber-300 text-amber-900 text-xs font-bold px-3 py-1.5 rounded-xl transition cursor-pointer shadow-3xs"
+              title="Buka Pengaturan Master Google Drive & Whitelist"
+            >
+              <Settings size={13} className="text-amber-700" />
+              <span>Kelola &amp; Tambah Akun (Whitelist)</span>
+            </button>
+          </div>
         )}
       </div>
 
@@ -151,9 +183,22 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({
       </p>
 
       {errorText && (
-        <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-center gap-2 font-medium">
-          <AlertTriangle size={14} className="shrink-0" />
-          <span>{errorText}</span>
+        <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 space-y-2 font-medium">
+          <div className="flex items-start gap-2">
+            <AlertTriangle size={15} className="shrink-0 text-rose-600 mt-0.5" />
+            <span className="flex-1 whitespace-pre-line leading-relaxed">{errorText}</span>
+          </div>
+
+          <div className="pt-1 flex items-center justify-end gap-2 border-t border-rose-200/60">
+            <button
+              type="button"
+              onClick={() => handleOpenManualTokenModal(connectingEmail || masterEmail)}
+              className="inline-flex items-center gap-1 bg-white hover:bg-rose-100 text-rose-900 border border-rose-300 px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer"
+            >
+              <Key size={12} className="text-rose-700" />
+              <span>Gunakan Input Token Manual ➔</span>
+            </button>
+          </div>
         </div>
       )}
 
@@ -164,21 +209,32 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({
           </div>
           <div className="space-y-0.5">
             <p className="text-xs font-bold text-stone-800">Belum Ada Akun Google Drive Terhubung</p>
-            <p className="text-[10px] text-stone-400">Hubungkan akun Google Drive utama Anda untuk mengaktifkan unggahan dokumen keuangan.</p>
+            <p className="text-[10px] text-stone-400">Hubungkan akun Google Drive Anda untuk mengaktifkan unggahan dokumen keuangan.</p>
           </div>
-          <button
-            type="button"
-            onClick={handleConnectNewDrive}
-            disabled={isConnecting}
-            className="inline-flex items-center gap-2 bg-stone-900 hover:bg-stone-850 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition shadow-xs cursor-pointer disabled:opacity-50"
-          >
-            {isConnecting ? (
-              <RefreshCw size={12} className="animate-spin text-amber-400" />
-            ) : (
-              <Cloud size={12} className="text-[#D4AF37]" />
-            )}
-            Hubungkan Akun Google Drive Utama
-          </button>
+          <div className="flex items-center gap-2 flex-wrap justify-center">
+            <button
+              type="button"
+              onClick={handleConnectNewDrive}
+              disabled={isConnecting}
+              className="inline-flex items-center gap-2 bg-stone-900 hover:bg-stone-850 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition shadow-xs cursor-pointer disabled:opacity-50"
+            >
+              {isConnecting ? (
+                <RefreshCw size={12} className="animate-spin text-amber-400" />
+              ) : (
+                <Cloud size={12} className="text-[#D4AF37]" />
+              )}
+              Hubungkan Akun Google Drive (Pop-up)
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleOpenManualTokenModal()}
+              className="inline-flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition shadow-xs cursor-pointer"
+            >
+              <Key size={12} className="text-amber-300" />
+              Input Token Akses Manual
+            </button>
+          </div>
         </div>
       ) : (
         <div className="space-y-3.5">
@@ -189,6 +245,7 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({
                 : 0;
               const isFull = quotaPercent >= 98;
               const remainsFormatted = formatBytes(Math.max(0, drive.quotaLimit - drive.quotaUsed));
+              const isConnectingThis = isConnecting && connectingEmail?.toLowerCase() === drive.email.toLowerCase();
 
               return (
                 <div key={drive.email} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white hover:bg-stone-50/30 transition">
@@ -248,7 +305,7 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({
                     {(() => {
                       const isValid = isDriveTokenValid(drive);
                       const remainingMins = getDriveRemainingMinutes(drive);
-                      const isDead = drive.isExpired && !isValid;
+                      const isDead = drive.isExpired || !isValid;
 
                       return (
                         <>
@@ -269,18 +326,32 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({
                             )}
                           </div>
 
-                          <div className="flex items-center gap-1.5 self-end">
+                          <div className="flex items-center gap-1.5 self-end flex-wrap">
                             {isDead && (
-                              <button
-                                type="button"
-                                onClick={() => handleReconnectDrive(drive.email)}
-                                disabled={isConnecting}
-                                className="p-1.5 text-amber-800 hover:text-amber-950 rounded-lg bg-amber-50 hover:bg-amber-100/80 border border-amber-300 flex items-center gap-1 transition cursor-pointer shadow-4xs font-sans"
-                                title="Sambungkan Ulang Sesi Token Google Drive Anda"
-                              >
-                                <RefreshCw size={11} className={isConnecting ? 'animate-spin' : ''} />
-                                <span className="text-[10px] font-bold">Sambungkan Ulang</span>
-                              </button>
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => handleReconnectDrive(drive.email)}
+                                  disabled={isConnecting}
+                                  className="p-1.5 text-amber-800 hover:text-amber-950 rounded-lg bg-amber-50 hover:bg-amber-100/80 border border-amber-300 flex items-center gap-1 transition cursor-pointer shadow-4xs font-sans disabled:opacity-50"
+                                  title="Sambungkan Ulang Sesi Token Google Drive Anda (Pop-up)"
+                                >
+                                  <RefreshCw size={11} className={isConnectingThis ? 'animate-spin' : ''} />
+                                  <span className="text-[10px] font-bold">
+                                    {isConnectingThis ? 'Menghubungkan...' : 'Sambungkan Ulang'}
+                                  </span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenManualTokenModal(drive.email)}
+                                  className="p-1.5 text-emerald-800 hover:text-emerald-950 rounded-lg bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 flex items-center gap-1 transition cursor-pointer shadow-4xs font-sans"
+                                  title="Input token manual untuk akun ini (bebas muter)"
+                                >
+                                  <Key size={11} className="text-emerald-700" />
+                                  <span className="text-[10px] font-bold">Input Token</span>
+                                </button>
+                              </>
                             )}
 
                             <button
@@ -301,20 +372,31 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({
             })}
           </div>
 
-          <div className="flex items-center justify-between pt-1">
-            <button
-              type="button"
-              onClick={handleConnectNewDrive}
-              disabled={isConnecting}
-              className="inline-flex items-center gap-1.5 border border-stone-300 hover:border-[#917118] text-[#917118] bg-white hover:bg-stone-50 text-[11px] font-bold px-3 py-2 rounded-xl transition cursor-pointer disabled:opacity-50"
-            >
-              {isConnecting ? (
-                <RefreshCw size={11} className="animate-spin" />
-              ) : (
-                <Plus size={11} />
-              )}
-              Sertakan Akun Google Drive Cadangan
-            </button>
+          <div className="flex items-center justify-between pt-1 flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleConnectNewDrive}
+                disabled={isConnecting}
+                className="inline-flex items-center gap-1.5 border border-stone-300 hover:border-[#917118] text-[#917118] bg-white hover:bg-stone-50 text-[11px] font-bold px-3 py-2 rounded-xl transition cursor-pointer disabled:opacity-50"
+              >
+                {isConnecting ? (
+                  <RefreshCw size={11} className="animate-spin" />
+                ) : (
+                  <Plus size={11} />
+                )}
+                Sertakan Akun Google Drive Cadangan
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleOpenManualTokenModal()}
+                className="inline-flex items-center gap-1.5 border border-emerald-300 hover:border-emerald-600 text-emerald-800 bg-emerald-50/60 hover:bg-emerald-100 text-[11px] font-bold px-3 py-2 rounded-xl transition cursor-pointer"
+              >
+                <Key size={11} className="text-emerald-700" />
+                Input Token Manual
+              </button>
+            </div>
             
             <p className="text-[9px] font-mono text-stone-400 text-right">
               Total Akun: {drives.length}
@@ -327,6 +409,8 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({
       <GoogleDriveSettingsModal 
         isOpen={isSettingsModalOpen} 
         onClose={() => setIsSettingsModalOpen(false)} 
+        initialTab={modalTab}
+        targetEmailForToken={modalTargetEmail}
       />
     </div>
   );
