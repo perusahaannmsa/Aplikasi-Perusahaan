@@ -76,11 +76,13 @@ import {
   switchUserCompany,
   setActiveCompanyId,
   isFirestoreQuotaExceeded,
-  resetFirestoreQuotaCooldown
+  resetFirestoreQuotaCooldown,
+  getPendingFirestoreSyncCount,
+  flushFirestoreQueue
 } from './firebase';
 import { loadAttendanceFromFirestore } from './lib/firebaseAbsen';
 
-import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, ArrowLeftRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell, MessageSquare, Bot, Sparkles, BookOpen, Wrench, Building2, Plus, HandCoins, ExternalLink } from 'lucide-react';
+import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, ArrowLeftRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell, MessageSquare, Bot, Sparkles, BookOpen, Wrench, Building2, Plus, HandCoins, ExternalLink, RefreshCw } from 'lucide-react';
 
 export default function App() {
   const [theme, setTheme] = useState<AppTheme>(() => {
@@ -242,6 +244,20 @@ export default function App() {
     const handler = () => setShowQuotaBanner(true);
     window.addEventListener('firestore-quota-exceeded', handler);
     return () => window.removeEventListener('firestore-quota-exceeded', handler);
+  }, []);
+
+  const [pendingSyncCount, setPendingSyncCount] = useState<number>(() => getPendingFirestoreSyncCount());
+  const [isSyncingQueue, setIsSyncingQueue] = useState<boolean>(false);
+
+  useEffect(() => {
+    const onQueueStatus = (e: any) => {
+      if (e.detail) {
+        setPendingSyncCount(e.detail.pendingCount ?? 0);
+        setIsSyncingQueue(!!e.detail.isSyncing);
+      }
+    };
+    window.addEventListener('firestore-queue-status', onQueueStatus);
+    return () => window.removeEventListener('firestore-queue-status', onQueueStatus);
   }, []);
 
   // Real-time Cloud Firestore subscription & Shared State sync across all computers/devices
@@ -2744,6 +2760,29 @@ export default function App() {
                     {masterDriveEmail}
                   </span>
                 </button>
+
+                {/* Realtime Cloud Sync Badge (In-Memory Queue Status) */}
+                {pendingSyncCount > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => flushFirestoreQueue()}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-2xl bg-amber-50 hover:bg-amber-100 border border-amber-300 text-amber-900 transition cursor-pointer shadow-3xs font-mono text-xs"
+                    title="Data tersimpan instan di memori sementara. Klik untuk sinkronisasi paksa ke Cloud Firestore sekarang."
+                  >
+                    <RefreshCw size={12} className={isSyncingQueue ? "animate-spin text-amber-600" : "text-amber-600"} />
+                    <span className="font-bold text-[11px] whitespace-nowrap">
+                      {isSyncingQueue ? 'Menyinkron...' : `Antrian (${pendingSyncCount})`}
+                    </span>
+                  </button>
+                ) : (
+                  <div
+                    className="hidden lg:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-2xl bg-emerald-50/70 border border-emerald-250 text-emerald-800 font-mono text-[11px] font-bold"
+                    title="Semua data tersimpan instan di memori & telah tersinkronisasi aman di Cloud Firestore"
+                  >
+                    <Check size={12} className="text-emerald-600" />
+                    <span>Cloud Tersinkron</span>
+                  </div>
+                )}
 
                 {/* User Dropdown Menu (Contains Theme, Profile, & Logout) */}
                 <div className="relative" ref={userMenuRef}>

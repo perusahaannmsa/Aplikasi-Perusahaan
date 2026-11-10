@@ -224,7 +224,7 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
   };
 
   const handleConnectDriveAccount = async (emailHint?: string) => {
-    const targetEmail = emailHint || masterEmail || getMasterDriveEmail() || 'penyimpanandrivenmsa1@gmail.com';
+    const targetEmail = emailHint || masterEmail || getMasterDriveEmail() || LOCKED_MASTER_DRIVE_EMAIL;
     setIsConnecting(true);
     setConnectingEmail(targetEmail);
     try {

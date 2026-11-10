@@ -1002,12 +1002,19 @@ export const mergeDrivesWithLocal = (remoteDrives: ConnectedDrive[]): ConnectedD
     if (raw) localDrives = JSON.parse(raw);
   } catch (e) {}
 
-  if (!Array.isArray(remoteDrives) || remoteDrives.length === 0) return localDrives;
-  if (!Array.isArray(localDrives) || localDrives.length === 0) return remoteDrives;
+  const cleanRemote = (Array.isArray(remoteDrives) ? remoteDrives : []).filter(
+    d => d && d.email && d.email.toLowerCase() !== 'penyimpanandrivenmsa1@gmail.com'
+  );
+  const cleanLocal = (Array.isArray(localDrives) ? localDrives : []).filter(
+    d => d && d.email && d.email.toLowerCase() !== 'penyimpanandrivenmsa1@gmail.com'
+  );
 
-  const result: ConnectedDrive[] = [...remoteDrives];
+  if (cleanRemote.length === 0) return cleanLocal;
+  if (cleanLocal.length === 0) return cleanRemote;
 
-  for (const local of localDrives) {
+  const result: ConnectedDrive[] = [...cleanRemote];
+
+  for (const local of cleanLocal) {
     const idx = result.findIndex(r => r.email.toLowerCase() === local.email.toLowerCase());
     if (idx === -1) {
       result.push(local);
@@ -1044,14 +1051,50 @@ export const setGoogleDriveToken = (token: string | null) => {
 };
 
 // 🔒 GOOGLE DRIVE ACCOUNTS CONFIGURATION (PT Nusantara Mineral Sukses Abadi)
-// Akun resmi perusahaan: penyimpanandrivenmsa1@gmail.com & akuncoding211@gmail.com
-export const PRIMARY_MASTER_DRIVE_EMAIL = 'penyimpanandrivenmsa1@gmail.com';
-export const LOCKED_MASTER_DRIVE_EMAIL = 'penyimpanandrivenmsa1@gmail.com';
+// Akun resmi Google Drive permanen & eksklusif: akuncoding211@gmail.com
+export const PRIMARY_MASTER_DRIVE_EMAIL = 'akuncoding211@gmail.com';
+export const LOCKED_MASTER_DRIVE_EMAIL = 'akuncoding211@gmail.com';
 
 export const DEFAULT_AUTHORIZED_DRIVE_EMAILS: string[] = [
-  'penyimpanandrivenmsa1@gmail.com',
   'akuncoding211@gmail.com'
 ];
+
+// Auto-cleanup legacy accounts and lock to akuncoding211@gmail.com
+if (typeof window !== 'undefined') {
+  try {
+    const curMaster = localStorage.getItem('NUSANTARA_MASTER_DRIVE_EMAIL');
+    if (!curMaster || curMaster.toLowerCase() === 'penyimpanandrivenmsa1@gmail.com') {
+      localStorage.setItem('NUSANTARA_MASTER_DRIVE_EMAIL', LOCKED_MASTER_DRIVE_EMAIL);
+    }
+    const rawAuth = localStorage.getItem('NUSANTARA_AUTHORIZED_DRIVES');
+    if (rawAuth) {
+      try {
+        const parsed = JSON.parse(rawAuth);
+        if (Array.isArray(parsed)) {
+          const filtered = parsed
+            .map(e => String(e).trim().toLowerCase())
+            .filter(e => e && e !== 'penyimpanandrivenmsa1@gmail.com');
+          if (!filtered.includes(LOCKED_MASTER_DRIVE_EMAIL)) {
+            filtered.unshift(LOCKED_MASTER_DRIVE_EMAIL);
+          }
+          localStorage.setItem('NUSANTARA_AUTHORIZED_DRIVES', JSON.stringify(filtered));
+        }
+      } catch (e) {}
+    }
+    const rawConn = localStorage.getItem('NUSANTARA_CONNECTED_DRIVES');
+    if (rawConn) {
+      try {
+        const parsed = JSON.parse(rawConn);
+        if (Array.isArray(parsed)) {
+          const filtered = parsed.filter(d => 
+            d && d.email && d.email.toLowerCase() !== 'penyimpanandrivenmsa1@gmail.com'
+          );
+          localStorage.setItem('NUSANTARA_CONNECTED_DRIVES', JSON.stringify(filtered));
+        }
+      } catch (e) {}
+    }
+  } catch (e) {}
+}
 
 /**
  * Flexible mode allows any Google account to be linked and used as a storage target.
@@ -1095,8 +1138,10 @@ export const getAuthorizedDriveEmails = (): string[] => {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
         const set = new Set([
-          PRIMARY_MASTER_DRIVE_EMAIL,
-          ...parsed.map(e => String(e).trim().toLowerCase())
+          LOCKED_MASTER_DRIVE_EMAIL,
+          ...parsed
+            .map(e => String(e).trim().toLowerCase())
+            .filter(e => e && e !== 'penyimpanandrivenmsa1@gmail.com')
         ]);
         return Array.from(set);
       }
@@ -1108,8 +1153,10 @@ export const getAuthorizedDriveEmails = (): string[] => {
 export const saveAuthorizedDriveEmails = async (emails: string[]): Promise<void> => {
   try {
     const cleanList = Array.from(new Set([
-      PRIMARY_MASTER_DRIVE_EMAIL,
-      ...emails.map(e => (e || '').trim().toLowerCase()).filter(Boolean)
+      LOCKED_MASTER_DRIVE_EMAIL,
+      ...emails
+        .map(e => (e || '').trim().toLowerCase())
+        .filter(e => e && e !== 'penyimpanandrivenmsa1@gmail.com')
     ]));
     localStorage.setItem('NUSANTARA_AUTHORIZED_DRIVES', JSON.stringify(cleanList));
 
@@ -1118,7 +1165,7 @@ export const saveAuthorizedDriveEmails = async (emails: string[]): Promise<void>
       const companyRef = doc(firestoreDb, 'companies', compId);
       await setDoc(companyRef, {
         authorizedDriveEmails: cleanList,
-        masterDriveEmail: getMasterDriveEmail(),
+        masterDriveEmail: LOCKED_MASTER_DRIVE_EMAIL,
         updatedAt: new Date().toISOString()
       }, { merge: true });
     }
@@ -1305,8 +1352,12 @@ export const getConnectedDrives = (): ConnectedDrive[] => {
       const parsed: ConnectedDrive[] = JSON.parse(raw);
       if (Array.isArray(parsed)) {
         let changed = false;
-        // Keep drives whose emails are authorized or present
-        const filteredDrives = parsed.filter(d => d.email && (isDriveEmailAuthorized(d.email) || d.email.includes('@')));
+        // Keep drives whose emails are authorized or present, strictly excluding legacy accounts
+        const filteredDrives = parsed.filter(d => 
+          d && d.email && 
+          d.email.toLowerCase() !== 'penyimpanandrivenmsa1@gmail.com' &&
+          (isDriveEmailAuthorized(d.email) || d.email.includes('@'))
+        );
         const normalized = filteredDrives.map(d => {
           const isValidTime = isDriveTokenValid(d);
           if (isValidTime && d.isExpired) {
@@ -1362,7 +1413,10 @@ export const loadConnectedDrivesFromFirestore = async (companyId: string = 'nmsa
     if (snap.exists()) {
       const data = snap.data();
       if (data && Array.isArray(data.googleDrives) && data.googleDrives.length > 0) {
-        const mergedDrives = mergeDrivesWithLocal(data.googleDrives);
+        const cleanRemote = data.googleDrives.filter((d: any) => 
+          d && d.email && d.email.toLowerCase() !== 'penyimpanandrivenmsa1@gmail.com'
+        );
+        const mergedDrives = mergeDrivesWithLocal(cleanRemote);
         localStorage.setItem('NUSANTARA_CONNECTED_DRIVES', JSON.stringify(mergedDrives));
         const activeDrive = mergedDrives.find(d => isDriveTokenValid(d) && (d.quotaLimit - d.quotaUsed > 10 * 1024 * 1024));
         const bestToken = activeDrive ? activeDrive.accessToken : (mergedDrives[0]?.accessToken || null);
@@ -1370,6 +1424,18 @@ export const loadConnectedDrivesFromFirestore = async (companyId: string = 'nmsa
         if (activeDrive) {
           localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', activeDrive.email);
         }
+
+        // Clean Firestore if it still contained old legacy email
+        if (data.masterDriveEmail === 'penyimpanandrivenmsa1@gmail.com' || data.googleDrives.length !== cleanRemote.length) {
+          try {
+            await setDoc(companyRef, {
+              masterDriveEmail: LOCKED_MASTER_DRIVE_EMAIL,
+              googleDrives: cleanUndefined(cleanRemote),
+              updatedAt: new Date().toISOString()
+            }, { merge: true });
+          } catch (e) {}
+        }
+
         return mergedDrives;
       }
     }
@@ -1398,10 +1464,11 @@ export const getActiveGoogleDriveAccount = (): { email: string; displayName?: st
 
 export const saveConnectedDrives = async (drives: ConnectedDrive[]) => {
   try {
-    localStorage.setItem('NUSANTARA_CONNECTED_DRIVES', JSON.stringify(drives));
+    const cleanDrives = drives.filter(d => d && d.email && d.email.toLowerCase() !== 'penyimpanandrivenmsa1@gmail.com');
+    localStorage.setItem('NUSANTARA_CONNECTED_DRIVES', JSON.stringify(cleanDrives));
     // Synced with legacy single token to maintain maximum compatibility with existing code
-    const activeDrive = drives.find(d => !d.isExpired && (d.quotaLimit - d.quotaUsed > 10 * 1024 * 1024));
-    const bestToken = activeDrive ? activeDrive.accessToken : (drives[0]?.accessToken || null);
+    const activeDrive = cleanDrives.find(d => !d.isExpired && (d.quotaLimit - d.quotaUsed > 10 * 1024 * 1024));
+    const bestToken = activeDrive ? activeDrive.accessToken : (cleanDrives[0]?.accessToken || null);
     setGoogleDriveToken(bestToken);
 
     if (activeDrive) {
@@ -1414,7 +1481,8 @@ export const saveConnectedDrives = async (drives: ConnectedDrive[]) => {
       try {
         const companyRef = doc(firestoreDb, 'companies', targetCompId);
         await setDoc(companyRef, {
-          googleDrives: cleanUndefined(drives),
+          googleDrives: cleanUndefined(cleanDrives),
+          masterDriveEmail: LOCKED_MASTER_DRIVE_EMAIL,
           updatedAt: new Date().toISOString()
         }, { merge: true });
         console.log(`☁️ Synced Google Drive credentials to Firestore for company: ${targetCompId}`);
@@ -2547,38 +2615,249 @@ export const getSubmissionFromFirestore = async (docId: string): Promise<Submiss
   return null;
 };
 
-// Put/Save single submission in Firestore under user's actual companyId
-export const saveSubmissionToFirestore = async (
-  submission: Submission, 
-  userCompanyId: string = 'nmsa',
-  userCompanyName: string = 'PT Nusantara Mineral Sukses Abadi'
-): Promise<void> => {
+// ═════════ IN-MEMORY & PERSISTENT FIRESTORE BACKGROUND QUEUE ═════════
+// Solusi cerdas: Data langsung tersimpan instan di memori sementara (RAM) & cache lokal,
+// lalu di-upload secara asynchronous di latar belakang. Jika Firestore lambat/down,
+// data tersimpan aman dan di-upload otomatis saat koneksi pulih!
+
+export interface FirestoreQueueItem {
+  id: string; // unique key: `${path}/${docId}`
+  path: string;
+  docId: string;
+  payload: any;
+  addedAt: number;
+  retries: number;
+  description?: string;
+}
+
+let firestoreWriteQueue: FirestoreQueueItem[] = [];
+let isProcessingFirestoreQueue = false;
+let queueFlushTimer: any = null;
+
+const loadPersistedFirestoreQueue = (): FirestoreQueueItem[] => {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem('NUSANTARA_FIRESTORE_WRITE_QUEUE');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (e) {}
+  return [];
+};
+
+const persistFirestoreQueue = () => {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem('NUSANTARA_FIRESTORE_WRITE_QUEUE', JSON.stringify(firestoreWriteQueue));
+  } catch (e) {}
+};
+
+if (typeof window !== 'undefined') {
+  firestoreWriteQueue = loadPersistedFirestoreQueue();
+}
+
+export const getPendingFirestoreSyncCount = (): number => {
+  return firestoreWriteQueue.length;
+};
+
+export const isFirestoreSyncing = (): boolean => {
+  return isProcessingFirestoreQueue;
+};
+
+export const notifyFirestoreQueueStatus = (isSyncing: boolean = isProcessingFirestoreQueue) => {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('firestore-queue-status', {
+      detail: {
+        pendingCount: firestoreWriteQueue.length,
+        isSyncing
+      }
+    }));
+  }
+};
+
+export const enqueueFirestoreWrite = (
+  path: string, 
+  docId: string, 
+  payload: any, 
+  description?: string
+): void => {
+  const key = `${path}/${docId}`;
+  const now = Date.now();
+  
+  // Deduplicate: perbarui antrian jika dokumen yang sama sudah ada di antrian
+  const existingIdx = firestoreWriteQueue.findIndex(item => item.id === key);
+  const newItem: FirestoreQueueItem = {
+    id: key,
+    path,
+    docId,
+    payload,
+    addedAt: now,
+    retries: 0,
+    description: description || `Write to ${key}`
+  };
+
+  if (existingIdx !== -1) {
+    firestoreWriteQueue[existingIdx] = newItem;
+  } else {
+    firestoreWriteQueue.push(newItem);
+  }
+
+  persistFirestoreQueue();
+  notifyFirestoreQueueStatus();
+
+  // Jadwalkan flush di background (debounce 80ms agar operasi batch bersatu)
+  if (!queueFlushTimer) {
+    queueFlushTimer = setTimeout(() => {
+      queueFlushTimer = null;
+      flushFirestoreQueue().catch(() => {});
+    }, 80);
+  }
+};
+
+export const flushFirestoreQueue = async (): Promise<{ processed: number; remaining: number }> => {
+  if (isProcessingFirestoreQueue) {
+    return { processed: 0, remaining: firestoreWriteQueue.length };
+  }
+
+  if (firestoreWriteQueue.length === 0) {
+    return { processed: 0, remaining: 0 };
+  }
+
   if (!isFirebaseConfigured() || !firestoreDb) {
-    throw new Error('Firebase is not initialized.');
+    return { processed: 0, remaining: firestoreWriteQueue.length };
   }
 
   if (isFirestoreQuotaExceeded()) {
-    console.log(`ℹ️ [Firestore Quota Guard] Operasi simpan submission ${submission.id} ke Firestore dilewati sementara karena batas kuota gratis harian (Spark Plan) tercapai. Data tersimpan aman di penyimpanan lokal & server.`);
-    return;
+    console.log(`ℹ️ [Firestore Queue] Flush ditunda karena batas kuota harian tercapai. Antrian (${firestoreWriteQueue.length} data) tersimpan aman di memori & penyimpanan lokal.`);
+    return { processed: 0, remaining: firestoreWriteQueue.length };
   }
 
-  const path = `submissions`;
+  isProcessingFirestoreQueue = true;
+  notifyFirestoreQueueStatus(true);
+  let processed = 0;
+
   try {
-    // Map our rich React types to their exact expected database fields
-    const fPayload = mapSubmissionToFirestore(
-      submission, 
-      currentUser?.email || 'admin@nmsa.com', 
-      currentUser?.uid || 'pwsDJv3bKHQamy89PDaAeCoZQcU2',
-      userCompanyId,
-      userCompanyName
-    );
-    const cleanedPayload = cleanUndefined(fPayload);
-    await setDoc(doc(firestoreDb, path, submission.id), cleanedPayload);
-    console.log(`☁️ Submission ${submission.id} mapped and saved in Firestore under company ${userCompanyId}.`);
-  } catch (error) {
-    markFirestoreQuotaExceeded(error);
-    handleFirestoreError(error, OperationType.WRITE, `${path}/${submission.id}`);
+    while (firestoreWriteQueue.length > 0) {
+      if (isFirestoreQuotaExceeded()) break;
+
+      const item = firestoreWriteQueue[0];
+      try {
+        const docRef = doc(firestoreDb, item.path, item.docId);
+        await setDoc(docRef, item.payload, { merge: true });
+        
+        // Berhasil disimpan ke cloud, hapus dari antrian
+        firestoreWriteQueue.shift();
+        processed++;
+        persistFirestoreQueue();
+        notifyFirestoreQueueStatus(true);
+        console.log(`☁️ [Firestore Background Sync] Berhasil mengunggah ${item.description || item.id} ke cloud.`);
+      } catch (err: any) {
+        console.warn(`[Firestore Queue] Gagal sinkronisasi data ${item.id}:`, err?.message || err);
+        markFirestoreQuotaExceeded(err);
+        
+        item.retries = (item.retries || 0) + 1;
+        
+        const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+        const errMsg = String(err?.message || '').toLowerCase();
+        const isTransient = isOffline || errMsg.includes('offline') || errMsg.includes('unavailable') || errMsg.includes('timeout') || errMsg.includes('network');
+        
+        if (isTransient || isFirestoreQuotaExceeded()) {
+          console.log(`[Firestore Queue] Menghentikan sementara proses antrian. Data tetap aman di memori & akan dilanjutkan otomatis.`);
+          break;
+        }
+
+        if (item.retries >= 5) {
+          firestoreWriteQueue.shift();
+          persistFirestoreQueue();
+        } else {
+          break;
+        }
+      }
+    }
+  } finally {
+    isProcessingFirestoreQueue = false;
+    notifyFirestoreQueueStatus(false);
   }
+
+  return { processed, remaining: firestoreWriteQueue.length };
+};
+
+// Auto-sync listener & interval
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => {
+    console.log('🌐 Koneksi internet aktif kembali. Mengunggah antrian data Firestore yang tertunda...');
+    flushFirestoreQueue().catch(() => {});
+  });
+
+  setInterval(() => {
+    if (firestoreWriteQueue.length > 0 && !isProcessingFirestoreQueue) {
+      flushFirestoreQueue().catch(() => {});
+    }
+  }, 20000);
+
+  setTimeout(() => {
+    if (firestoreWriteQueue.length > 0) {
+      console.log(`[Firestore Queue] Melanjutkan sinkronisasi ${firestoreWriteQueue.length} data tertunda dari sesi sebelumnya...`);
+      flushFirestoreQueue().catch(() => {});
+    }
+  }, 3000);
+}
+
+// Put/Save single submission in Firestore under user's actual companyId with instant optimistic memory save
+export const saveSubmissionToFirestore = async (
+  submission: Submission, 
+  userCompanyId: string = 'nmsa',
+  userCompanyName: string = 'PT Nusantara Mineral Sukses Abadi',
+  options?: { waitForCloudAck?: boolean }
+): Promise<void> => {
+  // 1. Immediately cache in local storage so user sees the change instantly
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem('NUSANTARA_HO_SUBMISSIONS');
+      if (raw) {
+        const list: Submission[] = JSON.parse(raw);
+        if (Array.isArray(list)) {
+          const idx = list.findIndex(s => s.id === submission.id);
+          if (idx !== -1) {
+            list[idx] = submission;
+          } else {
+            list.unshift(submission);
+          }
+          localStorage.setItem('NUSANTARA_HO_SUBMISSIONS', JSON.stringify(list));
+        }
+      }
+    }
+  } catch (e) {}
+
+  // 2. Prepare payload
+  const path = `submissions`;
+  const fPayload = mapSubmissionToFirestore(
+    submission, 
+    currentUser?.email || 'admin@nmsa.com', 
+    currentUser?.uid || 'pwsDJv3bKHQamy89PDaAeCoZQcU2',
+    userCompanyId,
+    userCompanyName
+  );
+  const cleanedPayload = cleanUndefined(fPayload);
+
+  // 3. Enqueue to in-memory & persistent sync queue (Instant execution, 0ms delay)
+  enqueueFirestoreWrite(path, submission.id, cleanedPayload, `Voucher ${submission.kode || submission.id}`);
+  console.log(`⚡ [Fast-Save] Submission ${submission.id} tersimpan di memori sementara & diantrikan ke background cloud sync.`);
+
+  // 4. Optional blocking wait if caller specifically requested it
+  if (options?.waitForCloudAck) {
+    if (isFirebaseConfigured() && firestoreDb && !isFirestoreQuotaExceeded()) {
+      try {
+        await setDoc(doc(firestoreDb, path, submission.id), cleanedPayload);
+      } catch (error) {
+        markFirestoreQuotaExceeded(error);
+        handleFirestoreError(error, OperationType.WRITE, `${path}/${submission.id}`);
+      }
+    }
+  }
+
+  return Promise.resolve();
 };
 
 // Batch save/update multiple submissions in Firestore (e.g. after name consolidation)
@@ -2738,16 +3017,8 @@ export const saveActivityLogToFirestore = async (
     console.warn('Failed to save log to localStorage:', e);
   }
 
-  // 2. Write to Firestore if connected and quota permits
-  if (isFirebaseConfigured() && firestoreDb && !isFirestoreQuotaExceeded()) {
-    const path = 'activity_logs';
-    try {
-      await setDoc(doc(firestoreDb, path, logId), logPayload);
-    } catch (err) {
-      markFirestoreQuotaExceeded(err);
-      console.warn('Silent write logs rejection - failed to save log to Firestore:', err);
-    }
-  }
+  // 2. Enqueue to background sync queue instead of blocking network await
+  enqueueFirestoreWrite('activity_logs', logId, logPayload, `Log: ${logPayload.action}`);
 };
 
 // Fetch NPWP Records from Firestore (or fallback to local / server)
