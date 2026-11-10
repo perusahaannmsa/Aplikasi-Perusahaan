@@ -1728,7 +1728,7 @@ export default function App() {
             }
           }
         } catch (e) {
-          console.error('Error fetching data from Firestore:', e);
+          console.warn('Notice: Firestore data fetch fallback to local storage:', e);
           try {
             const stored = localStorage.getItem('NUSANTARA_HO_SUBMISSIONS');
             if (stored) {
@@ -1738,7 +1738,7 @@ export default function App() {
               setSubmissions([]);
             }
           } catch (localStorageErr) {
-            console.error('Error loading data from localStorage:', localStorageErr);
+            console.warn('Notice: Error loading data from localStorage:', localStorageErr);
             setSubmissions([]);
           }
         }
