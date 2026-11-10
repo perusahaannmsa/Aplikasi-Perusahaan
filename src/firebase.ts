@@ -610,20 +610,10 @@ export const saveCompanyProfileToFirestore = async (company: Partial<CompanyProf
 
   setActiveCompanyId(cleanId);
 
-  // Sync to Firestore if configured
-  if (isFirebaseConfigured() && firestoreDb && !isFirestoreQuotaExceeded()) {
-    try {
-      const companyRef = doc(firestoreDb, 'companies', cleanId);
-      await setDoc(companyRef, cleanUndefined(payload), { merge: true });
-      console.log(`🏬 Profil perusahaan [${cleanCode} - ${cleanId}] berhasil disimpan di Firestore.`);
-    } catch (err: any) {
-      markFirestoreQuotaExceeded(err);
-      console.warn('Penyimpanan ke Firestore menemui kendala, tersimpan di cache lokal:', err);
-    }
-  }
+  // Stored locally to conserve daily Firestore quota
 };
 
-// Switch active user company and sync with Firestore user document
+// Switch active user company and store locally
 export const switchUserCompany = async (
   uid: string,
   companyId: string,
@@ -633,21 +623,7 @@ export const switchUserCompany = async (
   setActiveCompanyId(cleanId);
   localStorage.setItem('NUSANTARA_ACTIVE_COMPANY_ID', cleanId);
   localStorage.setItem('NUSANTARA_ACTIVE_COMPANY_NAME', companyName);
-
-  if (isFirebaseConfigured() && firestoreDb && uid && !isFirestoreQuotaExceeded()) {
-    try {
-      const userRef = doc(firestoreDb, 'users', uid);
-      await setDoc(userRef, {
-        companyId: cleanId,
-        companyName: companyName,
-        updatedAt: new Date().toISOString()
-      }, { merge: true });
-      console.log(`👤 User [${uid}] company switched to [${cleanId} - ${companyName}]`);
-    } catch (e) {
-      markFirestoreQuotaExceeded(e);
-      console.warn('Silent user company update warning:', e);
-    }
-  }
+  console.log(`👤 User [${uid}] company switched to [${cleanId} - ${companyName}] (saved locally)`);
 };
 
 export const registerUserToFirebase = async (
@@ -874,32 +850,24 @@ export const ensureUserProfile = async (
   user: User,
   defaults: { companyId?: string; companyName?: string } = {}
 ): Promise<void> => {
-  if (!firestoreDb || !user || isFirestoreQuotaExceeded()) return;
+  if (!user) return;
+  const companyId = (defaults.companyId || 'nmsa').toLowerCase().trim();
+  const companyName = defaults.companyName || 'PT Nusantara Mineral Sukses Abadi';
+  setActiveCompanyId(companyId);
+
   try {
-    const docRef = doc(firestoreDb, 'users', user.uid);
-    const snap = await getDoc(docRef);
-    if (!snap.exists()) {
-      const companyId = (defaults.companyId || 'nmsa').toLowerCase().trim();
-      const companyName = defaults.companyName || 'PT Nusantara Mineral Sukses Abadi';
-      await setDoc(docRef, {
-        uid: user.uid,
-        email: user.email,
-        fullName: user.displayName || user.email?.split('@')[0] || 'User',
-        role: 'Divisi Keuangan',
-        companyId: companyId,
-        companyName: companyName,
-        createdAt: new Date().toISOString()
-      });
-      setActiveCompanyId(companyId);
-    } else {
-      const data = snap.data();
-      if (data?.companyId) {
-        setActiveCompanyId(data.companyId);
-      }
-    }
+    const cachedProfile = {
+      uid: user.uid,
+      email: user.email,
+      fullName: user.displayName || user.email?.split('@')[0] || 'User',
+      role: 'Divisi Keuangan',
+      companyId: companyId,
+      companyName: companyName,
+      createdAt: new Date().toISOString()
+    };
+    localStorage.setItem(`user_profile_${user.uid}`, JSON.stringify(cachedProfile));
   } catch (err) {
-    markFirestoreQuotaExceeded(err);
-    console.warn('Failed to ensure user profile in Firestore:', err);
+    console.warn('Failed to cache user profile locally:', err);
   }
 };
 
@@ -1113,14 +1081,6 @@ export const isDriveFlexibleMode = (): boolean => {
 export const setDriveFlexibleMode = async (enabled: boolean): Promise<void> => {
   try {
     localStorage.setItem('NUSANTARA_DRIVE_FLEXIBLE_MODE', String(enabled));
-    const compId = activeCompanyId || 'nmsa';
-    if (firestoreDb && compId && !isFirestoreQuotaExceeded()) {
-      const companyRef = doc(firestoreDb, 'companies', compId);
-      await setDoc(companyRef, {
-        driveFlexibleMode: enabled,
-        updatedAt: new Date().toISOString()
-      }, { merge: true });
-    }
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('nusantara-drive-updated', {
         detail: { flexibleMode: enabled }
@@ -1159,18 +1119,7 @@ export const saveAuthorizedDriveEmails = async (emails: string[]): Promise<void>
         .filter(e => e && e !== 'penyimpanandrivenmsa1@gmail.com')
     ]));
     localStorage.setItem('NUSANTARA_AUTHORIZED_DRIVES', JSON.stringify(cleanList));
-
-    const compId = activeCompanyId || 'nmsa';
-    if (firestoreDb && compId && !isFirestoreQuotaExceeded()) {
-      const companyRef = doc(firestoreDb, 'companies', compId);
-      await setDoc(companyRef, {
-        authorizedDriveEmails: cleanList,
-        masterDriveEmail: LOCKED_MASTER_DRIVE_EMAIL,
-        updatedAt: new Date().toISOString()
-      }, { merge: true });
-    }
   } catch (e) {
-    markFirestoreQuotaExceeded(e);
     console.error('Failed to save authorized drive emails:', e);
   }
 };
@@ -1259,15 +1208,6 @@ export const setMasterDriveEmail = async (email: string): Promise<void> => {
     localStorage.setItem('NUSANTARA_MASTER_DRIVE_EMAIL', clean);
     localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', clean);
 
-    const compId = activeCompanyId || 'nmsa';
-    if (firestoreDb && compId && !isFirestoreQuotaExceeded()) {
-      const companyRef = doc(firestoreDb, 'companies', compId);
-      await setDoc(companyRef, {
-        masterDriveEmail: clean,
-        updatedAt: new Date().toISOString()
-      }, { merge: true });
-    }
-
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('nusantara-drive-updated', {
         detail: {
@@ -1277,7 +1217,6 @@ export const setMasterDriveEmail = async (email: string): Promise<void> => {
       }));
     }
   } catch (e) {
-    markFirestoreQuotaExceeded(e);
     console.error('Failed to set master drive email:', e);
   }
 };
@@ -1402,46 +1341,7 @@ export const getConnectedDrives = (): ConnectedDrive[] => {
   return [];
 };
 
-export const loadConnectedDrivesFromFirestore = async (companyId: string = 'nmsa'): Promise<ConnectedDrive[]> => {
-  if (!isFirebaseConfigured() || !firestoreDb) {
-    return getConnectedDrives();
-  }
-  try {
-    const compId = companyId || activeCompanyId || 'nmsa';
-    const companyRef = doc(firestoreDb, 'companies', compId);
-    const snap = await getDoc(companyRef);
-    if (snap.exists()) {
-      const data = snap.data();
-      if (data && Array.isArray(data.googleDrives) && data.googleDrives.length > 0) {
-        const cleanRemote = data.googleDrives.filter((d: any) => 
-          d && d.email && d.email.toLowerCase() !== 'penyimpanandrivenmsa1@gmail.com'
-        );
-        const mergedDrives = mergeDrivesWithLocal(cleanRemote);
-        localStorage.setItem('NUSANTARA_CONNECTED_DRIVES', JSON.stringify(mergedDrives));
-        const activeDrive = mergedDrives.find(d => isDriveTokenValid(d) && (d.quotaLimit - d.quotaUsed > 10 * 1024 * 1024));
-        const bestToken = activeDrive ? activeDrive.accessToken : (mergedDrives[0]?.accessToken || null);
-        setGoogleDriveToken(bestToken);
-        if (activeDrive) {
-          localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', activeDrive.email);
-        }
-
-        // Clean Firestore if it still contained old legacy email
-        if (data.masterDriveEmail === 'penyimpanandrivenmsa1@gmail.com' || data.googleDrives.length !== cleanRemote.length) {
-          try {
-            await setDoc(companyRef, {
-              masterDriveEmail: LOCKED_MASTER_DRIVE_EMAIL,
-              googleDrives: cleanUndefined(cleanRemote),
-              updatedAt: new Date().toISOString()
-            }, { merge: true });
-          } catch (e) {}
-        }
-
-        return mergedDrives;
-      }
-    }
-  } catch (err) {
-    console.warn('Could not load connected drives from Firestore:', err);
-  }
+export const loadConnectedDrivesFromFirestore = async (_companyId: string = 'nmsa'): Promise<ConnectedDrive[]> => {
   return getConnectedDrives();
 };
 
@@ -1475,22 +1375,14 @@ export const saveConnectedDrives = async (drives: ConnectedDrive[]) => {
       localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', activeDrive.email);
     }
 
-    // Persist to Firestore under company document to share with all users and all menus of this company!
-    const targetCompId = activeCompanyId || 'nmsa';
-    if (firestoreDb && targetCompId && !isFirestoreQuotaExceeded()) {
-      try {
-        const companyRef = doc(firestoreDb, 'companies', targetCompId);
-        await setDoc(companyRef, {
-          googleDrives: cleanUndefined(cleanDrives),
-          masterDriveEmail: LOCKED_MASTER_DRIVE_EMAIL,
-          updatedAt: new Date().toISOString()
-        }, { merge: true });
-        console.log(`☁️ Synced Google Drive credentials to Firestore for company: ${targetCompId}`);
-      } catch (fsErr) {
-        markFirestoreQuotaExceeded(fsErr);
-        console.warn('Firestore Google Drive credentials sync notice:', fsErr);
-      }
-    }
+    // Backup to server unified storage without calling Firestore
+    try {
+      fetch('/api/unified-storage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ googleDrives: cleanDrives })
+      }).catch(() => {});
+    } catch (_) {}
 
     // Notify all active application components about the updated Drive account
     if (typeof window !== 'undefined') {
@@ -1900,23 +1792,7 @@ export const saveCompanySettingsToFirestore = async (
     localStorage.setItem('nmsa_wa_name', partialSettings.waName);
   }
 
-  // 2. Persist to Firestore under companies collection so ALL devices and computers sync automatically
-  if (firestoreDb && compId && !isFirestoreQuotaExceeded()) {
-    try {
-      const companyRef = doc(firestoreDb, 'companies', compId);
-      const cleanPayload = cleanUndefined({
-        ...partialSettings,
-        updatedAt: new Date().toISOString()
-      });
-      await setDoc(companyRef, cleanPayload, { merge: true });
-      console.log(`☁️ [Cloud Sync] Pengaturan berhasil disimpan ke Firestore (${compId}):`, Object.keys(partialSettings));
-    } catch (fsErr) {
-      markFirestoreQuotaExceeded(fsErr);
-      console.warn('Firestore company settings sync notice:', fsErr);
-    }
-  }
-
-  // 3. Persist to server /api/shared-state as secondary persistent backup
+  // 2. Persist to server /api/shared-state as secondary persistent backup
   try {
     fetch('/api/shared-state', {
       method: 'POST',
@@ -1927,77 +1803,11 @@ export const saveCompanySettingsToFirestore = async (
 };
 
 export const subscribeToCompanySettingsFromFirestore = (
-  onSettingsUpdate: (settings: CompanyCloudSettings) => void,
-  companyId: string = 'nmsa'
+  _onSettingsUpdate: (settings: CompanyCloudSettings) => void,
+  _companyId: string = 'nmsa'
 ): (() => void) => {
-  if (!isFirebaseConfigured() || !firestoreDb) return () => {};
-  const compId = companyId || activeCompanyId || 'nmsa';
-
-  try {
-    const companyRef = doc(firestoreDb, 'companies', compId);
-    const unsubscribe = onSnapshot(companyRef, (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data() as CompanyCloudSettings;
-        if (data) {
-          // Sync to localStorage
-          if (data.sppdPedomanRates && Array.isArray(data.sppdPedomanRates)) {
-            localStorage.setItem('sppd_pedoman_rates', JSON.stringify(data.sppdPedomanRates));
-          }
-          if (data.sppdMonthlyCounters && typeof data.sppdMonthlyCounters === 'object') {
-            localStorage.setItem('sppd_monthly_counters', JSON.stringify(data.sppdMonthlyCounters));
-          }
-          if (data.authorizedDriveEmails && Array.isArray(data.authorizedDriveEmails)) {
-            localStorage.setItem('NUSANTARA_AUTHORIZED_DRIVES', JSON.stringify(data.authorizedDriveEmails));
-          }
-          if (data.masterDriveEmail) {
-            localStorage.setItem('NUSANTARA_MASTER_DRIVE_EMAIL', data.masterDriveEmail);
-          }
-          if (data.pettyCashHolders && Array.isArray(data.pettyCashHolders)) {
-            localStorage.setItem('petty_cash_holders_v2', JSON.stringify(data.pettyCashHolders));
-          }
-          if (data.pettyCashReports && Array.isArray(data.pettyCashReports)) {
-            localStorage.setItem('petty_cash_reports', JSON.stringify(data.pettyCashReports));
-          }
-          if (data.npwpRecords && Array.isArray(data.npwpRecords)) {
-            localStorage.setItem('npwp_records_v1', JSON.stringify(data.npwpRecords));
-          }
-          if (data.sppdRecords && Array.isArray(data.sppdRecords)) {
-            localStorage.setItem('sppd_records_v1', JSON.stringify(data.sppdRecords));
-          }
-          if (data.agendaItems && Array.isArray(data.agendaItems)) {
-            localStorage.setItem('nmsa_agenda_items_v1', JSON.stringify(data.agendaItems));
-          }
-          if (data.googleDrives && Array.isArray(data.googleDrives)) {
-            const mergedDrives = mergeDrivesWithLocal(data.googleDrives);
-            localStorage.setItem('NUSANTARA_CONNECTED_DRIVES', JSON.stringify(mergedDrives));
-            const activeDrive = mergedDrives.find((d: any) => isDriveTokenValid(d) && (d.quotaLimit - d.quotaUsed > 10 * 1024 * 1024));
-            const bestToken = activeDrive ? activeDrive.accessToken : (mergedDrives[0]?.accessToken || null);
-            if (bestToken) {
-              setGoogleDriveToken(bestToken);
-            }
-          }
-          if (data.waConnected !== undefined) {
-            localStorage.setItem('nmsa_wa_connected', data.waConnected ? 'true' : 'false');
-          }
-          if (data.waPhone) {
-            localStorage.setItem('nmsa_wa_phone', data.waPhone);
-          }
-          if (data.waName) {
-            localStorage.setItem('nmsa_wa_name', data.waName);
-          }
-          
-          onSettingsUpdate(data);
-        }
-      }
-    }, (err) => {
-      console.warn('Firestore company settings snapshot warning:', err);
-    });
-
-    return unsubscribe;
-  } catch (err) {
-    console.warn('Failed to subscribe to company settings snapshot:', err);
-    return () => {};
-  }
+  // Disabled Firestore real-time snapshot listener on companies to conserve daily free quota
+  return () => {};
 };
 
 // Global Single-Flight Mutex to ensure simultaneous uploads NEVER collide or open duplicate popups
@@ -2682,6 +2492,12 @@ export const enqueueFirestoreWrite = (
   payload: any, 
   description?: string
 ): void => {
+  // Strictly enforce user quota directive: only Absen, NPWP, and Voucher submissions
+  const ALLOWED_COLLECTIONS = ['submissions', 'npwp_records', 'absen_records', 'attendance'];
+  if (!ALLOWED_COLLECTIONS.includes(path)) {
+    return;
+  }
+
   const key = `${path}/${docId}`;
   const now = Date.now();
   
@@ -2929,55 +2745,17 @@ export const deleteSubmissionFromFirestore = async (id: string): Promise<void> =
   }
 };
 
-// Fetch activity logs from Firestore (or fallback to local if disconnected)
-export const loadActivityLogsFromFirestore = async (companyId?: string): Promise<ActivityLog[]> => {
-  if (!isFirebaseConfigured() || !firestoreDb) {
-    // If not configured, load from localStorage
-    try {
-      const stored = localStorage.getItem('NUSANTARA_ACTIVITY_LOGS');
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
-  }
-
-  const path = 'activity_logs';
+// Fetch activity logs (stored locally to conserve daily free Firestore quota)
+export const loadActivityLogsFromFirestore = async (_companyId?: string): Promise<ActivityLog[]> => {
   try {
-    const q = query(collection(firestoreDb, path), orderBy('timestamp', 'desc'));
-    const snapshot = await getDocs(q);
-    const list: ActivityLog[] = [];
-    
-    snapshot.forEach(docSnap => {
-      const data = docSnap.data();
-      list.push({
-        id: docSnap.id,
-        timestamp: data.timestamp || new Date().toISOString(),
-        userId: data.userId || '',
-        userEmail: data.userEmail || '',
-        userName: data.userName || '',
-        action: data.action || '',
-        details: data.details || '',
-        submissionId: data.submissionId || '',
-        submissionCode: data.submissionCode || '',
-        category: data.category || 'info'
-      });
-    });
-    
-    // Cache Firestore logs locally too
-    localStorage.setItem('NUSANTARA_ACTIVITY_LOGS', JSON.stringify(list));
-    return list;
-  } catch (error) {
-    console.warn('Silent read logs rejection - failed to fetch logs from Firestore:', error);
-    try {
-      const stored = localStorage.getItem('NUSANTARA_ACTIVITY_LOGS');
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
+    const stored = localStorage.getItem('NUSANTARA_ACTIVITY_LOGS');
+    return stored ? JSON.parse(stored) : [];
+  } catch {
+    return [];
   }
 };
 
-// Push a single activity log to Firestore and local cache
+// Push a single activity log to local cache (saved locally to conserve daily Firestore quota)
 export const saveActivityLogToFirestore = async (
   action: string,
   details: string,
@@ -3007,7 +2785,7 @@ export const saveActivityLogToFirestore = async (
     submissionCode: submissionCode || ''
   };
 
-  // 1. Cache to local storage list first
+  // Cache to local storage list
   try {
     const stored = localStorage.getItem('NUSANTARA_ACTIVITY_LOGS');
     const list: ActivityLog[] = stored ? JSON.parse(stored) : [];
@@ -3016,9 +2794,6 @@ export const saveActivityLogToFirestore = async (
   } catch (e) {
     console.warn('Failed to save log to localStorage:', e);
   }
-
-  // 2. Enqueue to background sync queue instead of blocking network await
-  enqueueFirestoreWrite('activity_logs', logId, logPayload, `Log: ${logPayload.action}`);
 };
 
 // Fetch NPWP Records from Firestore (or fallback to local / server)
@@ -3137,6 +2912,7 @@ export const subscribeToNpwpRecordsFromFirestore = (
         onUpdate(list);
       }
     }, (error) => {
+      markFirestoreQuotaExceeded(error);
       console.warn('Real-time listener notice for npwp_records:', error);
     });
     return unsub;
@@ -3174,12 +2950,6 @@ export const saveNpwpRecordsToFirestore = async (records: NpwpRecord[]): Promise
       }
     }
 
-    // 3. Mirror to companies/nmsa for company settings consistency
-    await setDoc(doc(firestoreDb, 'companies', 'nmsa'), {
-      npwpRecords: cleanUndefined(records),
-      updatedAt: new Date().toISOString()
-    }, { merge: true });
-
     console.log(`☁️ ${records.length} NPWP records synced to Firestore.`);
   } catch (error) {
     markFirestoreQuotaExceeded(error);
@@ -3188,7 +2958,7 @@ export const saveNpwpRecordsToFirestore = async (records: NpwpRecord[]): Promise
 };
 
 
-// Save Accurate Petty Cash Mappings to Firestore & localStorage
+// Save Accurate Petty Cash Mappings to localStorage (Firestore writes disabled to conserve daily free quota)
 export const saveAccurateMappingToFirestore = async (mappingData: any): Promise<void> => {
   const docId = mappingData.id || `acc-map-${Date.now()}`;
   const payload = {
@@ -3205,19 +2975,9 @@ export const saveAccurateMappingToFirestore = async (mappingData: any): Promise<
   } catch (e) {
     console.warn('Gagal menyimpan pemetaan Accurate ke localStorage:', e);
   }
-
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return;
-
-  try {
-    await setDoc(doc(firestoreDb, 'accurate_mappings', docId), cleanUndefined(payload));
-    console.log(`☁️ Accurate mapping report ${docId} saved to Firestore.`);
-  } catch (error) {
-    markFirestoreQuotaExceeded(error);
-    console.warn('Gagal menyimpan pemetaan Accurate ke Firestore:', error);
-  }
 };
 
-// Delete Accurate Petty Cash Mapping from Firestore & localStorage
+// Delete Accurate Petty Cash Mapping from localStorage
 export const deleteAccurateMappingFromFirestore = async (id: string): Promise<void> => {
   try {
     const stored = localStorage.getItem('accurate_mapped_reports_v1');
@@ -3229,61 +2989,21 @@ export const deleteAccurateMappingFromFirestore = async (id: string): Promise<vo
   } catch (e) {
     console.warn('Gagal menghapus pemetaan Accurate dari localStorage:', e);
   }
-
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return;
-
-  try {
-    await deleteDoc(doc(firestoreDb, 'accurate_mappings', id));
-    console.log(`🗑️ Accurate mapping ${id} deleted from Firestore.`);
-  } catch (error) {
-    markFirestoreQuotaExceeded(error);
-    console.warn('Gagal menghapus pemetaan Accurate dari Firestore:', error);
-  }
 };
 
-// Load Accurate Petty Cash Mappings from Firestore
+// Load Accurate Petty Cash Mappings from localStorage
 export const loadAccurateMappingsFromFirestore = async (): Promise<any[]> => {
-  if (!isFirebaseConfigured() || !firestoreDb) {
-    try {
-      const stored = localStorage.getItem('accurate_mapped_reports_v1');
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
-  }
-
   try {
-    const snapshot = await getDocs(collection(firestoreDb, 'accurate_mappings'));
-    const list: any[] = [];
-    snapshot.forEach(docSnap => {
-      const data = docSnap.data();
-      if (data) {
-        list.push({
-          id: docSnap.id || data.id,
-          ...data
-        });
-      }
-    });
-
-    // Sort by savedAt or updatedAt descending
-    list.sort((a, b) => {
+    const stored = localStorage.getItem('accurate_mapped_reports_v1');
+    const list = stored ? JSON.parse(stored) : [];
+    list.sort((a: any, b: any) => {
       const timeA = new Date(a.updatedAt || a.savedAt || 0).getTime();
       const timeB = new Date(b.updatedAt || b.savedAt || 0).getTime();
       return timeB - timeA;
     });
-
-    if (list.length > 0) {
-      localStorage.setItem('accurate_mapped_reports_v1', JSON.stringify(list));
-    }
     return list;
-  } catch (error) {
-    console.warn('Gagal memuat pemetaan Accurate dari Firestore:', error);
-    try {
-      const stored = localStorage.getItem('accurate_mapped_reports_v1');
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
+  } catch {
+    return [];
   }
 };
 
@@ -3364,15 +3084,7 @@ export const deleteNpwpRecordFromFirestore = async (id: string): Promise<void> =
         body: JSON.stringify({ npwpRecords: remaining })
       }).catch(() => {});
 
-      // Mirror to companies/nmsa
-      if (firestoreDb && !isFirestoreQuotaExceeded()) {
-        setDoc(doc(firestoreDb, 'companies', 'nmsa'), {
-          npwpRecords: cleanUndefined(remaining),
-          updatedAt: new Date().toISOString()
-        }, { merge: true }).catch((err) => {
-          markFirestoreQuotaExceeded(err);
-        });
-      }
+      // No mirroring to companies to conserve daily free quota
     }
   } catch (e) {
     console.warn('Gagal menghapus NPWP dari localStorage:', e);
@@ -3388,107 +3100,47 @@ export const deleteNpwpRecordFromFirestore = async (id: string): Promise<void> =
 };
 
 
-// Load SPPD (Surat Perintah Perjalanan Dinas) records from Firestore
+// Load SPPD (Surat Perintah Perjalanan Dinas) records from localStorage
 export const loadSppdRecordsFromFirestore = async (): Promise<any[]> => {
-  if (!isFirebaseConfigured() || !firestoreDb) {
-    try {
-      const stored = localStorage.getItem('sppd_records_v1');
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
-  }
-
-  const path = 'sppd_records';
   try {
-    const snapshot = await getDocs(collection(firestoreDb, path));
-    const list: any[] = [];
-    
-    snapshot.forEach(docSnap => {
-      const data = docSnap.data();
-      if (data && (data.noSppd || data.namaPekerja || data.namaPegawai)) {
-        list.push({
-          id: docSnap.id || data.id,
-          ...data
-        });
-      }
-    });
-    
-    // Always sync the authoritative list to localStorage
-    localStorage.setItem('sppd_records_v1', JSON.stringify(list));
-    return list;
-  } catch (error) {
-    console.warn('Gagal memuat data SPPD dari Firestore:', error);
-    try {
-      const stored = localStorage.getItem('sppd_records_v1');
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
+    const stored = localStorage.getItem('sppd_records_v1');
+    return stored ? JSON.parse(stored) : [];
+  } catch {
+    return [];
   }
 };
 
-// Save all or single SPPD Record to Firestore
+// Save SPPD Records to localStorage & server backup (Firestore writes disabled to conserve quota)
 export const saveSppdRecordsToFirestore = async (records: any[]): Promise<void> => {
   try {
     localStorage.setItem('sppd_records_v1', JSON.stringify(records));
+    // Persist to server unified-storage
+    fetch('/api/unified-storage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sppdRecords: records })
+    }).catch(() => {});
   } catch (e) {
     console.warn('Gagal menyimpan SPPD ke localStorage:', e);
   }
-
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return;
-
-  const path = 'sppd_records';
-  try {
-    for (const rec of records) {
-      if (rec.id) {
-        // Sanitize bulky base64 data: Firebase stores the structured SPPD data & Drive link, while files are in Google Drive
-        const sanitized = { ...rec };
-        if (Array.isArray(sanitized.costItems)) {
-          sanitized.costItems = sanitized.costItems.map((ci: any) => {
-            const copy = { ...ci };
-            if (copy.attachment && typeof copy.attachment.url === 'string' && copy.attachment.url.startsWith('data:')) {
-              copy.attachment = {
-                name: copy.attachment.name,
-                pageCount: copy.attachment.pageCount,
-                sizeBytes: copy.attachment.sizeBytes,
-                uploadedAt: copy.attachment.uploadedAt,
-              };
-            }
-            return copy;
-          });
-        }
-        if (Array.isArray(sanitized.attachedFiles)) {
-          sanitized.attachedFiles = sanitized.attachedFiles.map((af: any) => {
-            if (typeof af.url === 'string' && af.url.startsWith('data:')) {
-              return {
-                name: af.name,
-                category: af.category,
-                sizeBytes: af.sizeBytes,
-                pageCount: af.pageCount,
-              };
-            }
-            return af;
-          });
-        }
-        await setDoc(doc(firestoreDb, path, rec.id), cleanUndefined(sanitized));
-      }
-    }
-    console.log(`☁️ ${records.length} SPPD records synced to Firestore.`);
-  } catch (error) {
-    markFirestoreQuotaExceeded(error);
-    console.warn('Gagal menyimpan SPPD ke Firestore:', error);
-  }
 };
 
-// Delete single SPPD record from Firestore
+// Delete single SPPD record from localStorage & server
 export const deleteSppdRecordFromFirestore = async (id: string): Promise<void> => {
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return;
   try {
-    await deleteDoc(doc(firestoreDb, 'sppd_records', id));
-  } catch (error) {
-    markFirestoreQuotaExceeded(error);
-    console.warn('Gagal menghapus SPPD dari Firestore:', error);
+    const stored = localStorage.getItem('sppd_records_v1');
+    if (stored) {
+      const list = JSON.parse(stored);
+      const filtered = list.filter((item: any) => item.id !== id);
+      localStorage.setItem('sppd_records_v1', JSON.stringify(filtered));
+      fetch('/api/unified-storage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sppdRecords: filtered })
+      }).catch(() => {});
+    }
+  } catch (e) {
+    console.warn('Gagal menghapus SPPD dari localStorage:', e);
   }
 };
 
@@ -3514,50 +3166,40 @@ export const clearFirebaseConfig = () => {
   firebaseAuth = null;
 };
 
-// --- Internal Memo Firestore Cloud Methods ---
+// --- Internal Memo Local Storage Methods (Firestore disabled to conserve quota) ---
 export const saveInternalMemoToFirestore = async (memo: InternalMemo): Promise<void> => {
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return;
   try {
-    const docRef = doc(firestoreDb, 'internal_memos', memo.id);
-    const cleaned = cleanUndefined({
-      ...memo,
-      updatedAt: new Date().toISOString()
-    });
-    await setDoc(docRef, cleaned, { merge: true });
-    console.log(`☁️ Internal Memo ${memo.id} (${memo.nomorMemo}) successfully saved to Firestore.`);
+    const stored = localStorage.getItem('nmsa_internal_memos_v1');
+    const list: InternalMemo[] = stored ? JSON.parse(stored) : [];
+    const updated = [memo, ...list.filter((m) => m.id !== memo.id)];
+    localStorage.setItem('nmsa_internal_memos_v1', JSON.stringify(updated));
   } catch (err) {
-    markFirestoreQuotaExceeded(err);
-    console.warn('Failed to save internal memo to Firestore:', err);
+    console.warn('Failed to save internal memo locally:', err);
   }
 };
 
 export const getInternalMemosFromFirestore = async (): Promise<InternalMemo[]> => {
-  if (!isFirebaseConfigured() || !firestoreDb) return [];
   try {
-    const colRef = collection(firestoreDb, 'internal_memos');
-    const snap = await getDocs(colRef);
-    const list: InternalMemo[] = [];
-    snap.forEach((d) => {
-      list.push({ id: d.id, ...d.data() } as InternalMemo);
-    });
-    // Sort descending by createdAt or tanggal
+    const stored = localStorage.getItem('nmsa_internal_memos_v1');
+    const list: InternalMemo[] = stored ? JSON.parse(stored) : [];
     list.sort((a, b) => new Date(b.createdAt || b.tanggal).getTime() - new Date(a.createdAt || a.tanggal).getTime());
     return list;
   } catch (err) {
-    console.warn('Failed to fetch internal memos from Firestore:', err);
+    console.warn('Failed to fetch internal memos locally:', err);
     return [];
   }
 };
 
 export const deleteInternalMemoFromFirestore = async (id: string): Promise<void> => {
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return;
   try {
-    const docRef = doc(firestoreDb, 'internal_memos', id);
-    await deleteDoc(docRef);
-    console.log(`☁️ Internal Memo ${id} deleted from Firestore.`);
+    const stored = localStorage.getItem('nmsa_internal_memos_v1');
+    if (stored) {
+      const list: InternalMemo[] = JSON.parse(stored);
+      const filtered = list.filter((m) => m.id !== id);
+      localStorage.setItem('nmsa_internal_memos_v1', JSON.stringify(filtered));
+    }
   } catch (err) {
-    markFirestoreQuotaExceeded(err);
-    console.warn('Failed to delete internal memo from Firestore:', err);
+    console.warn('Failed to delete internal memo locally:', err);
   }
 };
 

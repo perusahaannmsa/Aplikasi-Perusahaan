@@ -541,14 +541,14 @@ export const UploadBuktiTransferModal: React.FC<UploadBuktiTransferModalProps> =
         const finalCompanyName = updatedSubmission.companyName || userProfile?.companyName || 'PT Nusantara Mineral Sukses Abadi';
         await saveSubmissionToFirestore(updatedSubmission, finalCompanyId, finalCompanyName);
 
-        await saveActivityLogToFirestore({
-          action: 'PAYMENT_RECEIPT_UPLOADED',
-          targetId: updatedSubmission.id,
-          targetKode: updatedSubmission.kode,
-          details: `Upload bukti bayar ${formatRupiah(currentPayNominal)} (${updatedSubmission.status}) untuk ${updatedSubmission.dibayarkanKepada}`,
-          companyId: finalCompanyId,
-          timestamp: new Date().toISOString()
-        }, userProfile);
+        await saveActivityLogToFirestore(
+          'PAYMENT_RECEIPT_UPLOADED',
+          `Upload bukti bayar ${formatRupiah(currentPayNominal)} (${updatedSubmission.status}) untuk ${updatedSubmission.dibayarkanKepada}`,
+          'success',
+          updatedSubmission.id,
+          updatedSubmission.kode,
+          userProfile
+        );
       }
 
       // 6. Notify parent component to update state

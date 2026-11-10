@@ -33,6 +33,31 @@ let firebaseApp: any = null;
 let firestoreDb: any = null;
 let firebaseAuth: any = null;
 
+// Server-side Firestore quota guard
+let isServerQuotaExceeded = false;
+let lastServerQuotaExceededTime = 0;
+const SERVER_QUOTA_COOLDOWN_MS = 60 * 60 * 1000;
+
+export function checkServerQuotaExceeded(): boolean {
+  if (!isServerQuotaExceeded) return false;
+  if (Date.now() - lastServerQuotaExceededTime > SERVER_QUOTA_COOLDOWN_MS) {
+    isServerQuotaExceeded = false;
+    return false;
+  }
+  return true;
+}
+
+export function markServerQuotaExceeded(err: any) {
+  const errStr = String(err?.message || err?.code || err || '');
+  if (err?.code === 'resource-exhausted' || errStr.includes('RESOURCE_EXHAUSTED') || errStr.includes('Quota exceeded') || errStr.includes('quota exceeded')) {
+    if (!isServerQuotaExceeded) {
+      console.warn('⚠️ [Server Firestore Quota Guard] Kuota harian Firestore (RESOURCE_EXHAUSTED) tercapai. Menangguhkan operasi ke Firestore di server sementara.');
+    }
+    isServerQuotaExceeded = true;
+    lastServerQuotaExceededTime = Date.now();
+  }
+}
+
 export function initFirebaseFirestore() {
   try {
     if (firestoreDb) return firestoreDb;
@@ -100,6 +125,7 @@ export async function syncAttendanceToFirestore(state: {
   weeklyReports?: any[];
   attendanceLogs?: any[];
 }) {
+  if (checkServerQuotaExceeded()) return false;
   const db = initFirebaseFirestore();
   if (!db) return false;
 
@@ -145,6 +171,7 @@ export async function syncAttendanceToFirestore(state: {
     return true;
 
   } catch (err: any) {
+    markServerQuotaExceeded(err);
     console.warn("[Firebase] Notice during attendance Firestore sync:", err.message);
     return false;
   }
@@ -152,6 +179,7 @@ export async function syncAttendanceToFirestore(state: {
 
 // 2. Restore attendance state from Firestore on startup
 export async function restoreAttendanceFromFirestore(currentState: any): Promise<any> {
+  if (checkServerQuotaExceeded()) return currentState;
   const db = initFirebaseFirestore();
   if (!db) return currentState;
 
@@ -307,6 +335,7 @@ export async function restoreAttendanceFromFirestore(currentState: any): Promise
 
     return hasChanges ? updated : currentState;
   } catch (err: any) {
+    markServerQuotaExceeded(err);
     console.warn("[Firebase] Notice restoring attendance from Firestore:", err.message);
     return currentState;
   }
@@ -314,6 +343,7 @@ export async function restoreAttendanceFromFirestore(currentState: any): Promise
 
 // 3. Sync NPWP master records to Firestore
 export async function syncNpwpToFirestore(npwpRecords: any[]): Promise<boolean> {
+  if (checkServerQuotaExceeded()) return false;
   const db = initFirebaseFirestore();
   if (!db) return false;
 
@@ -330,15 +360,7 @@ export async function syncNpwpToFirestore(npwpRecords: any[]): Promise<boolean> 
       updatedAt: timestamp
     }, { merge: true });
 
-    // 2. Mirror to companies/nmsa for settings & company-wide sync
-    try {
-      await setDoc(doc(db, "companies", "nmsa"), {
-        npwpRecords: list,
-        updatedAt: timestamp
-      }, { merge: true });
-    } catch (_) {}
-
-    // 3. Granular docs in npwp_records collection for each record
+    // 2. Granular docs in npwp_records collection for each record
     for (const record of list) {
       if (record && record.id) {
         await setDoc(doc(db, "npwp_records", String(record.id)), {
@@ -351,6 +373,7 @@ export async function syncNpwpToFirestore(npwpRecords: any[]): Promise<boolean> 
     console.log(`[Firebase] Successfully synchronized ${list.length} NPWP records to Firestore!`);
     return true;
   } catch (err: any) {
+    markServerQuotaExceeded(err);
     console.warn("[Firebase] Error during NPWP Firestore sync:", err.message);
     return false;
   }
@@ -358,6 +381,7 @@ export async function syncNpwpToFirestore(npwpRecords: any[]): Promise<boolean> 
 
 // 4. Restore NPWP records from Firestore
 export async function restoreNpwpFromFirestore(currentState: any): Promise<any> {
+  if (checkServerQuotaExceeded()) return currentState;
   const db = initFirebaseFirestore();
   if (!db) return currentState;
 
@@ -379,11 +403,12 @@ export async function restoreNpwpFromFirestore(currentState: any): Promise<any> 
         }
       }
     } catch (e: any) {
+      markServerQuotaExceeded(e);
       console.warn("[Firebase] Could not fetch master_records:", e.message);
     }
 
     // Check app_settings/general if not found yet
-    if (cloudRecords.length === 0) {
+    if (cloudRecords.length === 0 && !checkServerQuotaExceeded()) {
       try {
         const setSnap = await getDoc(doc(db, "app_settings", "general"));
         if (setSnap.exists()) {
@@ -392,11 +417,13 @@ export async function restoreNpwpFromFirestore(currentState: any): Promise<any> 
             cloudRecords = sd.npwpRecords;
           }
         }
-      } catch (_) {}
+      } catch (e) {
+        markServerQuotaExceeded(e);
+      }
     }
 
     // Fallback: list all docs in npwp_records collection
-    if (cloudRecords.length === 0) {
+    if (cloudRecords.length === 0 && !checkServerQuotaExceeded()) {
       try {
         const colSnap = await getDocs(collection(db, "npwp_records"));
         colSnap.forEach((d) => {
@@ -404,7 +431,9 @@ export async function restoreNpwpFromFirestore(currentState: any): Promise<any> 
             cloudRecords.push({ id: d.id, ...d.data() });
           }
         });
-      } catch (_) {}
+      } catch (e) {
+        markServerQuotaExceeded(e);
+      }
     }
 
     if (cloudRecords.length > 0) {
@@ -428,6 +457,7 @@ export async function restoreNpwpFromFirestore(currentState: any): Promise<any> 
 
     return hasChanges ? updated : currentState;
   } catch (err: any) {
+    markServerQuotaExceeded(err);
     console.warn("[Firebase] Notice restoring NPWP from Firestore:", err.message);
     return currentState;
   }

@@ -819,21 +819,7 @@ Silakan buka tautan di atas untuk mengakses menu absensi dan mencatat kehadiran 
               light: "#ffffff",
             },
           });
-          if (qrCodeDataUrl) {
-            try {
-              const { initFirebaseFirestore } = await import("./firebase-attendance");
-              const db = initFirebaseFirestore();
-              if (db) {
-                const { doc, setDoc } = await import("firebase/firestore");
-                await setDoc(doc(db, "companies", "nmsa"), {
-                  waQr: qrCodeDataUrl,
-                  waStatus: "qr",
-                  waConnected: false,
-                  waUpdatedAt: new Date().toISOString()
-                }, { merge: true });
-              }
-            } catch (_) {}
-          }
+          // QR code is kept in server memory and served via /api/wa/status (Firestore disabled to conserve quota)
         } catch (err: any) {
           console.error("Failed to generate QR data URL", err);
           qrCodeDataUrl = null;
@@ -848,21 +834,6 @@ Silakan buka tautan di atas untuk mengakses menu absensi dan mencatat kehadiran 
         const user = sock?.user;
         connectedUser = user ? { id: user.id, name: user.name || "Admin WhatsApp" } : { id: "unknown" };
         console.log("[WhatsApp Bot] WhatsApp connection successfully opened for", connectedUser);
-
-        try {
-          const { initFirebaseFirestore } = await import("./firebase-attendance");
-          const db = initFirebaseFirestore();
-          if (db) {
-            const { doc, setDoc } = await import("firebase/firestore");
-            await setDoc(doc(db, "companies", "nmsa"), {
-              waQr: null,
-              waStatus: "connected",
-              waConnected: true,
-              waUser: connectedUser,
-              waUpdatedAt: new Date().toISOString()
-            }, { merge: true });
-          }
-        } catch (_) {}
 
         // Backup session files immediately upon successful connection
         backupAuthStateToPersistentStore();
@@ -968,21 +939,6 @@ export async function disconnectWhatsApp(autoRestart = false) {
         fs.writeFileSync(dsPath, JSON.stringify(ds, null, 2), "utf-8");
       }
     } catch (e) {}
-
-    try {
-      const { initFirebaseFirestore } = await import("./firebase-attendance");
-      const db = initFirebaseFirestore();
-      if (db) {
-        const { doc, setDoc } = await import("firebase/firestore");
-        await setDoc(doc(db, "companies", "nmsa"), {
-          waQr: null,
-          waStatus: "disconnected",
-          waConnected: false,
-          waUser: null,
-          waUpdatedAt: new Date().toISOString()
-        }, { merge: true });
-      }
-    } catch (_) {}
 
     if (sock) {
       try {
