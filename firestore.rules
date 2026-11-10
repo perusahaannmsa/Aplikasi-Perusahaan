@@ -24,19 +24,58 @@ service cloud.firestore {
       allow read, write: if isValidId(recordId);
     }
 
-    // 3. Data Absensi Harian & Presensi Kehadiran Karyawan
-    match /absen_records/{recordId} {
-      allow read, write: if isValidId(recordId);
-    }
-
+    // 3. Data Absensi Harian Terpusat (attendance/current_records)
     match /attendance/{attendanceId} {
       allow read, write: if isValidId(attendanceId);
     }
 
     // =========================================================================
-    // KOLEKSI LAIN DIKUNCI / DITUTUP DARI TULIS AGAR KUOTA HARIAN TIDAK HABIS:
-    // Seluruh data di bawah disimpan di penyimpanan lokal & server (data-store.json)
+    // KOLEKSI OBSOLETE YANG AKAN DIBERSIHKAN:
+    // Izinkan baca & hapus agar pengguna bisa membersihkan koleksi dari console/aplikasi.
+    // Penulisan baru diblokir total (write: if false).
     // =========================================================================
+
+    // Data absen per-dokumen lama (digantikan oleh attendance/current_records)
+    match /absen_records/{recordId} {
+      allow read, delete: if true;
+      allow write: if false;
+    }
+
+    // Riwayat aktivitas & audit log lama (disimpan di server backend & local)
+    match /activity_logs/{logId} {
+      allow read, delete: if true;
+      allow write: if false;
+    }
+
+    // SPPD records (disimpan di server backend & localStorage)
+    match /sppd_records/{recordId} {
+      allow read, delete: if true;
+      allow write: if false;
+    }
+
+    // Accurate mappings (disimpan di server backend & localStorage)
+    match /accurate_mappings/{recordId} {
+      allow read, delete: if true;
+      allow write: if false;
+    }
+
+    // Konfigurasi GPS kantor
+    match /office_config/{configId} {
+      allow read, delete: if true;
+      allow write: if false;
+    }
+
+    // Dokumen Internal Memo Direksi lama (disimpan di server backend & localStorage)
+    match /internal_memos/{memoId} {
+      allow read, delete: if true;
+      allow write: if false;
+    }
+
+    // Dokumen pengujian koneksi lama
+    match /test/{docId} {
+      allow read, delete: if true;
+      allow write: if false;
+    }
 
     // Profil Perusahaan (Hanya baca jika ada data lama, blokir penulisan token berulang)
     match /companies/{companyId} {
@@ -44,33 +83,8 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Riwayat aktivitas & audit log (diblokir dari Firestore untuk hemat kuota)
-    match /activity_logs/{logId} {
-      allow read, write: if false;
-    }
-
-    // SPPD records (disimpan di server backend & localStorage)
-    match /sppd_records/{recordId} {
-      allow read, write: if false;
-    }
-
-    // Accurate mappings (disimpan di server backend & localStorage)
-    match /accurate_mappings/{recordId} {
-      allow read, write: if false;
-    }
-
     // Akun Google Drive (disimpan aman di server backend)
     match /connected_drives/{driveId} {
-      allow read, write: if false;
-    }
-
-    // Konfigurasi GPS kantor
-    match /office_config/{configId} {
-      allow read, write: if false;
-    }
-
-    // Dokumen Internal Memo Direksi (disimpan di server backend & localStorage)
-    match /internal_memos/{memoId} {
       allow read, write: if false;
     }
 
@@ -78,11 +92,6 @@ service cloud.firestore {
     match /users/{uid} {
       allow read: if true;
       allow write: if false;
-    }
-
-    // Dokumen pengujian koneksi
-    match /test/{docId} {
-      allow read, write: if false;
     }
 
     // Laporan mingguan dan rekap pembantu absensi

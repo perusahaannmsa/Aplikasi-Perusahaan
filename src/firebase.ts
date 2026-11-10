@@ -2564,7 +2564,7 @@ export const enqueueFirestoreWrite = (
   }
 
   // Strictly enforce user quota directive: only Absen, NPWP, and Voucher submissions
-  const ALLOWED_COLLECTIONS = ['submissions', 'npwp_records', 'absen_records', 'attendance'];
+  const ALLOWED_COLLECTIONS = ['submissions', 'npwp_records', 'attendance'];
   if (!ALLOWED_COLLECTIONS.includes(path)) {
     return;
   }
@@ -3085,7 +3085,7 @@ export const loadAccurateMappingsFromFirestore = async (): Promise<any[]> => {
   }
 };
 
-// Save Absen Harian NMSA records & weekly reports to Firestore
+// Save Absen Harian NMSA records & weekly reports to localStorage (central attendance is in attendance/current_records)
 export const saveAbsenDataToFirestore = async (absenData: any): Promise<void> => {
   const docId = absenData.id || `absen-${Date.now()}`;
   const payload = {
@@ -3103,15 +3103,89 @@ export const saveAbsenDataToFirestore = async (absenData: any): Promise<void> =>
     console.warn('Gagal menyimpan data Absen ke localStorage:', e);
   }
 
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return;
+  // NOTE: Penulisan dokumen individu ke 'absen_records' dinonaktifkan permanen
+  // Data absensi master disimpan terpusat dan rapi di 'attendance/current_records' untuk menghemat kuota Firestore.
+};
 
-  try {
-    await setDoc(doc(firestoreDb, 'absen_records', docId), cleanUndefined(payload));
-    console.log(`☁️ Absen record ${docId} saved to Firestore.`);
-  } catch (error) {
-    markFirestoreQuotaExceeded(error);
-    console.warn('Gagal menyimpan data Absen ke Firestore:', error);
+export interface CleanCollectionsResult {
+  success: boolean;
+  totalDeleted: number;
+  details: { collection: string; count: number; error?: string }[];
+  message: string;
+}
+
+/**
+ * Membersihkan koleksi tak terpakai dari Firebase Firestore (absen_records, accurate_mappings, activity_logs, dll.)
+ * Koleksi penting (submissions, attendance, npwp_records, companies, users) tetap aman 100%!
+ */
+export const cleanUnusedFirestoreCollections = async (
+  onProgress?: (progressMsg: string) => void
+): Promise<CleanCollectionsResult> => {
+  if (!isFirebaseConfigured() || !firestoreDb) {
+    return {
+      success: false,
+      totalDeleted: 0,
+      details: [],
+      message: 'Firebase belum terhubung atau belum diinisialisasi.'
+    };
   }
+
+  // Koleksi yang tidak diperlukan & aman untuk dibersihkan
+  const TARGET_COLLECTIONS = [
+    'absen_records',
+    'accurate_mappings',
+    'activity_logs',
+    'office_config',
+    'test',
+    'internal_memos'
+  ];
+
+  const details: { collection: string; count: number; error?: string }[] = [];
+  let totalDeleted = 0;
+
+  for (const collName of TARGET_COLLECTIONS) {
+    if (onProgress) onProgress(`Memeriksa koleksi "${collName}" di Firebase...`);
+    try {
+      const collRef = collection(firestoreDb, collName);
+      const snap = await getDocs(collRef);
+      if (snap.empty) {
+        details.push({ collection: collName, count: 0 });
+        continue;
+      }
+
+      let deletedInColl = 0;
+      const docsToDelete = snap.docs;
+      if (onProgress) onProgress(`Menghapus ${docsToDelete.length} dokumen dalam "${collName}"...`);
+
+      // Hapus dalam batch maksimal 400 dokumen
+      const BATCH_SIZE = 400;
+      for (let i = 0; i < docsToDelete.length; i += BATCH_SIZE) {
+        const chunk = docsToDelete.slice(i, i + BATCH_SIZE);
+        const batch = writeBatch(firestoreDb);
+        for (const docSnap of chunk) {
+          batch.delete(docSnap.ref);
+        }
+        await batch.commit();
+        deletedInColl += chunk.length;
+      }
+
+      totalDeleted += deletedInColl;
+      details.push({ collection: collName, count: deletedInColl });
+      if (onProgress) onProgress(`✓ Berhasil membersihkan ${deletedInColl} dokumen dari "${collName}".`);
+    } catch (err: any) {
+      console.warn(`Pemberitahuan saat membersihkan ${collName}:`, err);
+      details.push({ collection: collName, count: 0, error: err?.message || String(err) });
+    }
+  }
+
+  return {
+    success: true,
+    totalDeleted,
+    details,
+    message: totalDeleted > 0
+      ? `Berhasil membersihkan ${totalDeleted} dokumen tak terpakai dari Firestore. Koleksi kosong akan otomatis hilang di Firebase Console.`
+      : `Koleksi tak terpakai di Firestore sudah bersih dan kosong.`
+  };
 };
 
 // Load Absen Harian NMSA records from Firestore

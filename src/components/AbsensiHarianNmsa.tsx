@@ -4624,12 +4624,6 @@ export function AbsensiHarianNmsa({
           await setDoc(doc(db, "attendance", `rep_${reconstructedReport.id}`), cleanDataForFirestore(reconstructedReport), { merge: true });
         }
         await saveAttendanceToFirestore(updatedRecords, workers, updatedReports);
-        await saveAbsenDataToFirestore({
-          workers,
-          records: updatedRecords,
-          weeklyReports: updatedReports,
-          signatures,
-        });
       } catch (fbErr) {
         markFirestoreQuotaExceeded(fbErr);
         console.warn("Firebase sync notice:", fbErr);

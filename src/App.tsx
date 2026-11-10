@@ -82,7 +82,9 @@ import {
 } from './firebase';
 import { loadAttendanceFromFirestore } from './lib/firebaseAbsen';
 
-import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, ArrowLeftRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell, MessageSquare, Bot, Sparkles, BookOpen, Wrench, Building2, Plus, HandCoins, ExternalLink, RefreshCw } from 'lucide-react';
+import { CleanFirestoreModal } from './components/CleanFirestoreModal';
+import { DriveDeduplicateModal } from './components/DriveDeduplicateModal';
+import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, ArrowLeftRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell, MessageSquare, Bot, Sparkles, BookOpen, Wrench, Building2, Plus, HandCoins, ExternalLink, RefreshCw, FolderSync, Trash2 } from 'lucide-react';
 
 export default function App() {
   const [theme, setTheme] = useState<AppTheme>(() => {
@@ -1180,6 +1182,8 @@ export default function App() {
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
   const [isExportImportModalOpen, setIsExportImportModalOpen] = useState(false);
   const [isThemeModalOpen, setIsThemeModalOpen] = useState(false);
+  const [isCleanFirestoreModalOpen, setIsCleanFirestoreModalOpen] = useState(false);
+  const [isDriveDeduplicateModalOpen, setIsDriveDeduplicateModalOpen] = useState(false);
   const [masterDriveEmail, setMasterDriveEmailState] = useState<string>(() => getMasterDriveEmail());
 
   // Multi-Company switching handler with strictly segregated Firestore & local storage
@@ -3365,6 +3369,42 @@ export default function App() {
                         </span>
                       </button>
 
+                      {/* 13. Auto-Refresh & Bersihkan Duplikat Google Drive */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsToolsDropdownOpen(false);
+                          setIsDriveDeduplicateModalOpen(true);
+                        }}
+                        className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold text-sky-950 bg-sky-50 hover:bg-sky-100 transition cursor-pointer border border-sky-300 mt-1 shadow-3xs"
+                      >
+                        <div className="flex items-center gap-2">
+                          <FolderSync size={14} className="text-sky-600" />
+                          <span>Refresh &amp; Duplikat Drive</span>
+                        </div>
+                        <span className="text-[9px] font-mono bg-sky-200 text-sky-950 px-1.5 py-0.5 rounded font-black">
+                          Sinkron
+                        </span>
+                      </button>
+
+                      {/* 14. Bersihkan Koleksi Tak Terpakai di Firebase */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsToolsDropdownOpen(false);
+                          setIsCleanFirestoreModalOpen(true);
+                        }}
+                        className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold text-rose-950 bg-rose-50 hover:bg-rose-100 transition cursor-pointer border border-rose-300 mt-1 shadow-3xs"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Trash2 size={14} className="text-rose-600" />
+                          <span>Bersihkan Koleksi Tak Terpakai</span>
+                        </div>
+                        <span className="text-[9px] font-mono bg-rose-200 text-rose-950 px-1.5 py-0.5 rounded font-black">
+                          Firebase
+                        </span>
+                      </button>
+
                       {/* Tombol Cepat Kembali ke Voucher HO jika berada di menu lain */}
                       {view !== 'list' && (
                         <button
@@ -4202,6 +4242,28 @@ export default function App() {
         onClose={() => setIsThemeModalOpen(false)}
         currentTheme={theme}
         onSelectTheme={(t) => handleSelectTheme(t)}
+      />
+
+      {/* Bersihkan Koleksi Tak Terpakai di Firestore Modal */}
+      <CleanFirestoreModal
+        isOpen={isCleanFirestoreModalOpen}
+        onClose={() => setIsCleanFirestoreModalOpen(false)}
+        onSuccess={() => {
+          // Sukses pembersihan koleksi tak terpakai
+        }}
+      />
+
+      {/* Auto-Refresh & Bersihkan Duplikat Google Drive Modal */}
+      <DriveDeduplicateModal
+        isOpen={isDriveDeduplicateModalOpen}
+        onClose={() => setIsDriveDeduplicateModalOpen(false)}
+        submissions={submissions}
+        onUpdateSubmissions={(updated) => {
+          setSubmissions(updated);
+          try {
+            localStorage.setItem('submissions', JSON.stringify(updated));
+          } catch (e) {}
+        }}
       />
 
     </div>
