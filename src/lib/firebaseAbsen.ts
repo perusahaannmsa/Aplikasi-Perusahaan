@@ -1,5 +1,5 @@
 import { initializeApp, getApps } from "firebase/app";
-import { getFirestore, doc, setDoc, getDoc, collection, getDocs, onSnapshot } from "firebase/firestore";
+import { getFirestore, doc, setDoc, getDoc, collection, getDocs, onSnapshot, disableNetwork, enableNetwork } from "firebase/firestore";
 import { 
   getAuth, 
   signInWithPopup, 
@@ -8,13 +8,18 @@ import {
   User,
   signOut
 } from "firebase/auth";
-import { ensureValidDriveToken, setGoogleDriveToken, getStoredGoogleDriveToken, getActiveGoogleDriveAccount, getOrRenewDriveToken, isFirestoreQuotaExceeded, markFirestoreQuotaExceeded } from "../firebase";
+import { ensureValidDriveToken, setGoogleDriveToken, getStoredGoogleDriveToken, getActiveGoogleDriveAccount, getOrRenewDriveToken, isFirestoreQuotaExceeded, markFirestoreQuotaExceeded, registerFirestoreInstance } from "../firebase";
 import firebaseAppletConfig from "../../firebase-applet-config.json";
 
 // Initialize Firebase with unified applet credentials & target database
 const app = getApps().find(a => a.name === "[DEFAULT]") || initializeApp(firebaseAppletConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app, firebaseAppletConfig.firestoreDatabaseId || "(default)");
+registerFirestoreInstance(db);
+
+if (isFirestoreQuotaExceeded()) {
+  disableNetwork(db).catch(() => {});
+}
 
 // Setup Google Auth Provider
 export const provider = new GoogleAuthProvider();
@@ -243,6 +248,9 @@ export const saveAttendanceToFirestore = async (
 
   } catch (err: any) {
     markFirestoreQuotaExceeded(err);
+    if (db && isFirestoreQuotaExceeded()) {
+      disableNetwork(db).catch(() => {});
+    }
     const errStr = String(err?.message || err?.code || err || '');
     const isPermissionDenied = err?.code === 'permission-denied' || errStr.includes('PERMISSION_DENIED');
     const isQuotaExceeded = err?.code === 'resource-exhausted' || errStr.includes('RESOURCE_EXHAUSTED') || errStr.includes('Quota exceeded');
@@ -409,6 +417,9 @@ export const subscribeToAttendanceFromFirestore = (
     latestActiveDate?: string | null;
   }) => void
 ): (() => void) => {
+  if (isFirestoreQuotaExceeded()) {
+    return () => {};
+  }
   try {
     const unsub = onSnapshot(doc(db, "attendance", "current_records"), (snapshot) => {
       if (!snapshot.exists()) return;
@@ -506,7 +517,9 @@ export const subscribeToAttendanceFromFirestore = (
         latestActiveDate
       });
     }, (err) => {
-      console.warn("[Firestore Attendance Realtime] Snapshot listener notice:", err?.message);
+      markFirestoreQuotaExceeded(err);
+      if (db) disableNetwork(db).catch(() => {});
+      console.warn("[Firestore Attendance Realtime] Snapshot listener notice:", err?.message || err);
     });
 
     return unsub;

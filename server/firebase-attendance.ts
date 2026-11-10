@@ -49,7 +49,7 @@ export function checkServerQuotaExceeded(): boolean {
 
 export function markServerQuotaExceeded(err: any) {
   const errStr = String(err?.message || err?.code || err || '');
-  if (err?.code === 'resource-exhausted' || errStr.includes('RESOURCE_EXHAUSTED') || errStr.includes('Quota exceeded') || errStr.includes('quota exceeded')) {
+  if (err?.code === 'resource-exhausted' || err?.code === 8 || errStr.includes('RESOURCE_EXHAUSTED') || errStr.includes('Quota exceeded') || errStr.includes('quota exceeded')) {
     if (!isServerQuotaExceeded) {
       console.warn('⚠️ [Server Firestore Quota Guard] Kuota harian Firestore (RESOURCE_EXHAUSTED) tercapai. Menangguhkan operasi ke Firestore di server sementara.');
     }

@@ -15,7 +15,9 @@ import {
   getDocFromServer,
   getDoc,
   onSnapshot,
-  writeBatch
+  writeBatch,
+  disableNetwork,
+  enableNetwork
 } from 'firebase/firestore';
 import { 
   getAuth, 
@@ -698,6 +700,7 @@ export const initializeFirebaseApp = (customConfig?: any): boolean => {
     // Set firestore and auth instances
     const dbId = config.firestoreDatabaseId || (firebaseAppletConfig as any)?.firestoreDatabaseId || "(default)";
     firestoreDb = getFirestore(firebaseApp, dbId);
+    registerFirestoreInstance(firestoreDb);
     firebaseAuth = getAuth(firebaseApp);
     
     // Register listener for auth states
@@ -708,8 +711,14 @@ export const initializeFirebaseApp = (customConfig?: any): boolean => {
 
     console.log('✅ Firebase initialized successfully with project:', config.projectId);
     
-    // Asynchronously validate connection to Firestore
-    testConnection();
+    // If quota is already exceeded, immediately disable network to prevent gRPC Write stream errors
+    if (isFirestoreQuotaExceeded()) {
+      console.log('ℹ️ [Firestore Init] Kuota harian Firestore sedang dalam masa cooldown. Jaringan dinonaktifkan untuk mencegah gRPC Write stream errors.');
+      disableNetwork(firestoreDb).catch(() => {});
+    } else {
+      // Asynchronously validate connection to Firestore only if quota not exceeded
+      testConnection();
+    }
     return true;
   } catch (e) {
     console.error('❌ Failed to initialize Firebase:', e);
@@ -722,7 +731,7 @@ export const initializeFirebaseApp = (customConfig?: any): boolean => {
 
 // Asynchronously validate connection
 async function testConnection() {
-  if (!firestoreDb) return;
+  if (!firestoreDb || isFirestoreQuotaExceeded()) return;
   try {
     await getDocFromServer(doc(firestoreDb, 'test', 'connection'));
     console.log('📡 Firestore database connection status: ACTIVE');
@@ -731,6 +740,40 @@ async function testConnection() {
       console.warn("Please check your Firebase configuration or network status.");
     }
   }
+}
+
+// Registered Firestore instances across the application
+const registeredFirestoreInstances = new Set<Firestore>();
+
+export const registerFirestoreInstance = (dbInstance: Firestore | null) => {
+  if (dbInstance) {
+    registeredFirestoreInstances.add(dbInstance);
+    if (isFirestoreQuotaExceeded()) {
+      disableNetwork(dbInstance).catch(() => {});
+    }
+  }
+};
+
+// Global interceptor for unhandled console.error from @firebase/firestore
+if (typeof window !== 'undefined') {
+  const originalConsoleError = console.error;
+  console.error = function (...args: any[]) {
+    const fullMsg = args
+      .map(a => (typeof a === 'object' && a !== null ? (a.message || a.code || JSON.stringify(a)) : String(a)))
+      .join(' ');
+
+    if (
+      fullMsg.includes('RESOURCE_EXHAUSTED') ||
+      fullMsg.includes('Quota exceeded') ||
+      fullMsg.includes('quota exceeded') ||
+      (fullMsg.includes('Code: 8') && fullMsg.includes('Firestore'))
+    ) {
+      markFirestoreQuotaExceeded(fullMsg);
+      console.warn('⚠️ [Firestore Quota Guard] GrpcConnection stream quota error intercepted. Mengalihkan ke mode lokal & menutup stream jaringan.');
+      return;
+    }
+    originalConsoleError.apply(console, args);
+  };
 }
 
 // Helper to check configuration readiness
@@ -743,7 +786,7 @@ export const isFirebaseConfigured = (): boolean => {
 
 // Circuit breaker when Firestore daily free quota (Spark Plan) is exhausted
 let lastQuotaExceededTime = 0;
-const QUOTA_COOLDOWN_MS = 60 * 60 * 1000; // 60 minutes cooldown before testing write again (Firestore free quota is daily)
+const QUOTA_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours cooldown (Firebase Spark tier quota resets daily at midnight PST)
 
 export const isFirestoreQuotaExceeded = (): boolean => {
   if (lastQuotaExceededTime === 0) {
@@ -766,31 +809,53 @@ export const markFirestoreQuotaExceeded = (err?: any) => {
   const errStr = String(err?.message || err?.code || err || '');
   const isQuota = 
     err?.code === 'resource-exhausted' ||
+    err?.code === 8 ||
     errStr.includes('RESOURCE_EXHAUSTED') ||
     errStr.includes('Quota exceeded') ||
     errStr.includes('quota exceeded') ||
-    errStr.includes('resource-exhausted');
+    errStr.includes('resource-exhausted') ||
+    errStr.includes('Code: 8');
 
   if (isQuota) {
-    if (!isFirestoreQuotaExceeded()) {
-      console.warn('⚠️ [Firestore Quota Guard] Kuota harian gratis Firebase (Spark Plan) telah tercapai (RESOURCE_EXHAUSTED). Mengalihkan operasi tulis ke penyimpanan lokal dan backend server sementara.');
-    }
+    const wasAlreadyExceeded = isFirestoreQuotaExceeded();
     lastQuotaExceededTime = Date.now();
     try {
       localStorage.setItem('nmsa_fs_quota_exceeded', String(lastQuotaExceededTime));
       sessionStorage.setItem('nmsa_fs_quota_exceeded', String(lastQuotaExceededTime));
       window.dispatchEvent(new CustomEvent('firestore-quota-exceeded'));
     } catch (_) {}
+
+    if (!wasAlreadyExceeded) {
+      console.warn('⚠️ [Firestore Quota Guard] Kuota harian gratis Firebase (Spark Plan) telah tercapai (RESOURCE_EXHAUSTED). Mengalihkan operasi tulis ke penyimpanan lokal dan backend server sementara.');
+    }
+
+    // CRITICAL: Shut down the GrpcConnection RPC 'Write' stream immediately on ALL instances
+    for (const inst of registeredFirestoreInstances) {
+      disableNetwork(inst).catch(() => {});
+    }
+    if (firestoreDb) {
+      disableNetwork(firestoreDb).catch(() => {});
+    }
   }
 };
 
-export const resetFirestoreQuotaCooldown = () => {
+export const resetFirestoreQuotaCooldown = async () => {
   lastQuotaExceededTime = 0;
   try {
     localStorage.removeItem('nmsa_fs_quota_exceeded');
     sessionStorage.removeItem('nmsa_fs_quota_exceeded');
     window.dispatchEvent(new CustomEvent('firestore-quota-reset'));
   } catch (_) {}
+  for (const inst of registeredFirestoreInstances) {
+    try {
+      await enableNetwork(inst);
+    } catch (_) {}
+  }
+  if (firestoreDb) {
+    try {
+      await enableNetwork(firestoreDb);
+    } catch (_) {}
+  }
 };
 
 // Custom Firestore standard error reporter
@@ -2375,8 +2440,9 @@ export const loadSubmissionsFromFirestore = async (companyId?: string): Promise<
               if (matchedLocal && matchedLocal.dpAmount) {
                 item.dpAmount = Number(matchedLocal.dpAmount);
                 item.cicilanNotes = item.cicilanNotes || matchedLocal.cicilanNotes;
-                item.riwayatCicilan = item.riwayatCicilan || matchedLocal.riwayatCicilan;
-                saveSubmissionToFirestore(item, targetComp || 'nmsa').catch(() => {});
+                if (!isFirestoreQuotaExceeded()) {
+                  saveSubmissionToFirestore(item, targetComp || 'nmsa').catch(() => {});
+                }
               }
             }
           });
@@ -2492,6 +2558,11 @@ export const enqueueFirestoreWrite = (
   payload: any, 
   description?: string
 ): void => {
+  // If Firestore quota is currently exhausted, do not queue cloud writes to prevent Write stream errors
+  if (isFirestoreQuotaExceeded()) {
+    return;
+  }
+
   // Strictly enforce user quota directive: only Absen, NPWP, and Voucher submissions
   const ALLOWED_COLLECTIONS = ['submissions', 'npwp_records', 'absen_records', 'attendance'];
   if (!ALLOWED_COLLECTIONS.includes(path)) {
@@ -2546,6 +2617,9 @@ export const flushFirestoreQueue = async (): Promise<{ processed: number; remain
 
   if (isFirestoreQuotaExceeded()) {
     console.log(`ℹ️ [Firestore Queue] Flush ditunda karena batas kuota harian tercapai. Antrian (${firestoreWriteQueue.length} data) tersimpan aman di memori & penyimpanan lokal.`);
+    if (firestoreDb) {
+      disableNetwork(firestoreDb).catch(() => {});
+    }
     return { processed: 0, remaining: firestoreWriteQueue.length };
   }
 
@@ -2555,7 +2629,10 @@ export const flushFirestoreQueue = async (): Promise<{ processed: number; remain
 
   try {
     while (firestoreWriteQueue.length > 0) {
-      if (isFirestoreQuotaExceeded()) break;
+      if (isFirestoreQuotaExceeded()) {
+        if (firestoreDb) disableNetwork(firestoreDb).catch(() => {});
+        break;
+      }
 
       const item = firestoreWriteQueue[0];
       try {
@@ -2580,6 +2657,7 @@ export const flushFirestoreQueue = async (): Promise<{ processed: number; remain
         
         if (isTransient || isFirestoreQuotaExceeded()) {
           console.log(`[Firestore Queue] Menghentikan sementara proses antrian. Data tetap aman di memori & akan dilanjutkan otomatis.`);
+          if (firestoreDb) disableNetwork(firestoreDb).catch(() => {});
           break;
         }
 
@@ -2607,13 +2685,13 @@ if (typeof window !== 'undefined') {
   });
 
   setInterval(() => {
-    if (firestoreWriteQueue.length > 0 && !isProcessingFirestoreQueue) {
+    if (firestoreWriteQueue.length > 0 && !isProcessingFirestoreQueue && !isFirestoreQuotaExceeded()) {
       flushFirestoreQueue().catch(() => {});
     }
   }, 20000);
 
   setTimeout(() => {
-    if (firestoreWriteQueue.length > 0) {
+    if (firestoreWriteQueue.length > 0 && !isFirestoreQuotaExceeded()) {
       console.log(`[Firestore Queue] Melanjutkan sinkronisasi ${firestoreWriteQueue.length} data tertunda dari sesi sebelumnya...`);
       flushFirestoreQueue().catch(() => {});
     }
@@ -2886,7 +2964,7 @@ export const loadNpwpRecordsFromFirestore = async (): Promise<NpwpRecord[]> => {
 export const subscribeToNpwpRecordsFromFirestore = (
   onUpdate: (records: NpwpRecord[]) => void
 ): (() => void) => {
-  if (!isFirebaseConfigured() || !firestoreDb) return () => {};
+  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return () => {};
   try {
     const unsub = onSnapshot(collection(firestoreDb, 'npwp_records'), (snapshot) => {
       if (snapshot.empty) return;
