@@ -18,7 +18,7 @@ interface SubmissionsListProps {
   onDelete: (id: string) => void;
   onDuplicate: (submission: Submission) => void;
   onAddNew: () => void;
-  onOpenBuktiTransfer?: () => void;
+  onOpenBuktiTransfer?: (submission?: Submission) => void;
   userProfile?: any;
   onMarkAsPaid?: (id: string) => void;
   layoutMode?: 'standard' | 'spreadsheet' | 'audit_logs' | 'invoice_recap' | 'unpaid_outstanding' | 'petty_cash_recap';
@@ -1338,7 +1338,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
 
 
               <button
-                onClick={onOpenBuktiTransfer}
+                onClick={() => onOpenBuktiTransfer?.()}
                 id="btn-upload-bukti-transfer"
                 className="flex items-center justify-center gap-1 px-4 py-2.5 border border-stone-250 bg-white hover:bg-stone-50 hover:border-stone-400 text-stone-700 font-bold rounded-xl transition shadow-3xs cursor-pointer text-xs"
               >
@@ -3121,7 +3121,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                                   {/* Trigger upload transfer proof to PAY */}
                                   {onOpenBuktiTransfer && (
                                     <button
-                                      onClick={onOpenBuktiTransfer}
+                                      onClick={() => onOpenBuktiTransfer(sub)}
                                       className="p-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-250 rounded-lg transition font-extrabold flex items-center justify-center gap-0.5"
                                       title="Unggah Bukti Bayar untuk Melunasi Tagihan ini"
                                     >
@@ -4717,9 +4717,10 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
             {onOpenBuktiTransfer && (
               <button
                 onClick={() => {
+                  const target = activeActionSub;
                   setOpenActionMenuId(null);
                   setActionMenuPosition(null);
-                  onOpenBuktiTransfer();
+                  onOpenBuktiTransfer(target);
                 }}
                 className="w-full px-3.5 py-2 text-xs font-semibold text-teal-800 hover:bg-teal-50 flex items-center gap-2.5 transition text-left cursor-pointer"
                 title="Input / Unggah Bukti Bayar & Cicilan"

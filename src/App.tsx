@@ -15,6 +15,7 @@ import { SppdManager, SPPDRecord } from './components/SppdManager';
 import { PublicSppdInput } from './components/PublicSppdInput';
 import { AuthGate } from './components/AuthGate';
 import { InputBuktiTransfer } from './components/InputBuktiTransfer';
+import { UploadBuktiTransferModal } from './components/UploadBuktiTransferModal';
 import { UserProfileModal } from './components/UserProfileModal';
 import { GoogleDriveSettingsModal } from './components/GoogleDriveSettingsModal';
 import { AbsensiHarianNmsa } from './components/AbsensiHarianNmsa';
@@ -1158,6 +1159,8 @@ export default function App() {
   const [isCloudModalOpen, setIsCloudModalOpen] = useState(false);
   const [isFirebaseMigrationOpen, setIsFirebaseMigrationOpen] = useState(false);
   const [isGoogleDriveSettingsOpen, setIsGoogleDriveSettingsOpen] = useState(false);
+  const [uploadBuktiModalSub, setUploadBuktiModalSub] = useState<Submission | null>(null);
+  const [isUploadBuktiModalOpen, setIsUploadBuktiModalOpen] = useState(false);
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
   const [isExportImportModalOpen, setIsExportImportModalOpen] = useState(false);
   const [isThemeModalOpen, setIsThemeModalOpen] = useState(false);
@@ -3663,9 +3666,9 @@ export default function App() {
               setEditingSubmission(null);
               setView('form');
             }}
-            onOpenBuktiTransfer={() => {
-              try { sessionStorage.setItem('sublist_scrollPos', window.scrollY.toString()); } catch (e) {}
-              navigateTo('#/input-bukti-transfer');
+            onOpenBuktiTransfer={(targetSub) => {
+              setUploadBuktiModalSub(targetSub || null);
+              setIsUploadBuktiModalOpen(true);
             }}
             onMarkAsPaid={handleMarkAsPaid}
             onCreateMemo={(sub) => {
@@ -4068,6 +4071,28 @@ export default function App() {
       <GoogleDriveSettingsModal
         isOpen={isGoogleDriveSettingsOpen}
         onClose={() => setIsGoogleDriveSettingsOpen(false)}
+      />
+
+      {/* Pop-up Khusus Upload Bukti Pembayaran */}
+      <UploadBuktiTransferModal
+        isOpen={isUploadBuktiModalOpen}
+        onClose={() => {
+          setIsUploadBuktiModalOpen(false);
+          setUploadBuktiModalSub(null);
+        }}
+        submission={uploadBuktiModalSub}
+        allSubmissions={submissions}
+        onUpdateSubmission={(updatedSub) => {
+          const nextList = submissions.map(s => s.id === updatedSub.id ? updatedSub : s);
+          saveSubmissionsToStorage(nextList);
+          if (editingSubmission?.id === updatedSub.id) {
+            setEditingSubmission(updatedSub);
+          }
+          if (uploadBuktiModalSub?.id === updatedSub.id) {
+            setUploadBuktiModalSub(updatedSub);
+          }
+        }}
+        userProfile={userProfile}
       />
 
       {/* Integrasi WhatsApp Business AI & Pusat Data Modal */}
