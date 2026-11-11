@@ -1781,6 +1781,25 @@ export default function App() {
       }
     }
 
+    // Re-sync pinjaman jika transaksi yang dihapus merupakan pinjaman
+    if (targetSub && isLoanSubmission(targetSub)) {
+      try {
+        const currentLoans = getSavedEmployeeLoans();
+        const cleanedLoans = currentLoans.map(l => {
+          const disbList = (l.disbursements || []).filter(d => d.submissionId !== id && d.kodeDokumen !== targetSub.kode);
+          const totalFromDisbursements = disbList.reduce((sum, d) => sum + (Number(d.jumlah) || 0), 0);
+          return {
+            ...l,
+            disbursements: disbList,
+            jumlahPinjaman: disbList.length > 0 ? totalFromDisbursements : l.jumlahPinjaman,
+            linkedSubmissionId: l.linkedSubmissionId === id ? undefined : l.linkedSubmissionId,
+            linkedSubmissionKode: l.linkedSubmissionKode === targetSub.kode ? undefined : l.linkedSubmissionKode
+          };
+        });
+        saveEmployeeLoans(cleanedLoans);
+      } catch (e) {}
+    }
+
     if (isFirebaseConfigured()) {
       try {
         await deleteSubmissionFromFirestore(id);
@@ -1962,7 +1981,7 @@ export default function App() {
     if (isLoanSubmission(savedSub)) {
       try {
         const currentLoans = getSavedEmployeeLoans();
-        const { syncedLoans } = syncLoansWithSubmissions(currentLoans, [savedSub, ...submissions]);
+        const { syncedLoans } = syncLoansWithSubmissions(currentLoans, updatedList);
         saveEmployeeLoans(syncedLoans);
       } catch (loanSyncErr) {
         console.warn('Gagal sinkronisasi transaksi pinjaman:', loanSyncErr);

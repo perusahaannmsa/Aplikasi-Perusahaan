@@ -11,9 +11,13 @@ import {
   INITIAL_SAMPLE_LOANS,
   getSynchronizedAttendanceWorkers,
   syncLoansWithSubmissions,
-  determineLoanCategory
+  determineLoanCategory,
+  markLoanAsLunas,
+  reopenLoan
 } from '../utils/loanUtils';
 import { EmployeeLoanDocument } from './EmployeeLoanDocument';
+import { ManualSyncLoanModal } from './ManualSyncLoanModal';
+import { LinkVoucherToLoanModal } from './LinkVoucherToLoanModal';
 import {
   FileText,
   Plus,
@@ -45,7 +49,9 @@ import {
   ZoomOut,
   Maximize2,
   Users,
-  UserPlus
+  UserPlus,
+  Link,
+  RotateCcw
 } from 'lucide-react';
 
 interface EmployeeLoanManagerProps {
@@ -67,7 +73,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
 }) => {
   const [loans, setLoans] = useState<EmployeeLoan[]>(() => getSavedEmployeeLoans());
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<string>('aktif'); // Default: Daftar Hutang (Belum Lunas)
   const [categoryFilter, setCategoryFilter] = useState<'all' | 'karyawan' | 'perusahaan'>('all');
   const [expandedDisbursements, setExpandedDisbursements] = useState<Record<string, boolean>>({});
   const [syncMessage, setSyncMessage] = useState<string>('');
@@ -87,6 +93,32 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
   const [printWithLedger, setPrintWithLedger] = useState(true);
   const [showKopSuratInPrint, setShowKopSuratInPrint] = useState(true);
   const [zoomLevel, setZoomLevel] = useState<number>(0.85);
+
+  // Manual Voucher Link & Synchronization Modals
+  const [isManualSyncModalOpen, setIsManualSyncModalOpen] = useState(false);
+  const [targetLoanForLinkVoucher, setTargetLoanForLinkVoucher] = useState<EmployeeLoan | null>(null);
+
+  // Dialog Konfirmasi Tandai Lunas Langsung
+  const [settlementConfirmLoan, setSettlementConfirmLoan] = useState<EmployeeLoan | null>(null);
+  const [settlementDate, setSettlementDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [settlementNote, setSettlementNote] = useState('Pelunasan Pinjaman');
+
+  // Reactive listener untuk sinkronisasi instan antar modul dan tab
+  useEffect(() => {
+    const handleUpdate = (e: any) => {
+      if (e.detail && Array.isArray(e.detail)) {
+        setLoans(e.detail);
+      } else {
+        setLoans(getSavedEmployeeLoans());
+      }
+    };
+    window.addEventListener('nmsa-employee-loans-updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+    return () => {
+      window.removeEventListener('nmsa-employee-loans-updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
+  }, []);
 
   // Karyawan tersinkronisasi 100% dengan Modul Absensi Harian NMSA
   const syncedWorkers = useMemo(() => {
@@ -122,7 +154,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
       if (newLoansCount > 0 || accumulatedCount > 0) {
         setLoans(syncedLoans);
         saveEmployeeLoans(syncedLoans);
-        setSyncMessage(`⚡ Tersinkron otomatis ${newLoansCount} pinjaman baru & ${accumulatedCount} voucher terakumulasi`);
+        setSyncMessage(`⚡ Tersinkron otomatis: ${newLoansCount} pinjaman baru & ${accumulatedCount} voucher terakumulasi`);
         const timer = setTimeout(() => setSyncMessage(''), 6000);
         return () => clearTimeout(timer);
       }
@@ -139,6 +171,50 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
     saveEmployeeLoans(syncedLoans);
     setSyncMessage(`✅ Sinkronisasi Selesai: ${newLoansCount} pinjaman baru ditambahkan, ${accumulatedCount} voucher terakumulasi.`);
     setTimeout(() => setSyncMessage(''), 6000);
+  };
+
+  // Konfirmasi Pelunasan Pinjaman (Tandai Lunas)
+  const handleConfirmMarkAsLunas = () => {
+    if (!settlementConfirmLoan) return;
+    const updatedLoan = markLoanAsLunas(
+      settlementConfirmLoan,
+      settlementDate,
+      settlementNote,
+      userProfile?.fullName || 'Finance'
+    );
+    const updated = loans.map(l => l.id === updatedLoan.id ? updatedLoan : l);
+    setLoans(updated);
+    saveEmployeeLoans(updated);
+    setSettlementConfirmLoan(null);
+    setSyncMessage(`🎉 Hutang ${updatedLoan.namaKaryawan} (${updatedLoan.nomorPinjaman}) berhasil ditandai LUNAS dan dipindahkan ke Tab Lunas.`);
+    setTimeout(() => setSyncMessage(''), 6000);
+  };
+
+  // Batalkan status lunas (kembalikan ke daftar hutang aktif)
+  const handleReopen = (loan: EmployeeLoan) => {
+    const updatedLoan = reopenLoan(loan);
+    const updated = loans.map(l => l.id === updatedLoan.id ? updatedLoan : l);
+    setLoans(updated);
+    saveEmployeeLoans(updated);
+    setSyncMessage(`↩️ Status pinjaman ${loan.namaKaryawan} dikembalikan menjadi Belum Lunas (Masuk kembali ke Daftar Hutang).`);
+    setTimeout(() => setSyncMessage(''), 6000);
+  };
+
+  // Toggle kategori antara Karyawan dan Perusahaan
+  const handleToggleCategory = (targetLoan: EmployeeLoan) => {
+    const currentCat = targetLoan.category || determineLoanCategory(targetLoan.namaKaryawan, undefined, workers);
+    const newCat = currentCat === 'karyawan' ? 'perusahaan' : 'karyawan';
+    const updatedLoan: EmployeeLoan = {
+      ...targetLoan,
+      category: newCat,
+      divisi: newCat === 'karyawan' ? 'Staff / Karyawan NMSA' : 'Pihak Ketiga / Rekanan Perusahaan',
+      updatedAt: new Date().toISOString()
+    };
+    const updated = loans.map(l => l.id === updatedLoan.id ? updatedLoan : l);
+    setLoans(updated);
+    saveEmployeeLoans(updated);
+    setSyncMessage(`🔄 Kategori ${targetLoan.namaKaryawan} diubah menjadi Pinjaman ${newCat === 'karyawan' ? 'Karyawan' : 'Perusahaan / Pihak Ketiga'}.`);
+    setTimeout(() => setSyncMessage(''), 5000);
   };
   const [tanggalPengambilanPinjaman, setTanggalPengambilanPinjaman] = useState(() => new Date().toISOString().split('T')[0]);
   const [peminjamJabatan, setPeminjamJabatan] = useState('');
@@ -605,6 +681,8 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
   const filteredLoans = useMemo(() => {
     return loans.filter(l => {
       const summary = calculateLoanSummary(l);
+      // 'aktif' = Default: hanya tampilkan hutang berjalan yang belum lunas
+      if (statusFilter === 'aktif' && summary.effectiveStatus === 'Lunas') return false;
       if (statusFilter === 'lunas' && summary.effectiveStatus !== 'Lunas') return false;
       if (statusFilter === 'cicilan' && summary.effectiveStatus !== 'Dalam Cicilan') return false;
       if (statusFilter === 'belum_bayar' && summary.effectiveStatus !== 'Belum Dibayar') return false;
@@ -623,6 +701,11 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
         (l.alasanPeminjaman && l.alasanPeminjaman.toLowerCase().includes(q)) ||
         (l.caraPembayaran && l.caraPembayaran.toLowerCase().includes(q))
       );
+    }).sort((a, b) => {
+      // Urutkan pinjaman dari aktivitas terbaru / permohonan terbaru ke yang terlama
+      const dateA = a.updatedAt || a.tanggalPermohonan || a.createdAt || '';
+      const dateB = b.updatedAt || b.tanggalPermohonan || b.createdAt || '';
+      return dateB.localeCompare(dateA);
     });
   }, [loans, searchQuery, statusFilter, categoryFilter, workers]);
 
@@ -788,7 +871,16 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
             </button>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setIsManualSyncModalOpen(true)}
+              className="px-3.5 py-2 text-xs font-bold rounded-xl bg-sky-600 hover:bg-sky-700 text-white transition flex items-center gap-1.5 cursor-pointer shadow-3xs"
+              title="Hubungkan atau ganti transaksi voucher kas dengan pinjaman secara manual"
+            >
+              <Link size={13} />
+              <span>Sinkron Manual &amp; Ganti Tautan</span>
+            </button>
             <button
               type="button"
               onClick={handleManualSyncSubmissions}
@@ -796,7 +888,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
               title="Sinkronkan ulang seluruh transaksi voucher pengeluaran kas/bank berjenis pinjaman dan akumulasikan saldo peminjam yang sama"
             >
               <RefreshCw size={13} className="text-amber-700" />
-              <span>Sinkronkan Voucher Kas</span>
+              <span>Auto-Sinkronkan</span>
             </button>
           </div>
         </div>
@@ -892,23 +984,33 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
 
           <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto pb-1 sm:pb-0">
             {[
-              { id: 'all', label: 'Semua' },
+              { id: 'aktif', label: 'Daftar Hutang (Belum Lunas)', count: overallStats.peminjamAktif },
+              { id: 'lunas', label: 'Lunas', count: overallStats.peminjamLunas },
+              { id: 'all', label: 'Semua Pinjaman', count: loans.length },
               { id: 'cicilan', label: 'Dalam Cicilan' },
               { id: 'belum_bayar', label: 'Belum Ada Pembayaran' },
-              { id: 'lunas', label: 'Lunas' },
               { id: 'pending', label: 'Menunggu Persetujuan' }
             ].map(tab => (
               <button
                 key={tab.id}
                 type="button"
                 onClick={() => setStatusFilter(tab.id)}
-                className={`px-3 py-1.5 text-xs font-bold rounded-xl transition cursor-pointer whitespace-nowrap ${
+                className={`px-3 py-1.5 text-xs font-bold rounded-xl transition cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
                   statusFilter === tab.id
                     ? 'bg-amber-600 text-white shadow-3xs'
                     : 'bg-stone-100 hover:bg-stone-200 text-stone-700'
                 }`}
               >
-                {tab.label}
+                <span>{tab.label}</span>
+                {typeof tab.count === 'number' && (
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded-md font-mono ${
+                    statusFilter === tab.id
+                      ? 'bg-amber-800 text-white'
+                      : 'bg-stone-200 text-stone-800'
+                  }`}>
+                    {tab.count}
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -962,18 +1064,29 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
                           {loan.nomorPinjaman}
                         </span>
 
-                        {/* Kategori Badge: Perusahaan vs Karyawan */}
-                        {((loan.category || determineLoanCategory(loan.namaKaryawan, undefined, workers)) === 'perusahaan') ? (
-                          <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-900 border border-indigo-300 flex items-center gap-1 shadow-3xs">
-                            <Building size={11} className="text-indigo-700" />
-                            <span>Pinjaman Perusahaan</span>
-                          </span>
-                        ) : (
-                          <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1 shadow-3xs">
-                            <User size={11} className="text-amber-700" />
-                            <span>Pinjaman Karyawan</span>
-                          </span>
-                        )}
+                        {/* Kategori Badge: Perusahaan vs Karyawan (Klik untuk ubah) */}
+                        <button
+                          type="button"
+                          onClick={() => handleToggleCategory(loan)}
+                          className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-3xs cursor-pointer transition ${
+                            ((loan.category || determineLoanCategory(loan.namaKaryawan, undefined, workers)) === 'perusahaan')
+                              ? 'bg-indigo-100 text-indigo-950 border border-indigo-300 hover:bg-indigo-200'
+                              : 'bg-amber-100 text-amber-950 border border-amber-300 hover:bg-amber-200'
+                          }`}
+                          title="Klik untuk mengubah kategori antara Pinjaman Karyawan dan Perusahaan"
+                        >
+                          {((loan.category || determineLoanCategory(loan.namaKaryawan, undefined, workers)) === 'perusahaan') ? (
+                            <>
+                              <Building size={11} className="text-indigo-700" />
+                              <span>Pinjaman Perusahaan</span>
+                            </>
+                          ) : (
+                            <>
+                              <User size={11} className="text-amber-700" />
+                              <span>Pinjaman Karyawan</span>
+                            </>
+                          )}
+                        </button>
 
                         <span className={`text-[10.5px] font-bold px-2.5 py-0.5 rounded-full border flex items-center gap-1 ${
                           summary.effectiveStatus === 'Lunas'
@@ -1168,6 +1281,50 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
                           </button>
                         )
                       )}
+
+                      {/* Tombol Tandai Lunas & Status Lunas */}
+                      {summary.effectiveStatus === 'Lunas' ? (
+                        <div className="flex items-center gap-1.5 flex-1 lg:flex-none">
+                          <span className="flex-1 lg:flex-none px-3 py-1.5 bg-emerald-100 text-emerald-950 border border-emerald-300 rounded-xl text-xs font-black flex items-center justify-center gap-1 shadow-3xs">
+                            <CheckCircle2 size={13} className="text-emerald-700" />
+                            <span>LUNAS</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleReopen(loan)}
+                            className="px-2.5 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 border border-stone-200 rounded-xl text-[11px] font-bold transition flex items-center gap-1 cursor-pointer"
+                            title="Batalkan pelunasan dan kembalikan ke Daftar Hutang Aktif"
+                          >
+                            <RotateCcw size={11} />
+                            <span>Batal</span>
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSettlementConfirmLoan(loan);
+                            setSettlementDate(new Date().toISOString().split('T')[0]);
+                            setSettlementNote(`Pelunasan penuh pinjaman ${loan.nomorPinjaman} (${loan.namaKaryawan})`);
+                          }}
+                          className="flex-1 lg:flex-none px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 text-white rounded-xl text-xs font-black transition flex items-center justify-center gap-1.5 shadow-md shadow-emerald-700/20 cursor-pointer"
+                          title="Tandai pinjaman ini LUNAS (akan otomatis hilang dari Daftar Hutang dan masuk ke Tab Lunas)"
+                        >
+                          <CheckCircle2 size={13} />
+                          <span>✓ Tandai Lunas</span>
+                        </button>
+                      )}
+
+                      {/* Tombol Ganti / Hubungkan Transaksi Voucher Kas */}
+                      <button
+                        type="button"
+                        onClick={() => setTargetLoanForLinkVoucher(loan)}
+                        className="flex-1 lg:flex-none px-3 py-1.5 bg-sky-50 hover:bg-sky-100 text-sky-950 border border-sky-300 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-3xs cursor-pointer"
+                        title="Ganti atau hubungkan transaksi voucher kas ke pinjaman ini jika sistem salah/belum mendeteksi"
+                      >
+                        <Link size={13} className="text-sky-700" />
+                        <span>🔗 Hubungkan Voucher</span>
+                      </button>
 
                       {summary.sisaPinjaman > 0 && (
                         <button
@@ -2656,6 +2813,124 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
           </div>
         </div>
       )}
+
+      {/* DIALOG KONFIRMASI TANDAI LUNAS */}
+      {settlementConfirmLoan && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl p-5 sm:p-6 w-full max-w-md shadow-2xl border border-stone-200 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold">
+                  <CheckCircle2 size={20} />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm sm:text-base text-stone-900">
+                    Konfirmasi Tandai Lunas
+                  </h3>
+                  <p className="text-[11px] text-stone-500">
+                    {settlementConfirmLoan.nomorPinjaman} • {settlementConfirmLoan.namaKaryawan}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSettlementConfirmLoan(null)}
+                className="w-7 h-7 rounded-lg bg-stone-100 text-stone-500 hover:bg-stone-200 flex items-center justify-center"
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            <div className="p-3.5 bg-emerald-50/80 border border-emerald-200 rounded-2xl space-y-1 text-xs">
+              <div className="text-emerald-900 font-bold flex justify-between">
+                <span>Sisa Pinjaman yang Dilunasi:</span>
+                <span className="font-mono font-black text-sm text-emerald-950">
+                  {formatRupiah(calculateLoanSummary(settlementConfirmLoan).sisaPinjaman)}
+                </span>
+              </div>
+              <p className="text-[11px] text-emerald-700 leading-relaxed pt-1">
+                Pinjaman ini akan ditandai <strong>LUNAS</strong>, otomatis hilang dari <em>Daftar Hutang</em>, dan berpindah ke tab <em>Lunas</em>.
+              </p>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block text-stone-600 font-bold mb-1">Tanggal Pelunasan:</label>
+                <input
+                  type="date"
+                  value={settlementDate}
+                  onChange={(e) => setSettlementDate(e.target.value)}
+                  className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-xl font-bold focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-stone-600 font-bold mb-1">Catatan / Keterangan Pelunasan:</label>
+                <input
+                  type="text"
+                  value={settlementNote}
+                  onChange={(e) => setSettlementNote(e.target.value)}
+                  placeholder="Misal: Pelunasan penuh via transfer / potong gaji / tunai"
+                  className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-stone-100">
+              <button
+                type="button"
+                onClick={() => setSettlementConfirmLoan(null)}
+                className="px-4 py-2 text-xs font-bold text-stone-600 hover:bg-stone-100 rounded-xl"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmMarkAsLunas}
+                className="px-5 py-2 text-xs font-black bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-md shadow-emerald-600/20 cursor-pointer flex items-center gap-1.5"
+              >
+                <CheckCircle2 size={14} />
+                <span>Konfirmasi Lunas Sekarang</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL SINKRONISASI MANUAL SELURUH VOUCHER */}
+      {isManualSyncModalOpen && (
+        <ManualSyncLoanModal
+          isOpen={isManualSyncModalOpen}
+          onClose={() => setIsManualSyncModalOpen(false)}
+          submissions={submissions}
+          loans={loans}
+          workers={workers}
+          onLoansUpdated={(updated) => {
+            setLoans(updated);
+            saveEmployeeLoans(updated);
+          }}
+          onViewSubmission={onViewSubmission}
+        />
+      )}
+
+      {/* MODAL GANTI / HUBUNGKAN VOUCHER UNTUK PINJAMAN TERTENTU */}
+      {targetLoanForLinkVoucher && (
+        <LinkVoucherToLoanModal
+          isOpen={!!targetLoanForLinkVoucher}
+          onClose={() => setTargetLoanForLinkVoucher(null)}
+          loan={targetLoanForLinkVoucher}
+          submissions={submissions}
+          onLoanUpdated={(updatedLoan) => {
+            const updated = loans.map(l => l.id === updatedLoan.id ? updatedLoan : l);
+            setLoans(updated);
+            saveEmployeeLoans(updated);
+            setTargetLoanForLinkVoucher(null);
+            setSyncMessage(`✅ Transaksi voucher untuk ${updatedLoan.namaKaryawan} berhasil diperbarui.`);
+            setTimeout(() => setSyncMessage(''), 5000);
+          }}
+        />
+      )}
+
     </div>
   );
 };

@@ -264,50 +264,80 @@ export function saveEmployeeLoans(loans: EmployeeLoan[]): void {
 }
 
 /**
- * Cek apakah sebuah transaksi pengajuan / voucher kas merupakan transaksi Pinjaman
+ * Cek apakah sebuah transaksi pengajuan / voucher kas merupakan transaksi Pinjaman / Hutang
+ * Mendeteksi otomatis:
+ * - Pinjaman Sementara
+ * - Pinjaman Karyawan
+ * - Pinjaman ANH (PT Agro Nusantara Halid)
+ * - Pinjaman NH (Nursyam Halid)
+ * - Pinjaman SHIRON, IPN, dll.
+ * - Hutang Pribadi / Hutang Pihak Ketiga / Talangan
  */
 export function isLoanSubmission(sub: Submission): boolean {
   if (!sub) return false;
-  if (sub.loanId || (sub as any).loanNumber) return true;
+  if (sub.loanId || (sub as any).loanNumber || (sub as any).isLoan) return true;
   
-  const jenis = (sub.jenisPengajuan || '').toLowerCase();
-  if (jenis.includes('pinjam') || jenis.includes('kasbon') || jenis.includes('loan')) {
-    return true;
-  }
+  const textToCheck = [
+    sub.jenisPengajuan || '',
+    sub.notes || '',
+    sub.dibayarkanKepada || '',
+    (sub as any).kategori || '',
+    (sub as any).tipeTransaksi || '',
+    ...(Array.isArray(sub.items) ? sub.items.map(it => `${it.item || ''} ${it.keterangan || ''}`) : [])
+  ].join(' ').toLowerCase();
 
-  const notes = (sub.notes || '').toLowerCase();
-  if (notes.includes('pinjaman') || notes.includes('kasbon') || notes.includes('pk-202')) {
-    return true;
-  }
+  const loanKeywords = [
+    'pinjam',
+    'pinjaman',
+    'kasbon',
+    'loan',
+    'hutang',
+    'utang',
+    'piutang',
+    'talangan',
+    'pk-202',
+    'pinjaman sementara',
+    'pinjaman anh',
+    'pinjaman nh',
+    'pinjaman shiron',
+    'pinjaman ipn',
+    'hutang pihak ketiga',
+    'hutang pribadi'
+  ];
 
-  if (Array.isArray(sub.items)) {
-    const hasLoanItem = sub.items.some(it => {
-      const itName = (it.item || '').toLowerCase();
-      const itKet = (it.keterangan || '').toLowerCase();
-      return itName.includes('pinjam') || itName.includes('kasbon') || itKet.includes('pinjaman') || itKet.includes('kasbon');
-    });
-    if (hasLoanItem) return true;
-  }
-
-  return false;
+  return loanKeywords.some(kw => textToCheck.includes(kw));
 }
 
 /**
- * Normalisasi nama untuk pencocokan yang akurat (hapus titel Bpk, Ibu, Pak, spasi ganda)
+ * Normalisasi nama untuk pencocokan yang akurat
+ * Membersihkan titel Indonesia (Bpk, Ibu, Pak, Sdr, H., Hj., Dr., Drs., Ir., dll) dan tanda baca
  */
 export function normalizePersonName(name: string): string {
   if (!name) return '';
   return name
     .toLowerCase()
-    .replace(/^(bpk\.?|ibu\.?|pak\.?|bapak\.?|saudara\.?|sdr\.?)\s+/i, '')
+    .replace(/^(bpk\.?|bapak\.?|ibu\.?|bu\.?|pak\.?|saudara\.?|sdr\.?|h\.|haji\b|hj\.|dr\.|drs\.|ir\.|prof\.)\s+/i, '')
+    .replace(/[\(\)\[\],.\-_]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
 /**
+ * Cek apakah dua nama orang/entitas identik atau sangat mirip
+ */
+export function arePersonNamesMatching(nameA: string, nameB: string): boolean {
+  const normA = normalizePersonName(nameA);
+  const normB = normalizePersonName(nameB);
+  if (!normA || !normB) return false;
+  if (normA === normB) return true;
+  if (normA.includes(normB) || normB.includes(normA)) return true;
+  return false;
+}
+
+/**
  * Tentukan kategori pinjaman: 'karyawan' atau 'perusahaan'
- * Sesuai permintaan:
- * "jika itu statusnya karyawan maka pinjaman tercatat di menu pinjaman karyawan, dan jika bukan maka tercatat di pinjaman perusahaan"
+ * - Karyawan: Karyawan tetap/staff dari master absensi atau jenis pinjaman karyawan
+ * - Perusahaan / Pihak Ketiga: PT, CV, ANH, NH, Direksi, Yayasan, Pihak Ketiga, Vendor
  */
 export function determineLoanCategory(
   recipientName: string,
@@ -317,36 +347,45 @@ export function determineLoanCategory(
   const normRecipient = normalizePersonName(recipientName);
   const jenis = (jenisPengajuan || '').toLowerCase();
 
-  // 1. Jika nama eksplisit berawalan / mengandung entitas bisnis (PT, CV, Yayasan, ANH, dll)
+  // 1. Jika nama eksplisit berawalan / mengandung entitas bisnis (PT, CV, Yayasan, ANH, Universitas, dll)
   if (
-    /^(pt|pt\.|cv|cv\.|firma|fa|koperasi|ud|ud\.|yayasan)\b/i.test(recipientName.trim()) ||
+    /^(pt|pt\.|cv|cv\.|firma|fa|koperasi|ud|ud\.|yayasan|universitas|unila)\b/i.test(recipientName.trim()) ||
     normRecipient.includes('pt.') ||
     normRecipient.includes('pt ') ||
     normRecipient.includes('agro nusantara halid') ||
-    normRecipient.includes('perusahaan')
+    normRecipient.includes('perusahaan') ||
+    normRecipient.includes('universitas') ||
+    normRecipient.includes('unila')
   ) {
     return 'perusahaan';
   }
 
-  // 2. Jika jenis pengajuan eksplisit menyebutkan karyawan
+  // 2. Jika jenis pengajuan eksplisit menyebutkan perusahaan atau pihak ketiga
+  if (
+    jenis.includes('perusahaan') ||
+    jenis.includes('pihak ketiga') ||
+    jenis.includes('anh') ||
+    jenis.includes('rekanan')
+  ) {
+    return 'perusahaan';
+  }
+
+  // 3. Jika jenis pengajuan eksplisit menyebutkan karyawan
   if (jenis.includes('karyawan') || jenis.includes('staff') || jenis.includes('pegawai')) {
     return 'karyawan';
   }
 
-  // 3. Cocokkan dengan master daftar karyawan absensi & HO
+  // 4. Cocokkan dengan master daftar karyawan absensi & HO
   const activeWorkers = workersList || getSynchronizedAttendanceWorkers();
   const isFoundInWorkers = activeWorkers.some(w => {
-    const normWorker = normalizePersonName(w.name);
-    return normWorker === normRecipient ||
-      normRecipient.includes(normWorker) ||
-      normWorker.includes(normRecipient);
+    return arePersonNamesMatching(w.name, recipientName);
   });
 
   if (isFoundInWorkers) {
     return 'karyawan';
   }
 
-  // 4. Fallback: jika bukan karyawan di daftar master, kategorikan sebagai pinjaman perusahaan / rekanan
+  // 5. Fallback: jika bukan karyawan di daftar master absensi, kategorikan sebagai pinjaman perusahaan / rekanan / pihak ketiga
   return 'perusahaan';
 }
 
@@ -397,8 +436,6 @@ export function syncLoansWithSubmissions(
     const recipient = (sub.dibayarkanKepada || '').trim();
     if (!recipient) return;
 
-    const normRecipient = normalizePersonName(recipient);
-
     // Hitung nominal voucher
     let voucherAmount = 0;
     if (Array.isArray(sub.items) && sub.items.length > 0) {
@@ -415,12 +452,9 @@ export function syncLoansWithSubmissions(
     const category = determineLoanCategory(recipient, sub.jenisPengajuan, allWorkers);
 
     // Cari worker match jika kategori karyawan
-    const matchedWorker = allWorkers.find(w => {
-      const normW = normalizePersonName(w.name);
-      return normW === normRecipient || normRecipient.includes(normW) || normW.includes(normRecipient);
-    });
+    const matchedWorker = allWorkers.find(w => arePersonNamesMatching(w.name, recipient));
 
-    // Cari apakah sudah ada pinjaman atas nama yang sama
+    // Cari apakah sudah ada pinjaman atas nama yang sama atau voucher yang terhubung
     const existingIndex = updatedLoans.findIndex(l => {
       // 1. Match by linkedSubmissionId
       if (l.linkedSubmissionId && l.linkedSubmissionId === sub.id) return true;
@@ -430,8 +464,7 @@ export function syncLoansWithSubmissions(
         return true;
       }
       // 3. Match by name
-      const normLoanName = normalizePersonName(l.namaKaryawan);
-      return normLoanName === normRecipient;
+      return arePersonNamesMatching(l.namaKaryawan, recipient);
     });
 
     const disbursementItem: LoanDisbursement = {
@@ -447,7 +480,7 @@ export function syncLoansWithSubmissions(
     if (existingIndex >= 0) {
       // AKUMULASI DENGAN PINJAMAN YANG SUDAH ADA
       const currentLoan = updatedLoans[existingIndex];
-      const disbList = currentLoan.disbursements || [];
+      const disbList = [...(currentLoan.disbursements || [])];
 
       // Cek apakah transaksi voucher ini sudah pernah dicatat di riwayat pencairan
       const existingDisbIdx = disbList.findIndex(d => 
@@ -455,46 +488,58 @@ export function syncLoansWithSubmissions(
         (sub.kode && d.kodeDokumen === sub.kode)
       );
 
+      let isNewVoucherForThisLoan = false;
+
       if (existingDisbIdx >= 0) {
         // Update disbursement yang sudah ada
         disbList[existingDisbIdx] = {
           ...disbList[existingDisbIdx],
           jumlah: voucherAmount,
           tanggal: sub.tanggal || disbList[existingDisbIdx].tanggal,
+          keterangan: sub.notes || sub.jenisPengajuan || disbList[existingDisbIdx].keterangan,
           statusPembayaran: sub.status || disbList[existingDisbIdx].statusPembayaran
         };
       } else {
         // Transaksi baru dengan nama yang sama -> Tambahkan ke pencairan & akumulasikan!
         disbList.push(disbursementItem);
         accumulatedCount++;
+        isNewVoucherForThisLoan = true;
       }
 
-      // Hitung ulang total pinjaman terakumulasi
+      // Hitung akumulasi total pinjaman:
+      // Total dari seluruh disbursement yang terhubung
       const totalFromDisbursements = disbList.reduce((sum, d) => sum + (Number(d.jumlah) || 0), 0);
       
-      // Jika pinjaman memiliki nominal manual di luar disbursement voucher
-      const hasManualBase = disbList.length === 1 && currentLoan.jumlahPinjaman > voucherAmount;
-      const finalTotalPinjaman = hasManualBase ? currentLoan.jumlahPinjaman : Math.max(currentLoan.jumlahPinjaman, totalFromDisbursements);
-
-      // Perbarui kategori jika belum ada
-      if (!currentLoan.category) {
-        currentLoan.category = category;
-      }
+      // Jika pinjaman memiliki saldo awal manual yang dibuat sebelum ada voucher
+      const initialManualBase = (currentLoan as any).manualBaseAmount || 0;
+      const finalTotalPinjaman = totalFromDisbursements > 0 
+        ? Math.max(totalFromDisbursements + initialManualBase, currentLoan.jumlahPinjaman) 
+        : currentLoan.jumlahPinjaman;
 
       // Jika ada beberapa disbursement, catat di skema cara pembayaran
       let caraBayar = currentLoan.caraPembayaran || '';
       if (disbList.length > 1) {
-        caraBayar = `Terakumulasi dari ${disbList.length} transaksi voucher (${disbList.map(d => d.kodeDokumen || d.tanggal).join(', ')})`;
+        caraBayar = `Terakumulasi dari ${disbList.length} voucher (${disbList.map(d => d.kodeDokumen || d.tanggal).join(', ')})`;
+      } else if (sub.kode) {
+        caraBayar = `Voucher HO (${sub.kode})`;
       }
 
-      updatedLoans[existingIndex] = {
+      const updatedItem: EmployeeLoan = {
         ...currentLoan,
         category: currentLoan.category || category,
         jumlahPinjaman: finalTotalPinjaman,
         disbursements: disbList,
-        caraPembayaran: caraBayar || currentLoan.caraPembayaran,
+        caraPembayaran: caraBayar,
         updatedAt: new Date().toISOString()
       };
+
+      // Hapus dari posisi lama dan pindahkan ke posisi teratas jika ada voucher baru terakumulasi
+      if (isNewVoucherForThisLoan) {
+        updatedLoans.splice(existingIndex, 1);
+        updatedLoans.unshift(updatedItem);
+      } else {
+        updatedLoans[existingIndex] = updatedItem;
+      }
 
     } else {
       // BUAT DATA PINJAMAN BARU
@@ -508,7 +553,7 @@ export function syncLoansWithSubmissions(
         namaKaryawan: recipient,
         category,
         divisi: category === 'karyawan' 
-          ? (matchedWorker?.division || matchedWorker?.role || 'Operasional / Staff NMSA') 
+          ? (matchedWorker?.division || matchedWorker?.role || 'Staff / Karyawan NMSA') 
           : 'Pihak Ketiga / Rekanan Perusahaan',
         alasanPeminjaman: sub.notes || `Pencairan ${sub.jenisPengajuan}`,
         jumlahPinjaman: voucherAmount,
@@ -517,7 +562,7 @@ export function syncLoansWithSubmissions(
         cicilanPerBulan: Math.round(voucherAmount / 5),
         tanggalPengambilanPinjaman: sub.tanggal || new Date().toISOString().split('T')[0],
         peminjamNama: recipient,
-        peminjamJabatan: category === 'karyawan' ? (matchedWorker?.role || 'Karyawan') : 'Pimpinan Rekanan',
+        peminjamJabatan: category === 'karyawan' ? (matchedWorker?.role || 'Karyawan') : 'Pimpinan Rekanan / Pihak Ketiga',
         peminjamTanggal: sub.tanggal,
         atasanNama: 'Andi Muhammad Rifki',
         atasanJabatan: 'Direktur',
@@ -546,5 +591,124 @@ export function syncLoansWithSubmissions(
     syncedLoans: updatedLoans,
     newLoansCount,
     accumulatedCount
+  };
+}
+
+/**
+ * Tandai pinjaman sebagai Lunas
+ * Menambahkan catatan pelunasan penuh sebesar sisa pinjaman dan mengubah status pinjaman menjadi 'Lunas'
+ */
+export function markLoanAsLunas(
+  loan: EmployeeLoan,
+  tanggalLunas?: string,
+  keterangan?: string,
+  penerima?: string
+): EmployeeLoan {
+  const summary = calculateLoanSummary(loan);
+  const nowStr = new Date().toISOString();
+  const tglBayar = tanggalLunas || nowStr.split('T')[0];
+  const sisa = summary.sisaPinjaman;
+
+  const settlementPayment: LoanPayment = {
+    id: `pay-settle-${Date.now()}`,
+    tanggalBayar: tglBayar,
+    jumlahBayar: sisa > 0 ? sisa : Number(loan.jumlahPinjaman) || 0,
+    metodePembayaran: 'Lainnya',
+    keterangan: keterangan || 'Pelunasan Penuh (Ditandai Lunas oleh Finance)',
+    nomorBukti: `LUNAS-${loan.nomorPinjaman}`,
+    diterimaOleh: penerima || 'Sri Ekowati (Finance)',
+    createdAt: nowStr
+  };
+
+  const existingPayments = Array.isArray(loan.payments) ? [...loan.payments] : [];
+
+  return {
+    ...loan,
+    status: 'Lunas',
+    payments: [...existingPayments, settlementPayment],
+    updatedAt: nowStr
+  };
+}
+
+/**
+ * Batalkan status Lunas (Aktifkan kembali pinjaman ke daftar hutang)
+ */
+export function reopenLoan(loan: EmployeeLoan): EmployeeLoan {
+  const payments = (loan.payments || []).filter(p => !p.id.startsWith('pay-settle-'));
+  return {
+    ...loan,
+    status: 'Belum Lunas',
+    payments,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+/**
+ * Hubungkan / ganti transaksi Voucher kas secara manual ke sebuah Pinjaman
+ */
+export function manuallyLinkVoucherToLoan(
+  loan: EmployeeLoan,
+  sub: Submission
+): EmployeeLoan {
+  let voucherAmount = 0;
+  if (Array.isArray(sub.items) && sub.items.length > 0) {
+    voucherAmount = sub.items.reduce((acc, it) => acc + (Number(it.total) || 0), 0);
+  }
+  if (voucherAmount <= 0) {
+    voucherAmount = Number((sub as any).subTotal) || Number((sub as any).total) || 0;
+  }
+  if (voucherAmount <= 0) {
+    voucherAmount = Number((sub as any).invoiceAmount) || 0;
+  }
+
+  const disbList = [...(loan.disbursements || [])];
+  const existingIdx = disbList.findIndex(d => d.submissionId === sub.id || (sub.kode && d.kodeDokumen === sub.kode));
+
+  const disbItem: LoanDisbursement = {
+    id: `disb-manual-${sub.id}`,
+    submissionId: sub.id,
+    kodeDokumen: sub.kode,
+    tanggal: sub.tanggal || new Date().toISOString().split('T')[0],
+    jumlah: voucherAmount,
+    keterangan: sub.notes || sub.jenisPengajuan || 'Pencairan Pinjaman via Voucher HO (Manual)',
+    statusPembayaran: sub.status || 'Belum Lunas'
+  };
+
+  if (existingIdx >= 0) {
+    disbList[existingIdx] = disbItem;
+  } else {
+    disbList.push(disbItem);
+  }
+
+  const totalFromDisbursements = disbList.reduce((sum, d) => sum + (Number(d.jumlah) || 0), 0);
+  const newTotal = Math.max(loan.jumlahPinjaman, totalFromDisbursements);
+
+  return {
+    ...loan,
+    jumlahPinjaman: newTotal,
+    linkedSubmissionId: sub.id,
+    linkedSubmissionKode: sub.kode,
+    disbursements: disbList,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+/**
+ * Lepas tautan voucher dari pinjaman
+ */
+export function manuallyUnlinkVoucherFromLoan(
+  loan: EmployeeLoan,
+  submissionId: string
+): EmployeeLoan {
+  const disbList = (loan.disbursements || []).filter(d => d.submissionId !== submissionId);
+  const totalFromDisbursements = disbList.reduce((sum, d) => sum + (Number(d.jumlah) || 0), 0);
+
+  return {
+    ...loan,
+    linkedSubmissionId: loan.linkedSubmissionId === submissionId ? undefined : loan.linkedSubmissionId,
+    linkedSubmissionKode: loan.linkedSubmissionId === submissionId ? undefined : loan.linkedSubmissionKode,
+    disbursements: disbList,
+    jumlahPinjaman: disbList.length > 0 ? totalFromDisbursements : loan.jumlahPinjaman,
+    updatedAt: new Date().toISOString()
   };
 }
