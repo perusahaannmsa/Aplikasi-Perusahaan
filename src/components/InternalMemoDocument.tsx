@@ -84,7 +84,7 @@ export const InternalMemoDocument: React.FC<InternalMemoDocumentProps> = ({
           <div className="w-full pb-1 -mt-2 print:mt-0 print:pb-1">
             <img
               src={headerImageUrl}
-              alt="Kop Surat PT. Nusantara Mineral Sukses Abadi"
+              alt={memo.companyName || memo.companyHeaderName || "Kop Surat Perusahaan"}
               className="w-full h-auto block"
               style={{
                 width: '100%',

@@ -291,8 +291,11 @@ export async function restoreAttendanceFromFirestore(currentState: any): Promise
             mergedMap.set(ab.workerId, existing);
           });
         }
-      } catch (fbErr) {
-        console.warn("[Firebase] Notice reading absen_records fallback:", fbErr);
+      } catch (fbErr: any) {
+        // Silently ignore if legacy collection is restricted or removed in Firestore rules
+        if (fbErr?.code !== 'permission-denied' && !fbErr?.message?.includes('insufficient permissions')) {
+          console.warn("[Firebase] Notice reading absen_records fallback:", fbErr?.message || fbErr);
+        }
       }
 
       const consolidatedList = Array.from(mergedMap.values());

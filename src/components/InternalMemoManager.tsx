@@ -24,6 +24,7 @@ import {
   stripHtmlToText,
   extractMemoNominal,
   formatMemoBodyHtml,
+  toRomanMonth,
 } from '../utils/memoUtils';
 import { memoGoogleDriveService } from '../utils/memoDriveService';
 import { getInternalMemoLink } from '../utils/appLinks';
@@ -35,7 +36,9 @@ import {
 import { InternalMemoDocument } from './InternalMemoDocument';
 import { ManageBankAccountsModal } from './ManageBankAccountsModal';
 import { ManageKopSuratLinksModal } from './ManageKopSuratLinksModal';
+import { MoveMemoCompanyModal } from './MoveMemoCompanyModal';
 import { MemoRichEditor } from './MemoRichEditor';
+
 import {
   FileText,
   Printer,
@@ -48,9 +51,11 @@ import {
   RefreshCw,
   CreditCard,
   Building,
+  Building2,
   Calendar,
   User,
   ArrowLeft,
+  ArrowRightLeft,
   Search,
   CheckCircle2,
   AlertCircle,
@@ -100,7 +105,9 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
   onCreateVoucher,
 }) => {
   const [activeTab, setActiveTab] = useState<'editor' | 'history' | 'banks'>('editor');
-  const [historyCategory, setHistoryCategory] = useState<'with_kop' | 'without_kop' | 'all'>('with_kop');
+  const [activeKopTab, setActiveKopTab] = useState<string>('all');
+  const [isMoveModalOpen, setIsMoveModalOpen] = useState(false);
+  const [memosToMove, setMemosToMove] = useState<InternalMemo[]>([]);
   const [memos, setMemos] = useState<InternalMemo[]>(() => getSavedInternalMemos());
   
   // Sort order for Riwayat memo: default 'nomor_desc' (highest/latest memo number first, e.g. 183 -> 182 -> 181...)
@@ -913,16 +920,300 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
     }, 150);
   };
 
-  // Counts by category
-  const countWithKop = memos.filter((m) => !isMemoWithoutKopSurat(m)).length;
-  const countWithoutKop = memos.filter((m) => isMemoWithoutKopSurat(m)).length;
+  // Helper to resolve the Kop Surat identity for any memo
+  const getMemoKopIdentifier = (memo: Partial<InternalMemo>): { id: string; name: string; url?: string; isWithoutKop: boolean } => {
+    if (isMemoWithoutKopSurat(memo)) {
+      return {
+        id: 'without_kop',
+        name: 'Tanpa Kop Surat',
+        isWithoutKop: true,
+        url: '',
+      };
+    }
 
-  // Filter and sort memos for history tab with strict category separation & proper order by nomor memo
+    const rawName = (memo.companyHeaderName || '').trim();
+    const url = (memo.companyHeaderUrl || '').trim();
+
+    const isNmsa =
+      rawName === 'Kop Surat Resmi PT NMSA' ||
+      rawName === 'Kop Surat Resmi NMSA' ||
+      url === OFFICIAL_KOP_SURAT_IMAGE_URL ||
+      url.includes('kop-surat-nmsa-full.png') ||
+      (!rawName && !url);
+
+    if (isNmsa) {
+      return {
+        id: 'kop-resmi-nmsa',
+        name: 'Kop Surat Resmi PT NMSA',
+        url: OFFICIAL_KOP_SURAT_IMAGE_URL,
+        isWithoutKop: false,
+      };
+    }
+
+    const kopName = rawName || findKopSuratNameByUrl(url, savedKopLinks) || 'Kop Surat Dokumen';
+    const tabId = 'kop-' + kopName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+    return {
+      id: tabId,
+      name: kopName,
+      url: url || OFFICIAL_KOP_SURAT_IMAGE_URL,
+      isWithoutKop: false,
+    };
+  };
+
+  // Dynamic Kop Surat Tabs derived automatically from memos + savedKopLinks
+  const dynamicKopTabs = useMemo(() => {
+    const tabsMap = new Map<string, { id: string; name: string; url?: string; count: number; isDefault?: boolean; isWithoutKop?: boolean }>();
+
+    let nmsaCount = 0;
+    let withoutKopCount = 0;
+
+    // 1. Seed with any saved custom kop surat links
+    savedKopLinks.forEach((link) => {
+      const isNmsa =
+        link.name === 'Kop Surat Resmi PT NMSA' ||
+        link.name === 'Kop Surat Resmi NMSA' ||
+        link.url === OFFICIAL_KOP_SURAT_IMAGE_URL ||
+        link.url.includes('kop-surat-nmsa-full.png');
+      if (!isNmsa && link.name) {
+        const tabId = 'kop-' + link.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+        tabsMap.set(link.name, {
+          id: tabId,
+          name: link.name,
+          url: link.url,
+          count: 0,
+        });
+      }
+    });
+
+    // 2. Scan all memos and group counts
+    memos.forEach((m) => {
+      const info = getMemoKopIdentifier(m);
+      if (info.isWithoutKop) {
+        withoutKopCount++;
+        return;
+      }
+      if (info.id === 'kop-resmi-nmsa') {
+        nmsaCount++;
+        return;
+      }
+      const existing = tabsMap.get(info.name);
+      if (existing) {
+        existing.count++;
+        if (!existing.url && info.url) existing.url = info.url;
+      } else {
+        tabsMap.set(info.name, {
+          id: info.id,
+          name: info.name,
+          url: info.url,
+          count: 1,
+        });
+      }
+    });
+
+    const customTabs = Array.from(tabsMap.values());
+
+    return [
+      {
+        id: 'all',
+        name: 'Semua Memo',
+        count: memos.length,
+      },
+      {
+        id: 'kop-resmi-nmsa',
+        name: 'Kop Surat Resmi PT NMSA',
+        url: OFFICIAL_KOP_SURAT_IMAGE_URL,
+        count: nmsaCount,
+        isDefault: true,
+      },
+      ...customTabs,
+      {
+        id: 'without_kop',
+        name: 'Tanpa Kop Surat',
+        count: withoutKopCount,
+        isWithoutKop: true,
+      },
+    ];
+  }, [memos, savedKopLinks]);
+
+  // Open move modal for single memo
+  const handleOpenMoveModalForSingle = (memo: InternalMemo) => {
+    setMemosToMove([memo]);
+    setIsMoveModalOpen(true);
+  };
+
+  // Open move modal for bulk selected memos
+  const handleOpenMoveModalForSelected = () => {
+    const selected = memos.filter((m) => selectedMemoIds.includes(m.id));
+    if (selected.length === 0) return;
+    setMemosToMove(selected);
+    setIsMoveModalOpen(true);
+  };
+
+  // Helper to extract prefix code from Kop Surat name
+  const getPrefixFromKopName = (kopName: string): string => {
+    const upper = (kopName || '').toUpperCase();
+    if (upper.includes('NMSA') || upper.includes('NUSANTARA MINERAL')) return 'IM-NMSA';
+    if (upper.includes('IPN') || upper.includes('INDUSTRI PADI NUSANTARA')) return 'IM-IPN';
+    if (upper.includes('ANH') || upper.includes('AGRO NUSANTARA')) return 'IM-ANH';
+    const matchPt = upper.match(/PT\.?\s*([A-Z0-9]{2,6})/);
+    if (matchPt && matchPt[1]) return `IM-${matchPt[1]}`;
+    return 'IM-NMSA';
+  };
+
+  // Confirm move memo to target Kop Surat Tab
+  const handleConfirmMoveMemo = ({
+    targetKopName,
+    targetKopUrl,
+    isWithoutKop,
+    targetTabId,
+    updateMemoNumber,
+    customNomorMemo,
+  }: {
+    targetKopName: string;
+    targetKopUrl?: string;
+    isWithoutKop: boolean;
+    targetTabId: string;
+    updateMemoNumber: boolean;
+    customNomorMemo?: string;
+  }) => {
+    const movingIds = new Set(memosToMove.map((m) => m.id));
+    const isSingle = memosToMove.length === 1;
+
+    const updatedMemos = memos.map((m) => {
+      if (!movingIds.has(m.id)) return m;
+
+      let newNomor = m.nomorMemo;
+      if (isSingle && customNomorMemo) {
+        newNomor = customNomorMemo;
+      } else if (updateMemoNumber) {
+        if (isWithoutKop) {
+          newNomor = newNomor.replace(/\/IM-[A-Z0-9_-]+\/KEU\//i, '/IM/KEU/');
+        } else {
+          const prefix = getPrefixFromKopName(targetKopName);
+          if (newNomor.includes('/IM/KEU/')) {
+            newNomor = newNomor.replace('/IM/KEU/', `/${prefix}/KEU/`);
+          } else {
+            newNomor = newNomor.replace(/\/IM-[A-Z0-9_-]+\/KEU\//i, `/${prefix}/KEU/`);
+          }
+        }
+      }
+
+      return {
+        ...m,
+        showKopSurat: !isWithoutKop,
+        useImageHeader: !isWithoutKop,
+        companyHeaderName: isWithoutKop ? '' : targetKopName,
+        companyHeaderUrl: isWithoutKop ? '' : (targetKopUrl || OFFICIAL_KOP_SURAT_IMAGE_URL),
+        nomorMemo: newNomor,
+        updatedAt: new Date().toISOString(),
+      };
+    });
+
+    persistMemos(updatedMemos);
+
+    // Sync to backend and Firestore
+    updatedMemos
+      .filter((m) => movingIds.has(m.id))
+      .forEach((updatedMemo) => {
+        try {
+          fetch('/api/internal-memos', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ memo: updatedMemo }),
+          }).catch(() => {});
+          saveInternalMemoToFirestore(updatedMemo).catch(() => {});
+        } catch (_) {}
+      });
+
+    // Also update currentMemo if it was one of the moved memos
+    if (isSingle && memosToMove[0] && currentMemo.id === memosToMove[0].id) {
+      const moved = updatedMemos.find((m) => m.id === memosToMove[0].id);
+      if (moved) setCurrentMemo(moved);
+    }
+
+    // Set active Kop Surat tab to target tab so user sees the moved memo immediately
+    setActiveKopTab(targetTabId);
+
+    setSaveSuccessMsg(
+      isSingle
+        ? `Internal Memo berhasil dipindahkan ke tab [${targetKopName}]!`
+        : `${memosToMove.length} Internal Memo berhasil dipindahkan ke tab [${targetKopName}]!`
+    );
+    setTimeout(() => setSaveSuccessMsg(''), 4000);
+  };
+
+  const handleCreateNewMemoForCurrentTab = () => {
+    const currentTab = dynamicKopTabs.find((t) => t.id === activeKopTab);
+    if (!currentTab || currentTab.id === 'all' || currentTab.id === 'kop-resmi-nmsa') {
+      handleCreateNewMemo(true);
+      return;
+    }
+    if (currentTab.isWithoutKop) {
+      handleCreateNewMemo(false);
+      return;
+    }
+
+    // Custom Kop Surat
+    const targetDate = new Date();
+    const nextSeq = getNextMemoSequence(memos, 168, true);
+    const roman = toRomanMonth(targetDate.getMonth());
+    const year = targetDate.getFullYear();
+    const seqStr = String(nextSeq).padStart(3, '0');
+    const prefix = getPrefixFromKopName(currentTab.name);
+    const nomorMemo = `${seqStr}/${prefix}/KEU/${roman}/${year}`;
+
+    const freshMemo: InternalMemo = {
+      id: `memo-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      nomorMemo,
+      tanggal: targetDate.toISOString().split('T')[0],
+      hariTanggalDisplay: formatHariTanggalMemo(targetDate),
+      dari: 'Andi Muhammad Rifki – Direktur',
+      kepada: 'Harijon – Direktur Keuangan',
+      perihal: '',
+      isiSurat: '',
+      bankName: bankAccounts[0]?.bankName || '',
+      accountNumber: bankAccounts[0]?.accountNumber || '',
+      accountHolder: bankAccounts[0]?.accountHolder || '',
+      includeBankDetails: true,
+      penutup: 'Demikian Internal Memo ini dibuat untuk dapat dipahami bersama dan dilaksanakan sebaik baiknya',
+      salamPenutup: 'Hormat Saya',
+      penandatanganNama: 'Andi Muhammad Rifki',
+      penandatanganJabatan: 'Direktur',
+      signerCount: 2,
+      useSecondSigner: true,
+      useThirdSigner: false,
+      approvalHeaderTitle: 'Mengetahui dan Menyetujui',
+      salamPenutup2: 'Menyetujui,',
+      penandatanganNama2: 'Harijon',
+      penandatanganJabatan2: 'Direktur Keuangan',
+      companyHeaderName: currentTab.name,
+      companyHeaderUrl: currentTab.url || OFFICIAL_KOP_SURAT_IMAGE_URL,
+      useImageHeader: true,
+      showKopSurat: true,
+      createdAt: new Date().toISOString(),
+    };
+
+    setCurrentMemo(freshMemo);
+    setEditingExistingId(null);
+    setActiveTab('editor');
+    setSaveSuccessMsg(`Draf memo baru dengan [${currentTab.name}] (${nomorMemo}) siap diedit.`);
+    setTimeout(() => setSaveSuccessMsg(''), 3000);
+  };
+
+  // Filter and sort memos for history tab based on active Kop Surat tab
   const filteredMemos = useMemo(() => {
     const list = memos.filter((m) => {
-      const isWithoutKop = isMemoWithoutKopSurat(m);
-      if (historyCategory === 'with_kop' && isWithoutKop) return false;
-      if (historyCategory === 'without_kop' && !isWithoutKop) return false;
+      // 1. Kop Surat Tab Filter
+      if (activeKopTab !== 'all') {
+        const info = getMemoKopIdentifier(m);
+        if (activeKopTab === 'without_kop') {
+          if (!info.isWithoutKop) return false;
+        } else {
+          if (info.isWithoutKop) return false;
+          if (info.id !== activeKopTab) return false;
+        }
+      }
 
       const q = searchQuery.toLowerCase().trim();
       if (!q) return true;
@@ -961,7 +1252,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
       }
       return compareMemosByNumber(a, b, 'desc');
     });
-  }, [memos, historyCategory, searchQuery, historySortOrder]);
+  }, [memos, activeKopTab, savedKopLinks, searchQuery, historySortOrder]);
 
   return (
     <div className="space-y-6 font-sans">
@@ -1246,6 +1537,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
 
             {/* Fields Grid */}
             <div className="space-y-3.5">
+
               {/* Kop Surat Setting - Pilihan Dengan Kop Surat atau Tanpa Kop Surat */}
               <div className="p-3.5 bg-stone-50 border border-stone-200 rounded-xl space-y-2.5">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -2516,6 +2808,19 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                 )}
               </button>
 
+              {/* Pindahkan Terpilih ke Perusahaan Lain Button */}
+              {selectedMemoIds.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleOpenMoveModalForSelected}
+                  className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 shrink-0 cursor-pointer shadow-xs animate-in fade-in"
+                  title="Pindahkan memo yang dicentang ke tab perusahaan / kop surat lain"
+                >
+                  <ArrowRightLeft size={14} />
+                  <span>Pindahkan Terpilih ({selectedMemoIds.length})</span>
+                </button>
+              )}
+
               {/* Upload All to Google Drive Button */}
               <button
                 type="button"
@@ -2573,117 +2878,133 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
             </div>
           </div>
 
-          {/* PEMISAH HASIL & RIWAYAT: SUB-TABS DENGAN KOP VS TANPA KOP SURAT */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-stone-100/90 p-2 rounded-2xl border border-stone-200">
-            <div className="inline-flex rounded-xl border border-stone-300 p-0.5 bg-white text-xs font-bold shadow-2xs">
-              <button
-                type="button"
-                onClick={() => setHistoryCategory('with_kop')}
-                className={`px-3.5 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1.5 ${
-                  historyCategory === 'with_kop'
-                    ? 'bg-amber-600 text-white shadow-xs'
-                    : 'text-stone-700 hover:text-stone-900 hover:bg-stone-50'
-                }`}
-                title="Tampilkan hanya riwayat memo dengan kop surat resmi PT. NMSA"
-              >
-                <ImageIcon size={13} />
-                <span>Dengan Kop Surat ({countWithKop})</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setHistoryCategory('without_kop')}
-                className={`px-3.5 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1.5 ${
-                  historyCategory === 'without_kop'
-                    ? 'bg-stone-900 text-white shadow-xs'
-                    : 'text-stone-700 hover:text-stone-900 hover:bg-stone-50'
-                }`}
-                title="Tampilkan hanya riwayat memo tanpa kop surat (kertas blanko fisik)"
-              >
-                <FileText size={13} />
-                <span>Tanpa Kop Surat ({countWithoutKop})</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setHistoryCategory('all')}
-                className={`px-3.5 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1.5 ${
-                  historyCategory === 'all'
-                    ? 'bg-amber-800 text-white shadow-xs'
-                    : 'text-stone-700 hover:text-stone-900 hover:bg-stone-50'
-                }`}
-                title="Tampilkan semua gabungan memo"
-              >
-                <span>Semua Memo ({memos.length})</span>
-              </button>
+          {/* TAB UTAMA BERDASARKAN KOP SURAT (OTOMATIS DIBAGI BERDASARKAN KOP SURAT) */}
+          <div className="p-3 bg-stone-50/90 rounded-2xl border border-stone-200 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-stone-800">
+                <Building2 size={15} className="text-amber-600" />
+                <span>Tab Dokumen Berdasarkan Kop Surat :</span>
+                <span className="text-[11px] text-stone-500 font-normal hidden sm:inline">
+                  (Otomatis dikelompokkan berdasarkan kop surat yang dipakai)
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {selectedMemoIds.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleOpenMoveModalForSelected}
+                    className="px-2.5 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 rounded-lg text-xs font-bold flex items-center gap-1 transition cursor-pointer shadow-3xs"
+                    title="Pindahkan semua memo terpilih ke tab kop surat lain secara bersamaan"
+                  >
+                    <ArrowRightLeft size={12} className="text-amber-700" />
+                    <span>Pindahkan Terpilih ({selectedMemoIds.length})</span>
+                  </button>
+                )}
+                <div className="text-[11px] text-stone-500">
+                  Menampilkan: <strong className="text-stone-900 font-bold">{filteredMemos.length}</strong> memo
+                </div>
+              </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              {historyCategory === 'with_kop' && (
-                <button
-                  type="button"
-                  onClick={() => handleCreateNewMemo(true)}
-                  className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 shadow-2xs cursor-pointer"
-                >
-                  <Plus size={13} />
-                  <span>Buat Memo Dengan Kop</span>
-                </button>
-              )}
-              {historyCategory === 'without_kop' && (
-                <button
-                  type="button"
-                  onClick={() => handleCreateNewMemo(false)}
-                  className="px-3 py-1.5 bg-stone-900 hover:bg-black text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 shadow-2xs cursor-pointer"
-                >
-                  <Plus size={13} />
-                  <span>Buat Memo Tanpa Kop</span>
-                </button>
-              )}
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-thin">
+              {dynamicKopTabs.map((tab) => {
+                const isSelected = activeKopTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setActiveKopTab(tab.id)}
+                    className={`px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-2 shrink-0 border ${
+                      isSelected
+                        ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                        : 'bg-white hover:bg-stone-50 text-stone-700 border-stone-200'
+                    }`}
+                    title={`Lihat memo dengan ${tab.name}`}
+                  >
+                    {tab.id === 'all' ? (
+                      <Building2 size={13} />
+                    ) : tab.isWithoutKop ? (
+                      <FileText size={13} />
+                    ) : (
+                      <ImageIcon size={13} />
+                    )}
+                    <span>{tab.name}</span>
+                    <span
+                      className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
+                        isSelected
+                          ? 'bg-white/25 text-white'
+                          : 'bg-stone-100 text-stone-700'
+                      }`}
+                    >
+                      {tab.count}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
-          {/* Banner Penjelasan Kategori Riwayat & Status Urutan */}
-          <div className="px-3.5 py-2 rounded-xl text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2 border bg-stone-50 border-stone-200">
-            <div className="flex items-center gap-2 min-w-0">
-              {historyCategory === 'with_kop' ? (
-                <>
-                  <ImageIcon size={14} className="text-amber-600 shrink-0" />
+          {/* Banner Penjelasan Kategori Riwayat & Quick Action Buat Memo */}
+          <div className="px-3.5 py-2.5 rounded-xl text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2 border bg-stone-50 border-stone-200">
+            <div className="flex items-center gap-2 min-w-0 flex-wrap">
+              {(() => {
+                const currentTab = dynamicKopTabs.find((t) => t.id === activeKopTab);
+                if (!currentTab || currentTab.id === 'all') {
+                  return (
+                    <span className="text-stone-700">
+                      Menampilkan <strong className="text-stone-900 font-bold">seluruh riwayat memo</strong> dari semua kop surat ({memos.length} memo).
+                    </span>
+                  );
+                }
+                if (currentTab.isWithoutKop) {
+                  return (
+                    <span className="text-stone-700">
+                      Tab: <strong className="text-stone-900 font-bold">Tanpa Kop Surat / Blanko Fisik</strong> • Format nomor: <code className="font-mono font-bold text-stone-900">.../IM/KEU/...</code>
+                    </span>
+                  );
+                }
+                return (
                   <span className="text-stone-700">
-                    Kategori: <strong className="text-amber-950 font-bold">Memo Dengan Kop Surat Resmi NMSA</strong> (Format: <code className="font-mono font-bold text-amber-900">XXX/IM-NMSA/KEU/X/2026</code>). Nomor urut terakumulasi.
+                    Tab Kop Surat: <strong className="text-amber-950 font-bold">{currentTab.name}</strong> • Format nomor: <code className="font-mono font-bold text-amber-900">.../{getPrefixFromKopName(currentTab.name)}/KEU/...</code>
                   </span>
-                </>
-              ) : historyCategory === 'without_kop' ? (
-                <>
-                  <FileText size={14} className="text-stone-600 shrink-0" />
-                  <span className="text-stone-700">
-                    Kategori: <strong className="text-stone-900 font-bold">Memo Tanpa Kop Surat / Blanko Fisik</strong> (Format: <code className="font-mono font-bold text-stone-900">001/IM/KEU/X/2026</code>). Nomor urut independen &amp; reset awal tahun.
-                  </span>
-                </>
-              ) : (
-                <>
-                  <Sparkles size={14} className="text-amber-600 shrink-0" />
-                  <span className="text-stone-700">
-                    Menampilkan seluruh riwayat memo ({countWithKop} dengan kop surat, {countWithoutKop} tanpa kop surat).
-                  </span>
-                </>
-              )}
+                );
+              })()}
             </div>
 
-            {/* Indicator Urutan Riwayat Memo */}
-            <div className="flex items-center gap-1.5 shrink-0 text-[11px] text-stone-600 bg-white px-2.5 py-1 rounded-lg border border-stone-200 shadow-2xs">
-              <span className="text-stone-400">Urutan:</span>
-              <strong className="font-bold text-stone-900">
-                {historySortOrder === 'nomor_desc' && 'No. Memo Tertinggi (183 → 1)'}
-                {historySortOrder === 'nomor_asc' && 'No. Memo Terendah (1 → 183)'}
-                {historySortOrder === 'date_desc' && 'Tanggal Memo Terbaru'}
-                {historySortOrder === 'date_asc' && 'Tanggal Memo Terlama'}
-              </strong>
+            <div className="flex items-center gap-2 shrink-0">
               <button
                 type="button"
-                onClick={() => handleSortChange(historySortOrder === 'nomor_desc' ? 'nomor_asc' : 'nomor_desc')}
-                className="p-1 hover:bg-stone-100 rounded text-stone-500 hover:text-stone-800 transition cursor-pointer ml-0.5"
-                title="Balik arah urutan nomor memo"
+                onClick={handleCreateNewMemoForCurrentTab}
+                className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 shadow-2xs cursor-pointer"
               >
-                <ArrowUpDown size={12} />
+                <Plus size={13} />
+                <span>
+                  {activeKopTab === 'without_kop'
+                    ? 'Buat Memo Tanpa Kop'
+                    : activeKopTab === 'all'
+                    ? 'Buat Memo Baru'
+                    : `Buat Memo (${dynamicKopTabs.find((t) => t.id === activeKopTab)?.name.replace('Kop Surat ', '') || 'Kop Ini'})`}
+                </span>
               </button>
+
+              {/* Indicator Urutan Riwayat Memo */}
+              <div className="flex items-center gap-1.5 text-[11px] text-stone-600 bg-white px-2.5 py-1 rounded-lg border border-stone-200 shadow-2xs">
+                <span className="text-stone-400">Urutan:</span>
+                <strong className="font-bold text-stone-900">
+                  {historySortOrder === 'nomor_desc' && 'No. Memo Tertinggi'}
+                  {historySortOrder === 'nomor_asc' && 'No. Memo Terendah'}
+                  {historySortOrder === 'date_desc' && 'Tanggal Terbaru'}
+                  {historySortOrder === 'date_asc' && 'Tanggal Terlama'}
+                </strong>
+                <button
+                  type="button"
+                  onClick={() => handleSortChange(historySortOrder === 'nomor_desc' ? 'nomor_asc' : 'nomor_desc')}
+                  className="p-1 hover:bg-stone-100 rounded text-stone-500 hover:text-stone-800 transition cursor-pointer ml-0.5"
+                  title="Balik arah urutan nomor memo"
+                >
+                  <ArrowUpDown size={12} />
+                </button>
+              </div>
             </div>
           </div>
 
@@ -2742,15 +3063,32 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                         <span className="font-mono text-xs font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded">
                           {memo.nomorMemo}
                         </span>
-                        {isMemoWithoutKopSurat(memo) ? (
-                          <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-stone-100 text-stone-700 border border-stone-300 shrink-0">
-                            Tanpa Kop
-                          </span>
-                        ) : (
-                          <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-300 shrink-0">
-                            Dengan Kop
-                          </span>
-                        )}
+                        {(() => {
+                          const kopInfo = getMemoKopIdentifier(memo);
+                          return (
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {kopInfo.isWithoutKop ? (
+                                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-stone-100 text-stone-700 border border-stone-300 shrink-0">
+                                  Tanpa Kop
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-100 text-amber-950 border border-amber-300 shrink-0 flex items-center gap-1">
+                                  <ImageIcon size={10} className="text-amber-700 shrink-0" />
+                                  <span className="max-w-[140px] truncate">{kopInfo.name}</span>
+                                </span>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleOpenMoveModalForSingle(memo)}
+                                className="text-[10px] font-bold px-2 py-0.2 rounded-md border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 flex items-center gap-1 transition cursor-pointer shrink-0 shadow-3xs"
+                                title={`Kop: ${kopInfo.name}. Klik untuk memindahkan ke tab kop surat lain.`}
+                              >
+                                <ArrowRightLeft size={10} className="text-amber-700" />
+                                <span>Pindah Tab</span>
+                              </button>
+                            </div>
+                          );
+                        })()}
                       </div>
                       <span className="text-[11px] text-stone-500">
                         {memo.hariTanggalDisplay}
@@ -2905,7 +3243,16 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-stone-100">
+                  <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-stone-100 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenMoveModalForSingle(memo)}
+                      className="px-2.5 py-1 bg-amber-100/90 hover:bg-amber-200 text-amber-900 border border-amber-300 text-xs font-bold rounded-lg transition flex items-center gap-1 cursor-pointer shadow-3xs"
+                      title="Pindahkan memo ini ke tab perusahaan / kop surat lain secara manual"
+                    >
+                      <ArrowRightLeft size={13} className="text-amber-700" />
+                      <span>Pindah Tab</span>
+                    </button>
                     <button
                       onClick={() => handleSelectMemoFromHistory(memo)}
                       className="px-2.5 py-1 bg-stone-900 hover:bg-black text-white text-xs font-bold rounded-lg transition flex items-center gap-1 cursor-pointer"
@@ -2963,6 +3310,21 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
         onSaveLinks={handleSaveKopLinks}
         activeUrl={currentMemo.companyHeaderUrl || OFFICIAL_KOP_SURAT_IMAGE_URL}
         onSelectLink={handleSelectKopLink}
+      />
+
+      {/* PINDAHKAN INTERNAL MEMO KE TAB KOP SURAT LAIN MODAL */}
+      <MoveMemoCompanyModal
+        isOpen={isMoveModalOpen}
+        onClose={() => setIsMoveModalOpen(false)}
+        memosToMove={memosToMove}
+        savedKopLinks={savedKopLinks}
+        dynamicTabs={dynamicKopTabs}
+        onConfirmMove={handleConfirmMoveMemo}
+        onAddNewKopLink={(newLink) => {
+          const updated = [...savedKopLinks, newLink];
+          setSavedKopLinks(updated);
+          saveKopSuratLinks(updated);
+        }}
       />
     </div>
   );

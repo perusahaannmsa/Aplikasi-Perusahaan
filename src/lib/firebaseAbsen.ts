@@ -375,8 +375,10 @@ export const loadAttendanceFromFirestore = async (): Promise<{
           workerMap.set(ab.workerId, existing);
         });
       }
-    } catch (fbErr) {
-      console.warn("Fallback absen_records notice:", fbErr);
+    } catch (fbErr: any) {
+      if (fbErr?.code !== 'permission-denied' && !fbErr?.message?.includes('insufficient permissions')) {
+        console.warn("Fallback absen_records notice:", fbErr?.message || fbErr);
+      }
     }
 
     // 3. Find latestActiveDate across all consolidated attendance records

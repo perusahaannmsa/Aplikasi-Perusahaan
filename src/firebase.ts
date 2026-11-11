@@ -3209,8 +3209,10 @@ export const loadAbsenDataFromFirestore = async (): Promise<any[]> => {
       localStorage.setItem('absen_records_v1', JSON.stringify(list));
     }
     return list;
-  } catch (error) {
-    console.warn('Gagal memuat data Absen dari Firestore:', error);
+  } catch (error: any) {
+    if (error?.code !== 'permission-denied' && !error?.message?.includes('insufficient permissions')) {
+      console.warn('Gagal memuat data Absen dari Firestore:', error);
+    }
     try {
       const stored = localStorage.getItem('absen_records_v1');
       return stored ? JSON.parse(stored) : [];

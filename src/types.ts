@@ -547,6 +547,7 @@ export interface InternalMemo {
   linkedSubmissionId?: string;
   linkedSubmissionKode?: string;
   linkedAmount?: number;
+  companyId?: string; // ID singkatan perusahaan (misal: 'nmsa', 'ipn', 'anh')
   companyName?: string;
   companyAddress?: string;
   companyContact?: string;
