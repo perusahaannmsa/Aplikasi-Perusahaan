@@ -13,7 +13,8 @@ import {
   syncLoansWithSubmissions,
   determineLoanCategory,
   markLoanAsLunas,
-  reopenLoan
+  reopenLoan,
+  manuallyUnlinkVoucherFromLoan
 } from '../utils/loanUtils';
 import { downloadEmployeeLoanPdf } from '../utils/loanPdfGenerator';
 import { EmployeeLoanDocument } from './EmployeeLoanDocument';
@@ -28,6 +29,7 @@ import {
   Printer,
   Edit,
   Trash2,
+  Unlink,
   CheckCircle2,
   Clock,
   AlertCircle,
@@ -468,8 +470,20 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
     setAdditionalSigners(prev => prev.filter(s => s.id !== id));
   };
 
+  const handleUnlinkVoucherFromLoan = (loan: EmployeeLoan, submissionId?: string, kodeDokumen?: string) => {
+    const ident = kodeDokumen || submissionId || 'transaksi ini';
+    if (!window.confirm(`Lepaskan tautan ${ident} dari pinjaman "${loan.namaKaryawan}"?\n\nAMAN: Transaksi voucher kas asli di aplikasi TIDAK AKAN terhapus. Hanya dicoret/dilepaskan dari daftar pinjaman ini.`)) {
+      return;
+    }
+    const updatedLoan = manuallyUnlinkVoucherFromLoan(loan, submissionId || '');
+    const updated = loans.map(l => l.id === loan.id ? updatedLoan : l);
+    handleUpdateLoans(updated);
+    setSyncMessage(`🔗 Tautan voucher ${ident} berhasil dilepas dari pinjaman. Data voucher transaksi tetap aman.`);
+    setTimeout(() => setSyncMessage(''), 6000);
+  };
+
   const handleDeleteLoan = (loan: EmployeeLoan) => {
-    if (!window.confirm(`Hapus formulir pinjaman ${loan.nomorPinjaman} atas nama ${loan.namaKaryawan}? Riwayat cicilan terkait juga akan terhapus.`)) {
+    if (!window.confirm(`Hapus formulir pinjaman ${loan.nomorPinjaman} atas nama "${loan.namaKaryawan}" dari menu pinjaman?\n\nAMAN: Transaksi voucher pengeluaran kas di aplikasi TIDAK AKAN terhapus. Hanya kartu catatan pinjaman ini yang dihapus.`)) {
       return;
     }
     const updated = loans.filter(l => l.id !== loan.id);
@@ -531,7 +545,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
   };
 
   const handleDeletePayment = (loanId: string, paymentId: string) => {
-    if (!window.confirm('Hapus catatan pembayaran ini? Sisa pinjaman akan dikalkulasi ulang otomatis.')) return;
+    if (!window.confirm('Hapus catatan pembayaran/angsuran ini? Sisa pinjaman akan dikalkulasi ulang otomatis.\n\nAMAN: Transaksi voucher pengeluaran kas asli di aplikasi TIDAK AKAN terhapus.')) return;
     const updated = loans.map(l => {
       if (l.id === loanId) {
         const nextPayments = (l.payments || []).filter(p => p.id !== paymentId);
@@ -1192,6 +1206,14 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
                                     }`}>
                                       {d.statusPembayaran || 'Tercatat'}
                                     </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleUnlinkVoucherFromLoan(loan, d.submissionId, d.kodeDokumen)}
+                                      className="p-1 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded transition cursor-pointer"
+                                      title="Lepaskan transaksi ini dari pinjaman jika bukan pinjaman (Transaksi kas di aplikasi TIDAK AKAN terhapus)"
+                                    >
+                                      <Unlink size={12} />
+                                    </button>
                                   </div>
                                 </div>
                               ))}
@@ -1212,6 +1234,14 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
                             }`}>
                               {linkedVoucher.status === 'Lunas' ? 'LUNAS (SUDAH DIBAYAR)' : 'BELUM DIBAYAR'}
                             </span>
+                            <button
+                              type="button"
+                              onClick={() => handleUnlinkVoucherFromLoan(loan, linkedVoucher.id, linkedVoucher.kode)}
+                              className="text-stone-400 hover:text-red-600 p-0.5 rounded transition cursor-pointer ml-0.5"
+                              title="Lepaskan tautan voucher ini dari catatan pinjaman (Transaksi voucher kas tetap aman)"
+                            >
+                              <Unlink size={12} />
+                            </button>
                             {onViewSubmission && (
                               <button
                                 type="button"
