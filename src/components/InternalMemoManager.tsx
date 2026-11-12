@@ -25,6 +25,8 @@ import {
   extractMemoNominal,
   formatMemoBodyHtml,
   toRomanMonth,
+  getCompanyFromKopName,
+  updateMemoNumberWithKop,
 } from '../utils/memoUtils';
 import { memoGoogleDriveService } from '../utils/memoDriveService';
 import { getInternalMemoLink } from '../utils/appLinks';
@@ -680,14 +682,21 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
   };
 
   const handleSelectKopLink = (link: SavedKopSuratLink) => {
+    const comp = getCompanyFromKopName(link.name);
+    const updatedNomor = updateMemoNumberWithKop(currentMemo.nomorMemo, link.name, true);
+
     setCurrentMemo((prev) => ({
       ...prev,
       useImageHeader: true,
+      showKopSurat: true,
       companyHeaderUrl: link.url,
       companyHeaderName: link.name,
+      companyName: comp.fullName,
+      companyId: comp.id,
+      nomorMemo: updatedNomor || prev.nomorMemo,
     }));
-    setSaveSuccessMsg(`Kop Surat aktif: "${link.name}"`);
-    setTimeout(() => setSaveSuccessMsg(''), 2500);
+    setSaveSuccessMsg(`Kop Surat aktif: "${link.name}" • Format nomor: .../${comp.memoPrefix}/KEU/...`);
+    setTimeout(() => setSaveSuccessMsg(''), 3000);
   };
 
   // Duplicate current memo with next accumulated sequence
@@ -921,92 +930,150 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
   };
 
   // Helper to resolve the Kop Surat identity for any memo
-  const getMemoKopIdentifier = (memo: Partial<InternalMemo>): { id: string; name: string; url?: string; isWithoutKop: boolean } => {
+  const getMemoKopIdentifier = (memo: Partial<InternalMemo>): {
+    id: string;
+    name: string;
+    shortName: string;
+    icon: string;
+    tabLabel: string;
+    url?: string;
+    isWithoutKop: boolean;
+    prefix: string;
+  } => {
     if (isMemoWithoutKopSurat(memo)) {
       return {
         id: 'without_kop',
         name: 'Tanpa Kop Surat',
+        shortName: 'Tanpa Kop Surat',
+        icon: '📝',
+        tabLabel: '📝 Tanpa Kop Surat',
         isWithoutKop: true,
         url: '',
+        prefix: 'IM',
       };
     }
 
     const rawName = (memo.companyHeaderName || '').trim();
     const url = (memo.companyHeaderUrl || '').trim();
 
-    const isNmsa =
-      rawName === 'Kop Surat Resmi PT NMSA' ||
-      rawName === 'Kop Surat Resmi NMSA' ||
-      url === OFFICIAL_KOP_SURAT_IMAGE_URL ||
-      url.includes('kop-surat-nmsa-full.png') ||
-      (!rawName && !url);
-
-    if (isNmsa) {
-      return {
-        id: 'kop-resmi-nmsa',
-        name: 'Kop Surat Resmi PT NMSA',
-        url: OFFICIAL_KOP_SURAT_IMAGE_URL,
-        isWithoutKop: false,
-      };
+    let kopName = rawName;
+    if (!kopName && memo.nomorMemo) {
+      const upperNo = memo.nomorMemo.toUpperCase();
+      if (upperNo.includes('IM-IPN')) kopName = 'Kop Surat PT Industri Padi Nusantara';
+      else if (upperNo.includes('IM-ANH')) kopName = 'Kop Surat PT Agro Nusantara Halid';
+      else if (upperNo.includes('IM-NMSA')) kopName = 'Kop Surat Resmi PT NMSA';
+    }
+    if (!kopName && memo.companyName) {
+      const upperCo = memo.companyName.toUpperCase();
+      if (upperCo.includes('PADI') || upperCo.includes('IPN')) kopName = 'Kop Surat PT Industri Padi Nusantara';
+      else if (upperCo.includes('AGRO') || upperCo.includes('ANH')) kopName = 'Kop Surat PT Agro Nusantara Halid';
+    }
+    if (!kopName && url) {
+      kopName = findKopSuratNameByUrl(url, savedKopLinks);
+    }
+    if (!kopName) {
+      kopName = 'Kop Surat Resmi PT NMSA';
     }
 
-    const kopName = rawName || findKopSuratNameByUrl(url, savedKopLinks) || 'Kop Surat Dokumen';
-    const tabId = 'kop-' + kopName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    const comp = getCompanyFromKopName(kopName);
+    const tabId = comp.id === 'nmsa' ? 'kop-resmi-nmsa' : (comp.id.startsWith('kop-') ? comp.id : `kop-${comp.id}`);
 
     return {
       id: tabId,
       name: kopName,
+      shortName: comp.shortName,
+      icon: comp.icon,
+      tabLabel: comp.tabLabel,
       url: url || OFFICIAL_KOP_SURAT_IMAGE_URL,
       isWithoutKop: false,
+      prefix: comp.memoPrefix,
     };
   };
 
   // Dynamic Kop Surat Tabs derived automatically from memos + savedKopLinks
   const dynamicKopTabs = useMemo(() => {
-    const tabsMap = new Map<string, { id: string; name: string; url?: string; count: number; isDefault?: boolean; isWithoutKop?: boolean }>();
+    const tabsMap = new Map<
+      string,
+      {
+        id: string;
+        name: string;
+        shortName: string;
+        icon: string;
+        tabLabel: string;
+        url?: string;
+        count: number;
+        isDefault?: boolean;
+        isWithoutKop?: boolean;
+        prefix: string;
+      }
+    >();
 
-    let nmsaCount = 0;
-    let withoutKopCount = 0;
-
-    // 1. Seed with any saved custom kop surat links
+    // 1. Seed with known default/saved kop surat presets
     savedKopLinks.forEach((link) => {
-      const isNmsa =
-        link.name === 'Kop Surat Resmi PT NMSA' ||
-        link.name === 'Kop Surat Resmi NMSA' ||
-        link.url === OFFICIAL_KOP_SURAT_IMAGE_URL ||
-        link.url.includes('kop-surat-nmsa-full.png');
-      if (!isNmsa && link.name) {
-        const tabId = 'kop-' + link.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-        tabsMap.set(link.name, {
+      const comp = getCompanyFromKopName(link.name);
+      const tabId = comp.id === 'nmsa' ? 'kop-resmi-nmsa' : (comp.id.startsWith('kop-') ? comp.id : `kop-${comp.id}`);
+      if (!tabsMap.has(tabId)) {
+        tabsMap.set(tabId, {
           id: tabId,
           name: link.name,
+          shortName: comp.shortName,
+          icon: comp.icon,
+          tabLabel: comp.tabLabel,
           url: link.url,
           count: 0,
+          isDefault: comp.id === 'nmsa',
+          prefix: comp.memoPrefix,
         });
       }
     });
 
-    // 2. Scan all memos and group counts
+    // 2. Count memos
+    let withoutKopCount = 0;
+
     memos.forEach((m) => {
       const info = getMemoKopIdentifier(m);
       if (info.isWithoutKop) {
         withoutKopCount++;
         return;
       }
-      if (info.id === 'kop-resmi-nmsa') {
-        nmsaCount++;
-        return;
-      }
-      const existing = tabsMap.get(info.name);
+      const existing = tabsMap.get(info.id);
       if (existing) {
         existing.count++;
         if (!existing.url && info.url) existing.url = info.url;
       } else {
-        tabsMap.set(info.name, {
+        const comp = getCompanyFromKopName(info.name);
+        tabsMap.set(info.id, {
           id: info.id,
           name: info.name,
+          shortName: comp.shortName,
+          icon: comp.icon,
+          tabLabel: comp.tabLabel,
           url: info.url,
           count: 1,
+          prefix: comp.memoPrefix,
+        });
+      }
+    });
+
+    // Always ensure presets PT NMSA, PT IPN, PT ANH are available in the tabs
+    const defaultCompanies = [
+      { id: 'kop-resmi-nmsa', name: 'Kop Surat Resmi PT NMSA', shortName: 'PT NMSA', icon: '🏢', prefix: 'IM-NMSA', url: OFFICIAL_KOP_SURAT_IMAGE_URL, isDefault: true },
+      { id: 'kop-ipn', name: 'Kop Surat PT Industri Padi Nusantara', shortName: 'PT IPN', icon: '🌾', prefix: 'IM-IPN', url: '/kop-surat-nmsa-full.png' },
+      { id: 'kop-anh', name: 'Kop Surat PT Agro Nusantara Halid', shortName: 'PT ANH', icon: '🌴', prefix: 'IM-ANH', url: '/kop-surat-nmsa-full.png' },
+    ];
+
+    defaultCompanies.forEach((def) => {
+      if (!tabsMap.has(def.id)) {
+        tabsMap.set(def.id, {
+          id: def.id,
+          name: def.name,
+          shortName: def.shortName,
+          icon: def.icon,
+          tabLabel: `${def.icon} ${def.shortName}`,
+          url: def.url,
+          count: 0,
+          isDefault: def.isDefault,
+          prefix: def.prefix,
         });
       }
     });
@@ -1017,21 +1084,22 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
       {
         id: 'all',
         name: 'Semua Memo',
+        shortName: 'Semua Memo',
+        icon: '📁',
+        tabLabel: '📁 Semua Memo',
         count: memos.length,
-      },
-      {
-        id: 'kop-resmi-nmsa',
-        name: 'Kop Surat Resmi PT NMSA',
-        url: OFFICIAL_KOP_SURAT_IMAGE_URL,
-        count: nmsaCount,
-        isDefault: true,
+        prefix: 'IM',
       },
       ...customTabs,
       {
         id: 'without_kop',
         name: 'Tanpa Kop Surat',
+        shortName: 'Tanpa Kop Surat',
+        icon: '📝',
+        tabLabel: '📝 Tanpa Kop Surat',
         count: withoutKopCount,
         isWithoutKop: true,
+        prefix: 'IM',
       },
     ];
   }, [memos, savedKopLinks]);
@@ -1052,13 +1120,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
 
   // Helper to extract prefix code from Kop Surat name
   const getPrefixFromKopName = (kopName: string): string => {
-    const upper = (kopName || '').toUpperCase();
-    if (upper.includes('NMSA') || upper.includes('NUSANTARA MINERAL')) return 'IM-NMSA';
-    if (upper.includes('IPN') || upper.includes('INDUSTRI PADI NUSANTARA')) return 'IM-IPN';
-    if (upper.includes('ANH') || upper.includes('AGRO NUSANTARA')) return 'IM-ANH';
-    const matchPt = upper.match(/PT\.?\s*([A-Z0-9]{2,6})/);
-    if (matchPt && matchPt[1]) return `IM-${matchPt[1]}`;
-    return 'IM-NMSA';
+    return getCompanyFromKopName(kopName).memoPrefix;
   };
 
   // Confirm move memo to target Kop Surat Tab
@@ -1087,30 +1149,27 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
       if (isSingle && customNomorMemo) {
         newNomor = customNomorMemo;
       } else if (updateMemoNumber) {
-        if (isWithoutKop) {
-          newNomor = newNomor.replace(/\/IM-[A-Z0-9_-]+\/KEU\//i, '/IM/KEU/');
-        } else {
-          const prefix = getPrefixFromKopName(targetKopName);
-          if (newNomor.includes('/IM/KEU/')) {
-            newNomor = newNomor.replace('/IM/KEU/', `/${prefix}/KEU/`);
-          } else {
-            newNomor = newNomor.replace(/\/IM-[A-Z0-9_-]+\/KEU\//i, `/${prefix}/KEU/`);
-          }
-        }
+        newNomor = updateMemoNumberWithKop(m.nomorMemo, targetKopName, !isWithoutKop);
       }
+
+      const targetComp = getCompanyFromKopName(targetKopName);
 
       return {
         ...m,
+        nomorMemo: newNomor,
         showKopSurat: !isWithoutKop,
         useImageHeader: !isWithoutKop,
         companyHeaderName: isWithoutKop ? '' : targetKopName,
-        companyHeaderUrl: isWithoutKop ? '' : (targetKopUrl || OFFICIAL_KOP_SURAT_IMAGE_URL),
-        nomorMemo: newNomor,
+        companyHeaderUrl: isWithoutKop ? '' : targetKopUrl || OFFICIAL_KOP_SURAT_IMAGE_URL,
+        companyName: isWithoutKop ? m.companyName : targetComp.fullName,
+        companyId: isWithoutKop ? m.companyId : targetComp.id,
         updatedAt: new Date().toISOString(),
       };
     });
 
     persistMemos(updatedMemos);
+    setSelectedMemoIds([]);
+    setIsMoveModalOpen(false);
 
     // Sync to backend and Firestore
     updatedMemos
@@ -1145,7 +1204,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
 
   const handleCreateNewMemoForCurrentTab = () => {
     const currentTab = dynamicKopTabs.find((t) => t.id === activeKopTab);
-    if (!currentTab || currentTab.id === 'all' || currentTab.id === 'kop-resmi-nmsa') {
+    if (!currentTab || currentTab.id === 'all') {
       handleCreateNewMemo(true);
       return;
     }
@@ -1154,13 +1213,13 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
       return;
     }
 
-    // Custom Kop Surat
+    const comp = getCompanyFromKopName(currentTab.name);
     const targetDate = new Date();
     const nextSeq = getNextMemoSequence(memos, 168, true);
     const roman = toRomanMonth(targetDate.getMonth());
     const year = targetDate.getFullYear();
     const seqStr = String(nextSeq).padStart(3, '0');
-    const prefix = getPrefixFromKopName(currentTab.name);
+    const prefix = comp.memoPrefix;
     const nomorMemo = `${seqStr}/${prefix}/KEU/${roman}/${year}`;
 
     const freshMemo: InternalMemo = {
@@ -1174,7 +1233,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
       isiSurat: '',
       bankName: bankAccounts[0]?.bankName || '',
       accountNumber: bankAccounts[0]?.accountNumber || '',
-      accountHolder: bankAccounts[0]?.accountHolder || '',
+      accountHolder: comp.fullName || bankAccounts[0]?.accountHolder || '',
       includeBankDetails: true,
       penutup: 'Demikian Internal Memo ini dibuat untuk dapat dipahami bersama dan dilaksanakan sebaik baiknya',
       salamPenutup: 'Hormat Saya',
@@ -1189,6 +1248,8 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
       penandatanganJabatan2: 'Direktur Keuangan',
       companyHeaderName: currentTab.name,
       companyHeaderUrl: currentTab.url || OFFICIAL_KOP_SURAT_IMAGE_URL,
+      companyName: comp.fullName,
+      companyId: comp.id,
       useImageHeader: true,
       showKopSurat: true,
       createdAt: new Date().toISOString(),
@@ -1197,7 +1258,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
     setCurrentMemo(freshMemo);
     setEditingExistingId(null);
     setActiveTab('editor');
-    setSaveSuccessMsg(`Draf memo baru dengan [${currentTab.name}] (${nomorMemo}) siap diedit.`);
+    setSaveSuccessMsg(`Draf memo baru [${comp.shortName}] (${nomorMemo}) siap diedit.`);
     setTimeout(() => setSaveSuccessMsg(''), 3000);
   };
 
@@ -1550,15 +1611,18 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                     <button
                       type="button"
                       onClick={() => {
-                        const targetDate = currentMemo.tanggal ? new Date(currentMemo.tanggal) : new Date();
-                        const nextNomor = generateNextMemoNumber(memos, targetDate, 168, true);
+                        const targetKopName = currentMemo.companyHeaderName || savedKopLinks[0]?.name || 'Kop Surat Resmi PT NMSA';
+                        const comp = getCompanyFromKopName(targetKopName);
+                        const updatedNomor = updateMemoNumberWithKop(currentMemo.nomorMemo, targetKopName, true);
                         setCurrentMemo((prev) => ({
                           ...prev,
                           showKopSurat: true,
                           useImageHeader: true,
-                          nomorMemo: (!prev.nomorMemo || prev.nomorMemo.includes('/IM/KEU/') || prev.nomorMemo.includes('/IM-NMSA/KEU/')) ? nextNomor : prev.nomorMemo,
+                          nomorMemo: updatedNomor || prev.nomorMemo,
+                          companyName: prev.companyName || comp.fullName,
+                          companyId: prev.companyId || comp.id,
                         }));
-                        setSaveSuccessMsg('Format diubah: Dengan Kop Surat resmi NMSA');
+                        setSaveSuccessMsg(`Format diubah: Dengan Kop Surat (${comp.shortName})`);
                         setTimeout(() => setSaveSuccessMsg(''), 2500);
                       }}
                       className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer flex items-center gap-1 ${
@@ -1566,7 +1630,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                           ? 'bg-amber-600 text-white shadow-xs'
                           : 'text-stone-700 hover:text-stone-900'
                       }`}
-                      title="Tampilkan banner kop surat resmi PT. NMSA"
+                      title="Gunakan format dokumen resmi dengan Kop Surat"
                     >
                       <Check size={12} />
                       <span>Dengan Kop Surat</span>
@@ -1574,14 +1638,13 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                     <button
                       type="button"
                       onClick={() => {
-                        const targetDate = currentMemo.tanggal ? new Date(currentMemo.tanggal) : new Date();
-                        const nextNomor = generateNextMemoNumber(memos, targetDate, 168, false);
+                        const updatedNomor = updateMemoNumberWithKop(currentMemo.nomorMemo, '', false);
                         setCurrentMemo((prev) => ({
                           ...prev,
                           showKopSurat: false,
-                          nomorMemo: (!prev.nomorMemo || prev.nomorMemo.includes('/IM-NMSA/KEU/') || prev.nomorMemo.includes('/IM/KEU/')) ? nextNomor : prev.nomorMemo,
+                          nomorMemo: updatedNomor || prev.nomorMemo,
                         }));
-                        setSaveSuccessMsg('Format diubah: Tanpa Kop Surat (No: 001/IM/KEU/...)');
+                        setSaveSuccessMsg('Format diubah: Tanpa Kop Surat (.../IM/KEU/...)');
                         setTimeout(() => setSaveSuccessMsg(''), 2500);
                       }}
                       className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer flex items-center gap-1 ${
@@ -1598,7 +1661,36 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                 </div>
 
                 {currentMemo.showKopSurat !== false ? (
-                  <div className="bg-white border border-stone-200 rounded-xl p-2.5 shadow-2xs space-y-2">
+                  <div className="bg-white border border-stone-200 rounded-xl p-2.5 shadow-2xs space-y-2.5">
+                    {/* Tombol Cepat Pilihan Kop Surat: Otomatis kelompokkan perusahaan & format nomor */}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[10px] font-bold text-stone-500 mr-1">Pilih Kop:</span>
+                      {savedKopLinks.map((link) => {
+                        const comp = getCompanyFromKopName(link.name);
+                        const activeUrl = currentMemo.companyHeaderUrl || OFFICIAL_KOP_SURAT_IMAGE_URL;
+                        const isSelected =
+                          (currentMemo.companyHeaderName && currentMemo.companyHeaderName === link.name) ||
+                          activeUrl === link.url ||
+                          (link.url === OFFICIAL_KOP_SURAT_IMAGE_URL && activeUrl.includes('kop-surat-nmsa-full.png'));
+                        return (
+                          <button
+                            key={link.id}
+                            type="button"
+                            onClick={() => handleSelectKopLink(link)}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 border ${
+                              isSelected
+                                ? 'bg-amber-600 text-white border-amber-600 shadow-2xs ring-2 ring-amber-300'
+                                : 'bg-stone-50 hover:bg-amber-50 text-stone-700 border-stone-200 hover:border-amber-300'
+                            }`}
+                            title={`Gunakan ${link.name} (Format .../${comp.memoPrefix}/KEU/...)`}
+                          >
+                            <span>{comp.icon}</span>
+                            <span>{comp.shortName}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
                     <div className="w-full bg-stone-100 rounded-lg overflow-hidden border border-stone-200/80 p-2 flex flex-col items-center justify-center gap-1">
                       <img
                         src={currentMemo.companyHeaderUrl || OFFICIAL_KOP_SURAT_IMAGE_URL}
@@ -2685,13 +2777,16 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      const targetDate = currentMemo.tanggal ? new Date(currentMemo.tanggal) : new Date();
-                      const nextNomor = generateNextMemoNumber(memos, targetDate, 168, true);
+                      const targetKopName = currentMemo.companyHeaderName || savedKopLinks[0]?.name || 'Kop Surat Resmi PT NMSA';
+                      const comp = getCompanyFromKopName(targetKopName);
+                      const updatedNomor = updateMemoNumberWithKop(currentMemo.nomorMemo, targetKopName, true);
                       setCurrentMemo((prev) => ({
                         ...prev,
                         showKopSurat: true,
                         useImageHeader: true,
-                        nomorMemo: (!prev.nomorMemo || prev.nomorMemo.includes('/IM/KEU/') || prev.nomorMemo.includes('/IM-NMSA/KEU/')) ? nextNomor : prev.nomorMemo,
+                        nomorMemo: updatedNomor || prev.nomorMemo,
+                        companyName: prev.companyName || comp.fullName,
+                        companyId: prev.companyId || comp.id,
                       }));
                     }}
                     className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer flex items-center gap-1 ${
@@ -2707,12 +2802,11 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      const targetDate = currentMemo.tanggal ? new Date(currentMemo.tanggal) : new Date();
-                      const nextNomor = generateNextMemoNumber(memos, targetDate, 168, false);
+                      const updatedNomor = updateMemoNumberWithKop(currentMemo.nomorMemo, '', false);
                       setCurrentMemo((prev) => ({
                         ...prev,
                         showKopSurat: false,
-                        nomorMemo: (!prev.nomorMemo || prev.nomorMemo.includes('/IM-NMSA/KEU/') || prev.nomorMemo.includes('/IM/KEU/')) ? nextNomor : prev.nomorMemo,
+                        nomorMemo: updatedNomor || prev.nomorMemo,
                       }));
                     }}
                     className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer flex items-center gap-1 ${
@@ -2726,7 +2820,6 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                     <span>Tanpa Kop</span>
                   </button>
                 </div>
-
                 <button
                   onClick={() => handlePrint()}
                   className="px-3 py-1.5 bg-stone-900 hover:bg-black text-white text-xs font-bold rounded-lg transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
@@ -2916,19 +3009,13 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                     onClick={() => setActiveKopTab(tab.id)}
                     className={`px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-2 shrink-0 border ${
                       isSelected
-                        ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                        ? 'bg-amber-600 text-white border-amber-600 shadow-xs ring-2 ring-amber-300'
                         : 'bg-white hover:bg-stone-50 text-stone-700 border-stone-200'
                     }`}
-                    title={`Lihat memo dengan ${tab.name}`}
+                    title={`Lihat memo ${tab.name} (${tab.shortName})`}
                   >
-                    {tab.id === 'all' ? (
-                      <Building2 size={13} />
-                    ) : tab.isWithoutKop ? (
-                      <FileText size={13} />
-                    ) : (
-                      <ImageIcon size={13} />
-                    )}
-                    <span>{tab.name}</span>
+                    <span className="text-sm">{tab.icon}</span>
+                    <span>{tab.shortName || tab.name}</span>
                     <span
                       className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
                         isSelected
@@ -2952,20 +3039,23 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                 if (!currentTab || currentTab.id === 'all') {
                   return (
                     <span className="text-stone-700">
-                      Menampilkan <strong className="text-stone-900 font-bold">seluruh riwayat memo</strong> dari semua kop surat ({memos.length} memo).
+                      📁 Menampilkan <strong className="text-stone-900 font-bold">seluruh riwayat memo</strong> dari semua perusahaan / kop surat ({memos.length} memo).
                     </span>
                   );
                 }
                 if (currentTab.isWithoutKop) {
                   return (
-                    <span className="text-stone-700">
-                      Tab: <strong className="text-stone-900 font-bold">Tanpa Kop Surat / Blanko Fisik</strong> • Format nomor: <code className="font-mono font-bold text-stone-900">.../IM/KEU/...</code>
+                    <span className="text-stone-700 flex items-center gap-1.5 flex-wrap">
+                      <span>📝 Tab: <strong className="text-stone-900 font-bold">Tanpa Kop Surat / Blanko Fisik</strong></span>
+                      <span>• Format nomor: <code className="font-mono font-bold text-stone-900 bg-white px-1.5 py-0.5 rounded border border-stone-200">.../IM/KEU/...</code></span>
                     </span>
                   );
                 }
                 return (
-                  <span className="text-stone-700">
-                    Tab Kop Surat: <strong className="text-amber-950 font-bold">{currentTab.name}</strong> • Format nomor: <code className="font-mono font-bold text-amber-900">.../{getPrefixFromKopName(currentTab.name)}/KEU/...</code>
+                  <span className="text-stone-700 flex items-center gap-1.5 flex-wrap">
+                    <span>{currentTab.icon} Tab Perusahaan: <strong className="text-amber-950 font-bold">{currentTab.shortName}</strong></span>
+                    <span>• Kop: <strong className="text-stone-900 font-medium">{currentTab.name}</strong></span>
+                    <span>• Format nomor: <code className="font-mono font-bold text-amber-900 bg-amber-100/60 px-1.5 py-0.5 rounded border border-amber-200">.../{currentTab.prefix}/KEU/...</code></span>
                   </span>
                 );
               })()}
@@ -2983,7 +3073,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                     ? 'Buat Memo Tanpa Kop'
                     : activeKopTab === 'all'
                     ? 'Buat Memo Baru'
-                    : `Buat Memo (${dynamicKopTabs.find((t) => t.id === activeKopTab)?.name.replace('Kop Surat ', '') || 'Kop Ini'})`}
+                    : `Buat Memo ${dynamicKopTabs.find((t) => t.id === activeKopTab)?.shortName || 'Kop Ini'}`}
                 </span>
               </button>
 

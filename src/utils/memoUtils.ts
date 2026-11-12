@@ -224,12 +224,12 @@ export function toRomanMonth(monthZeroIndexed: number): string {
   return romanMonths[monthZeroIndexed] || 'IX';
 }
 
-export function generateDefaultMemoNumber(sequence = 164, date = new Date(), withKop = true): string {
+export function generateDefaultMemoNumber(sequence = 164, date = new Date(), withKop = true, prefix = 'IM-NMSA'): string {
   const roman = toRomanMonth(date.getMonth());
   const year = date.getFullYear();
   const seqStr = String(sequence).padStart(3, '0');
   if (withKop) {
-    return `${seqStr}/IM-NMSA/KEU/${roman}/${year}`;
+    return `${seqStr}/${prefix}/KEU/${roman}/${year}`;
   }
   // Format nomor memo tanpa kop surat: 001/IM/KEU/X/2026
   return `${seqStr}/IM/KEU/${roman}/${year}`;
@@ -243,7 +243,7 @@ export function isMemoWithoutKopSurat(memo: Partial<InternalMemo> | undefined | 
   if (memo.showKopSurat === false) return true;
   if (memo.nomorMemo) {
     const cleaned = memo.nomorMemo.trim();
-    if (/IM\/KEU/i.test(cleaned) && !/IM-NMSA/i.test(cleaned)) {
+    if (/\/IM\/KEU/i.test(cleaned) && !/\/IM-[A-Za-z0-9_-]+/i.test(cleaned)) {
       return true;
     }
   }
@@ -365,7 +365,8 @@ export function generateNextMemoNumber(
   existingMemosOrCount: InternalMemo[] | number = [],
   date = new Date(),
   baseSequence = 168,
-  withKop = true
+  withKop = true,
+  prefix = 'IM-NMSA'
 ): string {
   const targetYear = date.getFullYear();
   let nextSeq: number;
@@ -376,7 +377,7 @@ export function generateNextMemoNumber(
   } else {
     nextSeq = withKop ? baseSequence : 1;
   }
-  return generateDefaultMemoNumber(nextSeq, date, withKop);
+  return generateDefaultMemoNumber(nextSeq, date, withKop, prefix);
 }
 
 export function getSavedBankAccounts(): BankAccountMaster[] {
@@ -503,6 +504,20 @@ export const DEFAULT_SAVED_KOP_SURAT_LINKS: SavedKopSuratLink[] = [
     isDefault: true,
     createdAt: '2026-01-01T00:00:00.000Z',
   },
+  {
+    id: 'kop-ipn',
+    name: 'Kop Surat PT Industri Padi Nusantara',
+    url: '/kop-surat-nmsa-full.png',
+    isDefault: false,
+    createdAt: '2026-01-01T00:00:00.000Z',
+  },
+  {
+    id: 'kop-anh',
+    name: 'Kop Surat PT Agro Nusantara Halid',
+    url: '/kop-surat-nmsa-full.png',
+    isDefault: false,
+    createdAt: '2026-01-01T00:00:00.000Z',
+  },
 ];
 
 export function getSavedKopSuratLinks(): SavedKopSuratLink[] {
@@ -511,7 +526,13 @@ export function getSavedKopSuratLinks(): SavedKopSuratLink[] {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+        const list = [...parsed];
+        DEFAULT_SAVED_KOP_SURAT_LINKS.forEach((def) => {
+          if (!list.some((item) => item.name.toLowerCase() === def.name.toLowerCase())) {
+            list.push(def);
+          }
+        });
+        return list;
       }
     }
   } catch (e) {
@@ -538,6 +559,139 @@ export function findKopSuratNameByUrl(url?: string, links?: SavedKopSuratLink[])
     return 'Kop Surat Resmi PT NMSA';
   }
   return cleanUrl;
+}
+
+export interface KopCompanyInfo {
+  id: string; // 'nmsa', 'ipn', 'anh', or custom slug
+  code: string; // 'NMSA', 'IPN', 'ANH'
+  shortName: string; // 'PT NMSA', 'PT IPN', 'PT ANH'
+  fullName: string;
+  memoPrefix: string; // 'IM-NMSA', 'IM-IPN', 'IM-ANH'
+  icon: string;
+  tabLabel: string; // '🏢 PT NMSA'
+}
+
+/**
+ * Derives company details, code, and memo number prefix automatically from Kop Surat name.
+ */
+export function getCompanyFromKopName(kopName?: string): KopCompanyInfo {
+  if (!kopName) {
+    return {
+      id: 'nmsa',
+      code: 'NMSA',
+      shortName: 'PT NMSA',
+      fullName: 'PT Nusantara Mineral Sukses Abadi',
+      memoPrefix: 'IM-NMSA',
+      icon: '🏢',
+      tabLabel: '🏢 PT NMSA',
+    };
+  }
+
+  const upper = kopName.toUpperCase();
+
+  if (upper.includes('PADI') || upper.includes('IPN') || upper.includes('INDUSTRI PADI')) {
+    return {
+      id: 'ipn',
+      code: 'IPN',
+      shortName: 'PT IPN',
+      fullName: 'PT Industri Padi Nusantara',
+      memoPrefix: 'IM-IPN',
+      icon: '🌾',
+      tabLabel: '🌾 PT IPN',
+    };
+  }
+
+  if (upper.includes('AGRO') || upper.includes('ANH') || upper.includes('HALID')) {
+    return {
+      id: 'anh',
+      code: 'ANH',
+      shortName: 'PT ANH',
+      fullName: 'PT Agro Nusantara Halid',
+      memoPrefix: 'IM-ANH',
+      icon: '🌴',
+      tabLabel: '🌴 PT ANH',
+    };
+  }
+
+  if (upper.includes('MINERAL') || upper.includes('NMSA') || upper.includes('SUKSES ABADI')) {
+    return {
+      id: 'nmsa',
+      code: 'NMSA',
+      shortName: 'PT NMSA',
+      fullName: 'PT Nusantara Mineral Sukses Abadi',
+      memoPrefix: 'IM-NMSA',
+      icon: '🏢',
+      tabLabel: '🏢 PT NMSA',
+    };
+  }
+
+  const ptMatch = kopName.match(/(?:PT|CV)\.?\s*([A-Za-z0-9_-]+(?:\s+[A-Za-z0-9_-]+)*)/i);
+  if (ptMatch && ptMatch[1]) {
+    const rawEntity = ptMatch[1].trim();
+    const words = rawEntity.split(/\s+/);
+    const code = words.length > 1 ? words.map((w) => w[0]).join('').toUpperCase() : rawEntity.toUpperCase().slice(0, 5);
+    const shortName = `PT ${code}`;
+    const cleanId = 'kop-' + code.toLowerCase();
+    return {
+      id: cleanId,
+      code,
+      shortName,
+      fullName: `PT ${rawEntity}`,
+      memoPrefix: `IM-${code}`,
+      icon: '📄',
+      tabLabel: `📄 ${shortName}`,
+    };
+  }
+
+  const cleanName = kopName.replace(/^kop\s*surat\s*/i, '').trim();
+  const slug = cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  const code = (cleanName.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5) || 'DOC');
+  return {
+    id: slug || 'custom',
+    code,
+    shortName: cleanName || 'PT Dokumen',
+    fullName: cleanName || 'Kop Surat Dokumen',
+    memoPrefix: `IM-${code}`,
+    icon: '📄',
+    tabLabel: `📄 ${cleanName || 'Kop Dokumen'}`,
+  };
+}
+
+/**
+ * Updates a memo number to match the selected Kop Surat format:
+ * - With Kop Surat: replaces with .../IM-[PREFIX]/KEU/...
+ * - Without Kop Surat: replaces with .../IM/KEU/...
+ */
+export function updateMemoNumberWithKop(currentNomor: string | undefined, kopName: string, isWithKop = true): string {
+  if (!currentNomor) return '';
+  const trimmed = currentNomor.trim();
+
+  if (!isWithKop) {
+    if (/\/IM-[A-Za-z0-9_-]+\/KEU\//i.test(trimmed)) {
+      return trimmed.replace(/\/IM-[A-Za-z0-9_-]+\/KEU\//i, '/IM/KEU/');
+    }
+    if (/\/IM-[A-Za-z0-9_-]+\//i.test(trimmed)) {
+      return trimmed.replace(/\/IM-[A-Za-z0-9_-]+\//i, '/IM/');
+    }
+    return trimmed;
+  }
+
+  const comp = getCompanyFromKopName(kopName);
+  const targetPrefix = comp.memoPrefix;
+
+  if (/\/IM\/KEU\//i.test(trimmed)) {
+    return trimmed.replace(/\/IM\/KEU\//i, `/${targetPrefix}/KEU/`);
+  }
+  if (/\/IM-[A-Za-z0-9_-]+\/KEU\//i.test(trimmed)) {
+    return trimmed.replace(/\/IM-[A-Za-z0-9_-]+\/KEU\//i, `/${targetPrefix}/KEU/`);
+  }
+  if (/\/IM\//i.test(trimmed)) {
+    return trimmed.replace(/\/IM\//i, `/${targetPrefix}/`);
+  }
+  if (/\/IM-[A-Za-z0-9_-]+\//i.test(trimmed)) {
+    return trimmed.replace(/\/IM-[A-Za-z0-9_-]+\//i, `/${targetPrefix}/`);
+  }
+  return trimmed;
 }
 
 /**

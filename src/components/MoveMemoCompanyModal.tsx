@@ -15,10 +15,14 @@ import { extractMemoNominal, OFFICIAL_KOP_SURAT_IMAGE_URL } from '../utils/memoU
 export interface DynamicKopTabInfo {
   id: string;
   name: string;
+  shortName?: string;
+  icon?: string;
+  tabLabel?: string;
   url?: string;
   count?: number;
   isDefault?: boolean;
   isWithoutKop?: boolean;
+  prefix?: string;
 }
 
 interface MoveMemoCompanyModalProps {
@@ -364,8 +368,9 @@ export const MoveMemoCompanyModal: React.FC<MoveMemoCompanyModalProps> = ({
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
+                          {tab.icon && <span className="text-sm">{tab.icon}</span>}
                           <span className="font-bold text-xs text-stone-900 truncate">
-                            {tab.name}
+                            {tab.shortName ? `${tab.shortName} (${tab.name})` : tab.name}
                           </span>
                           {tab.isDefault && (
                             <span className="text-[9.5px] font-bold px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-300">
