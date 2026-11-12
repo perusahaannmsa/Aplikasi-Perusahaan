@@ -15,6 +15,7 @@ import {
   markLoanAsLunas,
   reopenLoan
 } from '../utils/loanUtils';
+import { downloadEmployeeLoanPdf } from '../utils/loanPdfGenerator';
 import { EmployeeLoanDocument } from './EmployeeLoanDocument';
 import { ManualSyncLoanModal } from './ManualSyncLoanModal';
 import { LinkVoucherToLoanModal } from './LinkVoucherToLoanModal';
@@ -147,19 +148,8 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
   const [cicilanPerBulan, setCicilanPerBulan] = useState<number | ''>('');
   const [caraPembayaran, setCaraPembayaran] = useState('');
 
-  // Auto-sync transaksi Voucher Kas/Bank HO ke Modul Pinjaman
-  useEffect(() => {
-    if (submissions && submissions.length > 0) {
-      const { syncedLoans, newLoansCount, accumulatedCount } = syncLoansWithSubmissions(loans, submissions, workers);
-      if (newLoansCount > 0 || accumulatedCount > 0) {
-        setLoans(syncedLoans);
-        saveEmployeeLoans(syncedLoans);
-        setSyncMessage(`⚡ Tersinkron otomatis: ${newLoansCount} pinjaman baru & ${accumulatedCount} voucher terakumulasi`);
-        const timer = setTimeout(() => setSyncMessage(''), 6000);
-        return () => clearTimeout(timer);
-      }
-    }
-  }, [submissions, workers]);
+  // Fitur pendeteksi otomatis dinonaktifkan sesuai permintaan pengguna.
+  // Transaksi pinjaman hanya ditandai secara manual atau otomatis saat dibuatkan voucher dari menu pinjaman.
 
   const handleManualSyncSubmissions = () => {
     if (!submissions || submissions.length === 0) {
@@ -775,6 +765,32 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
           </div>
 
           <div className="flex items-center gap-2 flex-wrap self-start md:self-auto">
+            <button
+              type="button"
+              onClick={() => {
+                const url = `${window.location.origin}${window.location.pathname}#/form-pinjaman`;
+                navigator.clipboard.writeText(url);
+                setSyncMessage(`📋 Tautan formulir karyawan disalin: ${url}`);
+                setTimeout(() => setSyncMessage(''), 6000);
+              }}
+              className="px-3 py-2 text-xs font-bold rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 transition cursor-pointer flex items-center gap-1.5 shadow-3xs"
+              title="Salin link formulir mandiri untuk dibagikan ke karyawan"
+            >
+              <Share2 size={14} className="text-amber-700" />
+              <span>Bagikan Form Karyawan</span>
+            </button>
+
+            <a
+              href="#/form-pinjaman"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-3 py-2 text-xs font-bold rounded-xl border border-stone-300 bg-white hover:bg-stone-50 text-stone-750 transition cursor-pointer flex items-center gap-1.5 shadow-3xs"
+              title="Buka website formulir mandiri karyawan di tab baru"
+            >
+              <ExternalLink size={14} className="text-stone-500" />
+              <span className="hidden sm:inline">Portal Karyawan</span>
+            </a>
+
             <button
               type="button"
               onClick={handlePrintBlankForm}

@@ -1803,25 +1803,40 @@ export const autoCleanDriveFolders = async (activeSubmissions: any[]) => {
 
 export const deleteGoogleDriveFile = async (fileId: string): Promise<void> => {
   return executeDriveApiWithAutoRefresh(async (token) => {
-    const response = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
+    // 1. Try direct DELETE
+    const response = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?supportsAllDrives=true`, {
       method: 'DELETE',
       headers: {
         Authorization: `Bearer ${token}`
       }
     });
 
-    if (!response.ok) {
-      if (response.status === 404) {
-        console.log(`[Google Drive] File/folder ${fileId} already deleted or not found.`);
-        return;
-      }
-      if (response.status === 401) {
-        throw new Error('UNAUTHORIZED_401'); // Triggers auto-refresh retry in wrapper
-      }
-      const errorData = await response.json().catch(() => null);
-      throw new Error(`Failed to delete file/folder: ${response.status} ${response.statusText} - ${errorData?.error?.message || ''}`);
+    if (response.ok || response.status === 404) {
+      console.log(`[Google Drive] Successfully deleted file/folder ${fileId}`);
+      return;
     }
-    console.log(`[Google Drive] Successfully deleted file/folder ${fileId}`);
+
+    if (response.status === 401) {
+      throw new Error('UNAUTHORIZED_401'); // Triggers auto-refresh retry in wrapper
+    }
+
+    // 2. Fallback: If permanent DELETE is prohibited by permission/policy, move to trash via PATCH
+    const trashResponse = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?supportsAllDrives=true`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ trashed: true })
+    });
+
+    if (trashResponse.ok || trashResponse.status === 404) {
+      console.log(`[Google Drive] Successfully moved file/folder ${fileId} to Trash`);
+      return;
+    }
+
+    const errorData = await response.json().catch(() => null);
+    throw new Error(`Failed to delete file/folder: ${response.status} ${response.statusText} - ${errorData?.error?.message || ''}`);
   }, { actionName: `delete file ${fileId}` });
 };
 

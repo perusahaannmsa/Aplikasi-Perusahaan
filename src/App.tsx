@@ -13,11 +13,13 @@ import { FirebaseMigration } from './components/FirebaseMigration';
 import { SppdIntegration, SppdRecord } from './components/SppdIntegration';
 import { SppdManager, SPPDRecord } from './components/SppdManager';
 import { PublicSppdInput } from './components/PublicSppdInput';
+import { PublicEmployeeLoanInput } from './components/PublicEmployeeLoanInput';
 import { AuthGate } from './components/AuthGate';
 import { InputBuktiTransfer } from './components/InputBuktiTransfer';
 import { UploadBuktiTransferModal } from './components/UploadBuktiTransferModal';
 import { UserProfileModal } from './components/UserProfileModal';
 import { GoogleDriveSettingsModal } from './components/GoogleDriveSettingsModal';
+import { DriveOrphanCleanerModal } from './components/DriveOrphanCleanerModal';
 import { FirebaseQuotaModal } from './components/FirebaseQuotaModal';
 import { AbsensiHarianNmsa } from './components/AbsensiHarianNmsa';
 import { PettyCashHoldersModal } from './components/PettyCashHoldersModal';
@@ -45,6 +47,7 @@ import { ThemeSelectorModal, AppTheme } from './components/ThemeSelectorModal';
 import { getSynchronizedAttendanceWorkers, getSavedEmployeeLoans, saveEmployeeLoans, isLoanSubmission, syncLoansWithSubmissions } from './utils/loanUtils';
 import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, syncInvoiceSubmissionToAgenda, formatDateIndonesian } from './utils';
 import { areNamesSimilar, toTitleCase } from './utils/nameConsolidation';
+import { deleteSubmissionDriveFolder } from './utils/googleDriveCleaner';
 import { 
   isFirebaseConfigured, 
   saveSubmissionToFirestore, 
@@ -241,7 +244,14 @@ export default function App() {
 
   const [isHoldersModalOpen, setIsHoldersModalOpen] = useState(false);
   const [isConsolidateNamesModalOpen, setIsConsolidateNamesModalOpen] = useState(false);
+  const [isDriveOrphanCleanerOpen, setIsDriveOrphanCleanerOpen] = useState(false);
   const [showQuotaBanner, setShowQuotaBanner] = useState<boolean>(() => isFirestoreQuotaExceeded());
+
+  useEffect(() => {
+    const onOpenCleaner = () => setIsDriveOrphanCleanerOpen(true);
+    window.addEventListener('open-drive-orphan-cleaner', onOpenCleaner);
+    return () => window.removeEventListener('open-drive-orphan-cleaner', onOpenCleaner);
+  }, []);
 
   useEffect(() => {
     const handler = () => setShowQuotaBanner(true);
@@ -1784,14 +1794,17 @@ export default function App() {
     const updated = submissions.filter((sub) => sub.id !== id);
     saveSubmissionsToStorage(updated);
     
-    // Auto-delete Google Drive folder if exists
-    if (targetSub?.googleDriveFolderId) {
-      try {
-        console.log(`[Auto-Sync] Menghapus folder transaksi dari Google Drive: ${targetSub.googleDriveFolderId}`);
-        await deleteGoogleDriveFile(targetSub.googleDriveFolderId);
-      } catch (err) {
+    // Auto-delete Google Drive folder if exists (searches by folderId, attachments, standard name, or voucher code)
+    if (targetSub) {
+      deleteSubmissionDriveFolder(targetSub).then((res) => {
+        if (res.success) {
+          console.log(`[Auto-Sync] ${res.message}`);
+        } else {
+          console.log(`[Auto-Sync] Info folder Drive: ${res.message}`);
+        }
+      }).catch((err) => {
         console.warn('Gagal menghapus folder Google Drive saat menghapus transaksi:', err);
-      }
+      });
     }
 
     // Re-sync pinjaman jika transaksi yang dihapus merupakan pinjaman
@@ -2700,6 +2713,18 @@ export default function App() {
     );
   }
 
+  const isPublicLoanView = 
+    currentPath === '/pinjaman-karyawan' || 
+    currentPath === '/form-pinjaman' ||
+    currentPath === '/loan-form' ||
+    currentHash.includes('pinjaman-karyawan') || 
+    currentHash.includes('form-pinjaman') ||
+    currentHash.includes('loan-form');
+
+  if (isPublicLoanView) {
+    return <PublicEmployeeLoanInput onBackToHome={() => navigateTo('/')} />;
+  }
+
   const isPublicSppdView = 
     currentPath === '/input-sppd' || 
     currentPath === '/sppd-form' ||
@@ -3187,6 +3212,31 @@ export default function App() {
                       </button>
                     </div>
 
+                    {/* Pembersih Folder Drive Transaksi Terhapus */}
+                    <div className="p-2.5 rounded-xl bg-rose-50/70 border border-rose-200/80 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="p-2 bg-rose-600 text-white rounded-lg shrink-0">
+                          <Trash2 size={14} />
+                        </div>
+                        <div className="min-w-0">
+                          <h5 className="font-bold text-xs text-stone-900 leading-tight truncate">Pembersih Folder Drive</h5>
+                          <p className="text-[10px] text-stone-500 font-mono truncate">
+                            Hapus folder transaksi terhapus (No. 1088)
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsToolsDropdownOpen(false);
+                          setIsDriveOrphanCleanerOpen(true);
+                        }}
+                        className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg text-[11px] shadow-3xs cursor-pointer transition shrink-0"
+                      >
+                        Buka
+                      </button>
+                    </div>
+
                     {/* 3. Monitoring Kuota Firebase */}
                     <div className="p-2.5 rounded-xl bg-indigo-50/70 border border-indigo-200/80 flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2 min-w-0">
@@ -3389,6 +3439,22 @@ export default function App() {
                         </div>
                         <span className="text-[9px] font-mono bg-emerald-100 text-emerald-800 border border-emerald-300 px-1.5 rounded font-bold">Form Resmi</span>
                       </button>
+
+                      {/* 11b. Form Mandiri Pengajuan Pinjaman Karyawan (Portal Terpisah) */}
+                      <a
+                        href="#/form-pinjaman"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={() => setIsToolsDropdownOpen(false)}
+                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-[11px] font-semibold text-stone-600 hover:text-amber-900 hover:bg-amber-50/70 transition cursor-pointer pl-6"
+                        title="Buka website terpisah formulir mandiri karyawan (Unduh PDF otomatis setelah diisi)"
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <ExternalLink size={12} className="text-amber-600" />
+                          <span>Portal Formulir Karyawan</span>
+                        </div>
+                        <span className="text-[9px] font-mono bg-stone-100 text-stone-600 border border-stone-200 px-1 rounded">Tab Baru ↗</span>
+                      </a>
 
                       {/* 11. Pengaturan & Switcher Perusahaan */}
                       <button
@@ -4224,6 +4290,13 @@ export default function App() {
       <GoogleDriveSettingsModal
         isOpen={isGoogleDriveSettingsOpen}
         onClose={() => setIsGoogleDriveSettingsOpen(false)}
+      />
+
+      {/* Pembersih Folder Google Drive Transaksi Terhapus */}
+      <DriveOrphanCleanerModal
+        isOpen={isDriveOrphanCleanerOpen}
+        onClose={() => setIsDriveOrphanCleanerOpen(false)}
+        submissions={submissions}
       />
 
       {/* Monitoring Kuota & Sinkronisasi Firebase */}

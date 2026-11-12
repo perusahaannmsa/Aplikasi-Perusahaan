@@ -1960,7 +1960,8 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                       </button>
                       <button
                         onClick={() => {
-                          if (window.confirm(`Yakin ingin menghapus voucher "${selectedSub.dibayarkanKepada}" senilai Rp ${formatRupiah(subTotal)}?`)) {
+                          const kodeInfo = selectedSub.kode ? ` (${selectedSub.kode})` : '';
+                          if (window.confirm(`Yakin ingin menghapus voucher "${selectedSub.dibayarkanKepada}"${kodeInfo} senilai Rp ${formatRupiah(subTotal)}?\n\nFolder transaksi & seluruh lampiran di Google Drive akan otomatis ikut dihapus.`)) {
                             onDelete(selectedSub.id);
                             setSelectedRowId(null);
                           }
@@ -2241,7 +2242,8 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                               title="Hapus Data"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                if (window.confirm(`Yakin ingin menghapus data pengajuan untuk "${sub.dibayarkanKepada}" senilai Rp ${formatRupiah(subTotal)}?`)) {
+                                const kodeInfo = sub.kode ? ` (${sub.kode})` : '';
+                                if (window.confirm(`Yakin ingin menghapus data pengajuan untuk "${sub.dibayarkanKepada}"${kodeInfo} senilai Rp ${formatRupiah(subTotal)}?\n\nFolder transaksi & seluruh lampiran di Google Drive akan otomatis ikut dihapus.`)) {
                                   onDelete(sub.id);
                                 }
                               }}
@@ -4788,7 +4790,8 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 setOpenActionMenuId(null);
                 setActionMenuPosition(null);
                 const subTotal = (activeActionSub.items || []).reduce((sum, i) => sum + i.total, 0);
-                if (window.confirm(`Yakin ingin menghapus data pengajuan untuk "${activeActionSub.dibayarkanKepada}" senilai Rp ${formatRupiah(subTotal)}?`)) {
+                const kodeInfo = activeActionSub.kode ? ` (${activeActionSub.kode})` : '';
+                if (window.confirm(`Yakin ingin menghapus data pengajuan untuk "${activeActionSub.dibayarkanKepada}"${kodeInfo} senilai Rp ${formatRupiah(subTotal)}?\n\nFolder transaksi & seluruh lampiran di Google Drive akan otomatis ikut dihapus.`)) {
                   onDelete(activeActionSub.id);
                 }
               }}

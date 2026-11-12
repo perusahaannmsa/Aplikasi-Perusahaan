@@ -307,6 +307,7 @@ export interface NpwpRecord {
   contactPerson?: string;
   notes?: string;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface AccurateAccount {

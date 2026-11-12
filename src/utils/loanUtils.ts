@@ -275,37 +275,21 @@ export function saveEmployeeLoans(loans: EmployeeLoan[]): void {
  */
 export function isLoanSubmission(sub: Submission): boolean {
   if (!sub) return false;
+  // 1. Ditandai manual atau terhubung langsung dengan ID / nomor pinjaman
   if (sub.loanId || (sub as any).loanNumber || (sub as any).isLoan) return true;
   
-  const textToCheck = [
-    sub.jenisPengajuan || '',
-    sub.notes || '',
-    sub.dibayarkanKepada || '',
-    (sub as any).kategori || '',
-    (sub as any).tipeTransaksi || '',
-    ...(Array.isArray(sub.items) ? sub.items.map(it => `${it.item || ''} ${it.keterangan || ''}`) : [])
-  ].join(' ').toLowerCase();
+  // 2. Berdasarkan jenis pengajuan yang eksplisit "Pinjaman Karyawan" / "Pinjaman"
+  const cleanJenis = (sub.jenisPengajuan || '').trim().toLowerCase();
+  if (
+    cleanJenis === 'pinjaman karyawan' || 
+    cleanJenis === 'pinjaman' || 
+    cleanJenis === 'kasbon karyawan' ||
+    cleanJenis === 'pencairan pinjaman karyawan'
+  ) {
+    return true;
+  }
 
-  const loanKeywords = [
-    'pinjam',
-    'pinjaman',
-    'kasbon',
-    'loan',
-    'hutang',
-    'utang',
-    'piutang',
-    'talangan',
-    'pk-202',
-    'pinjaman sementara',
-    'pinjaman anh',
-    'pinjaman nh',
-    'pinjaman shiron',
-    'pinjaman ipn',
-    'hutang pihak ketiga',
-    'hutang pribadi'
-  ];
-
-  return loanKeywords.some(kw => textToCheck.includes(kw));
+  return false;
 }
 
 /**

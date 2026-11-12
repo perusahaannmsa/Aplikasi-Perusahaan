@@ -1416,6 +1416,28 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
                 </button>
               </div>
 
+              {/* Clean Up Deleted/Orphaned Folders Section */}
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-rose-50/60 border border-rose-200/80 p-3.5 rounded-xl">
+                <div className="space-y-0.5">
+                  <p className="text-xs font-bold text-stone-800 leading-tight flex items-center gap-1.5">
+                    <Trash2 size={13} className="text-rose-500" />
+                    Bersihkan Folder Transaksi Terhapus di Google Drive (Contoh: No. 1088)
+                  </p>
+                  <p className="text-[10px] text-stone-600">
+                    Cari berdasarkan nomor voucher atau pindai otomatis folder di Google Drive yang datanya sudah dihapus dari aplikasi.
+                  </p>
+                </div>
+                
+                <button
+                  type="button"
+                  onClick={() => window.dispatchEvent(new CustomEvent('open-drive-orphan-cleaner'))}
+                  className="w-full sm:w-auto flex items-center justify-center gap-1.5 px-4 py-2 text-[11px] font-bold text-rose-700 bg-white hover:bg-rose-100 border border-rose-250 rounded-lg shadow-3xs transition cursor-pointer shrink-0"
+                >
+                  <Trash2 size={12} className="text-rose-600" />
+                  <span>Buka Pembersih Folder Drive</span>
+                </button>
+              </div>
+
               {/* Progress Panel */}
               {isSyncing && (
                 <div className="space-y-2 bg-stone-50 border border-stone-200/80 p-4 rounded-xl">

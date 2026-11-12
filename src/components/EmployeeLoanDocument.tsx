@@ -223,7 +223,6 @@ export const EmployeeLoanDocument: React.FC<EmployeeLoanDocumentProps> = ({
                   <div className="border-t border-black pt-1.5 text-[9pt] leading-tight space-y-0.5">
                     <div><strong>Nama :</strong> {loan.peminjamNama || loan.namaKaryawan || '.....................'}</div>
                     <div><strong>Jabatan :</strong> {loan.peminjamJabatan || loan.divisi || '.....................'}</div>
-                    <div><strong>Tanggal :</strong> {formatTanggalIndo(loan.peminjamTanggal || loan.tanggalPermohonan)}</div>
                   </div>
                 </td>
 
@@ -235,7 +234,6 @@ export const EmployeeLoanDocument: React.FC<EmployeeLoanDocumentProps> = ({
                   <div className="border-t border-black pt-1.5 text-[9pt] leading-tight space-y-0.5">
                     <div><strong>Nama :</strong> {loan.atasanNama || 'Andi Muhammad Rifki'}</div>
                     <div><strong>Jabatan :</strong> {loan.atasanJabatan || 'Direktur'}</div>
-                    <div><strong>Tanggal :</strong> {formatTanggalIndo(loan.atasanTanggal || loan.tanggalPermohonan)}</div>
                   </div>
                 </td>
 
@@ -247,7 +245,6 @@ export const EmployeeLoanDocument: React.FC<EmployeeLoanDocumentProps> = ({
                   <div className="border-t border-black pt-1.5 text-[9pt] leading-tight space-y-0.5">
                     <div><strong>Nama :</strong> {loan.financeNama || 'Harijon'}</div>
                     <div><strong>Jabatan :</strong> {loan.financeJabatan || 'Direktur Keuangan'}</div>
-                    <div><strong>Tanggal :</strong> {formatTanggalIndo(loan.financeTanggal || loan.tanggalPengambilanPinjaman)}</div>
                   </div>
                 </td>
 
@@ -259,7 +256,6 @@ export const EmployeeLoanDocument: React.FC<EmployeeLoanDocumentProps> = ({
                   <div className="border-t border-black pt-1.5 text-[9pt] leading-tight space-y-0.5">
                     <div><strong>Nama :</strong> {loan.direkturNama || 'Andi Nursyam Halid'}</div>
                     <div><strong>Jabatan :</strong> {loan.direkturJabatan || 'Direktur Utama'}</div>
-                    <div><strong>Tanggal :</strong> {formatTanggalIndo(loan.direkturTanggal || loan.tanggalPengambilanPinjaman)}</div>
                   </div>
                 </td>
               </tr>
@@ -318,9 +314,6 @@ export const EmployeeLoanDocument: React.FC<EmployeeLoanDocumentProps> = ({
                               <div className="border-t border-black pt-1.5 text-[9pt] leading-tight space-y-0.5">
                                 <div><strong>Nama :</strong> {signer.nama || '.....................'}</div>
                                 <div><strong>Jabatan :</strong> {signer.jabatan || '.....................'}</div>
-                                {signer.tanggal ? (
-                                  <div><strong>Tanggal :</strong> {formatTanggalIndo(signer.tanggal)}</div>
-                                ) : null}
                               </div>
                             </td>
                           ))}
