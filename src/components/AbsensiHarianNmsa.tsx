@@ -2221,10 +2221,16 @@ export function AbsensiHarianNmsa({
             resolvedWorkers = mergedWorkers;
             setWorkers((prevWorkers) => {
               if (JSON.stringify(prevWorkers) !== JSON.stringify(mergedWorkers)) {
+                try {
+                  localStorage.setItem("karyawan_uang_makan", JSON.stringify(mergedWorkers));
+                } catch (_) {}
                 return mergedWorkers;
               }
               return prevWorkers;
             });
+            try {
+              localStorage.setItem("karyawan_uang_makan", JSON.stringify(mergedWorkers));
+            } catch (_) {}
           }
 
           if (data.attendanceRecords && Array.isArray(data.attendanceRecords)) {
@@ -2456,7 +2462,11 @@ export function AbsensiHarianNmsa({
             setWorkers((prevW) => {
               const ids = new Set(prevW.map(w => w.id));
               const missing = fbData.workers.filter(w => !ids.has(w.id));
-              return missing.length > 0 ? [...prevW, ...missing] : prevW;
+              const merged = missing.length > 0 ? [...prevW, ...missing] : prevW;
+              try {
+                localStorage.setItem("karyawan_uang_makan", JSON.stringify(merged));
+              } catch (_) {}
+              return merged;
             });
           }
 
@@ -2535,6 +2545,9 @@ export function AbsensiHarianNmsa({
       if (cloudData.workers && cloudData.workers.length > 0) {
         setWorkers((prevW) => {
           if (JSON.stringify(prevW) === JSON.stringify(cloudData.workers)) return prevW;
+          try {
+            localStorage.setItem("karyawan_uang_makan", JSON.stringify(cloudData.workers));
+          } catch (_) {}
           return cloudData.workers;
         });
       }
@@ -4248,27 +4261,68 @@ export function AbsensiHarianNmsa({
     triggerExcelDownload(activeWorkspaceReport.transactions, activeWorkspaceReport.summary, cleanFileName);
   };
 
-  // --- Workers Management Actions ---
+  // --- Workers Management Actions (Cross-Device Synchronized) ---
   const handleAddWorker = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newWorkerName) return;
+    if (!newWorkerName || !newWorkerName.trim()) return;
+
+    // Generate safe sequential ID without duplicates
+    const nextNum = Math.max(
+      0,
+      ...workers.map((w) => {
+        const num = parseInt((w.id || "").replace(/\D/g, ""), 10);
+        return isNaN(num) ? 0 : num;
+      }),
+      workers.length
+    ) + 1;
+    const nextId = "W" + String(nextNum).padStart(2, "0");
 
     const newWorker: Worker = {
-      id: "W0" + (workers.length + 1),
-      name: newWorkerName,
-      role: "Karyawan",
+      id: nextId,
+      name: newWorkerName.trim(),
+      role: newWorkerRole || "Karyawan",
       isActive: true,
-      phoneNumber: newWorkerPhoneNumber || undefined,
+      phoneNumber: newWorkerPhoneNumber ? newWorkerPhoneNumber.trim() : undefined,
+      bankName: newWorkerBankName ? newWorkerBankName.trim() : undefined,
+      bankAccount: newWorkerBankAccount ? newWorkerBankAccount.trim() : undefined,
       updatedAt: Date.now(),
     };
 
-    setWorkers([...workers, newWorker]);
+    const updatedWorkers = [...workers, newWorker];
+    setWorkers(updatedWorkers);
+
+    let updatedRecords = [...attendanceRecords];
+    if (!updatedRecords.some((r) => r.workerId === nextId)) {
+      updatedRecords.push({
+        workerId: nextId,
+        dailyAllowance: 25000,
+        attendance: {},
+        customStatus: {},
+        reasons: {},
+        signatures: {},
+      });
+      setAttendanceRecords(updatedRecords);
+    }
+
+    try {
+      localStorage.setItem("karyawan_uang_makan", JSON.stringify(updatedWorkers));
+      localStorage.setItem("absensi_uang_makan_records", JSON.stringify(updatedRecords));
+    } catch (_) {}
+
     setNewWorkerName("");
     setNewWorkerRole("");
     setNewWorkerBankName("");
     setNewWorkerBankAccount("");
     setNewWorkerPhoneNumber("");
     setNewWorkerNik("");
+
+    // Broadcast sync to Firestore and Server immediately so Computer receives it
+    saveAttendanceToFirestore(updatedRecords, updatedWorkers, weeklyReports).catch((err) =>
+      console.warn("Firestore worker sync error:", err)
+    );
+    syncStateToServer(updatedWorkers, updatedRecords, weeklyReports).catch((err) =>
+      console.warn("Server worker sync error:", err)
+    );
   };
 
   const handleOpenEditWorker = (worker: Worker) => {
@@ -4285,33 +4339,55 @@ export function AbsensiHarianNmsa({
     e.preventDefault();
     if (!editingWorker || !editWorkerName) return;
 
-    setWorkers(
-      workers.map((w) =>
-        w.id === editingWorker.id
-          ? {
-              ...w,
-              name: editWorkerName,
-              role: "Karyawan",
-              phoneNumber: editWorkerPhoneNumber || undefined,
-              updatedAt: Date.now(),
-            }
-          : w
-      )
+    const updatedWorkers = workers.map((w) =>
+      w.id === editingWorker.id
+        ? {
+            ...w,
+            name: editWorkerName.trim(),
+            role: "Karyawan",
+            phoneNumber: editWorkerPhoneNumber ? editWorkerPhoneNumber.trim() : undefined,
+            updatedAt: Date.now(),
+          }
+        : w
     );
 
+    setWorkers(updatedWorkers);
+    try {
+      localStorage.setItem("karyawan_uang_makan", JSON.stringify(updatedWorkers));
+    } catch (_) {}
+
     setEditingWorker(null);
+
+    saveAttendanceToFirestore(attendanceRecords, updatedWorkers, weeklyReports).catch(() => {});
+    syncStateToServer(updatedWorkers, attendanceRecords, weeklyReports).catch(() => {});
   };
 
   const handleToggleWorkerActive = (workerId: string) => {
-    setWorkers(
-      workers.map((w) => (w.id === workerId ? { ...w, isActive: !w.isActive, updatedAt: Date.now() } : w))
+    const updatedWorkers = workers.map((w) =>
+      w.id === workerId ? { ...w, isActive: !w.isActive, updatedAt: Date.now() } : w
     );
+    setWorkers(updatedWorkers);
+    try {
+      localStorage.setItem("karyawan_uang_makan", JSON.stringify(updatedWorkers));
+    } catch (_) {}
+
+    saveAttendanceToFirestore(attendanceRecords, updatedWorkers, weeklyReports).catch(() => {});
+    syncStateToServer(updatedWorkers, attendanceRecords, weeklyReports).catch(() => {});
   };
 
   const handleRemoveWorker = (workerId: string) => {
     if (!window.confirm("Apakah Anda yakin ingin menghapus karyawan ini?")) return;
-    setWorkers(workers.filter((w) => w.id !== workerId));
-    setAttendanceRecords((prev) => prev.filter((r) => r.workerId !== workerId));
+    const updatedWorkers = workers.filter((w) => w.id !== workerId);
+    const updatedRecords = attendanceRecords.filter((r) => r.workerId !== workerId);
+    setWorkers(updatedWorkers);
+    setAttendanceRecords(updatedRecords);
+    try {
+      localStorage.setItem("karyawan_uang_makan", JSON.stringify(updatedWorkers));
+      localStorage.setItem("absensi_uang_makan_records", JSON.stringify(updatedRecords));
+    } catch (_) {}
+
+    saveAttendanceToFirestore(updatedRecords, updatedWorkers, weeklyReports).catch(() => {});
+    syncStateToServer(updatedWorkers, updatedRecords, weeklyReports).catch(() => {});
   };
 
   // --- WhatsApp Baileys Controller Handlers ---

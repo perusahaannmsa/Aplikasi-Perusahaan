@@ -91,6 +91,7 @@ export const InternalMemoDocument: React.FC<InternalMemoDocumentProps> = ({
                 maxWidth: '100%',
                 height: 'auto',
                 display: 'block',
+                imageRendering: '-webkit-optimize-contrast',
               }}
               referrerPolicy="no-referrer"
             />

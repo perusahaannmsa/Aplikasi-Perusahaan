@@ -102,9 +102,9 @@ export const VoucherOnlineQr: React.FC<{
   useEffect(() => {
     let isMounted = true;
     QRCode.toDataURL(targetUrl, {
-      width: Math.max(160, Math.round(size * 3)),
+      width: Math.max(240, Math.round(size * 4)),
       margin: 1,
-      errorCorrectionLevel: 'M',
+      errorCorrectionLevel: 'H',
       color: {
         dark: '#000000',
         light: '#ffffff',
@@ -603,14 +603,14 @@ const PageScaleWrapper: React.FC<{ children: React.ReactNode; isLandscape?: bool
     return (
       <div 
         ref={containerRef} 
-        className={`w-full flex flex-col items-center justify-center print:!block print:!w-full print:!max-w-full print:!h-auto print:!overflow-visible ${!isLastPage ? "print-force-page-break" : ""}`}
+        className={`w-full flex flex-col items-center justify-center print:!block print:!w-full print:!max-w-full print:!h-auto print:!overflow-visible ${!isLastPage ? "print-force-page-break" : "print:!break-after-avoid print:!page-break-after-avoid"}`}
       >
         <div 
           style={{ 
             width: `${targetWidth * scale}px`,
             height: `${targetHeight * scale}px`,
           }}
-          className="relative overflow-hidden flex items-start justify-start print:!w-full print:!max-w-full print:!h-auto print:!overflow-visible print:!block"
+          className="relative overflow-hidden flex items-start justify-start print:!w-full print:!max-w-full print:!h-auto print:!overflow-visible print:!block print:!static"
         >
           <div 
             style={{ 
@@ -619,7 +619,7 @@ const PageScaleWrapper: React.FC<{ children: React.ReactNode; isLandscape?: bool
               width: `${targetWidth}px`,
               height: `${targetHeight}px`,
             }}
-            className="origin-top-left shrink-0 print:!transform-none print:!w-full print:!max-w-full print:!h-auto print:!overflow-visible print:!block print:!p-0 print:!m-0"
+            className="origin-top-left shrink-0 print:!transform-none print:!w-full print:!max-w-full print:!h-auto print:!overflow-visible print:!block print:!p-0 print:!m-0 print:!static"
           >
             {children}
           </div>
@@ -630,7 +630,7 @@ const PageScaleWrapper: React.FC<{ children: React.ReactNode; isLandscape?: bool
 
   // Normal scale (no scaling needed)
   return (
-    <div ref={containerRef} className={`w-full flex flex-col items-center print:!block print:!w-full print:!max-w-full ${!isLastPage ? "print-force-page-break" : ""}`}>
+    <div ref={containerRef} className={`w-full flex flex-col items-center print:!block print:!w-full print:!max-w-full print:!h-auto print:!overflow-visible ${!isLastPage ? "print-force-page-break" : "print:!break-after-avoid print:!page-break-after-avoid"}`}>
       <div className="shrink-0 print:!block print:!w-full print:!max-w-full print:!h-auto print:!overflow-visible">
         {children}
       </div>
@@ -1770,20 +1770,23 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
                     setLoadingProgress(`Merender PDF ${file.name} - Halaman ${pNum} dari ${pdf.numPages}...`);
                   }
                   const page = await pdf.getPage(pNum);
-                  const viewport = page.getViewport({ scale: 2.2 });
+                  // High-definition 3.0 scale for crisp, razor-sharp print and PDF export
+                  const viewport = page.getViewport({ scale: 3.0 });
                   const canvas = document.createElement('canvas');
-                  const context = canvas.getContext('2d');
+                  const context = canvas.getContext('2d', { alpha: false });
                   if (!context) continue;
 
                   canvas.height = viewport.height;
                   canvas.width = viewport.width;
+                  context.imageSmoothingEnabled = true;
+                  context.imageSmoothingQuality = 'high';
 
                   await page.render({
                     canvasContext: context,
                     viewport: viewport
                   }).promise;
 
-                  const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
+                  const dataUrl = canvas.toDataURL('image/jpeg', 0.98);
                   const isLandscape = viewport.width > viewport.height;
                   tempPages.push({
                     id: `b64-pdf-${i}-p${pNum}`,
@@ -1969,21 +1972,23 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
                   setLoadingProgress(`Merender PDF ${file.name} - Halaman ${pNum} dari ${pdf.numPages}...`);
                 }
                 const page = await pdf.getPage(pNum);
-                // Scale to 2.2 for high-definition print resolution which preserves micro-text readability
-                const viewport = page.getViewport({ scale: 2.2 });
+                // High-definition 3.0 scale for crisp, razor-sharp print resolution
+                const viewport = page.getViewport({ scale: 3.0 });
                 const canvas = document.createElement('canvas');
-                const context = canvas.getContext('2d');
+                const context = canvas.getContext('2d', { alpha: false });
                 if (!context) continue;
 
                 canvas.height = viewport.height;
                 canvas.width = viewport.width;
+                context.imageSmoothingEnabled = true;
+                context.imageSmoothingQuality = 'high';
 
                 await page.render({
                   canvasContext: context,
                   viewport: viewport
                 }).promise;
 
-                const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.98);
                 const isLandscape = viewport.width > viewport.height;
                 tempPages.push({
                   id: `${fileId}-p${pNum}`,
@@ -3533,7 +3538,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
             {/* ================= PAGE 1: BUKTI PENGELUARAN KAS / BANK (STANDARD 100% LAYOUT) ================= */}
             {printLayoutMode === 'standard' && (activeTab === 'both' || activeTab === 'pengajuan') && (
               <PageScaleWrapper isLandscape={false} isLastPage={!hasMoreAfterF1}>
-                <div className={`w-[210mm] max-w-full print:!w-full print:!max-w-full ${isUltraDenseF1 ? 'min-h-[297mm] p-[8mm] sm:p-[10mm]' : isDenseF1 ? 'min-h-[297mm] p-[10mm] sm:p-[12mm]' : 'min-h-[297mm] p-[14mm] sm:p-[15mm]'} bg-white border border-stone-250 shadow-md rounded-xl print:shadow-none print:border-none print:rounded-none print:!p-0 print:!m-0 print:!min-h-0 print:!h-auto page-break flex flex-col justify-between box-border`}>
+                <div className={`w-[210mm] max-w-full print:!w-full print:!max-w-full ${isUltraDenseF1 ? 'min-h-[297mm] p-[8mm] sm:p-[10mm]' : isDenseF1 ? 'min-h-[297mm] p-[10mm] sm:p-[12mm]' : 'min-h-[297mm] p-[14mm] sm:p-[15mm]'} bg-white border border-stone-250 shadow-md rounded-xl print:shadow-none print:border-none print:rounded-none print:!p-0 print:!m-0 print:!min-h-0 print:!h-auto print:!max-h-[268mm] print:!overflow-hidden page-break flex flex-col justify-between box-border`}>
                   
                   {/* Top Content: Header, Meta, Table & Terbilang */}
                   <div className="flex-1 flex flex-col justify-start">
@@ -3684,7 +3689,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
         {/* ================= PAGE 1: BUKTI PENGELUARAN KAS / BANK (COMPACT TOP LAYOUT) ================= */}
         {printLayoutMode === 'compact_70' && (activeTab === 'both' || activeTab === 'pengajuan') && (
           <PageScaleWrapper isLandscape={false} isLastPage={!hasMoreAfterF1}>
-            <div className="w-[210mm] print:w-full min-h-[297mm] print:h-[297mm] bg-white p-[8mm] border border-stone-250 shadow-md rounded-xl print:shadow-none print:border-none print:rounded-none page-break flex flex-col justify-between box-border overflow-hidden">
+            <div className="w-[210mm] print:w-full min-h-[297mm] print:!h-auto print:!max-h-[268mm] bg-white p-[8mm] border border-stone-250 shadow-md rounded-xl print:shadow-none print:border-none print:rounded-none page-break flex flex-col justify-between box-border overflow-hidden print:!overflow-hidden">
               
               {/* Top Half (50%): F1 Box */}
               <div className="w-full border-[1.5px] border-black p-4 bg-white text-xs sm:text-sm flex-1 flex flex-col justify-between box-border overflow-hidden">
@@ -3813,7 +3818,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
 
           return (
             <PageScaleWrapper isLandscape={false} isLastPage={!hasMoreAfterF2}>
-              <div className={`w-[210mm] max-w-full print:!w-full print:!max-w-full ${isUltraDenseF2 ? 'min-h-[297mm] p-[8mm] sm:p-[10mm]' : isDenseF2 ? 'min-h-[297mm] p-[10mm] sm:p-[12mm]' : 'min-h-[297mm] p-[14mm] sm:p-[15mm]'} bg-white border border-stone-250 shadow-md rounded-xl print:shadow-none print:border-none print:rounded-none print:!p-0 print:!m-0 print:!min-h-0 print:!h-auto page-break flex flex-col justify-between box-border`}>
+              <div className={`w-[210mm] max-w-full print:!w-full print:!max-w-full ${isUltraDenseF2 ? 'min-h-[297mm] p-[8mm] sm:p-[10mm]' : isDenseF2 ? 'min-h-[297mm] p-[10mm] sm:p-[12mm]' : 'min-h-[297mm] p-[14mm] sm:p-[15mm]'} bg-white border border-stone-250 shadow-md rounded-xl print:shadow-none print:border-none print:rounded-none print:!p-0 print:!m-0 print:!min-h-0 print:!h-auto print:!max-h-[268mm] print:!overflow-hidden page-break flex flex-col justify-between box-border`}>
                 
                 {/* Top Content: Header, Meta & Table */}
                 <div className="flex-1 flex flex-col justify-start">
@@ -3924,7 +3929,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
         {/* ================= PAGE 2: FORMULIR PENGAJUAN HO (COMPACT TOP LAYOUT) ================= */}
         {showF2 && printLayoutMode === 'compact_70' && (activeTab === 'both' || activeTab === 'pengajuan') && (
           <PageScaleWrapper isLandscape={false} isLastPage={!hasMoreAfterF2}>
-            <div className="w-[210mm] print:w-full min-h-[297mm] print:h-[297mm] bg-white p-[8mm] border border-stone-250 shadow-md rounded-xl print:shadow-none print:border-none print:rounded-none page-break flex flex-col justify-between box-border overflow-hidden">
+            <div className="w-[210mm] print:w-full min-h-[297mm] print:!h-auto print:!max-h-[268mm] bg-white p-[8mm] border border-stone-250 shadow-md rounded-xl print:shadow-none print:border-none print:rounded-none page-break flex flex-col justify-between box-border overflow-hidden print:!overflow-hidden">
               
               {/* Top Half (50%): F2 Box */}
               <div className="w-full border-[1.5px] border-black p-4 bg-white text-xs sm:text-sm flex-1 flex flex-col justify-between box-border overflow-hidden">
@@ -4840,6 +4845,11 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
       {/* Styled inline media-print stylesheet to dynamically align perfectly fit elements */}
       <style>{`
         @media print {
+          *, *::before, *::after {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+            color-adjust: exact !important;
+          }
           @page {
             size: A4 portrait;
             margin: 8mm 12mm 8mm 12mm;
@@ -4851,7 +4861,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
           html, body, #app-root, main, #app-root > main {
             background-color: white !important;
             background: white !important;
-            color: black !important;
+            color: #000000 !important;
             margin: 0 !important;
             padding: 0 !important;
             width: 100% !important;
@@ -4861,17 +4871,49 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
             display: block !important;
             box-shadow: none !important;
             border: none !important;
+            -webkit-font-smoothing: antialiased !important;
+            -moz-osx-font-smoothing: grayscale !important;
+            text-rendering: geometricPrecision !important;
+          }
+          /* Typography sharpness & true black contrast */
+          p, span, div, td, th, h1, h2, h3, h4, h5, h6 {
+            -webkit-font-smoothing: antialiased !important;
+            -moz-osx-font-smoothing: grayscale !important;
+            text-rendering: geometricPrecision !important;
+          }
+          /* Razor-sharp image & barcode rendering */
+          img, canvas, svg {
+            image-rendering: -webkit-optimize-contrast !important;
+            image-rendering: crisp-edges !important;
+            image-rendering: high-quality !important;
           }
           /* Ensure wrapper elements do not carry external paddings/spacings in print content */
+          .space-y-6, .space-y-8, .space-y-4, .space-y-2 {
+            gap: 0 !important;
+          }
+          .space-y-6 > *, .space-y-8 > *, .space-y-4 > *, .space-y-2 > *,
           .space-y-6 > * + *, .space-y-8 > * + * {
-            margin: 0 !important;
-            padding: 0 !important;
+            margin-top: 0 !important;
+            margin-bottom: 0 !important;
+            padding-top: 0 !important;
+            padding-bottom: 0 !important;
             gap: 0 !important;
           }
           .print\:hidden {
             display: none !important;
           }
-          /* Ensure each form fits exactly on a single A4 page */
+          /* Reset screen scale and prevent rasterization blur */
+          .origin-top-left,
+          [style*="scale("] {
+            transform: none !important;
+          }
+          /* Force solid black on voucher tables, signatures, and document text */
+          .voucher-table, .voucher-table th, .voucher-table td,
+          .signature-sub-table, .signature-sub-table th, .signature-sub-table td {
+            color: #000000 !important;
+            border-color: #000000 !important;
+          }
+          /* Ensure each form fits exactly on a single A4 page without overflowing to 2nd blank sheet */
           .page-break {
             border: none !important;
             padding: 0 !important;
@@ -4879,17 +4921,20 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
             width: 100% !important;
             height: auto !important;
             min-height: 0 !important;
-            max-height: 280mm !important;
+            max-height: 268mm !important;
+            overflow: hidden !important;
             box-sizing: border-box !important;
             box-shadow: none !important;
             page-break-inside: avoid !important;
             break-inside: avoid !important;
           }
           .page-break.is-image-page {
-            height: 272mm !important;
+            height: 270mm !important;
+            max-height: 270mm !important;
           }
           .page-break.is-image-page.print-landscape {
             height: 185mm !important;
+            max-height: 185mm !important;
             page: landscape-page !important;
           }
           .page-break.is-image-page img {
@@ -4907,6 +4952,17 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
           .print-force-page-break {
             page-break-after: always !important;
             break-after: page !important;
+          }
+          /* Anti-blank-page: The last printed page must never force a page break */
+          .page-break:last-child,
+          .page-break:last-of-type,
+          .print-force-page-break:last-child,
+          .print-force-page-break:last-of-type,
+          div:last-child > .print-force-page-break,
+          div:last-child > .page-break,
+          *:last-child > .print-force-page-break {
+            page-break-after: avoid !important;
+            break-after: avoid !important;
           }
           /* Ensure no cutoffs or overlapping content */
           table, tr, td, th {

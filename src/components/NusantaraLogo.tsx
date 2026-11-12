@@ -34,6 +34,7 @@ export const NusantaraLogo: React.FC<LogoProps> = ({
         src={effectiveLogoUrl}
         alt={companyName || 'PT Nusantara Mineral Sukses Abadi'}
         className={`company-logo-img ${dimClass} object-contain`}
+        style={{ imageRendering: '-webkit-optimize-contrast' }}
         referrerPolicy="no-referrer"
         onError={(e) => {
           // Graceful fallback if custom logo fails to load

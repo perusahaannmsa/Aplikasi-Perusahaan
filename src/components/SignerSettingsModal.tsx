@@ -280,6 +280,8 @@ export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
   const activeF1Count = localF1.filter((s) => s.enabled !== false).length;
   const activeF2Count = localF2.filter((s) => s.enabled !== false).length;
 
+  if (!isOpen) return null;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto print:hidden">
       <div className="bg-white rounded-2xl shadow-2xl border border-stone-200 w-full max-w-4xl overflow-hidden flex flex-col max-h-[94vh]">

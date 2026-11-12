@@ -48,6 +48,7 @@ export const EmployeeLoanDocument: React.FC<EmployeeLoanDocumentProps> = ({
                 maxWidth: '100%',
                 height: 'auto',
                 display: 'block',
+                imageRendering: '-webkit-optimize-contrast',
               }}
               onError={(e) => {
                 // Fallback jika gambar kop surat tidak terload

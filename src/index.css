@@ -624,13 +624,96 @@ html, body {
 }
 
 @media print {
+  /* 1. UNIVERSAL PRINT COLOR PRESERVATION (Prevents faded backgrounds, washed-out borders, and light dithering) */
+  *, *::before, *::after {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+    text-shadow: none !important;
+    box-shadow: none !important;
+  }
+
+  /* 2. THEME COLOR OVERRIDE IN PRINT (Ensures dark/custom themes never bleed inverted or pale colors into print) */
+  :root,
+  html,
+  body,
+  .theme-classic,
+  .theme-gold-dark,
+  .theme-emerald,
+  .theme-slate,
+  .theme-sunset,
+  .theme-nordic,
+  .theme-cyberpunk,
+  .theme-cozy {
+    --color-white: #ffffff !important;
+    --color-stone-50: #ffffff !important;
+    --color-stone-100: #f4f4f5 !important;
+    --color-stone-150: #e4e4e7 !important;
+    --color-stone-200: #d4d4d8 !important;
+    --color-stone-250: #a1a1aa !important;
+    --color-stone-300: #71717a !important;
+    --color-stone-400: #52525b !important;
+    --color-stone-500: #3f3f46 !important;
+    --color-stone-600: #27272a !important;
+    --color-stone-700: #18181b !important;
+    --color-stone-800: #09090b !important;
+    --color-stone-850: #000000 !important;
+    --color-stone-900: #000000 !important;
+    background-color: #ffffff !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  /* 3. HIGH-PRECISION TYPOGRAPHY & VECTOR SHARPNESS */
+  body, p, span, div, td, th, h1, h2, h3, h4, h5, h6, strong, b, em, i, a {
+    -webkit-font-smoothing: antialiased !important;
+    -moz-osx-font-smoothing: grayscale !important;
+    text-rendering: geometricPrecision !important;
+  }
+
+  /* 4. CRISP HIGH-CONTRAST IMAGE & BARCODE RENDERING */
+  img, canvas, svg {
+    image-rendering: -webkit-optimize-contrast !important;
+    image-rendering: crisp-edges !important;
+    image-rendering: high-quality !important;
+  }
+
+  /* 5. RESET SCREEN SCALE / TRANSFORMS TO PREVENT BITMAP BLUR */
+  .origin-top-left,
+  [style*="scale("] {
+    transform: none !important;
+  }
+
+  /* 6. TRUE SOLID BLACK TEXT & BORDER CONTRAST FOR ALL OFFICIAL DOCUMENTS */
+  .voucher-table, .voucher-table *,
+  .signature-sub-table, .signature-sub-table *,
+  .memo-word-document, .memo-word-document *,
+  #internal-memo-printable-document, #internal-memo-printable-document *,
+  #employee-loan-printable-document, #employee-loan-printable-document *,
+  .page-break:not(.is-image-page) p,
+  .page-break:not(.is-image-page) span:not(.badge-color-override),
+  .page-break:not(.is-image-page) td,
+  .page-break:not(.is-image-page) th,
+  .page-break:not(.is-image-page) h1,
+  .page-break:not(.is-image-page) h2,
+  .page-break:not(.is-image-page) h3 {
+    color: #000000 !important;
+  }
+
+  .voucher-table, .voucher-table th, .voucher-table td,
+  .signature-sub-table, .signature-sub-table th, .signature-sub-table td,
+  .memo-word-document table, .memo-word-document th, .memo-word-document td,
+  #employee-loan-printable-document table, #employee-loan-printable-document th, #employee-loan-printable-document td {
+    border-color: #000000 !important;
+  }
+
   @page {
     size: A4 portrait;
-    margin: 10mm 12mm 10mm 12mm;
+    margin: 8mm 12mm 8mm 12mm;
   }
   @page landscape-page {
     size: A4 landscape;
-    margin: 10mm 12mm 10mm 12mm;
+    margin: 8mm 12mm 8mm 12mm;
   }
   html, body, #app-root, main, #submissions-list-container {
     display: block !important;
@@ -648,10 +731,31 @@ html, body {
   .page-break {
     page-break-inside: avoid !important;
     break-inside: avoid !important;
+    max-height: 268mm !important;
+    overflow: hidden !important;
+    box-sizing: border-box !important;
+  }
+  .page-break.is-image-page {
+    height: 270mm !important;
+    max-height: 270mm !important;
+  }
+  .page-break.is-image-page.print-landscape {
+    height: 185mm !important;
+    max-height: 185mm !important;
   }
   .print-force-page-break {
     page-break-after: always !important;
     break-after: page !important;
+  }
+  .page-break:last-child,
+  .page-break:last-of-type,
+  .print-force-page-break:last-child,
+  .print-force-page-break:last-of-type,
+  div:last-child > .print-force-page-break,
+  div:last-child > .page-break,
+  *:last-child > .print-force-page-break {
+    page-break-after: avoid !important;
+    break-after: avoid !important;
   }
   .sppd-print-page {
     page-break-inside: avoid !important;
@@ -699,6 +803,7 @@ html, body {
     height: auto !important;
     display: block !important;
     object-fit: fill !important;
+    image-rendering: -webkit-optimize-contrast !important;
   }
 
   /* Employee Loan Form Exact Format Print Isolation */
@@ -728,6 +833,7 @@ html, body {
     height: auto !important;
     display: block !important;
     object-fit: fill !important;
+    image-rendering: -webkit-optimize-contrast !important;
   }
 }
 

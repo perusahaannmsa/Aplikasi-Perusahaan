@@ -315,6 +315,9 @@ export default function App() {
             if (!fbRes.ok) throw new Error(`HTTP ${fbRes.status}`);
             const fbData = await fbRes.json();
             if (fbData) {
+              if (fbData.workers && Array.isArray(fbData.workers) && fbData.workers.length > 0) {
+                localStorage.setItem('karyawan_uang_makan', JSON.stringify(fbData.workers));
+              }
               if (fbData.pettyCashHolders && Array.isArray(fbData.pettyCashHolders) && fbData.pettyCashHolders.length > 0) {
                 setPettyCashHolders(fbData.pettyCashHolders);
                 localStorage.setItem('petty_cash_holders_v2', JSON.stringify(fbData.pettyCashHolders));
@@ -366,6 +369,9 @@ export default function App() {
           const data = await res.json();
           if (data && data.success) {
             const raw = data.raw || {};
+            if (raw.workers && Array.isArray(raw.workers) && raw.workers.length > 0) {
+              localStorage.setItem('karyawan_uang_makan', JSON.stringify(raw.workers));
+            }
             if (raw.pettyCashHolders && Array.isArray(raw.pettyCashHolders) && raw.pettyCashHolders.length > 0) {
               setPettyCashHolders(raw.pettyCashHolders);
               localStorage.setItem('petty_cash_holders_v2', JSON.stringify(raw.pettyCashHolders));
@@ -945,17 +951,22 @@ export default function App() {
           }
         })
         .catch(err => console.warn('Auto-read Submissions from Firestore failed:', err));
-    } else if (view === 'absen') {
+    } else if (view === 'absen' || view === 'pinjaman') {
       loadAttendanceFromFirestore()
         .then(res => {
-          if (res && res.attendanceRecords && res.attendanceRecords.length > 0) {
-            localStorage.setItem('absensi_uang_makan_records', JSON.stringify(res.attendanceRecords));
+          if (res) {
+            if (res.workers && res.workers.length > 0) {
+              localStorage.setItem('karyawan_uang_makan', JSON.stringify(res.workers));
+            }
+            if (res.attendanceRecords && res.attendanceRecords.length > 0) {
+              localStorage.setItem('absensi_uang_makan_records', JSON.stringify(res.attendanceRecords));
+            }
             if (res.weeklyReports && res.weeklyReports.length > 0) {
               localStorage.setItem('weekly_reports_nmsa', JSON.stringify(res.weeklyReports));
               localStorage.setItem('weekly_reports', JSON.stringify(res.weeklyReports));
               localStorage.setItem('laporan_uang_makan_log', JSON.stringify(res.weeklyReports));
             }
-            console.log(`☁️ [Auto-Fetch] ${res.attendanceRecords.length} data absensi & ${(res.weeklyReports || []).length} laporan mingguan berhasil dibaca langsung dari Firebase Firestore.`);
+            console.log(`☁️ [Auto-Fetch] ${(res.workers || []).length} data karyawan & ${(res.attendanceRecords || []).length} absensi berhasil dibaca langsung dari Firebase.`);
           }
         })
         .catch(err => console.warn('Auto-read Attendance from Firestore failed:', err));
