@@ -31,7 +31,8 @@ import {
   signInWithPopup,
   sendPasswordResetEmail
 } from 'firebase/auth';
-import { Submission, SubmissionItem, ActivityLog, NpwpRecord, CompanyProfile, InternalMemo } from './types';
+import { Submission, SubmissionItem, ActivityLog, NpwpRecord, CompanyProfile, InternalMemo, Worker } from './types';
+import { INITIAL_WORKERS } from './constantsAbsen';
 import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission } from './utils';
 
 export enum OperationType {
@@ -856,6 +857,146 @@ export const resetFirestoreQuotaCooldown = async () => {
       await enableNetwork(firestoreDb);
     } catch (_) {}
   }
+};
+
+// ═════════════════════════════════════════════════════════════════════
+// 📊 REAL-TIME FIREBASE FIRESTORE QUOTA USAGE & MONITORING (SPARK TIER)
+// ═════════════════════════════════════════════════════════════════════
+export interface FirestoreQuotaMetrics {
+  date: string;
+  reads: number;
+  writes: number;
+  deletes: number;
+  sessionReads: number;
+  sessionWrites: number;
+  sessionDeletes: number;
+  maxDailyReads: number;   // 50,000 document reads/hari (Spark Plan Gratis)
+  maxDailyWrites: number;  // 20,000 document writes/hari (Spark Plan Gratis)
+  maxDailyDeletes: number; // 20,000 document deletes/hari (Spark Plan Gratis)
+  maxStorageBytes: number; // 1 GiB free storage
+  isQuotaExceeded: boolean;
+  pendingQueueCount: number;
+  lastSyncTime: string | null;
+  connectedProjectId: string;
+  activeDatabaseId: string;
+}
+
+let sessionReads = 0;
+let sessionWrites = 0;
+let sessionDeletes = 0;
+let lastSyncTimestamp: string | null = null;
+
+const getTodayDateString = (): string => {
+  return new Date().toISOString().split('T')[0];
+};
+
+export const getFirestoreQuotaMetrics = (): FirestoreQuotaMetrics => {
+  const today = getTodayDateString();
+  let storedMetrics = { date: today, reads: 0, writes: 0, deletes: 0 };
+  try {
+    const raw = localStorage.getItem('nmsa_fs_quota_metrics');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.date === today) {
+        storedMetrics = {
+          date: today,
+          reads: Number(parsed.reads) || 0,
+          writes: Number(parsed.writes) || 0,
+          deletes: Number(parsed.deletes) || 0
+        };
+      }
+    }
+  } catch (_) {}
+
+  return {
+    date: today,
+    reads: storedMetrics.reads,
+    writes: storedMetrics.writes,
+    deletes: storedMetrics.deletes,
+    sessionReads,
+    sessionWrites,
+    sessionDeletes,
+    maxDailyReads: 50000,
+    maxDailyWrites: 20000,
+    maxDailyDeletes: 20000,
+    maxStorageBytes: 1073741824,
+    isQuotaExceeded: isFirestoreQuotaExceeded(),
+    pendingQueueCount: firestoreWriteQueue.length,
+    lastSyncTime: lastSyncTimestamp || localStorage.getItem('nmsa_fs_last_sync') || null,
+    connectedProjectId: getActiveFirebaseProjectId(),
+    activeDatabaseId: "(default)"
+  };
+};
+
+const notifyQuotaUpdate = () => {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('firestore-quota-updated', { detail: getFirestoreQuotaMetrics() }));
+  }
+};
+
+export const recordFirestoreReads = (count: number = 1) => {
+  if (count <= 0) return;
+  sessionReads += count;
+  const today = getTodayDateString();
+  try {
+    let current = { date: today, reads: 0, writes: 0, deletes: 0 };
+    const raw = localStorage.getItem('nmsa_fs_quota_metrics');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.date === today) current = parsed;
+    }
+    current.reads += count;
+    current.date = today;
+    localStorage.setItem('nmsa_fs_quota_metrics', JSON.stringify(current));
+  } catch (_) {}
+  notifyQuotaUpdate();
+};
+
+export const recordFirestoreWrites = (count: number = 1) => {
+  if (count <= 0) return;
+  sessionWrites += count;
+  const today = getTodayDateString();
+  try {
+    let current = { date: today, reads: 0, writes: 0, deletes: 0 };
+    const raw = localStorage.getItem('nmsa_fs_quota_metrics');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.date === today) current = parsed;
+    }
+    current.writes += count;
+    current.date = today;
+    localStorage.setItem('nmsa_fs_quota_metrics', JSON.stringify(current));
+    lastSyncTimestamp = new Date().toISOString();
+    localStorage.setItem('nmsa_fs_last_sync', lastSyncTimestamp);
+  } catch (_) {}
+  notifyQuotaUpdate();
+};
+
+export const recordFirestoreDeletes = (count: number = 1) => {
+  if (count <= 0) return;
+  sessionDeletes += count;
+  const today = getTodayDateString();
+  try {
+    let current = { date: today, reads: 0, writes: 0, deletes: 0 };
+    const raw = localStorage.getItem('nmsa_fs_quota_metrics');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.date === today) current = parsed;
+    }
+    current.deletes += count;
+    current.date = today;
+    localStorage.setItem('nmsa_fs_quota_metrics', JSON.stringify(current));
+    lastSyncTimestamp = new Date().toISOString();
+    localStorage.setItem('nmsa_fs_last_sync', lastSyncTimestamp);
+  } catch (_) {}
+  notifyQuotaUpdate();
+};
+
+export const resetFirestoreSessionCounters = () => {
+  sessionReads = 0;
+  sessionWrites = 0;
+  sessionDeletes = 0;
+  notifyQuotaUpdate();
 };
 
 // Custom Firestore standard error reporter
@@ -2564,7 +2705,7 @@ export const enqueueFirestoreWrite = (
   }
 
   // Strictly enforce user quota directive: only Absen, NPWP, and Voucher submissions
-  const ALLOWED_COLLECTIONS = ['submissions', 'npwp_records', 'attendance'];
+  const ALLOWED_COLLECTIONS = ['submissions', 'npwp_records', 'attendance', 'workers'];
   if (!ALLOWED_COLLECTIONS.includes(path)) {
     return;
   }
@@ -2642,6 +2783,7 @@ export const flushFirestoreQueue = async (): Promise<{ processed: number; remain
         // Berhasil disimpan ke cloud, hapus dari antrian
         firestoreWriteQueue.shift();
         processed++;
+        recordFirestoreWrites(1);
         persistFirestoreQueue();
         notifyFirestoreQueueStatus(true);
         console.log(`☁️ [Firestore Background Sync] Berhasil mengunggah ${item.description || item.id} ke cloud.`);
@@ -2816,6 +2958,7 @@ export const deleteSubmissionFromFirestore = async (id: string): Promise<void> =
   const path = `submissions`;
   try {
     await deleteDoc(doc(firestoreDb, path, id));
+    recordFirestoreDeletes(1);
     console.log(`☁️ Submission ${id} deleted from Firestore.`);
   } catch (error) {
     markFirestoreQuotaExceeded(error);
@@ -2888,6 +3031,7 @@ export const loadNpwpRecordsFromFirestore = async (): Promise<NpwpRecord[]> => {
   const path = 'npwp_records';
   try {
     const snapshot = await getDocs(collection(firestoreDb, path));
+    recordFirestoreReads(snapshot.size || 1);
     const list: NpwpRecord[] = [];
     
     snapshot.forEach(docSnap => {
@@ -3000,6 +3144,43 @@ export const subscribeToNpwpRecordsFromFirestore = (
   }
 };
 
+// Save single NPWP record to Firestore (hemat kuota Spark Plan - hanya 1 penulisan dokumen spesifik)
+export const saveSingleNpwpRecordToFirestore = async (record: NpwpRecord): Promise<void> => {
+  if (!record || !record.id) return;
+
+  // 1. Update localStorage segera
+  try {
+    const stored = localStorage.getItem('npwp_records_v1');
+    let list: NpwpRecord[] = stored ? JSON.parse(stored) : [];
+    const idx = list.findIndex(r => r.id === record.id);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...record, updatedAt: new Date().toISOString() };
+    } else {
+      list.unshift({ ...record, createdAt: record.createdAt || new Date().toISOString() });
+    }
+    localStorage.setItem('npwp_records_v1', JSON.stringify(list));
+
+    // 2. Persist to server unified-storage
+    fetch('/api/unified-storage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ npwpRecords: list })
+    }).catch(() => {});
+  } catch (_) {}
+
+  // 3. Write ONLY single document to Firestore (hanya 1 penulisan)
+  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return;
+  const path = 'npwp_records';
+  try {
+    await setDoc(doc(firestoreDb, path, record.id), cleanUndefined(record), { merge: true });
+    recordFirestoreWrites(1);
+    console.log(`☁️ [NPWP Firestore] Dokumen NPWP "${record.companyName}" (${record.id}) berhasil disimpan ke Firestore.`);
+  } catch (error) {
+    markFirestoreQuotaExceeded(error);
+    console.warn('Gagal menyimpan single NPWP ke Firestore:', error);
+  }
+};
+
 // Save all or single NPWP Record to Firestore & sync everywhere
 export const saveNpwpRecordsToFirestore = async (records: NpwpRecord[]): Promise<void> => {
   try {
@@ -3027,7 +3208,7 @@ export const saveNpwpRecordsToFirestore = async (records: NpwpRecord[]): Promise
         await setDoc(doc(firestoreDb, path, rec.id), cleanUndefined(rec), { merge: true });
       }
     }
-
+    recordFirestoreWrites(records.length);
     console.log(`☁️ ${records.length} NPWP records synced to Firestore.`);
   } catch (error) {
     markFirestoreQuotaExceeded(error);
@@ -3247,9 +3428,172 @@ export const deleteNpwpRecordFromFirestore = async (id: string): Promise<void> =
   if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return;
   try {
     await deleteDoc(doc(firestoreDb, 'npwp_records', id));
+    recordFirestoreDeletes(1);
+    console.log(`🗑️ [NPWP Firestore] Dokumen tunggal NPWP ${id} berhasil dihapus dari Firestore.`);
   } catch (error) {
     markFirestoreQuotaExceeded(error);
     console.warn('Gagal menghapus NPWP dari Firestore:', error);
+  }
+};
+
+// ═════════════════════════════════════════════════════════════════════
+// 👥 MASTER LIST KARYAWAN FIRESTORE PERSISTENCE (HEMAT KUOTA)
+// Hanya simpan & hapus dokumen per-karyawan agar kuota tidak terkuras
+// ═════════════════════════════════════════════════════════════════════
+
+export const loadWorkersFromFirestore = async (): Promise<Worker[]> => {
+  // 1. Coba baca dari koleksi 'workers' Firestore jika aktif
+  if (isFirebaseConfigured() && firestoreDb && !isFirestoreQuotaExceeded()) {
+    try {
+      const snap = await getDocs(collection(firestoreDb, 'workers'));
+      if (!snap.empty) {
+        recordFirestoreReads(snap.size);
+        const list: Worker[] = [];
+        snap.forEach(d => {
+          const data = d.data() as Worker;
+          if (data && (data.id || d.id) && data.name) {
+            list.push({
+              id: data.id || d.id,
+              name: data.name,
+              role: data.role || 'Karyawan',
+              isActive: data.isActive ?? true,
+              division: data.division,
+              bankName: data.bankName,
+              bankAccount: data.bankAccount,
+              phoneNumber: data.phoneNumber,
+              nik: data.nik,
+              photoUrl: data.photoUrl,
+              updatedAt: data.updatedAt
+            });
+          }
+        });
+        if (list.length > 0) {
+          list.sort((a, b) => (a.id || '').localeCompare(b.id || ''));
+          try {
+            localStorage.setItem('karyawan_uang_makan', JSON.stringify(list));
+            localStorage.setItem('workers_v1', JSON.stringify(list));
+            fetch('/api/unified-storage', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ workers: list })
+            }).catch(() => {});
+          } catch (_) {}
+          console.log(`☁️ [Workers Firestore] Berhasil memuat ${list.length} karyawan dari Cloud Firestore.`);
+          return list;
+        }
+      }
+    } catch (err) {
+      markFirestoreQuotaExceeded(err);
+      console.warn('Gagal memuat list karyawan dari Firestore:', err);
+    }
+  }
+
+  // 2. Fallback: baca dari server unified-storage (/api/unified-storage)
+  try {
+    const srvRes = await fetch('/api/unified-storage');
+    if (srvRes.ok) {
+      const srvData = await srvRes.json();
+      const serverWorkers = srvData?.raw?.workers || srvData?.workers;
+      if (Array.isArray(serverWorkers) && serverWorkers.length > 0) {
+        localStorage.setItem('karyawan_uang_makan', JSON.stringify(serverWorkers));
+        localStorage.setItem('workers_v1', JSON.stringify(serverWorkers));
+        return serverWorkers;
+      }
+    }
+  } catch (_) {}
+
+  // 3. Fallback: cek localStorage browser
+  try {
+    const local = localStorage.getItem('karyawan_uang_makan') || localStorage.getItem('workers_v1');
+    if (local) {
+      const parsed = JSON.parse(local);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (_) {}
+
+  // 4. Default: kembalikan INITIAL_WORKERS
+  return INITIAL_WORKERS;
+};
+
+export const saveWorkerToFirestore = async (worker: Worker): Promise<boolean> => {
+  if (!worker || !worker.id) return false;
+
+  // 1. Simpan ke localStorage segera
+  try {
+    const stored = localStorage.getItem('karyawan_uang_makan') || localStorage.getItem('workers_v1');
+    let list: Worker[] = stored ? JSON.parse(stored) : [];
+    const idx = list.findIndex(w => w.id === worker.id);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...worker, updatedAt: Date.now() };
+    } else {
+      list.push({ ...worker, updatedAt: Date.now() });
+    }
+    localStorage.setItem('karyawan_uang_makan', JSON.stringify(list));
+    localStorage.setItem('workers_v1', JSON.stringify(list));
+
+    // 2. Simpan ke server unified-storage
+    fetch('/api/unified-storage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workers: list })
+    }).catch(() => {});
+  } catch (_) {}
+
+  // 3. Simpan hanya dokumen tunggal ini ke Firestore (Hemat Kuota: 1 Write)
+  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) {
+    return false;
+  }
+
+  try {
+    const cleanWorker = cleanUndefined(worker);
+    await setDoc(doc(firestoreDb, 'workers', worker.id), cleanWorker, { merge: true });
+    recordFirestoreWrites(1);
+    console.log(`☁️ [Worker Firestore] Data karyawan "${worker.name}" (${worker.id}) berhasil disimpan ke Firestore.`);
+    return true;
+  } catch (error) {
+    markFirestoreQuotaExceeded(error);
+    console.warn(`Gagal menyimpan karyawan ${worker.id} ke Firestore:`, error);
+    return false;
+  }
+};
+
+export const deleteWorkerFromFirestore = async (workerId: string): Promise<boolean> => {
+  if (!workerId) return false;
+
+  // 1. Hapus dari localStorage segera
+  try {
+    const stored = localStorage.getItem('karyawan_uang_makan') || localStorage.getItem('workers_v1');
+    if (stored) {
+      const list: Worker[] = JSON.parse(stored);
+      const remaining = list.filter(w => w.id !== workerId);
+      localStorage.setItem('karyawan_uang_makan', JSON.stringify(remaining));
+      localStorage.setItem('workers_v1', JSON.stringify(remaining));
+
+      // 2. Simpan ke server unified-storage
+      fetch('/api/unified-storage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workers: remaining })
+      }).catch(() => {});
+    }
+  } catch (_) {}
+
+  // 3. Hapus hanya dokumen tunggal ini dari Firestore (Hemat Kuota: 1 Delete)
+  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) {
+    return false;
+  }
+
+  try {
+    await deleteDoc(doc(firestoreDb, 'workers', workerId));
+    recordFirestoreDeletes(1);
+    console.log(`🗑️ [Worker Firestore] Karyawan ${workerId} berhasil dihapus dari Firestore.`);
+    return true;
+  } catch (error) {
+    markFirestoreQuotaExceeded(error);
+    console.warn(`Gagal menghapus karyawan ${workerId} dari Firestore:`, error);
+    return false;
   }
 };
 

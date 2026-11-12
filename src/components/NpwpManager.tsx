@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { NpwpRecord, Submission } from '../types';
 import { isVendorOrCompanyMatch, normalizeEntityString } from '../utils';
-import { loadNpwpRecordsFromFirestore, saveNpwpRecordsToFirestore } from '../firebase';
+import { loadNpwpRecordsFromFirestore, saveNpwpRecordsToFirestore, saveSingleNpwpRecordToFirestore, deleteNpwpRecordFromFirestore } from '../firebase';
 import { 
   Building2, 
   Search, 
@@ -138,17 +138,20 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
     }
 
     if (editingRecord) {
-      const updated = npwpRecords.map(r => r.id === editingRecord.id ? {
-        ...r,
+      const updatedItem: NpwpRecord = {
+        ...editingRecord,
         companyName: formCompanyName.trim(),
         npwpNumber: formNpwpNumber.trim(),
         address: formAddress.trim(),
         kppName: formKppName.trim(),
         taxStatus: formTaxStatus,
         contactPerson: formContactPerson.trim(),
-        notes: formNotes.trim()
-      } : r);
+        notes: formNotes.trim(),
+        updatedAt: new Date().toISOString()
+      };
+      const updated = npwpRecords.map(r => r.id === editingRecord.id ? updatedItem : r);
       onSaveNpwpRecords(updated);
+      saveSingleNpwpRecordToFirestore(updatedItem).catch(() => {});
     } else {
       const newRec: NpwpRecord = {
         id: 'npwp_' + Date.now(),
@@ -162,6 +165,7 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
         createdAt: new Date().toISOString()
       };
       onSaveNpwpRecords([newRec, ...npwpRecords]);
+      saveSingleNpwpRecordToFirestore(newRec).catch(() => {});
     }
 
     setIsFormModalOpen(false);
@@ -171,6 +175,7 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
     if (confirm(`Apakah Anda yakin ingin menghapus data NPWP untuk "${name}"?`)) {
       const remaining = npwpRecords.filter(r => r.id !== id);
       onSaveNpwpRecords(remaining);
+      deleteNpwpRecordFromFirestore(id).catch(() => {});
     }
   };
 

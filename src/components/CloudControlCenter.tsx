@@ -4,6 +4,7 @@ import { FirebaseMigration } from './FirebaseMigration';
 import { DriveMigration } from './DriveMigration';
 import { SheetsImport } from './SheetsImport';
 import { SppdIntegration, SppdRecord } from './SppdIntegration';
+import { FirebaseQuotaModal } from './FirebaseQuotaModal';
 import { Submission } from '../types';
 import { 
   Cloud, 
@@ -15,7 +16,8 @@ import {
   ChevronDown, 
   Sliders, 
   ShieldCheck,
-  GitBranch
+  GitBranch,
+  Activity
 } from 'lucide-react';
 
 interface CloudControlCenterProps {
@@ -37,6 +39,7 @@ export const CloudControlCenter: React.FC<CloudControlCenterProps> = ({
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'sync' | 'db-migrate' | 'drive-migrate' | 'sheets' | 'sppd' | null>(null);
+  const [isQuotaModalOpen, setIsQuotaModalOpen] = useState(false);
 
   // Quick statistics
   const countWithCloudFiles = submissions.filter(
@@ -118,7 +121,7 @@ export const CloudControlCenter: React.FC<CloudControlCenterProps> = ({
           </div>
 
           {/* Quick Menu Selection Bar (Judul-Judul Menu) */}
-          <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
             {/* SUBMENU 1: Live Sync */}
             <button
               onClick={() => setActiveTab(activeTab === 'sync' ? null : 'sync')}
@@ -196,6 +199,18 @@ export const CloudControlCenter: React.FC<CloudControlCenterProps> = ({
               <div className="space-y-0.5">
                 <div className="text-xs font-bold text-stone-850 font-display">Migrasi GDrive</div>
                 <div className="text-[10px] text-stone-500 leading-tight">Salin lampiran ke Drive</div>
+              </div>
+            </button>
+
+            {/* SUBMENU 6: Monitoring Kuota Firebase */}
+            <button
+              onClick={() => setIsQuotaModalOpen(true)}
+              className="p-3 rounded-xl border text-left transition duration-200 flex items-start gap-2.5 bg-indigo-50/60 border-indigo-200 hover:bg-indigo-100/70 cursor-pointer shadow-3xs"
+            >
+              <Activity size={16} className="shrink-0 mt-0.5 text-indigo-600" />
+              <div className="space-y-0.5">
+                <div className="text-xs font-bold text-indigo-950 font-display">Kuota Firebase</div>
+                <div className="text-[10px] text-indigo-700 leading-tight">Pantau Read &amp; Write</div>
               </div>
             </button>
           </div>
@@ -350,6 +365,12 @@ export const CloudControlCenter: React.FC<CloudControlCenterProps> = ({
           </div>
         </div>
       )}
+
+      {/* Monitoring Kuota Firebase Modal */}
+      <FirebaseQuotaModal
+        isOpen={isQuotaModalOpen}
+        onClose={() => setIsQuotaModalOpen(false)}
+      />
     </div>
   );
 };

@@ -59,7 +59,8 @@ import {
   ArrowUp,
   ArrowDown,
   ArrowUpDown,
-  PenTool
+  PenTool,
+  Activity
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -82,8 +83,8 @@ import { INITIAL_WORKERS, INDONESIAN_DAYS, COMMON_CATEGORIES } from "../constant
 import { triggerExcelDownload } from "../lib/excelGenerator";
 import { triggerAttendanceExcelDownload, printWeeklyReportPDF, generateAttendanceExcelBlob } from "../lib/attendanceSheetGenerator";
 import { getOrCreateFolder, getOrCreateNestedFolder, uploadFileToDrive, exportAttendanceToGoogleSheet } from "../lib/googleWorkspaceAbsen";
-import { initAuth, googleSignIn, googleSignOut, getFreshGoogleToken, saveGoogleToken, saveAttendanceToFirestore, loadAttendanceFromFirestore, subscribeToAttendanceFromFirestore } from "../lib/firebaseAbsen";
-import { saveSubmissionToFirestore, saveAbsenDataToFirestore, ensureValidDriveToken, getActiveGoogleDriveAccount, getConnectedDrives, executeDriveApiWithAutoRefresh, getOrRenewDriveToken, triggerGoogleDriveAutoRefresh, isFirestoreQuotaExceeded, markFirestoreQuotaExceeded } from "../firebase";
+import { initAuth, googleSignIn, googleSignOut, getFreshGoogleToken, saveGoogleToken, saveAttendanceToFirestore, loadAttendanceFromFirestore, subscribeToAttendanceFromFirestore, loadWorkersFromFirestore, saveWorkerToFirestore, deleteWorkerFromFirestore } from "../lib/firebaseAbsen";
+import { saveSubmissionToFirestore, saveAbsenDataToFirestore, ensureValidDriveToken, getActiveGoogleDriveAccount, getConnectedDrives, executeDriveApiWithAutoRefresh, getOrRenewDriveToken, triggerGoogleDriveAutoRefresh, isFirestoreQuotaExceeded, markFirestoreQuotaExceeded, getFirestoreQuotaMetrics, FirestoreQuotaMetrics } from "../firebase";
 import { googleDriveAutoBackup, BackupSyncLog, DriveAutoBackupSettings } from "../utils/googleDriveAutoBackup";
 import { SignaturePad } from "./SignaturePad";
 import { OnlineSignatureModal } from "./OnlineSignatureModal";
@@ -1025,7 +1026,7 @@ export function AbsensiHarianNmsa({
   // --- Google Drive Auto-Backup & Comprehensive Settings States ---
   const [showAutoBackupModal, setShowAutoBackupModal] = useState<boolean>(false);
   const [showSystemSettingsModal, setShowSystemSettingsModal] = useState<boolean>(false);
-  const [settingsTab, setSettingsTab] = useState<'schedule' | 'allowance' | 'attendance' | 'danger'>('schedule');
+  const [settingsTab, setSettingsTab] = useState<'schedule' | 'allowance' | 'attendance' | 'danger' | 'quota'>('schedule');
   const [driveUploadHour, setDriveUploadHour] = useState<string>(() => {
     return googleDriveAutoBackup.getSettings().uploadHour || '17:00';
   });
@@ -2458,16 +2459,47 @@ export function AbsensiHarianNmsa({
             return mergedList;
           });
 
-          if (fbData.workers && fbData.workers.length > 0) {
-            setWorkers((prevW) => {
-              const ids = new Set(prevW.map(w => w.id));
-              const missing = fbData.workers.filter(w => !ids.has(w.id));
-              const merged = missing.length > 0 ? [...prevW, ...missing] : prevW;
-              try {
-                localStorage.setItem("karyawan_uang_makan", JSON.stringify(merged));
-              } catch (_) {}
-              return merged;
-            });
+          // Load discrete workers from dedicated Firestore workers collection
+          try {
+            const discreteWorkers = await loadWorkersFromFirestore();
+            if (discreteWorkers && discreteWorkers.length > 0) {
+              setWorkers((prevW) => {
+                const map = new Map<string, Worker>();
+                // Keep default or existing first
+                (prevW || []).forEach(w => map.set(w.id, w));
+                // Overlay with latest cloud workers
+                discreteWorkers.forEach(w => map.set(w.id, { ...(map.get(w.id) || {}), ...w }));
+                const merged = Array.from(map.values());
+                try {
+                  localStorage.setItem("karyawan_uang_makan", JSON.stringify(merged));
+                  localStorage.setItem("workers_v1", JSON.stringify(merged));
+                } catch (_) {}
+                return merged;
+              });
+            } else if (fbData.workers && fbData.workers.length > 0) {
+              setWorkers((prevW) => {
+                const ids = new Set(prevW.map(w => w.id));
+                const missing = fbData.workers.filter(w => !ids.has(w.id));
+                const merged = missing.length > 0 ? [...prevW, ...missing] : prevW;
+                try {
+                  localStorage.setItem("karyawan_uang_makan", JSON.stringify(merged));
+                  localStorage.setItem("workers_v1", JSON.stringify(merged));
+                } catch (_) {}
+                return merged;
+              });
+            }
+          } catch (_) {
+            if (fbData.workers && fbData.workers.length > 0) {
+              setWorkers((prevW) => {
+                const ids = new Set(prevW.map(w => w.id));
+                const missing = fbData.workers.filter(w => !ids.has(w.id));
+                const merged = missing.length > 0 ? [...prevW, ...missing] : prevW;
+                try {
+                  localStorage.setItem("karyawan_uang_makan", JSON.stringify(merged));
+                } catch (_) {}
+                return merged;
+              });
+            }
           }
 
           if (fbData.weeklyReports && fbData.weeklyReports.length > 0) {
@@ -4316,9 +4348,14 @@ export function AbsensiHarianNmsa({
     setNewWorkerPhoneNumber("");
     setNewWorkerNik("");
 
-    // Broadcast sync to Firestore and Server immediately so Computer receives it
+    // 1. Simpan dokumen karyawan tunggal langsung ke Firestore (koleksi 'workers' - hemat kuota Spark Plan)
+    saveWorkerToFirestore(newWorker).catch((err) =>
+      console.warn("Firestore worker discrete save notice:", err)
+    );
+
+    // 2. Broadcast sync to Firestore and Server immediately so Computer receives it
     saveAttendanceToFirestore(updatedRecords, updatedWorkers, weeklyReports).catch((err) =>
-      console.warn("Firestore worker sync error:", err)
+      console.warn("Firestore attendance sync error:", err)
     );
     syncStateToServer(updatedWorkers, updatedRecords, weeklyReports).catch((err) =>
       console.warn("Server worker sync error:", err)
@@ -4339,17 +4376,20 @@ export function AbsensiHarianNmsa({
     e.preventDefault();
     if (!editingWorker || !editWorkerName) return;
 
-    const updatedWorkers = workers.map((w) =>
-      w.id === editingWorker.id
-        ? {
-            ...w,
-            name: editWorkerName.trim(),
-            role: "Karyawan",
-            phoneNumber: editWorkerPhoneNumber ? editWorkerPhoneNumber.trim() : undefined,
-            updatedAt: Date.now(),
-          }
-        : w
-    );
+    let targetUpdated: Worker | null = null;
+    const updatedWorkers = workers.map((w) => {
+      if (w.id === editingWorker.id) {
+        targetUpdated = {
+          ...w,
+          name: editWorkerName.trim(),
+          role: "Karyawan",
+          phoneNumber: editWorkerPhoneNumber ? editWorkerPhoneNumber.trim() : undefined,
+          updatedAt: Date.now(),
+        };
+        return targetUpdated;
+      }
+      return w;
+    });
 
     setWorkers(updatedWorkers);
     try {
@@ -4358,19 +4398,31 @@ export function AbsensiHarianNmsa({
 
     setEditingWorker(null);
 
+    // Simpan perubahan ke Firestore (hemat kuota)
+    if (targetUpdated) {
+      saveWorkerToFirestore(targetUpdated).catch(() => {});
+    }
     saveAttendanceToFirestore(attendanceRecords, updatedWorkers, weeklyReports).catch(() => {});
     syncStateToServer(updatedWorkers, attendanceRecords, weeklyReports).catch(() => {});
   };
 
   const handleToggleWorkerActive = (workerId: string) => {
-    const updatedWorkers = workers.map((w) =>
-      w.id === workerId ? { ...w, isActive: !w.isActive, updatedAt: Date.now() } : w
-    );
+    let targetToggled: Worker | null = null;
+    const updatedWorkers = workers.map((w) => {
+      if (w.id === workerId) {
+        targetToggled = { ...w, isActive: !w.isActive, updatedAt: Date.now() };
+        return targetToggled;
+      }
+      return w;
+    });
     setWorkers(updatedWorkers);
     try {
       localStorage.setItem("karyawan_uang_makan", JSON.stringify(updatedWorkers));
     } catch (_) {}
 
+    if (targetToggled) {
+      saveWorkerToFirestore(targetToggled).catch(() => {});
+    }
     saveAttendanceToFirestore(attendanceRecords, updatedWorkers, weeklyReports).catch(() => {});
     syncStateToServer(updatedWorkers, attendanceRecords, weeklyReports).catch(() => {});
   };
@@ -4386,6 +4438,10 @@ export function AbsensiHarianNmsa({
       localStorage.setItem("absensi_uang_makan_records", JSON.stringify(updatedRecords));
     } catch (_) {}
 
+    // Hapus dokumen karyawan tunggal dari Firestore (koleksi 'workers')
+    deleteWorkerFromFirestore(workerId).catch((err) =>
+      console.warn("Firestore worker delete error:", err)
+    );
     saveAttendanceToFirestore(updatedRecords, updatedWorkers, weeklyReports).catch(() => {});
     syncStateToServer(updatedWorkers, updatedRecords, weeklyReports).catch(() => {});
   };
@@ -11210,6 +11266,19 @@ export function AbsensiHarianNmsa({
                     <Trash className="w-3.5 h-3.5" />
                     <span>Data Karyawan</span>
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSettingsTab('quota')}
+                    className={`pb-2.5 px-3 text-xs font-bold transition-all border-b-2 flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                      settingsTab === 'quota'
+                        ? 'border-indigo-600 text-indigo-700'
+                        : 'border-transparent text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <Activity className="w-3.5 h-3.5" />
+                    <span>Kuota Firebase</span>
+                  </button>
                 </div>
 
                 {/* Body Content */}
@@ -11723,6 +11792,103 @@ export function AbsensiHarianNmsa({
                       </div>
                     </div>
                   )}
+
+                  {/* TAB 5: MONITORING KUOTA FIREBASE */}
+                  {settingsTab === 'quota' && (() => {
+                    const qMetrics = getFirestoreQuotaMetrics();
+                    const qExceeded = isFirestoreQuotaExceeded();
+                    const rPct = Math.min(100, Math.round((qMetrics.reads / qMetrics.maxDailyReads) * 1000) / 10);
+                    const wPct = Math.min(100, Math.round((qMetrics.writes / qMetrics.maxDailyWrites) * 1000) / 10);
+                    const dPct = Math.min(100, Math.round((qMetrics.deletes / qMetrics.maxDailyDeletes) * 1000) / 10);
+
+                    return (
+                      <div className="space-y-4 animate-in fade-in duration-150">
+                        {/* Status Header Banner */}
+                        <div className="p-4 rounded-2xl bg-indigo-50/70 border border-indigo-200 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <Activity className="w-4 h-4 text-indigo-600" />
+                              <h4 className="font-bold text-indigo-950 text-xs sm:text-sm">
+                                Monitoring Kuota Harian Firebase Firestore (Spark Plan)
+                              </h4>
+                            </div>
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              qExceeded ? 'bg-rose-100 text-rose-800 border border-rose-300' : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                            }`}>
+                              {qExceeded ? 'Mode Cooldown / Terlampaui' : '● Koneksi Cloud Aktif'}
+                            </span>
+                          </div>
+                          <p className="text-xs text-indigo-800 leading-relaxed">
+                            Data karyawan dan NPWP sekarang disimpan secara per-dokumen tunggal. Setiap kali menambah atau menghapus karyawan, hanya 1 operasi tulis atau hapus yang dikirim ke Firebase Firestore, sehingga kuota gratis 50.000 reads &amp; 20.000 writes/hari tetap aman dan tidak terkuras.
+                          </p>
+                        </div>
+
+                        {/* Metric Cards Grid */}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                          <div className="p-3.5 bg-white border border-slate-200 rounded-xl space-y-1.5 shadow-3xs">
+                            <div className="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-wider flex justify-between">
+                              <span>Reads Hari Ini</span>
+                              <span>{rPct}%</span>
+                            </div>
+                            <div className="text-xl font-black text-slate-900">
+                              {qMetrics.reads.toLocaleString('id-ID')} <span className="text-xs font-normal text-slate-400">/ 50.000</span>
+                            </div>
+                            <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                              <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${Math.max(2, rPct)}%` }} />
+                            </div>
+                            <div className="text-[10px] text-slate-500 font-mono">
+                              Sisa: {(qMetrics.maxDailyReads - qMetrics.reads).toLocaleString('id-ID')}
+                            </div>
+                          </div>
+
+                          <div className="p-3.5 bg-white border border-slate-200 rounded-xl space-y-1.5 shadow-3xs">
+                            <div className="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-wider flex justify-between">
+                              <span>Writes Hari Ini</span>
+                              <span>{wPct}%</span>
+                            </div>
+                            <div className="text-xl font-black text-slate-900">
+                              {qMetrics.writes.toLocaleString('id-ID')} <span className="text-xs font-normal text-slate-400">/ 20.000</span>
+                            </div>
+                            <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                              <div className="h-full bg-amber-500 rounded-full" style={{ width: `${Math.max(2, wPct)}%` }} />
+                            </div>
+                            <div className="text-[10px] text-slate-500 font-mono">
+                              Sisa: {(qMetrics.maxDailyWrites - qMetrics.writes).toLocaleString('id-ID')}
+                            </div>
+                          </div>
+
+                          <div className="p-3.5 bg-white border border-slate-200 rounded-xl space-y-1.5 shadow-3xs">
+                            <div className="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-wider flex justify-between">
+                              <span>Deletes Hari Ini</span>
+                              <span>{dPct}%</span>
+                            </div>
+                            <div className="text-xl font-black text-slate-900">
+                              {qMetrics.deletes.toLocaleString('id-ID')} <span className="text-xs font-normal text-slate-400">/ 20.000</span>
+                            </div>
+                            <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                              <div className="h-full bg-rose-500 rounded-full" style={{ width: `${Math.max(2, dPct)}%` }} />
+                            </div>
+                            <div className="text-[10px] text-slate-500 font-mono">
+                              Sisa: {(qMetrics.maxDailyDeletes - qMetrics.deletes).toLocaleString('id-ID')}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Synchronization Status */}
+                        <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs">
+                          <div className="font-bold text-slate-800 flex items-center gap-1.5">
+                            <Database className="w-3.5 h-3.5 text-indigo-600" />
+                            <span>Koleksi Terhubung &amp; Sinkronisasi Permanen:</span>
+                          </div>
+                          <ul className="space-y-1 text-slate-600 pl-4 list-disc text-[11px]">
+                            <li><strong>workers</strong>: Menyimpan {workers.length} data karyawan ke Firestore. Tidak akan hilang walau browser di-refresh atau di-clear cache.</li>
+                            <li><strong>npwp_records</strong>: Sinkronisasi data NPWP vendor/perusahaan secara discrete per dokumen.</li>
+                            <li><strong>attendance</strong>: Riwayat absensi harian terpusat (`attendance/current_records`).</li>
+                          </ul>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* Footer */}

@@ -24,7 +24,12 @@ service cloud.firestore {
       allow read, write: if isValidId(recordId);
     }
 
-    // 3. Data Absensi Harian Terpusat (attendance/current_records)
+    // 3. Master List Data Karyawan (hanya simpan & hapus dokumen per-karyawan agar hemat kuota)
+    match /workers/{workerId} {
+      allow read, write: if isValidId(workerId);
+    }
+
+    // 4. Data Absensi Harian Terpusat (attendance/current_records)
     match /attendance/{attendanceId} {
       allow read, write: if isValidId(attendanceId);
     }

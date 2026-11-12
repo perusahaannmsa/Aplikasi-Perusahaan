@@ -8,7 +8,23 @@ import {
   User,
   signOut
 } from "firebase/auth";
-import { ensureValidDriveToken, setGoogleDriveToken, getStoredGoogleDriveToken, getActiveGoogleDriveAccount, getOrRenewDriveToken, isFirestoreQuotaExceeded, markFirestoreQuotaExceeded, registerFirestoreInstance } from "../firebase";
+import { 
+  ensureValidDriveToken, 
+  setGoogleDriveToken, 
+  getStoredGoogleDriveToken, 
+  getActiveGoogleDriveAccount, 
+  getOrRenewDriveToken, 
+  isFirestoreQuotaExceeded, 
+  markFirestoreQuotaExceeded, 
+  registerFirestoreInstance,
+  loadWorkersFromFirestore,
+  saveWorkerToFirestore,
+  deleteWorkerFromFirestore,
+  recordFirestoreWrites,
+  recordFirestoreReads
+} from "../firebase";
+
+export { loadWorkersFromFirestore, saveWorkerToFirestore, deleteWorkerFromFirestore };
 import firebaseAppletConfig from "../../firebase-applet-config.json";
 
 // Initialize Firebase with unified applet credentials & target database
@@ -244,6 +260,7 @@ export const saveAttendanceToFirestore = async (
       totalReports: cleanWeeklyReports.length
     }, { merge: true });
 
+    recordFirestoreWrites(1);
     return true;
 
   } catch (err: any) {
@@ -277,6 +294,7 @@ export const loadAttendanceFromFirestore = async (): Promise<{
 } | null> => {
   try {
     const masterDoc = await getDoc(doc(db, "attendance", "current_records"));
+    recordFirestoreReads(1);
     let wrks: any[] = [];
     const workerMap = new Map<string, any>();
     const repMap = new Map<string, any>();

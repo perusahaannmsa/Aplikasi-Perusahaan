@@ -18,6 +18,7 @@ import { InputBuktiTransfer } from './components/InputBuktiTransfer';
 import { UploadBuktiTransferModal } from './components/UploadBuktiTransferModal';
 import { UserProfileModal } from './components/UserProfileModal';
 import { GoogleDriveSettingsModal } from './components/GoogleDriveSettingsModal';
+import { FirebaseQuotaModal } from './components/FirebaseQuotaModal';
 import { AbsensiHarianNmsa } from './components/AbsensiHarianNmsa';
 import { PettyCashHoldersModal } from './components/PettyCashHoldersModal';
 import { ConsolidateNamesModal } from './components/ConsolidateNamesModal';
@@ -1188,6 +1189,7 @@ export default function App() {
   const [isCloudModalOpen, setIsCloudModalOpen] = useState(false);
   const [isFirebaseMigrationOpen, setIsFirebaseMigrationOpen] = useState(false);
   const [isGoogleDriveSettingsOpen, setIsGoogleDriveSettingsOpen] = useState(false);
+  const [isFirebaseQuotaModalOpen, setIsFirebaseQuotaModalOpen] = useState(false);
   const [uploadBuktiModalSub, setUploadBuktiModalSub] = useState<Submission | null>(null);
   const [isUploadBuktiModalOpen, setIsUploadBuktiModalOpen] = useState(false);
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
@@ -3185,6 +3187,31 @@ export default function App() {
                       </button>
                     </div>
 
+                    {/* 3. Monitoring Kuota Firebase */}
+                    <div className="p-2.5 rounded-xl bg-indigo-50/70 border border-indigo-200/80 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="p-2 bg-indigo-600 text-white rounded-lg shrink-0">
+                          <Database size={14} />
+                        </div>
+                        <div className="min-w-0">
+                          <h5 className="font-bold text-xs text-stone-900 leading-tight truncate">Monitoring Kuota Firebase</h5>
+                          <p className="text-[10px] text-stone-500 font-mono truncate">
+                            Read, Write &amp; Sinkronisasi Data
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsToolsDropdownOpen(false);
+                          setIsFirebaseQuotaModalOpen(true);
+                        }}
+                        className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-[11px] shadow-3xs cursor-pointer transition shrink-0"
+                      >
+                        Pantau
+                      </button>
+                    </div>
+
                     {/* Quick Access Menu Items - All Modules */}
                     <div className="pt-1.5 border-t border-stone-150 space-y-1">
                       <div className="px-2 py-0.5 text-[10px] font-mono font-bold text-stone-400 uppercase tracking-wider">
@@ -3534,6 +3561,23 @@ export default function App() {
                           </div>
                           <span className="text-[9px] font-mono bg-amber-200 text-amber-900 px-1.5 py-0.5 rounded font-bold shrink-0">
                             24/7
+                          </span>
+                        </button>
+
+                        {/* Monitoring Kuota Firebase */}
+                        <button
+                          onClick={() => {
+                            setIsUserMenuOpen(false);
+                            setIsFirebaseQuotaModalOpen(true);
+                          }}
+                          className="w-full bg-indigo-50/70 hover:bg-indigo-100 text-indigo-950 border border-indigo-300 font-bold px-3 py-2 rounded-xl text-xs transition cursor-pointer flex items-center justify-between font-sans shadow-3xs"
+                        >
+                          <div className="flex items-center gap-2 truncate">
+                            <Database size={15} className="text-indigo-600 shrink-0" />
+                            <span className="truncate">Monitoring Kuota Firebase</span>
+                          </div>
+                          <span className="text-[9px] font-mono bg-indigo-200 text-indigo-950 px-1.5 py-0.5 rounded font-bold shrink-0">
+                            Read/Write
                           </span>
                         </button>
 
@@ -4180,6 +4224,17 @@ export default function App() {
       <GoogleDriveSettingsModal
         isOpen={isGoogleDriveSettingsOpen}
         onClose={() => setIsGoogleDriveSettingsOpen(false)}
+      />
+
+      {/* Monitoring Kuota & Sinkronisasi Firebase */}
+      <FirebaseQuotaModal
+        isOpen={isFirebaseQuotaModalOpen}
+        onClose={() => setIsFirebaseQuotaModalOpen(false)}
+        onNpwpSynced={(records) => setNpwpRecords(records)}
+        onWorkersSynced={(wrks) => {
+          localStorage.setItem('karyawan_uang_makan', JSON.stringify(wrks));
+          localStorage.setItem('workers_v1', JSON.stringify(wrks));
+        }}
       />
 
       {/* Pop-up Khusus Upload Bukti Pembayaran */}
