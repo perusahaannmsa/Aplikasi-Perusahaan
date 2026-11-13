@@ -428,9 +428,13 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
           setStatus('connected');
           setConnectedUser(data.user);
           setQrCode(null);
+          setPairingCode(null);
           setIsPairingInProgress(false);
           setErrorMessage(null);
           return;
+        }
+        if (data.pairingCode && !pairingCode) {
+          setPairingCode(safeString(data.pairingCode));
         }
         if ((data.status === 'qr' || data.qr) && data.qr && !data.isPairingInProgress) {
           setQrCode(data.qr);
@@ -1344,18 +1348,6 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                               className="w-full px-3 py-1.5 text-xs rounded-lg border border-stone-300 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 bg-white text-stone-900"
                             />
                           </div>
-
-                          {/* Instant Connect Button if number entered */}
-                          {pairingPhone.trim().length >= 9 && (
-                            <button
-                              type="button"
-                              onClick={() => handleConnectPersonalPhone(pairingPhone, pairingName)}
-                              className="w-full py-2 px-3 bg-emerald-800 hover:bg-emerald-900 text-white rounded-lg text-xs font-bold transition cursor-pointer flex items-center justify-center gap-2 shadow-2xs"
-                            >
-                              <CheckCircle2 size={14} />
-                              <span>✓ Tautkan &amp; Aktifkan Nomor Ini ke Sistem Sekarang</span>
-                            </button>
-                          )}
                         </form>
 
                         {/* Pairing Code Card (Displayed when requested) */}
@@ -1383,17 +1375,17 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                             </div>
 
                             <p className="text-[11px] font-medium text-emerald-900 leading-relaxed max-w-md mx-auto">
-                              Segera masukkan kode di atas pada layar HP Anda di menu <strong>Perangkat Tertaut &gt; Tautkan dengan nomor telepon saja</strong>.
+                              Segera masukkan kode di atas pada layar HP Anda di menu <strong>Perangkat Tertaut &gt; Tautkan perangkat &gt; Tautkan dengan nomor telepon saja</strong>. Status akan otomatis terhubung begitu kode dikonfirmasi di HP.
                             </p>
 
                             <div className="pt-2 flex flex-col sm:flex-row gap-2 justify-center">
                               <button
                                 type="button"
-                                onClick={() => handleConnectPersonalPhone(pairingPhone, pairingName)}
+                                onClick={() => fetchStatus()}
                                 className="flex-1 py-2 px-3 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-lg transition shadow-xs cursor-pointer flex items-center justify-center gap-1.5"
                               >
-                                <CheckCircle2 size={14} />
-                                <span>Konfirmasi Nomor Ini Terhubung</span>
+                                <RefreshCw size={14} />
+                                <span>Periksa Status Penautan</span>
                               </button>
 
                               {pairingPhone && (

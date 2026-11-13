@@ -27,7 +27,7 @@ export const EmployeeLoanDocument: React.FC<EmployeeLoanDocumentProps> = ({
   return (
     <div
       id={id}
-      className={`bg-white text-black shadow-md border border-stone-300 mx-auto p-8 sm:p-12 md:p-14 max-w-[850px] w-full min-h-[1050px] flex flex-col justify-between select-text print:shadow-none print:border-none print:p-0 print:m-0 print:max-w-none ${className}`}
+      className={`bg-white text-black shadow-md border border-stone-300 mx-auto p-8 sm:p-12 md:p-14 max-w-[850px] w-full min-h-[1050px] print:min-h-0 print:h-auto flex flex-col justify-between select-text print:shadow-none print:border-none print:p-0 print:m-0 print:max-w-none ${className}`}
       style={{
         boxSizing: 'border-box',
         fontFamily: "Calibri, 'Calibri (Body)', Aptos, 'Segoe UI', Arial, sans-serif",

@@ -438,16 +438,19 @@ export function syncLoansWithSubmissions(
     // Cari worker match jika kategori karyawan
     const matchedWorker = allWorkers.find(w => arePersonNamesMatching(w.name, recipient));
 
-    // Cari apakah sudah ada pinjaman atas nama yang sama atau voucher yang terhubung
+    // Cari apakah sudah ada pinjaman atas ID/nomor pinjaman yang sama, voucher terhubung, atau nama yang sama
     const existingIndex = updatedLoans.findIndex(l => {
-      // 1. Match by linkedSubmissionId
+      // 1. Exact match by loanId or loanNumber from voucher created via Pinjaman menu
+      if ((sub as any).loanId && l.id === (sub as any).loanId) return true;
+      if ((sub as any).loanNumber && l.nomorPinjaman === (sub as any).loanNumber) return true;
+      // 2. Match by linkedSubmissionId / linkedSubmissionKode
       if (l.linkedSubmissionId && l.linkedSubmissionId === sub.id) return true;
       if (l.linkedSubmissionKode && sub.kode && l.linkedSubmissionKode === sub.kode) return true;
-      // 2. Match by existing disbursements
+      // 3. Match by existing disbursements
       if (l.disbursements && l.disbursements.some(d => d.submissionId === sub.id || (sub.kode && d.kodeDokumen === sub.kode))) {
         return true;
       }
-      // 3. Match by name
+      // 4. Match by name
       return arePersonNamesMatching(l.namaKaryawan, recipient);
     });
 
@@ -514,6 +517,9 @@ export function syncLoansWithSubmissions(
         jumlahPinjaman: finalTotalPinjaman,
         disbursements: disbList,
         caraPembayaran: caraBayar,
+        linkedSubmissionId: currentLoan.linkedSubmissionId || sub.id,
+        linkedSubmissionKode: currentLoan.linkedSubmissionKode || sub.kode,
+        status: currentLoan.status === 'Menunggu Persetujuan' ? 'Disetujui' : currentLoan.status,
         updatedAt: new Date().toISOString()
       };
 

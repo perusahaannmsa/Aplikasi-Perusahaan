@@ -1651,13 +1651,41 @@ export default function App() {
 
   // Listen to Firebase Auth status and load/clear data accordingly
   useEffect(() => {
+    // Check if current tab is a public portal (form pinjaman, SPPD publik, absen mandiri, shared voucher)
+    const pPath = typeof window !== 'undefined' ? window.location.pathname : '';
+    const pHash = typeof window !== 'undefined' ? window.location.hash : '';
+    const pSearch = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
+    const isPublicPortalUrl = Boolean(
+      pPath === '/pinjaman-karyawan' || pPath === '/form-pinjaman' || pPath === '/loan-form' ||
+      pHash.includes('pinjaman-karyawan') || pHash.includes('form-pinjaman') || pHash.includes('loan-form') ||
+      pPath === '/input-sppd' || pPath === '/sppd-form' ||
+      pHash.includes('input-sppd') || pHash.includes('sppd-form') ||
+      pPath === '/absen' || pPath === '/absensi' || pPath === '/absen-mandiri' ||
+      pHash.includes('absen') || pHash.includes('absensi') || pHash.includes('shared-view') ||
+      pPath.includes('shared-view') || pPath.includes('/voucher') || pPath.includes('/transaksi') || pPath.includes('/shared') ||
+      pHash.includes('voucher') || pHash.includes('transaksi') ||
+      pSearch.has('workerId') || pSearch.has('quick') || pSearch.get('view') === 'absen' || pSearch.get('tab') === 'absen' ||
+      pSearch.has('transaksi') || pSearch.has('nominal') || pSearch.has('kode') || pSearch.has('id')
+    );
+
     // Elegant shared terminal/device logic:
-    // If the browser session is fresh (or reopened tab), prevent auto-login by logging out first.
-    // Preserves active logins across simple page reloads (F5) through sessionStorage.
+    // If the browser session is fresh (all tabs closed and reopened), prevent auto-login by logging out first.
+    // Preserves active logins across page reloads (F5) and NEVER logs out when opening public portals or another tab while a tab is active!
     const hasActiveSession = sessionStorage.getItem('NUSANTARA_SESSION_ACTIVE') === 'true';
-    if (!hasActiveSession) {
+    const lastHeartbeat = Number(localStorage.getItem('NUSANTARA_ACTIVE_TAB_HEARTBEAT') || '0');
+    const hasLiveOtherTab = lastHeartbeat > 0 && (Date.now() - lastHeartbeat) < 15000;
+
+    if (!isPublicPortalUrl && !hasActiveSession && !hasLiveOtherTab) {
       logoutFromFirebase();
     }
+
+    const heartbeatTimer = window.setInterval(() => {
+      if (!isPublicPortalUrl && sessionStorage.getItem('NUSANTARA_SESSION_ACTIVE') === 'true') {
+        try {
+          localStorage.setItem('NUSANTARA_ACTIVE_TAB_HEARTBEAT', String(Date.now()));
+        } catch (_) {}
+      }
+    }, 4000);
 
     const unsubscribe = registerAuthChangeListener(async (user) => {
       setAuthUser(user);
@@ -1666,8 +1694,13 @@ export default function App() {
         // DO NOT implicitly delete localStorage or empty submissions here.
         // This avoids race conditions and data-loss during initial app loading stages or tab reopenings!
       } else {
-        // Mark session as active to prevent force-logout during same-tab refreshes
-        sessionStorage.setItem('NUSANTARA_SESSION_ACTIVE', 'true');
+        // Mark session as active to prevent force-logout during same-tab refreshes and sibling tabs
+        if (!isPublicPortalUrl) {
+          sessionStorage.setItem('NUSANTARA_SESSION_ACTIVE', 'true');
+          try {
+            localStorage.setItem('NUSANTARA_ACTIVE_TAB_HEARTBEAT', String(Date.now()));
+          } catch (_) {}
+        }
         // Fetch user profile info from Firestore collection
         let profile = await getUserProfileFromFirestore(user.uid);
         if (!profile) {
@@ -1794,7 +1827,10 @@ export default function App() {
         }
       }
     });
-    return () => unsubscribe();
+    return () => {
+      window.clearInterval(heartbeatTimer);
+      unsubscribe();
+    };
   }, []);
 
   // Sync state changes with localStorage
@@ -2206,6 +2242,7 @@ export default function App() {
     try {
       sessionStorage.removeItem('NUSANTARA_SESSION_ACTIVE');
       sessionStorage.removeItem('NUSANTARA_ACTIVE_VIEW');
+      localStorage.removeItem('NUSANTARA_ACTIVE_TAB_HEARTBEAT');
       localStorage.removeItem('NUSANTARA_HO_SUBMISSIONS');
       localStorage.removeItem('NUSANTARA_ACTIVE_VIEW');
       setViewInternal('list');
@@ -2529,25 +2566,6 @@ export default function App() {
       createdAt: new Date().toISOString()
     };
 
-    // Update loan record with the linked voucher
-    try {
-      const currentLoans = getSavedEmployeeLoans();
-      const updatedLoans = currentLoans.map(l => {
-        if (l.id === loan.id || l.nomorPinjaman === loan.nomorPinjaman) {
-          return {
-            ...l,
-            linkedSubmissionId: newLoanSubmission.id,
-            linkedSubmissionKode: newLoanSubmission.kode,
-            status: l.status === 'Menunggu Persetujuan' ? 'Disetujui' : l.status
-          };
-        }
-        return l;
-      });
-      saveEmployeeLoans(updatedLoans);
-    } catch (loanErr) {
-      console.warn('Notice updating linked loan:', loanErr);
-    }
-
     setEditingSubmission(newLoanSubmission);
     setView('form');
   };
@@ -2764,6 +2782,9 @@ export default function App() {
       <AuthGate
         onLoginSuccess={(user, initialData) => {
           sessionStorage.setItem('NUSANTARA_SESSION_ACTIVE', 'true');
+          try {
+            localStorage.setItem('NUSANTARA_ACTIVE_TAB_HEARTBEAT', String(Date.now()));
+          } catch (_) {}
           setAuthUser(user);
           setViewInternal('list');
           try {

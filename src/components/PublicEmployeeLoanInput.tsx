@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { 
   FileText, 
   Download, 
@@ -203,11 +204,35 @@ export const PublicEmployeeLoanInput: React.FC<PublicEmployeeLoanInputProps> = (
     }
   };
 
-  const handlePrintBrowser = () => {
-    if (!submittedLoan) return;
+  // Otomatis aktifkan isolasi print jika pengguna menekan Ctrl+P saat melihat formulir
+  useEffect(() => {
+    if (!submittedLoan && !isPreviewOpen) return;
+    const activeLoan = submittedLoan || draftLoan;
+    const origTitle = document.title;
+    const handleBeforePrint = () => {
+      document.body.classList.add('is-printing-employee-loan');
+      document.title = `FORM_PINJAMAN_${activeLoan.nomorPinjaman || 'KARYAWAN'}`;
+    };
+    const handleAfterPrint = () => {
+      document.body.classList.remove('is-printing-employee-loan');
+      document.title = origTitle;
+    };
+    window.addEventListener('beforeprint', handleBeforePrint);
+    window.addEventListener('afterprint', handleAfterPrint);
+    return () => {
+      window.removeEventListener('beforeprint', handleBeforePrint);
+      window.removeEventListener('afterprint', handleAfterPrint);
+      document.body.classList.remove('is-printing-employee-loan');
+      document.title = origTitle;
+    };
+  }, [submittedLoan, isPreviewOpen, draftLoan]);
+
+  const handlePrintBrowser = (loanToPrint?: EmployeeLoan) => {
+    const activeLoan = loanToPrint || submittedLoan || (isPreviewOpen ? draftLoan : null);
+    if (!activeLoan) return;
     document.body.classList.add('is-printing-employee-loan');
     const origTitle = document.title;
-    document.title = `FORM_PINJAMAN_${submittedLoan.nomorPinjaman}`;
+    document.title = `FORM_PINJAMAN_${activeLoan.nomorPinjaman}`;
     const cleanup = () => {
       document.body.classList.remove('is-printing-employee-loan');
       document.title = origTitle;
@@ -216,7 +241,7 @@ export const PublicEmployeeLoanInput: React.FC<PublicEmployeeLoanInputProps> = (
     window.addEventListener('afterprint', cleanup);
     setTimeout(() => {
       window.print();
-      setTimeout(cleanup, 2000);
+      setTimeout(cleanup, 2500);
     }, 150);
   };
 
@@ -266,88 +291,92 @@ export const PublicEmployeeLoanInput: React.FC<PublicEmployeeLoanInputProps> = (
       <main className="flex-1 max-w-4xl w-full mx-auto px-4 py-6 sm:py-8">
         {/* SUCCESS STATE AFTER SUBMISSION & DOWNLOAD */}
         {submittedLoan ? (
-          <div className="bg-white border border-stone-200 rounded-3xl p-6 sm:p-10 shadow-xl space-y-6 animate-in fade-in zoom-in-95 duration-200 text-center max-w-2xl mx-auto">
-            <div className="w-16 h-16 bg-emerald-100 border border-emerald-200 text-emerald-600 rounded-2xl mx-auto flex items-center justify-center shadow-inner">
-              <CheckCircle2 size={36} />
-            </div>
+          <div className="space-y-6 animate-in fade-in zoom-in-95 duration-200">
+            {/* Compact Confirmation & Quick Actions Card */}
+            <div className="bg-white border border-stone-200 rounded-3xl p-5 sm:p-7 shadow-md space-y-5 text-center max-w-3xl mx-auto">
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-left">
+                <div className="flex items-center gap-3.5">
+                  <div className="w-12 h-12 bg-emerald-100 border border-emerald-200 text-emerald-600 rounded-2xl flex items-center justify-center shadow-inner shrink-0">
+                    <CheckCircle2 size={26} />
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200 inline-block mb-1">
+                      Permohonan Berhasil Dikirim &amp; Terunduh
+                    </span>
+                    <h2 className="text-base sm:text-lg font-black text-stone-900 tracking-tight">
+                      Formulir Pinjaman Karyawan Berhasil Dibuat!
+                    </h2>
+                    <p className="text-xs text-stone-600">
+                      File PDF resmi telah <strong>otomatis diunduh</strong> dan pratinjau formulir resmi ditampilkan di bawah.
+                    </p>
+                  </div>
+                </div>
 
-            <div className="space-y-1.5">
-              <span className="text-xs font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200 inline-block">
-                Permohonan Berhasil Dikirim &amp; Terunduh
-              </span>
-              <h2 className="text-xl sm:text-2xl font-black text-stone-900 tracking-tight">
-                Formulir Pinjaman Karyawan Berhasil Dibuat!
-              </h2>
-              <p className="text-xs sm:text-sm text-stone-600 max-w-md mx-auto leading-relaxed">
-                File PDF resmi telah <strong>otomatis diunduh</strong> ke perangkat Anda. Data permohonan telah tercatat di sistem keuangan untuk diproses persetujuannya.
-              </p>
-            </div>
+                {/* Reference Number Chip */}
+                <div className="px-3.5 py-2 bg-stone-50 border border-stone-200 rounded-2xl shrink-0 w-full sm:w-auto text-center sm:text-right">
+                  <div className="flex items-center justify-between sm:justify-end gap-2 text-[10px] text-stone-500">
+                    <span>No. Ref:</span>
+                    <button
+                      type="button"
+                      onClick={copyRefNumber}
+                      className="flex items-center gap-1 text-amber-700 hover:text-amber-800 font-semibold cursor-pointer"
+                    >
+                      {isCopiedRef ? <Check size={11} /> : <Copy size={11} />}
+                      <span>{isCopiedRef ? 'Tersalin' : 'Salin'}</span>
+                    </button>
+                  </div>
+                  <div className="text-sm font-mono font-black text-stone-900 tracking-wider mt-0.5">
+                    {submittedLoan.nomorPinjaman}
+                  </div>
+                </div>
+              </div>
 
-            {/* Reference Number Card */}
-            <div className="p-4 bg-stone-50 border border-stone-200 rounded-2xl max-w-md mx-auto space-y-2">
-              <div className="flex items-center justify-between text-xs text-stone-500">
-                <span>Nomor Referensi Resmi :</span>
+              {/* Actions for downloaded / printable document */}
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-2.5 pt-3 border-t border-stone-150">
                 <button
                   type="button"
-                  onClick={copyRefNumber}
-                  className="flex items-center gap-1 text-amber-700 hover:text-amber-800 font-semibold cursor-pointer"
+                  onClick={() => downloadEmployeeLoanPdf(submittedLoan)}
+                  className="w-full sm:w-auto px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
                 >
-                  {isCopiedRef ? <Check size={12} /> : <Copy size={12} />}
-                  <span>{isCopiedRef ? 'Tersalin' : 'Salin Nomor'}</span>
+                  <Download size={14} />
+                  <span>Unduh Ulang File PDF</span>
                 </button>
-              </div>
 
-              <div className="text-lg font-mono font-black text-stone-900 bg-white border border-stone-200 py-2 px-3 rounded-xl tracking-wider">
-                {submittedLoan.nomorPinjaman}
-              </div>
+                <button
+                  type="button"
+                  onClick={() => handlePrintBrowser(submittedLoan)}
+                  className="w-full sm:w-auto px-5 py-2.5 bg-white hover:bg-stone-50 text-stone-700 border border-stone-250 text-xs font-bold rounded-xl shadow-xs transition flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
+                >
+                  <Printer size={14} />
+                  <span>Cetak / Print Langsung</span>
+                </button>
 
-              <div className="grid grid-cols-2 gap-2 text-left pt-2 text-[11px] text-stone-600 border-t border-stone-200">
-                <div>
-                  <span className="text-stone-400 block">Peminjam:</span>
-                  <strong className="text-stone-800">{submittedLoan.namaKaryawan}</strong>
-                </div>
-                <div>
-                  <span className="text-stone-400 block">Nominal:</span>
-                  <strong className="text-stone-800">{formatRupiah(submittedLoan.jumlahPinjaman)}</strong>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSubmittedLoan(null);
+                    setNamaKaryawan('');
+                    setDivisi('');
+                    setJumlahPinjaman('');
+                    setRawJumlahInput('');
+                    setAlasanPeminjaman('');
+                    setCatatan('');
+                  }}
+                  className="w-full sm:w-auto px-5 py-2.5 text-stone-600 hover:text-stone-900 text-xs font-semibold rounded-xl hover:bg-stone-100 border border-transparent hover:border-stone-200 transition cursor-pointer whitespace-nowrap"
+                >
+                  Isi Formulir Baru
+                </button>
               </div>
             </div>
 
-            {/* Actions for downloaded document */}
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => downloadEmployeeLoanPdf(submittedLoan)}
-                className="w-full sm:w-auto px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <Download size={14} />
-                <span>Unduh Ulang File PDF</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handlePrintBrowser}
-                className="w-full sm:w-auto px-5 py-2.5 bg-white hover:bg-stone-50 text-stone-700 border border-stone-250 text-xs font-bold rounded-xl shadow-xs transition flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <Printer size={14} />
-                <span>Cetak / Print Langsung</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setSubmittedLoan(null);
-                  setNamaKaryawan('');
-                  setDivisi('');
-                  setJumlahPinjaman('');
-                  setRawJumlahInput('');
-                  setAlasanPeminjaman('');
-                  setCatatan('');
-                }}
-                className="w-full sm:w-auto px-5 py-2.5 text-stone-500 hover:text-stone-800 text-xs font-semibold rounded-xl hover:bg-stone-100 transition cursor-pointer"
-              >
-                Isi Formulir Baru
-              </button>
+            {/* Exact Official Employee Loan Form Preview (Sama persis format & bentuknya) */}
+            <div className="overflow-x-auto pb-4">
+              <EmployeeLoanDocument
+                id="employee-loan-preview-submitted"
+                loan={submittedLoan}
+                showPaymentLedger={false}
+                showKopSurat={true}
+              />
             </div>
           </div>
         ) : (
@@ -727,8 +756,9 @@ export const PublicEmployeeLoanInput: React.FC<PublicEmployeeLoanInputProps> = (
             </div>
 
             <div className="p-4 sm:p-6 overflow-y-auto flex-1 bg-stone-200/50 flex justify-center">
-              <div className="bg-white shadow-xl scale-95 sm:scale-100 origin-top">
+              <div className="bg-white shadow-xl origin-top w-full max-w-[850px]">
                 <EmployeeLoanDocument
+                  id="employee-loan-preview-modal"
                   loan={draftLoan}
                   showPaymentLedger={false}
                   showKopSurat={true}
@@ -739,14 +769,35 @@ export const PublicEmployeeLoanInput: React.FC<PublicEmployeeLoanInputProps> = (
             <div className="p-3.5 border-t border-stone-200 bg-stone-50 flex justify-end gap-2">
               <button
                 type="button"
+                onClick={() => handlePrintBrowser(draftLoan)}
+                className="px-4 py-1.5 text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white rounded-lg transition flex items-center gap-1.5 cursor-pointer"
+              >
+                <Printer size={13} />
+                <span>Cetak / Print</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => setIsPreviewOpen(false)}
-                className="px-4 py-1.5 text-xs font-bold text-stone-600 hover:text-stone-800 hover:bg-stone-200 rounded-lg transition"
+                className="px-4 py-1.5 text-xs font-bold text-stone-600 hover:text-stone-800 hover:bg-stone-200 rounded-lg transition cursor-pointer"
               >
                 Tutup Pratinjau
               </button>
             </div>
           </div>
         </div>
+      )}
+
+      {/* DEDICATED PRINT PORTAL ON DOCUMENT BODY (Menjamin cetak langsung selalu tampil penuh & tidak pernah kosong) */}
+      {(submittedLoan || isPreviewOpen) && typeof document !== 'undefined' && createPortal(
+        <div id="employee-loan-print-sheet-wrapper" className="hidden print:block bg-white text-black w-full">
+          <EmployeeLoanDocument
+            id="employee-loan-printable-document"
+            loan={submittedLoan || draftLoan}
+            showPaymentLedger={false}
+            showKopSurat={true}
+          />
+        </div>,
+        document.body
       )}
     </div>
   );

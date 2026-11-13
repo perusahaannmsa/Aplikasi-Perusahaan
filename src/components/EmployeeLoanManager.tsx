@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { EmployeeLoan, LoanPayment, LoanSigner, Worker, Submission } from '../types';
 import {
   calculateLoanSummary,
@@ -14,7 +15,8 @@ import {
   determineLoanCategory,
   markLoanAsLunas,
   reopenLoan,
-  manuallyUnlinkVoucherFromLoan
+  manuallyUnlinkVoucherFromLoan,
+  STORAGE_KEY_EMPLOYEE_LOANS
 } from '../utils/loanUtils';
 import { downloadEmployeeLoanPdf } from '../utils/loanPdfGenerator';
 import { EmployeeLoanDocument } from './EmployeeLoanDocument';
@@ -54,7 +56,9 @@ import {
   Users,
   UserPlus,
   Link,
-  RotateCcw
+  RotateCcw,
+  MoreVertical,
+  Eye
 } from 'lucide-react';
 
 interface EmployeeLoanManagerProps {
@@ -105,6 +109,170 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
   const [settlementConfirmLoan, setSettlementConfirmLoan] = useState<EmployeeLoan | null>(null);
   const [settlementDate, setSettlementDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [settlementNote, setSettlementNote] = useState('Pelunasan Pinjaman');
+
+  // Floating Dropdown Menu state (portal popover per item pinjaman)
+  const [openLoanMenuId, setOpenLoanMenuId] = useState<string | null>(null);
+  const [loanMenuPosition, setLoanMenuPosition] = useState<{
+    top?: number;
+    bottom?: number;
+    left: number;
+    maxHeight: number;
+  } | null>(null);
+
+  const activeMenuLoan = useMemo(() => {
+    if (!openLoanMenuId) return null;
+    return loans.find(l => l.id === openLoanMenuId) || null;
+  }, [openLoanMenuId, loans]);
+
+  const findLinkedVoucherForLoan = (loan: EmployeeLoan): Submission | undefined => {
+    return submissions.find(s =>
+      (loan.linkedSubmissionId && s.id === loan.linkedSubmissionId) ||
+      (loan.linkedSubmissionKode && s.kode === loan.linkedSubmissionKode) ||
+      (Array.isArray(loan.disbursements) && loan.disbursements.some(d =>
+        (d.submissionId && d.submissionId === s.id) ||
+        (d.kodeDokumen && s.kode && d.kodeDokumen === s.kode)
+      )) ||
+      (s.loanId && s.loanId === loan.id) ||
+      (s.loanNumber && s.loanNumber === loan.nomorPinjaman) ||
+      (s.notes && s.notes.includes(loan.nomorPinjaman)) ||
+      (s.items && s.items.some(it => it.keterangan && it.keterangan.includes(loan.nomorPinjaman)))
+    );
+  };
+
+  const isLoanConnectedToVoucher = (loan: EmployeeLoan, linkedVoucher?: Submission): boolean => {
+    return Boolean(
+      linkedVoucher ||
+      (Array.isArray(loan.disbursements) && loan.disbursements.length > 0)
+    );
+  };
+
+  const updateLoanMenuPosition = (loanId: string) => {
+    const btn = document.getElementById(`btn-loan-action-${loanId}`);
+    if (!btn) return;
+    const rect = btn.getBoundingClientRect();
+    const menuWidth = 224;
+    const menuEstimatedHeight = 330;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    const openUpwards = spaceBelow < menuEstimatedHeight && spaceAbove > spaceBelow;
+
+    let left = rect.right - menuWidth;
+    if (left < 12) {
+      left = Math.max(12, rect.left);
+    }
+    if (left + menuWidth > window.innerWidth - 12) {
+      left = Math.max(12, window.innerWidth - menuWidth - 12);
+    }
+
+    if (openUpwards) {
+      setLoanMenuPosition({
+        bottom: Math.max(8, window.innerHeight - rect.top + 6),
+        left,
+        maxHeight: Math.min(420, Math.max(160, spaceAbove - 16)),
+      });
+    } else {
+      setLoanMenuPosition({
+        top: Math.max(8, rect.bottom + 6),
+        left,
+        maxHeight: Math.min(420, Math.max(160, spaceBelow - 16)),
+      });
+    }
+  };
+
+  useEffect(() => {
+    if (openLoanMenuId) {
+      updateLoanMenuPosition(openLoanMenuId);
+    }
+  }, [openLoanMenuId]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest('.loan-action-menu-root')) {
+        setOpenLoanMenuId(null);
+        setLoanMenuPosition(null);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setOpenLoanMenuId(null);
+        setLoanMenuPosition(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!openLoanMenuId) return;
+    const handleScrollOrResize = () => updateLoanMenuPosition(openLoanMenuId);
+    window.addEventListener('scroll', handleScrollOrResize, true);
+    window.addEventListener('resize', handleScrollOrResize);
+    return () => {
+      window.removeEventListener('scroll', handleScrollOrResize, true);
+      window.removeEventListener('resize', handleScrollOrResize);
+    };
+  }, [openLoanMenuId]);
+
+  // Sinkronkan pengajuan dari portal karyawan (cross-tab / server unified-storage)
+  useEffect(() => {
+    let isMounted = true;
+    fetch('/api/unified-storage')
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => {
+        if (!isMounted || !data || !Array.isArray(data.employeeLoans) || data.employeeLoans.length === 0) return;
+        const hasLocalKey = !!localStorage.getItem(STORAGE_KEY_EMPLOYEE_LOANS);
+        if (!hasLocalKey) {
+          setLoans(data.employeeLoans);
+          localStorage.setItem(STORAGE_KEY_EMPLOYEE_LOANS, JSON.stringify(data.employeeLoans));
+          return;
+        }
+        // Gabungkan pengajuan dari portal karyawan publik yang belum ada di localStorage
+        setLoans(prev => {
+          const existingIds = new Set(prev.map(l => l.id));
+          const missingPublicLoans = (data.employeeLoans as EmployeeLoan[]).filter(
+            srvLoan => srvLoan && srvLoan.id && srvLoan.id.startsWith('loan-emp-') && !existingIds.has(srvLoan.id)
+          );
+          if (missingPublicLoans.length === 0) return prev;
+          const merged = [...missingPublicLoans, ...prev];
+          try {
+            localStorage.setItem(STORAGE_KEY_EMPLOYEE_LOANS, JSON.stringify(merged));
+          } catch (_) {}
+          return merged;
+        });
+      })
+      .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Pastikan Ctrl+P pada modal cetak pinjaman selalu memakai layout cetak resmi
+  useEffect(() => {
+    if (!isPrintModalOpen || !targetLoanForPrint) return;
+    const originalTitle = document.title;
+    const cleanNo = (targetLoanForPrint.nomorPinjaman || 'KARYAWAN').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const handleBeforePrint = () => {
+      document.body.classList.add('is-printing-employee-loan');
+      document.title = `FORM_PINJAMAN_${cleanNo}`;
+    };
+    const handleAfterPrint = () => {
+      document.body.classList.remove('is-printing-employee-loan');
+      document.title = originalTitle;
+    };
+    window.addEventListener('beforeprint', handleBeforePrint);
+    window.addEventListener('afterprint', handleAfterPrint);
+    return () => {
+      window.removeEventListener('beforeprint', handleBeforePrint);
+      window.removeEventListener('afterprint', handleAfterPrint);
+      document.body.classList.remove('is-printing-employee-loan');
+      document.title = originalTitle;
+    };
+  }, [isPrintModalOpen, targetLoanForPrint]);
 
   // Reactive listener untuk sinkronisasi instan antar modul dan tab
   useEffect(() => {
@@ -1072,19 +1240,18 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
             filteredLoans.map((loan) => {
               const summary = calculateLoanSummary(loan);
               const payments = loan.payments || [];
-              const linkedVoucher = submissions.find(s => 
-                (loan.linkedSubmissionId && s.id === loan.linkedSubmissionId) ||
-                (loan.linkedSubmissionKode && s.kode === loan.linkedSubmissionKode) ||
-                (s.loanId && s.loanId === loan.id) ||
-                (s.loanNumber && s.loanNumber === loan.nomorPinjaman) ||
-                (s.notes && s.notes.includes(loan.nomorPinjaman)) ||
-                (s.items && s.items.some(it => it.keterangan && it.keterangan.includes(loan.nomorPinjaman)))
-              );
+              const linkedVoucher = findLinkedVoucherForLoan(loan);
+              const isConnectedToVoucher = isLoanConnectedToVoucher(loan, linkedVoucher);
+              const showDisbursementAccordion =
+                Array.isArray(loan.disbursements) &&
+                (loan.disbursements.length > 1 || (!linkedVoucher && loan.disbursements.length === 1));
 
               return (
                 <div
                   key={loan.id}
-                  className="bg-white border border-stone-200/90 rounded-2xl p-4 sm:p-5 shadow-xs hover:border-amber-300 transition duration-150"
+                  className={`bg-white border border-stone-200/90 rounded-2xl p-4 sm:p-5 shadow-xs hover:border-amber-300 transition duration-150 ${
+                    openLoanMenuId === loan.id ? 'relative z-30 border-amber-300' : ''
+                  }`}
                 >
                   <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                     {/* Left: Info Peminjam */}
@@ -1170,8 +1337,8 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
                         )}
                       </div>
 
-                      {/* Riwayat Akumulasi Transaksi Voucher Kas/Bank HO */}
-                      {loan.disbursements && loan.disbursements.length > 0 && (
+                      {/* Riwayat Akumulasi Transaksi Voucher Kas/Bank HO (ditampilkan bila multi-voucher atau belum ter-match di list voucher) */}
+                      {showDisbursementAccordion && loan.disbursements && (
                         <div className="pt-2">
                           <button
                             type="button"
@@ -1299,133 +1466,33 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
                       </div>
                     </div>
 
-                    {/* Right: Action Buttons */}
-                    <div className="flex flex-row lg:flex-col items-center lg:items-stretch gap-1.5 shrink-0 self-end lg:self-center w-full lg:w-auto pt-2 lg:pt-0 border-t lg:border-t-0 border-stone-100">
-                      {/* Direct Voucher HO Creation or Open Action */}
-                      {linkedVoucher ? (
-                        onViewSubmission && (
-                          <button
-                            type="button"
-                            onClick={() => onViewSubmission(linkedVoucher)}
-                            className="flex-1 lg:flex-none px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-3xs cursor-pointer"
-                            title={`Buka Formulir Voucher HO ${linkedVoucher.kode}`}
-                          >
-                            <FileCheck size={13} className="text-emerald-700" />
-                            <span>Voucher {linkedVoucher.kode}</span>
-                          </button>
-                        )
-                      ) : (
-                        onCreateVoucher && (
-                          <button
-                            type="button"
-                            onClick={() => onCreateVoucher(loan)}
-                            className="flex-1 lg:flex-none px-3 py-1.5 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-md shadow-amber-600/20 cursor-pointer"
-                            title="Buat Voucher Transaksi HO untuk pencairan pinjaman ini"
-                          >
-                            <FileText size={13} />
-                            <span>+ Buat Voucher HO</span>
-                          </button>
-                        )
-                      )}
-
-                      {/* Tombol Tandai Lunas & Status Lunas */}
-                      {summary.effectiveStatus === 'Lunas' ? (
-                        <div className="flex items-center gap-1.5 flex-1 lg:flex-none">
-                          <span className="flex-1 lg:flex-none px-3 py-1.5 bg-emerald-100 text-emerald-950 border border-emerald-300 rounded-xl text-xs font-black flex items-center justify-center gap-1 shadow-3xs">
-                            <CheckCircle2 size={13} className="text-emerald-700" />
-                            <span>LUNAS</span>
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => handleReopen(loan)}
-                            className="px-2.5 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 border border-stone-200 rounded-xl text-[11px] font-bold transition flex items-center gap-1 cursor-pointer"
-                            title="Batalkan pelunasan dan kembalikan ke Daftar Hutang Aktif"
-                          >
-                            <RotateCcw size={11} />
-                            <span>Batal</span>
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSettlementConfirmLoan(loan);
-                            setSettlementDate(new Date().toISOString().split('T')[0]);
-                            setSettlementNote(`Pelunasan penuh pinjaman ${loan.nomorPinjaman} (${loan.namaKaryawan})`);
-                          }}
-                          className="flex-1 lg:flex-none px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 text-white rounded-xl text-xs font-black transition flex items-center justify-center gap-1.5 shadow-md shadow-emerald-700/20 cursor-pointer"
-                          title="Tandai pinjaman ini LUNAS (akan otomatis hilang dari Daftar Hutang dan masuk ke Tab Lunas)"
-                        >
-                          <CheckCircle2 size={13} />
-                          <span>✓ Tandai Lunas</span>
-                        </button>
-                      )}
-
-                      {/* Tombol Ganti / Hubungkan Transaksi Voucher Kas */}
+                    {/* Right: Compact Dropdown Menu Trigger */}
+                    <div className="flex items-center justify-end lg:justify-center shrink-0 self-end lg:self-center w-full lg:w-auto pt-2 lg:pt-0 border-t lg:border-t-0 border-stone-100 loan-action-menu-root">
                       <button
                         type="button"
-                        onClick={() => setTargetLoanForLinkVoucher(loan)}
-                        className="flex-1 lg:flex-none px-3 py-1.5 bg-sky-50 hover:bg-sky-100 text-sky-950 border border-sky-300 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-3xs cursor-pointer"
-                        title="Ganti atau hubungkan transaksi voucher kas ke pinjaman ini jika sistem salah/belum mendeteksi"
-                      >
-                        <Link size={13} className="text-sky-700" />
-                        <span>🔗 Hubungkan Voucher</span>
-                      </button>
-
-                      {summary.sisaPinjaman > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => handleOpenPaymentModal(loan)}
-                          className="flex-1 lg:flex-none px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-3xs cursor-pointer"
-                          title="Catat angsuran atau pemotongan gaji untuk pinjaman ini"
-                        >
-                          <CreditCard size={13} />
-                          <span>+ Catat Bayar</span>
-                        </button>
-                      )}
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setTargetLoanForHistory(loan);
-                          setIsHistoryModalOpen(true);
+                        id={`btn-loan-action-${loan.id}`}
+                        aria-expanded={openLoanMenuId === loan.id}
+                        aria-haspopup="menu"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (openLoanMenuId === loan.id) {
+                            setOpenLoanMenuId(null);
+                            setLoanMenuPosition(null);
+                          } else {
+                            setOpenLoanMenuId(loan.id);
+                            updateLoanMenuPosition(loan.id);
+                          }
                         }}
-                        className="flex-1 lg:flex-none px-3 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-800 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
-                        title="Lihat rincian riwayat seluruh angsuran & cicilan"
+                        className={`w-full lg:w-auto px-3.5 py-2 rounded-xl border text-xs font-bold transition flex items-center justify-center gap-2 shadow-3xs cursor-pointer whitespace-nowrap ${
+                          openLoanMenuId === loan.id
+                            ? 'bg-amber-600 text-white border-amber-700 shadow-sm'
+                            : 'bg-white hover:bg-stone-50 text-stone-700 border-stone-250'
+                        }`}
+                        title={isConnectedToVoucher ? 'Menu tindakan pinjaman (Sudah terhubung voucher)' : 'Menu tindakan pinjaman'}
                       >
-                        <Layers size={13} className="text-stone-600" />
-                        <span>Riwayat ({payments.length})</span>
+                        <span>Tindakan</span>
+                        <MoreVertical size={15} />
                       </button>
-
-                      <button
-                        type="button"
-                        onClick={() => handleOpenPrintModal(loan)}
-                        className="flex-1 lg:flex-none px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
-                        title="Cetak formulir resmi form pinjaman karyawan"
-                      >
-                        <Printer size={13} className="text-amber-700" />
-                        <span>Cetak Form</span>
-                      </button>
-
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => handleOpenEditLoanForm(loan)}
-                          className="p-1.5 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-lg transition cursor-pointer"
-                          title="Edit Formulir Pinjaman"
-                        >
-                          <Edit size={14} />
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteLoan(loan)}
-                          className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition cursor-pointer"
-                          title="Hapus Formulir Pinjaman"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
                     </div>
                   </div>
                 </div>
@@ -2258,7 +2325,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
 
       {/* MODAL 4: STUDIO PRATINJAU & CETAK DOKUMEN RESMI (TAMPILAN BARU SESUAI FORMAT NMSA) */}
       {isPrintModalOpen && targetLoanForPrint && (
-        <div className="fixed inset-0 z-[2000] flex flex-col bg-stone-900/95 backdrop-blur-md text-white overflow-hidden animate-in fade-in duration-150 print:bg-white print:p-0 print:overflow-visible print:block">
+        <div className="fixed inset-0 z-[2000] flex flex-col bg-stone-900/95 backdrop-blur-md text-white overflow-hidden animate-in fade-in duration-150 print:hidden">
           {/* Top Fixed Floating Control Toolbar (Always visible, clean, never scrolls out of view) */}
           <header className="h-16 px-4 sm:px-6 bg-stone-950/90 border-b border-stone-800 flex items-center justify-between shrink-0 z-30 print:hidden select-none">
             {/* Left: Close & Document Meta */}
@@ -2387,8 +2454,8 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
                 <span className="hidden xl:inline">{printWithLedger ? 'Riwayat: YA' : 'Riwayat: TIDAK'}</span>
               </button>
 
-              {/* Button: Buat Voucher Kas/Bank HO */}
-              {onCreateVoucher && (
+              {/* Button: Buat Voucher Kas/Bank HO (hanya tampil jika belum terhubung voucher) */}
+              {onCreateVoucher && !isLoanConnectedToVoucher(targetLoanForPrint, findLinkedVoucherForLoan(targetLoanForPrint)) && (
                 <button
                   type="button"
                   onClick={() => {
@@ -2399,7 +2466,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
                   title="Buat draf Formulir Voucher Kas/Bank HO untuk pencairan pinjaman ini"
                 >
                   <FileCheck size={14} />
-                  <span>+ Voucher HO</span>
+                  <span>+ Buat Voucher</span>
                 </button>
               )}
 
@@ -2437,6 +2504,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
               className="print:transform-none print:m-0"
             >
               <EmployeeLoanDocument
+                id="employee-loan-preview-studio"
                 loan={targetLoanForPrint}
                 showPaymentLedger={printWithLedger}
                 showKopSurat={showKopSuratInPrint}
@@ -2975,6 +3043,228 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
             setTimeout(() => setSyncMessage(''), 5000);
           }}
         />
+      )}
+
+      {/* PORTAL DROPDOWN MENU TINDAKAN PINJAMAN */}
+      {openLoanMenuId && activeMenuLoan && typeof document !== 'undefined' && createPortal(
+        (() => {
+          const menuSummary = calculateLoanSummary(activeMenuLoan);
+          const menuPayments = activeMenuLoan.payments || [];
+          const menuLinkedVoucher = findLinkedVoucherForLoan(activeMenuLoan);
+          const menuIsConnected = isLoanConnectedToVoucher(activeMenuLoan, menuLinkedVoucher);
+          const closeMenu = () => {
+            setOpenLoanMenuId(null);
+            setLoanMenuPosition(null);
+          };
+
+          return (
+            <div
+              id="portal-loan-action-menu"
+              role="menu"
+              style={{
+                position: 'fixed',
+                top: loanMenuPosition?.top !== undefined ? `${loanMenuPosition.top}px` : (loanMenuPosition?.bottom === undefined ? '100px' : 'auto'),
+                bottom: loanMenuPosition?.bottom !== undefined ? `${loanMenuPosition.bottom}px` : 'auto',
+                left: loanMenuPosition?.left !== undefined ? `${loanMenuPosition.left}px` : 'auto',
+                right: loanMenuPosition?.left === undefined ? '16px' : 'auto',
+                width: '224px',
+                maxHeight: loanMenuPosition?.maxHeight !== undefined ? `${loanMenuPosition.maxHeight}px` : '420px',
+                zIndex: 9999999,
+              }}
+              className="loan-action-menu-root action-menu-dropdown-popover w-56 bg-white rounded-2xl shadow-2xl border border-stone-200 py-1.5 overflow-y-auto divide-y divide-stone-100 text-left select-none ring-1 ring-black/5 animate-in fade-in duration-100"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header Info Pinjaman */}
+              <div className="px-3.5 py-2 bg-stone-50/90 border-b border-stone-150">
+                <div className="text-[10px] font-mono font-bold text-stone-500 uppercase tracking-wider truncate">
+                  {activeMenuLoan.nomorPinjaman}
+                </div>
+                <div className="text-xs font-extrabold text-stone-800 truncate" title={activeMenuLoan.namaKaryawan}>
+                  {activeMenuLoan.namaKaryawan}
+                </div>
+              </div>
+
+              {/* Kelompok 1: Voucher Transaksi (Kondisional: Ganti Voucher vs Buat Voucher) */}
+              <div className="py-1">
+                {menuIsConnected ? (
+                  <>
+                    {menuLinkedVoucher && onViewSubmission && (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          closeMenu();
+                          onViewSubmission(menuLinkedVoucher);
+                        }}
+                        className="w-full px-3.5 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-50 flex items-center gap-2.5 transition text-left cursor-pointer"
+                      >
+                        <Eye size={15} className="text-emerald-600 shrink-0" />
+                        <span className="truncate">Lihat Voucher ({menuLinkedVoucher.kode})</span>
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        const target = activeMenuLoan;
+                        closeMenu();
+                        setTargetLoanForLinkVoucher(target);
+                      }}
+                      className="w-full px-3.5 py-2 text-xs font-semibold text-sky-800 hover:bg-sky-50 flex items-center gap-2.5 transition text-left cursor-pointer"
+                    >
+                      <Link size={15} className="text-sky-600 shrink-0" />
+                      <span>Ganti Voucher</span>
+                    </button>
+                  </>
+                ) : (
+                  onCreateVoucher && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        const target = activeMenuLoan;
+                        closeMenu();
+                        onCreateVoucher(target);
+                      }}
+                      className="w-full px-3.5 py-2 text-xs font-bold text-amber-800 hover:bg-amber-50 flex items-center gap-2.5 transition text-left cursor-pointer"
+                    >
+                      <FileText size={15} className="text-amber-600 shrink-0" />
+                      <span>Buat Voucher</span>
+                    </button>
+                  )
+                )}
+              </div>
+
+              {/* Kelompok 2: Pembayaran, Pelunasan & Riwayat */}
+              <div className="py-1">
+                {menuSummary.sisaPinjaman > 0 && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      const target = activeMenuLoan;
+                      closeMenu();
+                      handleOpenPaymentModal(target);
+                    }}
+                    className="w-full px-3.5 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 flex items-center gap-2.5 transition text-left cursor-pointer"
+                  >
+                    <CreditCard size={15} className="text-emerald-600 shrink-0" />
+                    <span>Catat Bayar</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    const target = activeMenuLoan;
+                    closeMenu();
+                    setTargetLoanForHistory(target);
+                    setIsHistoryModalOpen(true);
+                  }}
+                  className="w-full px-3.5 py-2 text-xs font-semibold text-stone-700 hover:bg-stone-50 flex items-center gap-2.5 transition text-left cursor-pointer"
+                >
+                  <Layers size={15} className="text-stone-500 shrink-0" />
+                  <span>Riwayat ({menuPayments.length})</span>
+                </button>
+
+                {menuSummary.effectiveStatus === 'Lunas' ? (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      const target = activeMenuLoan;
+                      closeMenu();
+                      handleReopen(target);
+                    }}
+                    className="w-full px-3.5 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-50 flex items-center gap-2.5 transition text-left cursor-pointer"
+                  >
+                    <RotateCcw size={15} className="text-amber-600 shrink-0" />
+                    <span>Batalkan Lunas</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      const target = activeMenuLoan;
+                      closeMenu();
+                      setSettlementConfirmLoan(target);
+                      setSettlementDate(new Date().toISOString().split('T')[0]);
+                      setSettlementNote(`Pelunasan penuh pinjaman ${target.nomorPinjaman} (${target.namaKaryawan})`);
+                    }}
+                    className="w-full px-3.5 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-50 flex items-center gap-2.5 transition text-left cursor-pointer"
+                  >
+                    <CheckCircle2 size={15} className="text-emerald-600 shrink-0" />
+                    <span>Tandai Lunas</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Kelompok 3: Cetak, Edit & Hapus */}
+              <div className="py-1">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    const target = activeMenuLoan;
+                    closeMenu();
+                    handleOpenPrintModal(target);
+                  }}
+                  className="w-full px-3.5 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-50 flex items-center gap-2.5 transition text-left cursor-pointer"
+                >
+                  <Printer size={15} className="text-amber-600 shrink-0" />
+                  <span>Cetak Form</span>
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    const target = activeMenuLoan;
+                    closeMenu();
+                    handleOpenEditLoanForm(target);
+                  }}
+                  className="w-full px-3.5 py-2 text-xs font-semibold text-sky-700 hover:bg-sky-50 flex items-center gap-2.5 transition text-left cursor-pointer"
+                >
+                  <Edit size={15} className="text-sky-600 shrink-0" />
+                  <span>Edit Pinjaman</span>
+                </button>
+              </div>
+
+              <div className="py-1">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    const target = activeMenuLoan;
+                    closeMenu();
+                    handleDeleteLoan(target);
+                  }}
+                  className="w-full px-3.5 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-50 flex items-center gap-2.5 transition text-left cursor-pointer"
+                >
+                  <Trash2 size={15} className="text-rose-600 shrink-0" />
+                  <span>Hapus Pinjaman</span>
+                </button>
+              </div>
+            </div>
+          );
+        })(),
+        document.body
+      )}
+
+      {/* DEDICATED PRINT PORTAL ON DOCUMENT BODY */}
+      {isPrintModalOpen && targetLoanForPrint && typeof document !== 'undefined' && createPortal(
+        <div id="employee-loan-print-sheet-wrapper" className="hidden print:block bg-white text-black w-full">
+          <EmployeeLoanDocument
+            id="employee-loan-printable-document"
+            loan={targetLoanForPrint}
+            showPaymentLedger={printWithLedger}
+            showKopSurat={showKopSuratInPrint}
+          />
+        </div>,
+        document.body
       )}
 
     </div>
