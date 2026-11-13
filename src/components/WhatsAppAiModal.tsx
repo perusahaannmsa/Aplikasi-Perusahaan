@@ -114,6 +114,9 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isRefreshingQr, setIsRefreshingQr] = useState<boolean>(false);
+  const [isPairingInProgress, setIsPairingInProgress] = useState<boolean>(false);
+  const [isVercelServerless, setIsVercelServerless] = useState<boolean>(false);
+  const lastQrSeqRef = useRef<number>(0);
 
   // Server Backend Config states
   const [backendUrlInput, setBackendUrlInput] = useState<string>(getBackendBaseUrl());
@@ -395,57 +398,73 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
     }
   };
 
-  const [qrCountdown, setQrCountdown] = useState<number>(25);
+  const [qrCountdown, setQrCountdown] = useState<number>(45);
   const [isQrZoomed, setIsQrZoomed] = useState<boolean>(false);
 
-  // Active real-time countdown for QR rotation (25s cycle)
+  // Non-destructive display timer only (Baileys rotates QR automatically on the live socket;
+  // NEVER call disconnect/refresh-qr automatically because that destroys active QR handshakes!)
   useEffect(() => {
-    if (!isOpen || activeLinkMethod !== 'qr' || status === 'connected') return;
+    if (!isOpen || activeLinkMethod !== 'qr' || status !== 'qr' || isPairingInProgress) return;
     const timer = setInterval(() => {
-      setQrCountdown((prev) => {
-        if (prev <= 1) {
-          fetchStatus();
-          return 25;
-        }
-        return prev - 1;
-      });
+      setQrCountdown((prev) => (prev > 1 ? prev - 1 : 20));
     }, 1000);
     return () => clearInterval(timer);
-  }, [isOpen, activeLinkMethod, status]);
+  }, [isOpen, activeLinkMethod, status, isPairingInProgress]);
+
   const fetchStatus = async () => {
     try {
       // 1. Check server status for real Baileys connection / live QR code
+      let serverStatus = '';
+      let serverIsVercel = false;
       const res = await apiFetch('/api/wa/status');
       if (res.ok) {
         const data = await res.json().catch(() => ({}));
+        serverStatus = data.status || '';
+        serverIsVercel = Boolean(data.isVercelServerless);
+        setIsVercelServerless(serverIsVercel);
+        setIsPairingInProgress(Boolean(data.isPairingInProgress));
+
         if (data.status === 'connected' && data.user) {
           setStatus('connected');
           setConnectedUser(data.user);
           setQrCode(null);
+          setIsPairingInProgress(false);
           setErrorMessage(null);
           return;
         }
-        if (data.status === 'qr' && data.qr) {
+        if ((data.status === 'qr' || data.qr) && data.qr && !data.isPairingInProgress) {
           setQrCode(data.qr);
           setStatus('qr');
+          setErrorMessage(null);
+          if (typeof data.qrSeq === 'number' && data.qrSeq !== lastQrSeqRef.current) {
+            lastQrSeqRef.current = data.qrSeq;
+            setQrCountdown(data.qrSeq <= 1 ? 45 : 20);
+          }
+          return;
+        }
+        if (data.isPairingInProgress || data.status === 'connecting') {
+          setStatus('connecting');
+          if (data.isPairingInProgress) {
+            setQrCode(null);
+          }
           setErrorMessage(null);
           return;
         }
-        if (data.qr) {
-          setQrCode(data.qr);
-          setStatus('qr');
-          setErrorMessage(null);
-          return;
+        if (data.error) {
+          setErrorMessage(safeString(data.error));
         }
         if (data.status) {
           setStatus(data.status);
+          if (data.status === 'disconnected') {
+            setQrCode(null);
+          }
         }
       }
 
-      // 2. Check if user has explicitly connected their own personal WhatsApp in localStorage
+      // 2. Fallback: Check localStorage only on Vercel serverless (never override live Node.js server state)
       const savedPhone = typeof window !== 'undefined' ? localStorage.getItem('nmsa_wa_phone') : null;
       const isCustomConnected = typeof window !== 'undefined' && localStorage.getItem('nmsa_wa_connected') === 'true';
-      if (isCustomConnected && savedPhone && status === 'disconnected') {
+      if (serverIsVercel && isCustomConnected && savedPhone && serverStatus === 'disconnected') {
         setStatus('connected');
         setConnectedUser({
           id: `${savedPhone}@s.whatsapp.net`,
@@ -456,29 +475,31 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
       }
 
       // 3. Fallback: Check Firebase Firestore (for Vercel serverless syncing with active backend)
-      try {
-        const { getDoc, doc } = await import('firebase/firestore');
-        const { firestoreDb } = await import('../firebase');
-        if (firestoreDb) {
-          const snap = await getDoc(doc(firestoreDb, 'companies', 'nmsa'));
-          if (snap.exists()) {
-            const cData = snap.data();
-            if (cData?.waConnected && cData?.waUser) {
-              setStatus('connected');
-              setConnectedUser(cData.waUser);
-              setQrCode(null);
-              setErrorMessage(null);
-              return;
-            }
-            if (cData?.waQr) {
-              setQrCode(cData.waQr);
-              setStatus('qr');
-              setErrorMessage(null);
-              return;
+      if (serverIsVercel) {
+        try {
+          const { getDoc, doc } = await import('firebase/firestore');
+          const { firestoreDb } = await import('../firebase');
+          if (firestoreDb) {
+            const snap = await getDoc(doc(firestoreDb, 'companies', 'nmsa'));
+            if (snap.exists()) {
+              const cData = snap.data();
+              if (cData?.waConnected && cData?.waUser) {
+                setStatus('connected');
+                setConnectedUser(cData.waUser);
+                setQrCode(null);
+                setErrorMessage(null);
+                return;
+              }
+              if (cData?.waQr) {
+                setQrCode(cData.waQr);
+                setStatus('qr');
+                setErrorMessage(null);
+                return;
+              }
             }
           }
-        }
-      } catch (_) {}
+        } catch (_) {}
+      }
     } catch (err: any) {
       console.warn('Error fetching WA status:', err);
     }
@@ -488,20 +509,24 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
   const handleRefreshQr = async () => {
     setIsRefreshingQr(true);
     setErrorMessage(null);
-    setQrCountdown(60);
+    setIsPairingInProgress(false);
+    setQrCode(null);
+    setQrCountdown(45);
     try {
       const res = await apiFetch('/api/wa/refresh-qr', { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (data.qr) {
         setQrCode(data.qr);
         setStatus('qr');
+        if (typeof data.qrSeq === 'number') {
+          lastQrSeqRef.current = data.qrSeq;
+        }
       } else {
-        // Auto-fetch after 1.5 seconds to pick up the fresh QR from socket handshake
-        setTimeout(fetchStatus, 1500);
+        setTimeout(fetchStatus, 1000);
       }
     } catch (err: any) {
       console.warn('Error refreshing WA QR:', err);
-      setTimeout(fetchStatus, 1500);
+      setTimeout(fetchStatus, 1000);
     } finally {
       setIsRefreshingQr(false);
     }
@@ -585,7 +610,6 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
       fetchKeepAliveStats();
       fetchAutomationSettings();
       const interval = setInterval(() => {
-        fetchStatus();
         fetchKeepAliveStats();
         fetchAutomationSettings();
       }, 5000);
@@ -593,22 +617,15 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
     }
   }, [isOpen]);
 
-  // Active countdown timer for QR code validity (Baileys emits new QR every ~45-60s)
+  // Fast status polling while linking (1.5s) so QR rotations & post-scan connection appear immediately
   useEffect(() => {
-    if (!isOpen || status !== 'qr' || activeLinkMethod !== 'qr') {
-      return;
-    }
-    const timer = setInterval(() => {
-      setQrCountdown((prev) => {
-        if (prev <= 1) {
-          handleRefreshQr();
-          return 60;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [isOpen, status, activeLinkMethod]);
+    if (!isOpen) return;
+    const pollMs = status === 'connected' ? 5000 : 1500;
+    const statusInterval = setInterval(() => {
+      fetchStatus();
+    }, pollMs);
+    return () => clearInterval(statusInterval);
+  }, [isOpen, status]);
 
   // Sync submissions to server whenever modal opens so AI has latest state
   useEffect(() => {
@@ -1506,37 +1523,68 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
 
                         {/* Scannable QR Image Container */}
                         <div className={`${isQrZoomed ? 'w-72 h-72 sm:w-80 sm:h-80' : 'w-64 h-64'} bg-white p-4 rounded-2xl border-2 border-stone-300 shadow-md flex flex-col items-center justify-center relative transition-all duration-200`}>
-                          {qrCode ? (
+                          {isPairingInProgress || (status === 'connecting' && !qrCode) ? (
+                            <div className="flex flex-col items-center justify-center gap-3 p-3 text-center h-full">
+                              <RefreshCw size={28} className="text-emerald-600 animate-spin" />
+                              <div className="space-y-1">
+                                <span className="font-bold text-xs text-emerald-950 block">
+                                  {isPairingInProgress ? 'QR Terpindai! Menyambungkan Perangkat...' : 'Menghubungkan ke Server WhatsApp...'}
+                                </span>
+                                <p className="text-[10.5px] text-stone-600 leading-snug">
+                                  {isPairingInProgress
+                                    ? 'Mohon tunggu sebentar, jangan tutup layar ini atau WhatsApp di HP Anda.'
+                                    : 'Sedang mempersiapkan QR Code resmi WhatsApp Web...'}
+                                </p>
+                              </div>
+                            </div>
+                          ) : qrCode ? (
                             <img 
                               src={qrCode} 
                               alt="WhatsApp QR Code" 
                               className="w-full h-full object-contain rounded-lg select-all"
                             />
+                          ) : isVercelServerless ? (
+                            <div className="flex flex-col items-center justify-center gap-2 p-3 text-center h-full">
+                              <div className="w-10 h-10 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center shadow-2xs">
+                                <Server size={20} className="text-amber-700" />
+                              </div>
+                              <span className="font-bold text-xs text-stone-900">Butuh Server Backend 24/7</span>
+                              <p className="text-[10px] text-stone-600 leading-snug">
+                                Hosting Vercel bersifat serverless sehingga QR Code WhatsApp memerlukan URL Server Node.js (Render/Railway) di <strong>Tab 8</strong>.
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => setActiveTab('server')}
+                                className="mt-1 py-1.5 px-3 bg-teal-700 hover:bg-teal-800 text-white rounded-lg text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs w-full"
+                              >
+                                <Server size={13} />
+                                <span>Atur Server Backend (Tab 8)</span>
+                              </button>
+                            </div>
                           ) : (
                             <div className="flex flex-col items-center justify-center gap-2 p-3 text-center h-full">
                               <div className="w-10 h-10 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold text-base shadow-2xs">
                                 <Smartphone size={20} className="text-emerald-700" />
                               </div>
-                              <span className="font-bold text-xs text-stone-900">Tautkan Cepat Tanpa Scan</span>
+                              <span className="font-bold text-xs text-stone-900">QR Code Sedang Disiapkan</span>
                               <p className="text-[10px] text-stone-600 leading-snug">
-                                Jika scan kamera sulit fokus di layar, gunakan <strong>Metode 1 (Nomor Telepon)</strong> langsung tanpa kamera.
+                                Klik tombol di bawah untuk memicu pembuatan QR baru, atau gunakan <strong>Metode 1 (Kode Pairing)</strong>.
                               </p>
-                              <button
-                                type="button"
-                                onClick={() => setActiveLinkMethod('phone')}
-                                className="mt-1 py-1.5 px-3 bg-emerald-800 hover:bg-emerald-900 text-white rounded-lg text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs w-full"
-                              >
-                                <CheckCircle2 size={13} />
-                                <span>Buka Metode 1 (Tautkan No HP)</span>
-                              </button>
                               <button
                                 type="button"
                                 onClick={handleRefreshQr}
                                 disabled={isRefreshingQr}
+                                className="mt-1 py-1.5 px-3 bg-emerald-800 hover:bg-emerald-900 text-white rounded-lg text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs w-full"
+                              >
+                                <RefreshCw size={13} className={isRefreshingQr ? "animate-spin" : ""} />
+                                <span>{isRefreshingQr ? "Memuat QR..." : "Tampilkan QR Code"}</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setActiveLinkMethod('phone')}
                                 className="text-[10px] text-stone-500 hover:text-stone-800 underline transition cursor-pointer flex items-center gap-1 mt-0.5"
                               >
-                                <RefreshCw size={10} className={isRefreshingQr ? "animate-spin" : ""} />
-                                <span>{isRefreshingQr ? "Memeriksa..." : "Cek Ulang QR Server"}</span>
+                                <span>Atau gunakan Kode Pairing 8 Digit</span>
                               </button>
                             </div>
                           )}
@@ -1545,16 +1593,24 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                         {/* Countdown & Refresh Controls */}
                         <div className="w-full space-y-2">
                           <div className={`flex items-center justify-between text-[11px] font-mono px-3 py-1.5 rounded-lg border transition ${
-                            qrCountdown <= 10
-                              ? 'bg-amber-100 text-amber-950 border-amber-300 animate-pulse'
+                            isPairingInProgress
+                              ? 'bg-emerald-100 text-emerald-950 border-emerald-300 animate-pulse'
+                              : qrCountdown <= 8
+                              ? 'bg-amber-100 text-amber-950 border-amber-300'
                               : 'bg-emerald-50/90 text-emerald-900 border-emerald-200'
                           }`}>
                             <span className="flex items-center gap-1 font-bold">
-                              <Clock size={12} className={qrCountdown <= 10 ? 'text-amber-700' : 'text-emerald-700'} />
-                              <span>{qrCountdown <= 10 ? 'QR Segera Diperbarui...' : 'Status QR: Siap Dipindai'}</span>
+                              <Clock size={12} className={isPairingInProgress ? 'text-emerald-700' : qrCountdown <= 8 ? 'text-amber-700' : 'text-emerald-700'} />
+                              <span>
+                                {isPairingInProgress
+                                  ? 'Menyelesaikan Penautan...'
+                                  : qrCode
+                                  ? 'Status QR: Siap Dipindai'
+                                  : 'Menunggu QR Server...'}
+                              </span>
                             </span>
-                            <span className={`font-bold ${qrCountdown <= 10 ? 'text-amber-800' : 'text-emerald-700'}`}>
-                              {qrCountdown} Detik
+                            <span className={`font-bold ${qrCountdown <= 8 ? 'text-amber-800' : 'text-emerald-700'}`}>
+                              {isPairingInProgress ? 'Sinkron' : qrCode ? `${qrCountdown} Detik` : '...'}
                             </span>
                           </div>
 

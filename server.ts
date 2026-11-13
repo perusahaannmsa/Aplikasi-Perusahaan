@@ -3835,12 +3835,12 @@ app.get("/api/wa/status", (req, res) => {
 app.post("/api/wa/refresh-qr", async (req, res) => {
   try {
     console.log("[WhatsApp Bot] Memperbarui QR Code atas permintaan pengguna...");
-    await disconnectWhatsApp(false);
+    await disconnectWhatsApp(false, true);
     await initWhatsApp(true);
 
-    // Wait up to 3 seconds to return the newly generated QR code directly to the frontend
+    // Wait up to 5 seconds to return the newly generated QR code directly to the frontend
     let freshStatus = getWhatsAppStatus();
-    for (let i = 0; i < 15; i++) {
+    for (let i = 0; i < 25; i++) {
       if (freshStatus.qr || freshStatus.status === "qr" || freshStatus.status === "connected") {
         break;
       }
@@ -3850,9 +3850,7 @@ app.post("/api/wa/refresh-qr", async (req, res) => {
 
     return res.json({
       success: true,
-      status: freshStatus.status,
-      qr: freshStatus.qr,
-      user: freshStatus.user,
+      ...freshStatus,
       message: "QR Code berhasil diperbarui."
     });
   } catch (err: any) {

@@ -1570,6 +1570,9 @@ export function AbsensiHarianNmsa({
   const [waBotQr, setWaBotQr] = useState<string | null>(null);
   const [waBotUser, setWaBotUser] = useState<{ id: string; name?: string } | null>(null);
   const [waBotError, setWaBotError] = useState<string | null>(null);
+  const [waBotPairingInProgress, setWaBotPairingInProgress] = useState<boolean>(false);
+  const [waIsVercelServerless, setWaIsVercelServerless] = useState<boolean>(false);
+  const [isRefreshingWaQr, setIsRefreshingWaQr] = useState<boolean>(false);
   
   // Late connection reminder states
   const [showLateReminderConfirm, setShowLateReminderConfirm] = useState<boolean>(false);
@@ -1637,6 +1640,7 @@ export function AbsensiHarianNmsa({
   }, [isDashWaOpen, waActivityTick]);
 
   // Periodically fetch WhatsApp Gateway status from Express backend
+  const isWaConnected = waBotStatus === "connected";
   useEffect(() => {
     let active = true;
     const checkWaStatus = async () => {
@@ -1647,9 +1651,11 @@ export function AbsensiHarianNmsa({
         const contentType = res.headers.get("content-type");
         if (res.ok && active && contentType && contentType.includes("application/json")) {
           const data = await res.json();
-          setWaBotStatus(data.status);
-          setWaBotQr(data.qr);
-          setWaBotUser(data.user);
+          setWaBotStatus(data.status || "disconnected");
+          setWaBotQr(data.isPairingInProgress ? null : (data.qr || null));
+          setWaBotUser(data.user || null);
+          setWaBotPairingInProgress(Boolean(data.isPairingInProgress));
+          setWaIsVercelServerless(Boolean(data.isVercelServerless));
           setWaBotError(data.error ? (typeof data.error === 'object' ? data.error?.message || JSON.stringify(data.error) : String(data.error)) : null);
 
           // If there is a late reminder pending, show confirmation popup unless dismissed today
@@ -1671,12 +1677,13 @@ export function AbsensiHarianNmsa({
     };
     
     checkWaStatus(); // run immediately
-    const interval = setInterval(checkWaStatus, 5000);
+    const pollMs = isDashWaOpen && !isWaConnected ? 1500 : 5000;
+    const interval = setInterval(checkWaStatus, pollMs);
     return () => {
       active = false;
       clearInterval(interval);
     };
-  }, []);
+  }, [isDashWaOpen, isWaConnected]);
 
   useEffect(() => {
     localStorage.setItem("wa_auto_reminder_enabled", autoReminderEnabled ? "true" : "false");
@@ -4474,6 +4481,31 @@ export function AbsensiHarianNmsa({
     }
   };
 
+  const handleRefreshWaQr = async () => {
+    setIsRefreshingWaQr(true);
+    setWaBotError(null);
+    setWaBotPairingInProgress(false);
+    setWaBotQr(null);
+    setWaBotStatus("connecting");
+    try {
+      const res = await apiFetch("/api/wa/refresh-qr", { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (data.status) setWaBotStatus(data.status);
+      if (data.qr) setWaBotQr(data.qr);
+      if (data.user) setWaBotUser(data.user);
+      setWaBotPairingInProgress(Boolean(data.isPairingInProgress));
+      setWaIsVercelServerless(Boolean(data.isVercelServerless));
+      if (data.error) {
+        setWaBotError(typeof data.error === "object" ? data.error?.message || JSON.stringify(data.error) : String(data.error));
+      }
+    } catch (err: any) {
+      console.error("Failed to refresh WA QR:", err);
+      setWaBotError("Gagal memuat ulang QR Code dari server.");
+    } finally {
+      setIsRefreshingWaQr(false);
+    }
+  };
+
   const handleDisconnectWa = async () => {
     if (!window.confirm("Apakah Anda yakin ingin memutuskan koneksi WhatsApp? Sesi Anda akan dihapus dan Anda harus melakukan scan QR code kembali.")) return;
     try {
@@ -7239,12 +7271,14 @@ export function AbsensiHarianNmsa({
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border flex items-center gap-1 ${
                         waBotStatus === "connected" 
                           ? "bg-emerald-50 text-emerald-700 border-emerald-200" 
+                          : waBotPairingInProgress || waBotStatus === "connecting"
+                          ? "bg-sky-50 text-sky-700 border-sky-200 animate-pulse"
                           : waBotStatus === "qr"
                           ? "bg-amber-50 text-amber-700 border-amber-200 animate-pulse"
                           : "bg-slate-50 text-slate-600 border-slate-200"
                       }`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${waBotStatus === "connected" ? "bg-emerald-500 animate-ping" : "bg-slate-400"}`} />
-                        <span className="capitalize">{waBotStatus === "connected" ? "Terhubung" : waBotStatus === "qr" ? "Butuh Scan" : "Offline"}</span>
+                        <span className={`w-1.5 h-1.5 rounded-full ${waBotStatus === "connected" ? "bg-emerald-500 animate-ping" : waBotPairingInProgress || waBotStatus === "connecting" ? "bg-sky-500 animate-ping" : "bg-slate-400"}`} />
+                        <span className="capitalize">{waBotStatus === "connected" ? "Terhubung" : waBotPairingInProgress ? "Menyambungkan..." : waBotStatus === "qr" ? "Butuh Scan" : waBotStatus === "connecting" ? "Menghubungkan..." : "Offline"}</span>
                       </span>
                     </h3>
                     <p className="text-[11px] text-slate-500 mt-0.5">Sambungkan nomor WhatsApp Anda untuk pengiriman pengingat harian secara gratis, aman, dan otomatis.</p>
@@ -7352,11 +7386,35 @@ export function AbsensiHarianNmsa({
                         {/* QR METHOD VIEW */}
                         {waBotStatus !== "connected" && waConnectMethod === "qr" && (
                           <div className="my-auto flex flex-col items-center justify-center text-center space-y-4 p-2">
-                            {waBotQr ? (
+                            {waIsVercelServerless ? (
+                              <div className="my-auto flex flex-col items-center justify-center text-center p-4 space-y-3 bg-amber-50/90 border border-amber-200 rounded-2xl">
+                                <span className="text-2xl">☁️</span>
+                                <div>
+                                  <h5 className="font-bold text-amber-950 text-xs sm:text-sm">Mode Vercel Serverless Terdeteksi</h5>
+                                  <p className="text-[11px] text-amber-800 mt-1 leading-relaxed">
+                                    Scan QR WhatsApp (Baileys WebSocket) tidak dapat berjalan langsung di Vercel Serverless. Atur <b>URL Server Backend (Render / Railway / VPS)</b> pada popup <b>AI WhatsApp Gateway &rarr; Tab 8 (Server Backend)</b> agar QR live bisa dimunculkan.
+                                  </p>
+                                </div>
+                              </div>
+                            ) : waBotPairingInProgress || (waBotStatus === "connecting" && !waBotQr) ? (
+                              <div className="my-auto flex flex-col items-center justify-center text-center p-4 space-y-3">
+                                <RefreshCw className="w-10 h-10 text-emerald-500 animate-spin mx-auto" />
+                                <div>
+                                  <h5 className="font-bold text-emerald-800 text-sm">
+                                    {waBotPairingInProgress ? "QR Terpindai! Menyambungkan Perangkat..." : "Menghubungkan ke Server WhatsApp..."}
+                                  </h5>
+                                  <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                                    {waBotPairingInProgress
+                                      ? "Jangan tutup halaman atau refresh. Sedang menyelesaikan otentikasi sesi WhatsApp Anda..."
+                                      : "Mengaktifkan gateway server & menunggu QR Code dari WhatsApp..."}
+                                  </p>
+                                </div>
+                              </div>
+                            ) : waBotQr ? (
                               <>
                                 <div className="space-y-1">
                                   <h5 className="font-bold text-slate-900 text-sm">Scan QR Code WhatsApp Anda</h5>
-                                  <p className="text-[11px] text-slate-500">Masa aktif QR Code terbatas. Segera lakukan pemindaian.</p>
+                                  <p className="text-[11px] text-slate-500">QR diperbarui otomatis tanpa memutus handshake saat dipindai.</p>
                                 </div>
                                 
                                 <div className="relative p-3 bg-white rounded-2xl border border-slate-200/80 shadow-md">
@@ -7376,10 +7434,11 @@ export function AbsensiHarianNmsa({
 
                                 <button
                                   type="button"
-                                  onClick={handleDisconnectWa}
-                                  className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 underline cursor-pointer mt-1"
+                                  onClick={handleRefreshWaQr}
+                                  disabled={isRefreshingWaQr}
+                                  className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 underline cursor-pointer mt-1 disabled:opacity-50"
                                 >
-                                  🔄 Refresh / Buat QR Code Baru
+                                  {isRefreshingWaQr ? "Memuat QR Baru..." : "🔄 Refresh / Buat QR Code Baru"}
                                 </button>
                               </>
                             ) : (
@@ -7391,10 +7450,11 @@ export function AbsensiHarianNmsa({
                                 </div>
                                 <button
                                   type="button"
-                                  onClick={handleDisconnectWa}
-                                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-3.5 py-2 rounded-xl transition cursor-pointer shadow-xs mt-2"
+                                  onClick={handleRefreshWaQr}
+                                  disabled={isRefreshingWaQr}
+                                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-3.5 py-2 rounded-xl transition cursor-pointer shadow-xs mt-2 disabled:opacity-50"
                                 >
-                                  ⚡ Klik di Sini untuk Tampilkan QR Code
+                                  {isRefreshingWaQr ? "Memuat..." : "⚡ Klik di Sini untuk Tampilkan QR Code"}
                                 </button>
                               </div>
                             )}
