@@ -167,6 +167,44 @@ export async function syncAttendanceToFirestore(state: {
       }, { merge: true });
     }
 
+    // 2. Keep attendance/workers_master safely merged with any newer cloud workers
+    if (Array.isArray(state.workers) && state.workers.length > 0) {
+      try {
+        const wmRef = doc(db, "attendance", "workers_master");
+        const wmSnap = await getDoc(wmRef).catch(() => null);
+        const existingWmData = wmSnap && wmSnap.exists() ? wmSnap.data() : null;
+        const deletedSet = new Set<string>([
+          ...((state as any).deletedWorkerIds || []),
+          ...(Array.isArray(existingWmData?.deletedWorkerIds) ? existingWmData.deletedWorkerIds : [])
+        ].map(String));
+
+        const wMap = new Map<string, any>();
+        if (existingWmData && Array.isArray(existingWmData.workers)) {
+          existingWmData.workers.forEach((w: any) => {
+            if (w && w.id && !deletedSet.has(String(w.id))) wMap.set(String(w.id), w);
+          });
+        }
+        state.workers.forEach((w: any) => {
+          if (!w || !w.id) return;
+          const id = String(w.id);
+          if (deletedSet.has(id)) return;
+          const prev = wMap.get(id);
+          if (!prev || Number(w.updatedAt || 0) >= Number(prev.updatedAt || 0)) {
+            wMap.set(id, { ...(prev || {}), ...w });
+          }
+        });
+        const mergedWorkers = Array.from(wMap.values());
+        await setDoc(wmRef, {
+          workers: mergedWorkers,
+          deletedWorkerIds: Array.from(deletedSet),
+          totalWorkers: mergedWorkers.length,
+          updatedAt: timestamp
+        }, { merge: true });
+      } catch (wmErr: any) {
+        markServerQuotaExceeded(wmErr);
+      }
+    }
+
     console.log("[Firebase] Successfully synchronized attendance & weekly reports to Firestore!");
     return true;
 
@@ -305,13 +343,45 @@ export async function restoreAttendanceFromFirestore(currentState: any): Promise
         hasChanges = true;
       }
 
-      // 5. Restore workers
-      if (data && Array.isArray(data.workers) && data.workers.length > 0) {
+      // 5. Restore workers from attendance/workers_master + attendance/current_records
+      let cloudWmWorkers: any[] = [];
+      let cloudDeletedIds: string[] = Array.isArray(currentState.deletedWorkerIds) ? [...currentState.deletedWorkerIds] : [];
+      try {
+        const wmSnap = await getDoc(doc(db, "attendance", "workers_master"));
+        if (wmSnap.exists()) {
+          const wmData = wmSnap.data();
+          if (Array.isArray(wmData?.workers)) cloudWmWorkers = wmData.workers;
+          if (Array.isArray(wmData?.deletedWorkerIds)) {
+            cloudDeletedIds = Array.from(new Set([...cloudDeletedIds, ...wmData.deletedWorkerIds.map(String)]));
+          }
+        }
+      } catch (_) {}
+
+      const deletedSet = new Set(cloudDeletedIds.map(String));
+      const allCloudWorkers = [...(Array.isArray(data?.workers) ? data.workers : []), ...cloudWmWorkers];
+      if (allCloudWorkers.length > 0) {
         const curWorkers = currentState.workers || [];
-        const wMap = new Map();
-        data.workers.forEach((w: any) => { if (w && w.id) wMap.set(w.id, w); });
-        curWorkers.forEach((w: any) => { if (w && w.id) wMap.set(w.id, { ...(wMap.get(w.id) || {}), ...w }); });
-        updated.workers = Array.from(wMap.values());
+        const wMap = new Map<string, any>();
+        allCloudWorkers.forEach((w: any) => {
+          if (w && w.id && !deletedSet.has(String(w.id))) {
+            const prev = wMap.get(String(w.id));
+            if (!prev || Number(w.updatedAt || 0) >= Number(prev.updatedAt || 0)) {
+              wMap.set(String(w.id), { ...(prev || {}), ...w });
+            }
+          }
+        });
+        curWorkers.forEach((w: any) => {
+          if (w && w.id && !deletedSet.has(String(w.id))) {
+            const prev = wMap.get(String(w.id));
+            if (!prev || Number(w.updatedAt || 0) >= Number(prev.updatedAt || 0)) {
+              wMap.set(String(w.id), { ...(prev || {}), ...w });
+            }
+          }
+        });
+        updated.workers = Array.from(wMap.values()).sort((a: any, b: any) =>
+          String(a.id || "").localeCompare(String(b.id || ""), undefined, { numeric: true })
+        );
+        updated.deletedWorkerIds = cloudDeletedIds;
         hasChanges = true;
       }
 

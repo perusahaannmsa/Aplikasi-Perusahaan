@@ -54,6 +54,22 @@
         "reasons": { "type": "object" }
       },
       "required": ["workerId"]
+    },
+    "worker": {
+      "title": "Worker",
+      "description": "Master employee / field worker profile stored in Firestore.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "phoneNumber": { "type": "string" },
+        "bankName": { "type": "string" },
+        "bankAccount": { "type": "string" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["id", "name"]
     }
   },
   "firestore": {
@@ -65,9 +81,13 @@
       "schema": "npwpRecord",
       "description": "Master list of registered taxpayer companies and vendors."
     },
+    "workers": {
+      "schema": "worker",
+      "description": "Individual employee documents (when enabled in rules)."
+    },
     "attendance": {
       "schema": "attendanceRecord",
-      "description": "Daily employee attendance and meal allowance records."
+      "description": "Daily employee attendance, weekly meal allowance reports, and workers_master list."
     }
   }
 }

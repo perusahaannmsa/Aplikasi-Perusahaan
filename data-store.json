@@ -1,127 +1,154 @@
 {
   "workers": [
     {
+      "name": "Bpk Faisal Zainuddin",
       "id": "W01",
-      "role": "Karyawan",
-      "isActive": true,
       "phoneNumber": "081342993880",
-      "name": "Bpk Faisal Zainuddin"
+      "isActive": true,
+      "role": "Karyawan"
     },
     {
-      "role": "Karyawan",
-      "phoneNumber": "085121315059",
-      "isActive": true,
       "name": "Ibu Sri Ekowati",
+      "phoneNumber": "085121315059",
+      "role": "Karyawan",
+      "isActive": true,
       "id": "W02"
     },
     {
-      "name": "Deasy",
+      "role": "Karyawan",
       "phoneNumber": "08997419199",
       "isActive": true,
-      "role": "Karyawan",
-      "id": "W03"
+      "id": "W03",
+      "name": "Deasy"
     },
     {
-      "id": "W04",
+      "name": "Andi Dhiya Salsabila",
       "isActive": true,
       "phoneNumber": "085121311713",
       "role": "Karyawan",
-      "name": "Andi Dhiya Salsabila"
+      "id": "W04"
     },
     {
-      "id": "W05",
       "name": "Addrian Firmansyah Zain",
-      "isActive": true,
       "phoneNumber": "085711655612",
+      "id": "W05",
+      "isActive": true,
       "role": "Karyawan"
     },
     {
-      "role": "Karyawan",
+      "id": "W06",
       "phoneNumber": "+62 881-0240-40191",
-      "name": "Nur Wahyudi",
+      "role": "Karyawan",
       "isActive": true,
-      "id": "W06"
+      "name": "Nur Wahyudi"
     },
     {
       "name": "Faranabila Zeolita Athalia",
-      "phoneNumber": "+447459719586",
       "role": "Karyawan",
       "isActive": true,
+      "phoneNumber": "+447459719586",
       "id": "W07"
     },
     {
-      "phoneNumber": "+62 857-5125-0015",
-      "name": "Andi Respati Syarif",
       "id": "W08",
       "isActive": true,
+      "name": "Andi Respati Syarif",
+      "phoneNumber": "+62 857-5125-0015",
       "role": "Karyawan"
     },
     {
-      "phoneNumber": "+62 895-3914-41239",
+      "role": "Karyawan",
       "id": "W09",
       "isActive": true,
+      "name": "Junaedi",
+      "phoneNumber": "+62 895-3914-41239"
+    },
+    {
+      "phoneNumber": "085757573788",
+      "updatedAt": 1794539539201,
       "role": "Karyawan",
-      "name": "Junaedi"
+      "isActive": true,
+      "name": "Andi Moh. Taqdir Al-Hasby",
+      "id": "W10"
     }
   ],
+  "deletedWorkerIds": [],
   "attendanceRecords": [
     {
-      "workerId": "W01",
       "dailyAllowance": 25000,
-      "signatures": {},
+      "workerId": "W01",
+      "reasons": {
+        "2026-09-30": "Diatur manual oleh admin",
+        "2026-08-18": "Diatur oleh admin",
+        "2026-10-14": "Diatur manual oleh admin",
+        "2026-10-21": "Diatur manual oleh admin",
+        "2026-10-06": "Diatur manual oleh admin",
+        "2026-10-20": "Diatur manual oleh admin",
+        "2026-10-08": "Diatur manual oleh admin",
+        "2026-10-12": "Diatur manual oleh admin",
+        "2026-10-05": "Diatur manual oleh admin",
+        "2026-10-15": "Diatur manual oleh admin",
+        "2026-10-09": "Diatur manual oleh admin",
+        "2026-10-07": "Diatur manual oleh admin",
+        "2026-10-19": "Diatur manual oleh admin",
+        "2026-10-16": "Diatur manual oleh admin",
+        "2026-10-22": "Diatur manual oleh admin",
+        "2026-10-13": "Diatur manual oleh admin"
+      },
       "attendance": {
-        "2026-10-28": true,
+        "2026-08-21": true,
+        "2026-08-07": true,
+        "2026-11-04": true,
+        "2026-09-01": true,
+        "2026-10-27": true,
+        "2026-09-18": true,
+        "2026-08-12": true,
+        "2026-08-25": true,
+        "2026-09-09": false,
+        "2026-08-31": true,
+        "2026-11-03": true,
+        "2026-10-02": false,
+        "2026-08-24": true,
         "2026-10-30": true,
-        "2026-09-08": true,
-        "2026-08-11": true,
+        "2026-09-16": true,
+        "2026-11-12": true,
+        "2026-11-11": true,
+        "2026-09-02": true,
+        "2026-09-10": false,
+        "2026-08-06": true,
+        "2026-08-13": true,
+        "2026-09-07": true,
+        "2026-10-29": true,
+        "2026-09-28": false,
+        "2026-10-26": true,
+        "2026-11-02": true,
+        "2026-08-14": true,
+        "2026-09-29": false,
+        "2026-09-04": true,
+        "2026-08-04": true,
+        "2026-08-28": true,
+        "2026-09-11": false,
+        "2026-10-01": false,
+        "2026-11-13": true,
+        "2026-08-10": true,
+        "2026-10-28": true,
         "2026-11-10": true,
         "2026-10-23": true,
+        "2026-09-08": true,
+        "2026-08-11": true,
         "2026-08-03": true,
-        "2026-09-16": true,
-        "2026-11-05": true,
-        "2026-11-11": true,
         "2026-09-15": true,
-        "2026-11-12": true,
+        "2026-11-05": true,
         "2026-09-17": true,
         "2026-08-26": true,
         "2026-08-19": true,
-        "2026-09-02": true,
-        "2026-08-06": true,
-        "2026-07-27": true,
-        "2026-08-13": true,
         "2026-09-14": true,
+        "2026-07-27": true,
+        "2026-11-06": true,
         "2026-08-27": true,
         "2026-08-20": true,
-        "2026-11-06": true,
-        "2026-10-29": true,
-        "2026-08-05": true,
-        "2026-09-07": true,
         "2026-11-09": true,
-        "2026-08-21": true,
-        "2026-10-26": true,
-        "2026-09-18": true,
-        "2026-08-07": true,
-        "2026-09-01": true,
-        "2026-11-04": true,
-        "2026-10-27": true,
-        "2026-08-14": true,
-        "2026-08-12": true,
-        "2026-11-02": true,
-        "2026-08-25": true,
-        "2026-09-04": true,
-        "2026-08-28": true,
-        "2026-08-04": true,
-        "2026-08-31": true,
-        "2026-08-10": true,
-        "2026-11-03": true,
-        "2026-08-24": true,
-        "2026-09-28": false,
-        "2026-09-29": false,
-        "2026-10-01": false,
-        "2026-10-02": false,
-        "2026-09-10": false,
-        "2026-09-09": false,
-        "2026-09-11": false,
+        "2026-08-05": true,
         "2026-09-30": false,
         "2026-07-09": false,
         "2026-10-05": false,
@@ -144,122 +171,106 @@
         "2026-10-06": false,
         "2026-09-21": false
       },
+      "signatures": {},
       "customStatus": {
-        "2026-10-13": "Cuti",
-        "2026-10-22": "Cuti",
         "2026-10-16": "Cuti",
+        "2026-10-22": "Cuti",
+        "2026-10-13": "Cuti",
         "2026-10-19": "Cuti",
+        "2026-10-05": "Cuti",
+        "2026-10-15": "Cuti",
         "2026-10-07": "Cuti",
         "2026-10-09": "Cuti",
-        "2026-10-15": "Cuti",
-        "2026-10-05": "Cuti",
         "2026-10-12": "Cuti",
         "2026-10-08": "Cuti",
-        "2026-10-20": "Cuti",
         "2026-10-06": "Cuti",
+        "2026-10-20": "Cuti",
         "2026-10-21": "Cuti",
+        "2026-09-30": "Sakit",
         "2026-08-18": "Sakit",
-        "2026-10-14": "Cuti",
-        "2026-09-30": "Sakit"
-      },
-      "reasons": {
-        "2026-10-19": "Diatur manual oleh admin",
-        "2026-10-16": "Diatur manual oleh admin",
-        "2026-10-22": "Diatur manual oleh admin",
-        "2026-10-13": "Diatur manual oleh admin",
-        "2026-10-08": "Diatur manual oleh admin",
-        "2026-10-12": "Diatur manual oleh admin",
-        "2026-10-15": "Diatur manual oleh admin",
-        "2026-10-05": "Diatur manual oleh admin",
-        "2026-10-09": "Diatur manual oleh admin",
-        "2026-10-07": "Diatur manual oleh admin",
-        "2026-09-30": "Diatur manual oleh admin",
-        "2026-08-18": "Diatur oleh admin",
-        "2026-10-14": "Diatur manual oleh admin",
-        "2026-10-21": "Diatur manual oleh admin",
-        "2026-10-06": "Diatur manual oleh admin",
-        "2026-10-20": "Diatur manual oleh admin"
+        "2026-10-14": "Cuti"
       }
     },
     {
-      "reasons": {
-        "2026-10-21": "Diatur manual oleh admin",
-        "2026-08-07": "Diatur oleh admin",
-        "2026-10-23": "Diatur manual oleh admin",
-        "2026-11-04": "Diatur manual oleh admin",
-        "2026-08-05": "Diatur oleh admin",
-        "2026-10-02": "Diatur manual oleh admin"
-      },
-      "dailyAllowance": 25000,
       "workerId": "W02",
+      "dailyAllowance": 25000,
       "customStatus": {
-        "2026-10-21": "Izin",
-        "2026-08-07": "Sakit",
+        "2026-10-02": "Izin",
+        "2026-08-05": "Sakit",
         "2026-11-04": "Sakit",
         "2026-10-23": "Izin",
-        "2026-08-05": "Sakit",
-        "2026-10-02": "Izin"
+        "2026-08-07": "Sakit",
+        "2026-10-21": "Izin"
       },
+      "reasons": {
+        "2026-10-02": "Diatur manual oleh admin",
+        "2026-11-04": "Diatur manual oleh admin",
+        "2026-10-23": "Diatur manual oleh admin",
+        "2026-08-07": "Diatur oleh admin",
+        "2026-10-21": "Diatur manual oleh admin",
+        "2026-08-05": "Diatur oleh admin"
+      },
+      "signatures": {},
       "attendance": {
-        "2026-08-12": true,
-        "2026-08-25": true,
-        "2026-08-21": true,
-        "2026-08-18": true,
-        "2026-09-01": true,
-        "2026-10-27": true,
-        "2026-09-18": true,
-        "2026-10-20": true,
+        "2026-09-09": false,
+        "2026-08-31": true,
         "2026-11-03": true,
         "2026-08-24": true,
-        "2026-08-31": true,
-        "2026-09-16": true,
-        "2026-11-12": true,
-        "2026-11-11": true,
-        "2026-10-30": true,
-        "2026-10-29": true,
-        "2026-10-22": true,
+        "2026-08-18": true,
+        "2026-08-21": true,
+        "2026-10-20": true,
+        "2026-09-18": true,
+        "2026-09-01": true,
+        "2026-10-27": true,
+        "2026-08-12": true,
+        "2026-08-25": true,
         "2026-09-02": true,
-        "2026-10-12": true,
-        "2026-08-06": true,
+        "2026-09-10": false,
         "2026-08-13": true,
-        "2026-11-02": true,
-        "2026-08-14": true,
-        "2026-09-04": true,
-        "2026-10-26": true,
-        "2026-08-10": true,
-        "2026-10-19": true,
-        "2026-10-16": true,
+        "2026-08-06": true,
+        "2026-10-12": true,
+        "2026-10-22": true,
+        "2026-10-29": true,
+        "2026-10-30": true,
+        "2026-09-16": true,
+        "2026-11-11": true,
+        "2026-11-12": true,
+        "2026-09-11": false,
         "2026-08-28": true,
         "2026-08-04": true,
         "2026-10-15": true,
-        "2026-08-03": true,
-        "2026-09-15": true,
-        "2026-11-05": true,
-        "2026-10-28": true,
-        "2026-10-14": true,
-        "2026-11-10": true,
-        "2026-08-11": true,
-        "2026-09-08": true,
-        "2026-11-06": true,
-        "2026-08-27": true,
-        "2026-08-20": true,
-        "2026-11-09": true,
-        "2026-10-13": true,
-        "2026-09-17": true,
+        "2026-10-01": false,
+        "2026-08-10": true,
+        "2026-10-16": true,
+        "2026-10-19": true,
+        "2026-10-26": true,
+        "2026-10-06": false,
+        "2026-09-28": false,
+        "2026-08-14": true,
+        "2026-11-02": true,
+        "2026-09-04": true,
+        "2026-09-29": false,
         "2026-08-26": true,
         "2026-08-19": true,
+        "2026-09-17": true,
+        "2026-10-05": false,
+        "2026-07-27": true,
         "2026-09-14": true,
         "2026-09-03": true,
-        "2026-07-27": true,
-        "2026-10-05": false,
+        "2026-08-20": true,
+        "2026-08-27": true,
+        "2026-11-06": true,
+        "2026-10-13": true,
+        "2026-11-09": true,
+        "2026-10-14": true,
+        "2026-10-28": true,
         "2026-09-30": false,
-        "2026-10-01": false,
-        "2026-09-28": false,
-        "2026-10-06": false,
-        "2026-09-29": false,
-        "2026-09-09": false,
-        "2026-09-10": false,
-        "2026-09-11": false,
+        "2026-09-08": true,
+        "2026-08-11": true,
+        "2026-11-10": true,
+        "2026-08-03": true,
+        "2026-11-05": true,
+        "2026-09-15": true,
         "2026-07-09": false,
         "2026-10-02": false,
         "2026-10-07": false,
@@ -280,78 +291,71 @@
         "2026-09-25": false,
         "2026-09-21": false,
         "2026-07-07": false
-      },
-      "signatures": {}
+      }
     },
     {
-      "reasons": {
-        "2026-11-09": "Diatur manual oleh admin",
-        "2026-10-28": "Diatur manual oleh admin",
-        "2026-08-03": "Diatur oleh admin"
-      },
-      "workerId": "W03",
       "signatures": {},
       "attendance": {
-        "2026-09-15": true,
-        "2026-10-14": true,
-        "2026-08-11": true,
-        "2026-10-23": true,
-        "2026-11-10": true,
-        "2026-08-20": true,
-        "2026-08-27": true,
-        "2026-11-06": true,
-        "2026-10-13": true,
-        "2026-08-05": true,
-        "2026-08-19": true,
-        "2026-08-26": true,
-        "2026-09-17": true,
-        "2026-09-03": true,
-        "2026-07-27": true,
-        "2026-08-14": true,
-        "2026-11-02": true,
-        "2026-09-04": true,
-        "2026-10-26": true,
-        "2026-10-21": true,
-        "2026-08-10": true,
-        "2026-10-16": true,
-        "2026-10-19": true,
-        "2026-08-28": true,
-        "2026-08-04": true,
-        "2026-10-15": true,
-        "2026-09-16": true,
-        "2026-11-11": true,
-        "2026-11-12": true,
-        "2026-10-30": true,
-        "2026-10-22": true,
-        "2026-10-29": true,
-        "2026-09-07": true,
-        "2026-09-02": true,
-        "2026-08-13": true,
-        "2026-10-12": true,
-        "2026-08-06": true,
-        "2026-08-12": true,
-        "2026-08-25": true,
-        "2026-08-18": true,
-        "2026-08-21": true,
-        "2026-10-20": true,
-        "2026-09-18": true,
+        "2026-08-31": true,
+        "2026-09-09": false,
+        "2026-08-24": true,
+        "2026-11-03": true,
+        "2026-10-02": false,
+        "2026-08-07": true,
+        "2026-11-04": true,
         "2026-10-27": true,
         "2026-09-01": true,
-        "2026-11-04": true,
-        "2026-08-07": true,
-        "2026-11-03": true,
-        "2026-08-24": true,
-        "2026-08-31": true,
-        "2026-09-28": false,
-        "2026-09-29": false,
-        "2026-10-01": false,
-        "2026-10-02": false,
-        "2026-09-30": false,
-        "2026-10-05": false,
-        "2026-09-08": false,
-        "2026-09-09": false,
+        "2026-09-18": true,
+        "2026-10-20": true,
+        "2026-08-21": true,
+        "2026-08-18": true,
+        "2026-08-25": true,
+        "2026-08-12": true,
+        "2026-10-12": true,
+        "2026-08-06": true,
+        "2026-08-13": true,
+        "2026-09-02": true,
         "2026-09-10": false,
+        "2026-09-07": true,
+        "2026-10-29": true,
+        "2026-10-22": true,
+        "2026-10-30": true,
+        "2026-11-12": true,
+        "2026-11-11": true,
+        "2026-09-16": true,
+        "2026-10-01": false,
+        "2026-10-15": true,
+        "2026-08-28": true,
+        "2026-08-04": true,
         "2026-09-11": false,
+        "2026-10-19": true,
+        "2026-10-16": true,
+        "2026-08-10": true,
+        "2026-10-21": true,
+        "2026-09-28": false,
+        "2026-10-26": true,
+        "2026-09-29": false,
+        "2026-09-04": true,
+        "2026-11-02": true,
+        "2026-08-14": true,
+        "2026-07-27": true,
+        "2026-09-03": true,
+        "2026-10-05": false,
+        "2026-09-17": true,
+        "2026-08-19": true,
+        "2026-08-26": true,
+        "2026-08-05": true,
+        "2026-10-13": true,
+        "2026-11-06": true,
+        "2026-08-27": true,
+        "2026-08-20": true,
+        "2026-11-10": true,
+        "2026-10-23": true,
+        "2026-09-08": false,
+        "2026-08-11": true,
+        "2026-09-30": false,
+        "2026-10-14": true,
+        "2026-09-15": true,
         "2026-10-06": false,
         "2026-07-07": false,
         "2026-09-21": false,
@@ -372,81 +376,90 @@
         "2026-07-08": false,
         "2026-07-09": false
       },
-      "dailyAllowance": 25000,
       "customStatus": {
-        "2026-08-03": "Izin",
         "2026-10-28": "Izin",
+        "2026-08-03": "Izin",
         "2026-11-09": "Izin"
-      }
+      },
+      "workerId": "W03",
+      "reasons": {
+        "2026-08-03": "Diatur oleh admin",
+        "2026-10-28": "Diatur manual oleh admin",
+        "2026-11-09": "Diatur manual oleh admin"
+      },
+      "dailyAllowance": 25000
     },
     {
+      "dailyAllowance": 25000,
+      "workerId": "W04",
       "customStatus": {
-        "2026-08-11": "Cuti",
-        "2026-10-01": "Izin",
         "2026-08-13": "Cuti",
         "2026-09-14": "Sakit",
-        "2026-11-11": "Sakit",
+        "2026-10-01": "Izin",
+        "2026-08-11": "Cuti",
         "2026-10-19": "Izin",
-        "2026-08-14": "Cuti",
+        "2026-11-11": "Sakit",
+        "2026-08-12": "Cuti",
         "2026-08-10": "Cuti",
-        "2026-08-12": "Cuti"
+        "2026-08-14": "Cuti"
       },
-      "workerId": "W04",
+      "signatures": {},
       "attendance": {
-        "2026-09-15": true,
-        "2026-11-12": true,
-        "2026-08-03": true,
-        "2026-09-16": true,
-        "2026-09-08": true,
-        "2026-11-10": true,
-        "2026-10-23": true,
-        "2026-10-28": true,
-        "2026-10-14": true,
-        "2026-10-30": true,
-        "2026-10-29": true,
-        "2026-08-05": true,
-        "2026-10-13": true,
-        "2026-10-22": true,
         "2026-11-09": true,
+        "2026-10-13": true,
+        "2026-08-05": true,
         "2026-08-27": true,
         "2026-08-20": true,
-        "2026-10-12": true,
-        "2026-08-06": true,
-        "2026-07-27": true,
         "2026-09-03": true,
+        "2026-07-27": true,
+        "2026-10-05": false,
         "2026-09-17": true,
-        "2026-09-02": true,
-        "2026-08-19": true,
         "2026-08-26": true,
-        "2026-08-25": true,
+        "2026-08-19": true,
+        "2026-09-15": true,
+        "2026-08-03": true,
+        "2026-11-10": true,
+        "2026-10-23": true,
+        "2026-09-08": true,
+        "2026-09-30": false,
+        "2026-10-28": true,
+        "2026-10-14": true,
+        "2026-10-16": true,
+        "2026-11-13": true,
+        "2026-10-15": true,
+        "2026-08-04": true,
+        "2026-08-28": true,
+        "2026-09-11": false,
+        "2026-09-29": false,
         "2026-09-04": true,
         "2026-11-02": true,
-        "2026-10-20": true,
-        "2026-09-18": true,
-        "2026-10-26": true,
         "2026-10-21": true,
-        "2026-08-07": true,
-        "2026-11-04": true,
-        "2026-10-27": true,
-        "2026-09-01": true,
-        "2026-08-21": true,
-        "2026-10-16": true,
-        "2026-08-24": true,
-        "2026-11-03": true,
-        "2026-10-15": true,
-        "2026-08-31": true,
-        "2026-08-28": true,
-        "2026-08-04": true,
-        "2026-10-05": false,
-        "2026-09-30": false,
-        "2026-10-02": false,
-        "2026-09-29": false,
         "2026-10-06": false,
         "2026-09-28": false,
+        "2026-10-26": true,
         "2026-09-07": false,
-        "2026-09-11": false,
-        "2026-09-09": false,
+        "2026-10-29": true,
+        "2026-10-22": true,
+        "2026-08-06": true,
+        "2026-10-12": true,
         "2026-09-10": false,
+        "2026-09-02": true,
+        "2026-11-12": true,
+        "2026-09-16": true,
+        "2026-10-30": true,
+        "2026-08-24": true,
+        "2026-11-03": true,
+        "2026-10-02": false,
+        "2026-08-31": true,
+        "2026-09-09": false,
+        "2026-08-25": true,
+        "2026-08-07": true,
+        "2026-10-27": true,
+        "2026-09-01": true,
+        "2026-11-04": true,
+        "2026-10-20": true,
+        "2026-09-18": true,
+        "2026-08-21": true,
         "2026-07-09": false,
         "2026-07-03": false,
         "2026-07-01": false,
@@ -467,58 +480,22 @@
         "2026-06-29": false,
         "2026-10-01": false
       },
-      "signatures": {},
       "reasons": {
-        "2026-09-14": "Diatur manual oleh admin",
-        "2026-08-13": "Diatur oleh admin",
+        "2026-08-14": "Diatur oleh admin",
+        "2026-08-10": "Diatur oleh admin",
+        "2026-08-12": "Diatur oleh admin",
+        "2026-11-11": "Diatur manual oleh admin",
+        "2026-10-19": "Diatur manual oleh admin",
         "2026-08-11": "Diatur oleh admin",
         "2026-10-01": "Diatur manual oleh admin",
-        "2026-10-19": "Diatur manual oleh admin",
-        "2026-11-11": "Diatur manual oleh admin",
-        "2026-08-12": "Diatur oleh admin",
-        "2026-08-14": "Diatur oleh admin",
-        "2026-08-10": "Diatur oleh admin"
-      },
-      "dailyAllowance": 25000
+        "2026-08-13": "Diatur oleh admin",
+        "2026-09-14": "Diatur manual oleh admin"
+      }
     },
     {
-      "customStatus": {
-        "2026-10-02": "Izin",
-        "2026-09-10": "Sakit",
-        "2026-09-09": "Sakit"
-      },
+      "workerId": "W05",
       "signatures": {},
       "attendance": {
-        "2026-10-16": true,
-        "2026-10-19": true,
-        "2026-08-10": true,
-        "2026-10-15": true,
-        "2026-08-28": true,
-        "2026-08-04": true,
-        "2026-09-04": true,
-        "2026-08-14": true,
-        "2026-11-02": true,
-        "2026-10-26": true,
-        "2026-10-21": true,
-        "2026-08-05": true,
-        "2026-10-13": true,
-        "2026-11-09": true,
-        "2026-08-20": true,
-        "2026-08-27": true,
-        "2026-11-06": true,
-        "2026-09-14": true,
-        "2026-07-27": true,
-        "2026-09-03": true,
-        "2026-08-19": true,
-        "2026-08-26": true,
-        "2026-09-17": true,
-        "2026-09-15": true,
-        "2026-08-03": true,
-        "2026-08-11": true,
-        "2026-10-23": true,
-        "2026-11-10": true,
-        "2026-10-14": true,
-        "2026-10-28": true,
         "2026-08-24": true,
         "2026-11-03": true,
         "2026-08-31": true,
@@ -526,30 +503,60 @@
         "2026-08-12": true,
         "2026-09-18": true,
         "2026-10-20": true,
-        "2026-10-27": true,
-        "2026-09-01": true,
-        "2026-11-04": true,
         "2026-08-07": true,
+        "2026-09-01": true,
+        "2026-10-27": true,
+        "2026-11-04": true,
         "2026-08-18": true,
         "2026-08-21": true,
-        "2026-10-22": true,
         "2026-10-29": true,
-        "2026-08-13": true,
+        "2026-10-22": true,
+        "2026-09-07": false,
         "2026-08-06": true,
         "2026-10-12": true,
+        "2026-08-13": true,
         "2026-09-02": true,
         "2026-11-11": true,
         "2026-11-12": true,
         "2026-09-16": true,
         "2026-10-30": true,
+        "2026-10-16": true,
+        "2026-10-19": true,
+        "2026-08-10": true,
+        "2026-10-01": false,
+        "2026-10-15": true,
+        "2026-08-28": true,
+        "2026-08-04": true,
+        "2026-09-04": true,
         "2026-09-29": false,
+        "2026-08-14": true,
+        "2026-11-02": true,
         "2026-09-28": false,
         "2026-10-06": false,
-        "2026-10-01": false,
-        "2026-09-30": false,
+        "2026-10-26": true,
+        "2026-10-21": true,
+        "2026-08-05": true,
+        "2026-10-13": true,
+        "2026-11-09": true,
+        "2026-08-27": true,
+        "2026-08-20": true,
+        "2026-11-06": true,
         "2026-10-05": false,
+        "2026-09-03": true,
+        "2026-07-27": true,
+        "2026-09-14": true,
+        "2026-09-17": true,
+        "2026-08-19": true,
+        "2026-08-26": true,
+        "2026-09-15": true,
+        "2026-08-03": true,
+        "2026-08-11": true,
         "2026-09-08": false,
-        "2026-09-07": false,
+        "2026-11-10": true,
+        "2026-10-23": true,
+        "2026-09-30": false,
+        "2026-10-28": true,
+        "2026-10-14": true,
         "2026-07-10": false,
         "2026-09-24": false,
         "2026-07-02": false,
@@ -573,13 +580,17 @@
         "2026-07-03": false,
         "2026-07-01": false
       },
-      "workerId": "W05",
-      "dailyAllowance": 25000,
+      "customStatus": {
+        "2026-09-09": "Sakit",
+        "2026-10-02": "Izin",
+        "2026-09-10": "Sakit"
+      },
       "reasons": {
         "2026-09-09": "Diatur oleh admin",
         "2026-10-02": "Diatur manual oleh admin",
         "2026-09-10": "Diatur oleh admin"
-      }
+      },
+      "dailyAllowance": 25000
     },
     {
       "reasons": {
@@ -590,70 +601,71 @@
       },
       "signatures": {},
       "attendance": {
-        "2026-11-12": true,
-        "2026-11-11": true,
-        "2026-09-16": true,
-        "2026-08-13": true,
-        "2026-10-12": true,
-        "2026-08-06": true,
-        "2026-09-02": true,
-        "2026-09-10": true,
-        "2026-09-07": true,
-        "2026-10-22": true,
-        "2026-10-29": true,
-        "2026-11-04": true,
-        "2026-10-27": true,
-        "2026-09-01": true,
-        "2026-08-07": true,
-        "2026-09-18": true,
-        "2026-10-20": true,
-        "2026-08-21": true,
-        "2026-08-18": true,
-        "2026-08-25": true,
-        "2026-08-12": true,
-        "2026-08-31": true,
-        "2026-09-09": true,
-        "2026-08-24": true,
-        "2026-11-03": true,
-        "2026-10-23": true,
-        "2026-11-10": true,
-        "2026-09-08": true,
-        "2026-08-11": true,
-        "2026-10-14": true,
-        "2026-09-30": true,
-        "2026-10-28": true,
+        "2026-08-03": true,
         "2026-09-15": true,
         "2026-11-05": true,
-        "2026-08-03": true,
+        "2026-10-28": true,
+        "2026-09-30": true,
+        "2026-10-14": true,
+        "2026-11-10": true,
+        "2026-10-23": true,
+        "2026-08-11": true,
+        "2026-09-08": true,
+        "2026-11-06": true,
+        "2026-08-27": true,
+        "2026-08-20": true,
+        "2026-11-09": true,
+        "2026-10-13": true,
+        "2026-08-05": true,
+        "2026-09-17": true,
+        "2026-08-26": true,
+        "2026-08-19": true,
         "2026-07-27": true,
         "2026-09-14": true,
-        "2026-08-19": true,
-        "2026-08-26": true,
-        "2026-09-17": true,
-        "2026-11-09": true,
-        "2026-08-05": true,
-        "2026-10-13": true,
-        "2026-11-06": true,
-        "2026-08-20": true,
-        "2026-08-27": true,
-        "2026-10-21": true,
-        "2026-10-26": true,
-        "2026-09-04": true,
+        "2026-10-05": false,
         "2026-11-02": true,
         "2026-08-14": true,
-        "2026-10-15": true,
-        "2026-09-11": true,
-        "2026-08-28": true,
-        "2026-08-04": true,
+        "2026-09-29": false,
+        "2026-09-04": true,
+        "2026-10-21": true,
+        "2026-09-28": false,
+        "2026-10-06": false,
+        "2026-10-26": true,
+        "2026-11-13": true,
+        "2026-08-10": true,
         "2026-10-19": true,
         "2026-10-16": true,
-        "2026-08-10": true,
-        "2026-10-05": false,
-        "2026-10-02": false,
+        "2026-08-04": true,
+        "2026-08-28": true,
+        "2026-09-11": true,
         "2026-10-01": false,
-        "2026-09-29": false,
-        "2026-10-06": false,
-        "2026-09-28": false,
+        "2026-10-15": true,
+        "2026-09-16": true,
+        "2026-11-12": true,
+        "2026-11-11": true,
+        "2026-09-07": true,
+        "2026-10-29": true,
+        "2026-10-22": true,
+        "2026-09-02": true,
+        "2026-09-10": true,
+        "2026-10-12": true,
+        "2026-08-06": true,
+        "2026-08-13": true,
+        "2026-08-12": true,
+        "2026-08-25": true,
+        "2026-08-21": true,
+        "2026-08-18": true,
+        "2026-08-07": true,
+        "2026-10-27": true,
+        "2026-09-01": true,
+        "2026-11-04": true,
+        "2026-10-20": true,
+        "2026-09-18": true,
+        "2026-11-03": true,
+        "2026-10-02": false,
+        "2026-08-24": true,
+        "2026-09-09": true,
+        "2026-08-31": true,
         "2026-07-07": false,
         "2026-09-21": false,
         "2026-09-25": false,
@@ -678,82 +690,66 @@
     },
     {
       "reasons": {
-        "2026-10-16": "Diatur manual oleh admin",
-        "2026-11-11": "Diatur manual oleh admin",
-        "2026-07-07": "Diatur manual oleh admin",
-        "2026-08-24": "Kantor memutuskan work from home (WFH)",
-        "2026-11-09": "Diatur manual oleh admin",
+        "2026-09-11": "Diatur oleh admin",
+        "2026-08-21": "Diatur oleh admin",
         "2026-09-17": "Diatur manual oleh admin",
         "2026-08-19": "Diatur oleh admin",
-        "2026-08-21": "Diatur oleh admin",
-        "2026-09-11": "Diatur oleh admin",
+        "2026-09-14": "Diatur manual oleh admin",
         "2026-09-18": "Diatur manual oleh admin",
-        "2026-09-14": "Diatur manual oleh admin"
+        "2026-11-09": "Diatur manual oleh admin",
+        "2026-11-11": "Diatur manual oleh admin",
+        "2026-10-16": "Diatur manual oleh admin",
+        "2026-07-07": "Diatur manual oleh admin",
+        "2026-08-24": "Kantor memutuskan work from home (WFH)"
       },
-      "dailyAllowance": 25000,
-      "customStatus": {
-        "2026-07-07": "Meeting",
-        "2026-11-11": "Meeting",
-        "2026-09-18": "Sakit",
-        "2026-08-21": "Sakit",
-        "2026-11-09": "Meeting",
-        "2026-10-16": "Sakit",
-        "2026-08-24": "Meeting",
-        "2026-08-27": "Meeting",
-        "2026-08-20": "Sakit",
-        "2026-09-14": "Sakit",
-        "2026-09-11": "Sakit",
-        "2026-09-17": "Sakit",
-        "2026-08-19": "Sakit"
-      },
-      "workerId": "W07",
+      "signatures": {},
       "attendance": {
-        "2026-08-10": true,
-        "2026-08-31": true,
-        "2026-10-15": true,
-        "2026-08-04": true,
-        "2026-08-28": true,
-        "2026-07-03": true,
-        "2026-07-02": true,
-        "2026-09-04": true,
         "2026-08-25": true,
-        "2026-06-30": true,
-        "2026-11-02": true,
-        "2026-08-12": true,
+        "2026-09-04": true,
+        "2026-09-29": false,
+        "2026-07-02": true,
         "2026-08-14": true,
+        "2026-06-30": true,
+        "2026-08-12": true,
+        "2026-11-02": true,
+        "2026-09-28": false,
+        "2026-10-26": true,
+        "2026-08-07": true,
         "2026-09-01": true,
         "2026-11-04": true,
-        "2026-08-07": true,
-        "2026-10-26": true,
         "2026-08-18": true,
-        "2026-11-09": true,
-        "2026-08-05": true,
-        "2026-06-29": true,
-        "2026-08-27": true,
-        "2026-07-27": true,
-        "2026-09-03": true,
-        "2026-08-13": true,
-        "2026-10-12": true,
-        "2026-08-06": true,
-        "2026-09-02": true,
-        "2026-08-26": true,
-        "2026-11-12": true,
-        "2026-09-15": true,
-        "2026-09-16": true,
-        "2026-08-03": true,
-        "2026-11-10": true,
-        "2026-08-11": true,
-        "2026-07-01": true,
-        "2026-09-30": true,
-        "2026-10-05": false,
-        "2026-09-29": false,
-        "2026-09-28": false,
+        "2026-08-10": true,
         "2026-10-02": false,
         "2026-10-01": false,
-        "2026-09-10": false,
+        "2026-10-15": true,
+        "2026-08-31": true,
         "2026-09-09": false,
-        "2026-09-07": false,
+        "2026-08-04": true,
+        "2026-07-03": true,
+        "2026-08-28": true,
+        "2026-09-15": true,
+        "2026-11-12": true,
+        "2026-08-03": true,
+        "2026-09-16": true,
+        "2026-07-01": true,
         "2026-09-08": false,
+        "2026-08-11": true,
+        "2026-11-10": true,
+        "2026-09-30": true,
+        "2026-06-29": true,
+        "2026-08-05": true,
+        "2026-09-07": false,
+        "2026-11-09": true,
+        "2026-08-27": true,
+        "2026-10-05": false,
+        "2026-08-06": true,
+        "2026-10-12": true,
+        "2026-09-03": true,
+        "2026-07-27": true,
+        "2026-08-13": true,
+        "2026-08-26": true,
+        "2026-09-10": false,
+        "2026-09-02": true,
         "2026-07-10": false,
         "2026-09-24": false,
         "2026-07-06": false,
@@ -770,83 +766,69 @@
         "2026-10-09": false,
         "2026-10-07": false
       },
-      "signatures": {}
+      "customStatus": {
+        "2026-09-11": "Sakit",
+        "2026-08-19": "Sakit",
+        "2026-09-17": "Sakit",
+        "2026-09-14": "Sakit",
+        "2026-08-20": "Sakit",
+        "2026-08-27": "Meeting",
+        "2026-11-09": "Meeting",
+        "2026-08-24": "Meeting",
+        "2026-10-16": "Sakit",
+        "2026-08-21": "Sakit",
+        "2026-09-18": "Sakit",
+        "2026-07-07": "Meeting",
+        "2026-11-11": "Meeting"
+      },
+      "workerId": "W07",
+      "dailyAllowance": 25000
     },
     {
-      "customStatus": {
-        "2026-09-24": "Meeting",
-        "2026-11-09": "Izin",
-        "2026-09-07": "Cuti",
-        "2026-07-06": "Meeting",
-        "2026-10-05": "Izin",
-        "2026-08-06": "Meeting",
-        "2026-09-10": "Cuti",
-        "2026-07-07": "Meeting",
-        "2026-09-23": "Meeting",
-        "2026-08-03": "Sakit",
-        "2026-09-16": "Izin",
-        "2026-08-11": "Meeting",
-        "2026-09-08": "Cuti",
-        "2026-09-30": "Meeting",
-        "2026-10-28": "Izin",
-        "2026-08-24": "Sakit",
-        "2026-10-02": "Izin",
-        "2026-08-10": "Izin",
-        "2026-09-09": "Cuti",
-        "2026-09-11": "Cuti",
-        "2026-08-04": "Sakit",
-        "2026-07-08": "Meeting",
-        "2026-08-12": "Meeting",
-        "2026-09-28": "Izin",
-        "2026-10-27": "Izin",
-        "2026-08-07": "Izin",
-        "2026-07-09": "Meeting",
-        "2026-08-21": "Meeting",
-        "2026-07-10": "Meeting"
-      },
+      "dailyAllowance": 25000,
       "attendance": {
-        "2026-10-16": true,
-        "2026-10-19": true,
+        "2026-07-03": true,
+        "2026-08-28": true,
+        "2026-10-01": false,
         "2026-10-15": true,
         "2026-08-31": true,
-        "2026-08-28": true,
-        "2026-07-03": true,
-        "2026-09-04": true,
-        "2026-08-25": true,
-        "2026-07-02": true,
-        "2026-08-14": true,
-        "2026-11-02": true,
-        "2026-06-30": true,
-        "2026-10-20": true,
-        "2026-10-26": true,
-        "2026-11-04": true,
-        "2026-09-01": true,
+        "2026-10-16": true,
+        "2026-10-19": true,
         "2026-08-18": true,
-        "2026-06-29": true,
-        "2026-10-13": true,
-        "2026-10-22": true,
-        "2026-08-05": true,
-        "2026-10-29": true,
-        "2026-08-20": true,
-        "2026-08-27": true,
+        "2026-10-06": false,
+        "2026-10-26": true,
+        "2026-10-20": true,
+        "2026-09-01": true,
+        "2026-11-04": true,
+        "2026-08-14": true,
+        "2026-06-30": true,
+        "2026-11-02": true,
+        "2026-08-25": true,
+        "2026-09-04": true,
+        "2026-09-29": false,
+        "2026-07-02": true,
+        "2026-09-17": true,
+        "2026-08-19": true,
+        "2026-08-26": true,
+        "2026-09-02": true,
+        "2026-10-12": true,
         "2026-07-27": true,
         "2026-08-13": true,
         "2026-09-03": true,
-        "2026-10-12": true,
-        "2026-08-19": true,
-        "2026-09-02": true,
-        "2026-08-26": true,
-        "2026-09-17": true,
+        "2026-08-27": true,
+        "2026-08-20": true,
+        "2026-10-29": true,
+        "2026-10-22": true,
+        "2026-08-05": true,
+        "2026-06-29": true,
+        "2026-10-13": true,
+        "2026-09-30": false,
+        "2026-10-14": true,
+        "2026-07-01": true,
+        "2026-11-10": true,
+        "2026-10-23": true,
         "2026-11-11": true,
         "2026-09-15": true,
-        "2026-07-01": true,
-        "2026-10-23": true,
-        "2026-11-10": true,
-        "2026-10-14": true,
-        "2026-10-01": false,
-        "2026-09-29": false,
-        "2026-10-06": false,
-        "2026-09-30": false,
         "2026-10-02": false,
         "2026-07-09": false,
         "2026-09-08": false,
@@ -871,118 +853,150 @@
       },
       "signatures": {},
       "workerId": "W08",
-      "dailyAllowance": 25000,
       "reasons": {
-        "2026-10-28": "Diatur manual oleh admin",
-        "2026-09-30": "Rapat AUDIENSI di KEMENTRIAN PERTANIAN., Bersama Mentri Pertanian,. PT. GSI., PT.CSCEC., Bupati Kabupaten Tulang Bawang",
-        "2026-09-08": "Diatur oleh admin",
-        "2026-09-16": "Diatur manual oleh admin",
-        "2026-08-03": "Diatur oleh admin",
         "2026-09-23": "Diatur manual oleh admin",
         "2026-07-07": "Diatur manual oleh admin",
-        "2026-09-10": "Diatur oleh admin",
-        "2026-10-05": "Diatur manual oleh admin",
-        "2026-07-06": "Diatur manual oleh admin",
+        "2026-09-16": "Diatur manual oleh admin",
+        "2026-08-03": "Diatur oleh admin",
+        "2026-09-08": "Diatur oleh admin",
+        "2026-10-28": "Diatur manual oleh admin",
+        "2026-09-30": "Rapat AUDIENSI di KEMENTRIAN PERTANIAN., Bersama Mentri Pertanian,. PT. GSI., PT.CSCEC., Bupati Kabupaten Tulang Bawang",
         "2026-09-07": "Diatur oleh admin",
         "2026-11-09": "Diatur manual oleh admin",
         "2026-09-24": "Diatur manual oleh admin",
-        "2026-07-10": "Diatur manual oleh admin",
-        "2026-07-09": "Diatur manual oleh admin",
-        "2026-08-07": "Diatur oleh admin",
-        "2026-10-27": "Diatur manual oleh admin",
-        "2026-09-28": "Diatur manual oleh admin",
-        "2026-08-12": "Diatur oleh admin",
+        "2026-07-06": "Diatur manual oleh admin",
+        "2026-10-05": "Diatur manual oleh admin",
+        "2026-09-10": "Diatur oleh admin",
         "2026-07-08": "Diatur manual oleh admin",
-        "2026-08-04": "Diatur oleh admin",
-        "2026-09-11": "Diatur oleh admin",
-        "2026-09-09": "Diatur oleh admin",
-        "2026-08-10": "Diatur oleh admin",
+        "2026-08-12": "Diatur oleh admin",
+        "2026-10-27": "Diatur manual oleh admin",
+        "2026-08-07": "Diatur oleh admin",
+        "2026-07-09": "Diatur manual oleh admin",
+        "2026-09-28": "Diatur manual oleh admin",
+        "2026-07-10": "Diatur manual oleh admin",
+        "2026-08-24": "Diatur oleh admin",
         "2026-10-02": "Diatur manual oleh admin",
-        "2026-08-24": "Diatur oleh admin"
+        "2026-08-10": "Diatur oleh admin",
+        "2026-09-11": "Diatur oleh admin",
+        "2026-08-04": "Diatur oleh admin",
+        "2026-09-09": "Diatur oleh admin"
+      },
+      "customStatus": {
+        "2026-08-03": "Sakit",
+        "2026-09-16": "Izin",
+        "2026-07-07": "Meeting",
+        "2026-09-23": "Meeting",
+        "2026-09-30": "Meeting",
+        "2026-10-28": "Izin",
+        "2026-09-08": "Cuti",
+        "2026-08-11": "Meeting",
+        "2026-07-06": "Meeting",
+        "2026-09-24": "Meeting",
+        "2026-09-07": "Cuti",
+        "2026-11-09": "Izin",
+        "2026-09-10": "Cuti",
+        "2026-10-05": "Izin",
+        "2026-08-06": "Meeting",
+        "2026-08-12": "Meeting",
+        "2026-07-08": "Meeting",
+        "2026-08-21": "Meeting",
+        "2026-07-10": "Meeting",
+        "2026-09-28": "Izin",
+        "2026-10-27": "Izin",
+        "2026-08-07": "Izin",
+        "2026-07-09": "Meeting",
+        "2026-10-02": "Izin",
+        "2026-08-10": "Izin",
+        "2026-08-24": "Sakit",
+        "2026-09-09": "Cuti",
+        "2026-09-11": "Cuti",
+        "2026-08-04": "Sakit"
       }
     },
     {
-      "reasons": {
-        "2026-08-21": "Diatur oleh admin"
-      },
+      "dailyAllowance": 25000,
       "customStatus": {
         "2026-08-21": "Sakit"
       },
+      "reasons": {
+        "2026-08-21": "Diatur oleh admin"
+      },
+      "signatures": {},
       "attendance": {
-        "2026-10-29": true,
+        "2026-09-07": false,
         "2026-10-22": true,
+        "2026-10-29": true,
         "2026-09-02": true,
-        "2026-08-06": true,
-        "2026-10-12": true,
+        "2026-09-10": false,
         "2026-08-13": true,
+        "2026-10-12": true,
+        "2026-08-06": true,
         "2026-09-16": true,
-        "2026-11-11": true,
         "2026-11-12": true,
+        "2026-11-11": true,
         "2026-10-30": true,
         "2026-07-01": true,
         "2026-11-03": true,
+        "2026-10-02": false,
         "2026-08-24": true,
         "2026-07-03": true,
+        "2026-09-09": false,
         "2026-08-31": true,
         "2026-08-12": true,
-        "2026-08-25": true,
-        "2026-07-08": true,
         "2026-07-02": true,
-        "2026-08-18": true,
+        "2026-07-08": true,
+        "2026-08-25": true,
         "2026-07-10": true,
+        "2026-08-18": true,
+        "2026-10-27": true,
+        "2026-09-01": true,
+        "2026-11-04": true,
+        "2026-08-07": true,
         "2026-09-18": true,
         "2026-10-20": true,
-        "2026-08-07": true,
-        "2026-10-27": true,
-        "2026-11-04": true,
-        "2026-09-01": true,
-        "2026-08-27": true,
-        "2026-08-20": true,
-        "2026-11-06": true,
         "2026-07-06": true,
-        "2026-10-13": true,
+        "2026-11-06": true,
+        "2026-08-20": true,
+        "2026-08-27": true,
+        "2026-11-09": true,
         "2026-06-29": true,
         "2026-08-05": true,
-        "2026-11-09": true,
-        "2026-09-17": true,
-        "2026-08-26": true,
+        "2026-10-13": true,
         "2026-08-19": true,
-        "2026-09-03": true,
-        "2026-07-27": true,
+        "2026-08-26": true,
+        "2026-09-17": true,
         "2026-09-14": true,
+        "2026-07-27": true,
+        "2026-09-03": true,
+        "2026-10-05": false,
         "2026-08-03": true,
-        "2026-07-07": true,
         "2026-09-15": true,
+        "2026-07-07": true,
+        "2026-10-14": true,
         "2026-10-28": true,
         "2026-09-30": true,
-        "2026-10-14": true,
-        "2026-08-11": true,
-        "2026-11-10": true,
         "2026-10-23": true,
+        "2026-11-10": true,
+        "2026-08-11": true,
+        "2026-09-08": false,
         "2026-08-10": true,
-        "2026-10-16": true,
         "2026-10-19": true,
+        "2026-10-16": true,
+        "2026-09-11": false,
         "2026-08-28": true,
         "2026-08-04": true,
         "2026-10-15": true,
-        "2026-08-14": true,
-        "2026-11-02": true,
-        "2026-06-30": true,
-        "2026-09-04": true,
-        "2026-10-26": true,
-        "2026-10-21": true,
-        "2026-07-09": true,
-        "2026-10-06": false,
-        "2026-09-28": false,
-        "2026-09-29": false,
         "2026-10-01": false,
-        "2026-10-02": false,
-        "2026-10-05": false,
-        "2026-09-10": false,
-        "2026-09-11": false,
-        "2026-09-09": false,
-        "2026-09-07": false,
-        "2026-09-08": false,
+        "2026-06-30": true,
+        "2026-11-02": true,
+        "2026-08-14": true,
+        "2026-09-29": false,
+        "2026-09-04": true,
+        "2026-07-09": true,
+        "2026-10-21": true,
+        "2026-10-26": true,
+        "2026-09-28": false,
+        "2026-10-06": false,
         "2026-09-21": false,
         "2026-10-07": false,
         "2026-10-09": false,
@@ -992,19 +1006,1311 @@
         "2026-10-08": false,
         "2026-09-24": false
       },
+      "workerId": "W09"
+    },
+    {
+      "workerId": "W10",
+      "customStatus": {},
       "signatures": {},
-      "workerId": "W09",
+      "attendance": {},
+      "reasons": {},
       "dailyAllowance": 25000
     }
   ],
   "weeklyReports": [
     {
-      "totalAmount": 0,
-      "isSubmitted": true,
+      "weekStartDate": "2026-11-09",
+      "id": "REP-776422",
       "status": "locked",
-      "weekStartDate": "2026-10-05",
-      "submittedAt": "2026-10-09T17:00:00.000Z",
+      "totalAmount": 750000,
+      "isSubmitted": true,
+      "records": [
+        {
+          "attendance": {
+            "2026-11-11": true,
+            "2026-11-10": true,
+            "2026-11-09": true,
+            "2026-11-12": true
+          },
+          "signatures": {},
+          "reasons": {},
+          "dailyAllowance": 25000,
+          "workerId": "W01",
+          "customStatus": {}
+        },
+        {
+          "reasons": {},
+          "dailyAllowance": 25000,
+          "attendance": {
+            "2026-11-12": true,
+            "2026-11-09": true,
+            "2026-11-10": true,
+            "2026-11-11": true
+          },
+          "signatures": {},
+          "customStatus": {},
+          "workerId": "W02"
+        },
+        {
+          "signatures": {},
+          "attendance": {
+            "2026-11-10": true,
+            "2026-11-12": true,
+            "2026-11-11": true
+          },
+          "reasons": {
+            "2026-11-09": "Diatur manual oleh admin"
+          },
+          "customStatus": {
+            "2026-11-09": "Izin"
+          },
+          "workerId": "W03",
+          "dailyAllowance": 25000
+        },
+        {
+          "reasons": {
+            "2026-11-11": "Diatur manual oleh admin"
+          },
+          "customStatus": {
+            "2026-11-11": "Sakit"
+          },
+          "workerId": "W04",
+          "dailyAllowance": 25000,
+          "signatures": {},
+          "attendance": {
+            "2026-11-12": true,
+            "2026-11-09": true,
+            "2026-11-10": true
+          }
+        },
+        {
+          "dailyAllowance": 25000,
+          "workerId": "W05",
+          "customStatus": {},
+          "attendance": {
+            "2026-11-11": true,
+            "2026-11-10": true,
+            "2026-11-12": true,
+            "2026-11-09": true
+          },
+          "signatures": {},
+          "reasons": {}
+        },
+        {
+          "workerId": "W06",
+          "dailyAllowance": 25000,
+          "reasons": {},
+          "customStatus": {},
+          "signatures": {},
+          "attendance": {
+            "2026-11-11": true,
+            "2026-11-10": true,
+            "2026-11-09": true,
+            "2026-11-12": true
+          }
+        },
+        {
+          "customStatus": {
+            "2026-11-09": "Meeting",
+            "2026-11-11": "Meeting"
+          },
+          "attendance": {
+            "2026-11-09": true,
+            "2026-11-12": true,
+            "2026-11-10": true
+          },
+          "signatures": {},
+          "workerId": "W07",
+          "dailyAllowance": 25000,
+          "reasons": {
+            "2026-11-11": "Diatur manual oleh admin",
+            "2026-11-09": "Diatur manual oleh admin"
+          }
+        },
+        {
+          "workerId": "W08",
+          "reasons": {
+            "2026-11-09": "Diatur manual oleh admin"
+          },
+          "dailyAllowance": 25000,
+          "attendance": {
+            "2026-11-11": true,
+            "2026-11-10": true
+          },
+          "signatures": {},
+          "customStatus": {
+            "2026-11-09": "Izin"
+          }
+        },
+        {
+          "reasons": {},
+          "customStatus": {},
+          "workerId": "W09",
+          "dailyAllowance": 25000,
+          "signatures": {},
+          "attendance": {
+            "2026-11-09": true,
+            "2026-11-12": true,
+            "2026-11-10": true,
+            "2026-11-11": true
+          }
+        }
+      ],
+      "weekEndDate": "2026-11-13",
+      "submittedAt": "2026-11-13T17:00:00.000Z"
+    },
+    {
+      "isSubmitted": true,
+      "weekStartDate": "2026-11-02",
+      "records": [
+        {
+          "dailyAllowance": 25000,
+          "attendance": {
+            "2026-10-30": true,
+            "2026-08-14": true,
+            "2026-10-23": true,
+            "2026-07-27": true,
+            "2026-09-17": true,
+            "2026-10-26": true,
+            "2026-09-01": true,
+            "2026-11-04": true,
+            "2026-09-29": true,
+            "2026-11-02": true,
+            "2026-08-10": true,
+            "2026-10-27": true,
+            "2026-09-02": true,
+            "2026-08-04": true,
+            "2026-09-16": true,
+            "2026-08-12": true,
+            "2026-10-02": true,
+            "2026-08-03": true,
+            "2026-08-05": true,
+            "2026-08-21": true,
+            "2026-10-28": true,
+            "2026-08-26": true,
+            "2026-09-28": true,
+            "2026-10-01": true,
+            "2026-08-25": true,
+            "2026-08-13": true,
+            "2026-09-15": true,
+            "2026-08-19": true,
+            "2026-08-06": true,
+            "2026-08-31": true,
+            "2026-09-18": true,
+            "2026-08-07": true,
+            "2026-10-29": true,
+            "2026-08-24": true,
+            "2026-09-11": true,
+            "2026-09-04": true,
+            "2026-09-10": true,
+            "2026-09-07": true,
+            "2026-08-20": true,
+            "2026-08-28": true,
+            "2026-08-11": true,
+            "2026-09-08": true,
+            "2026-09-09": true,
+            "2026-11-03": true,
+            "2026-09-14": true,
+            "2026-08-27": true
+          },
+          "reasons": {
+            "2026-10-14": "Diatur manual oleh admin",
+            "2026-10-13": "Diatur manual oleh admin",
+            "2026-10-20": "Diatur manual oleh admin",
+            "2026-10-08": "Diatur manual oleh admin",
+            "2026-10-16": "Diatur manual oleh admin",
+            "2026-10-19": "Diatur manual oleh admin",
+            "2026-10-06": "Diatur manual oleh admin",
+            "2026-10-21": "Diatur manual oleh admin",
+            "2026-10-09": "Diatur manual oleh admin",
+            "2026-10-07": "Diatur manual oleh admin",
+            "2026-08-18": "Diatur oleh admin",
+            "2026-10-22": "Diatur manual oleh admin",
+            "2026-10-15": "Diatur manual oleh admin",
+            "2026-09-30": "Diatur manual oleh admin",
+            "2026-10-05": "Diatur manual oleh admin",
+            "2026-10-12": "Diatur manual oleh admin"
+          },
+          "customStatus": {
+            "2026-10-14": "Cuti",
+            "2026-10-20": "Cuti",
+            "2026-10-13": "Cuti",
+            "2026-10-08": "Cuti",
+            "2026-10-16": "Cuti",
+            "2026-10-06": "Cuti",
+            "2026-10-19": "Cuti",
+            "2026-10-21": "Cuti",
+            "2026-10-07": "Cuti",
+            "2026-10-09": "Cuti",
+            "2026-10-22": "Cuti",
+            "2026-08-18": "Sakit",
+            "2026-10-15": "Cuti",
+            "2026-09-30": "Sakit",
+            "2026-10-12": "Cuti",
+            "2026-10-05": "Cuti"
+          },
+          "workerId": "W01"
+        },
+        {
+          "workerId": "W02",
+          "dailyAllowance": 25000,
+          "reasons": {
+            "2026-10-21": "Diatur manual oleh admin",
+            "2026-10-02": "Diatur manual oleh admin",
+            "2026-11-04": "Diatur manual oleh admin",
+            "2026-08-07": "Diatur oleh admin",
+            "2026-08-05": "Diatur oleh admin",
+            "2026-10-23": "Diatur manual oleh admin"
+          },
+          "attendance": {
+            "2026-08-03": true,
+            "2026-10-28": true,
+            "2026-09-29": true,
+            "2026-09-30": true,
+            "2026-09-16": true,
+            "2026-08-04": true,
+            "2026-09-02": true,
+            "2026-08-14": true,
+            "2026-10-06": true,
+            "2026-10-19": true,
+            "2026-09-14": true,
+            "2026-08-18": true,
+            "2026-08-20": true,
+            "2026-09-08": true,
+            "2026-08-06": true,
+            "2026-10-14": true,
+            "2026-08-24": true,
+            "2026-09-18": true,
+            "2026-10-01": true,
+            "2026-09-28": true,
+            "2026-08-13": true,
+            "2026-08-25": true,
+            "2026-08-26": true,
+            "2026-08-21": true,
+            "2026-11-02": true,
+            "2026-10-05": true,
+            "2026-08-12": true,
+            "2026-10-27": true,
+            "2026-08-10": true,
+            "2026-10-26": true,
+            "2026-09-17": true,
+            "2026-10-20": true,
+            "2026-10-13": true,
+            "2026-09-01": true,
+            "2026-10-16": true,
+            "2026-10-30": true,
+            "2026-07-27": true,
+            "2026-08-27": true,
+            "2026-10-22": true,
+            "2026-08-28": true,
+            "2026-10-15": true,
+            "2026-09-03": true,
+            "2026-09-10": true,
+            "2026-11-03": true,
+            "2026-09-09": true,
+            "2026-10-12": true,
+            "2026-08-11": true,
+            "2026-08-31": true,
+            "2026-08-19": true,
+            "2026-09-04": true,
+            "2026-09-11": true,
+            "2026-10-29": true,
+            "2026-09-15": true
+          },
+          "customStatus": {
+            "2026-10-02": "Izin",
+            "2026-11-04": "Sakit",
+            "2026-10-21": "Izin",
+            "2026-08-07": "Sakit",
+            "2026-08-05": "Sakit",
+            "2026-10-23": "Izin"
+          }
+        },
+        {
+          "workerId": "W03",
+          "dailyAllowance": 25000,
+          "customStatus": {
+            "2026-08-03": "Izin",
+            "2026-10-28": "Izin"
+          },
+          "attendance": {
+            "2026-10-21": true,
+            "2026-07-27": true,
+            "2026-10-16": true,
+            "2026-10-23": true,
+            "2026-10-30": true,
+            "2026-10-20": true,
+            "2026-11-04": true,
+            "2026-10-13": true,
+            "2026-09-01": true,
+            "2026-10-26": true,
+            "2026-09-17": true,
+            "2026-10-05": true,
+            "2026-08-12": true,
+            "2026-08-10": true,
+            "2026-10-27": true,
+            "2026-11-02": true,
+            "2026-08-26": true,
+            "2026-08-21": true,
+            "2026-08-05": true,
+            "2026-09-15": true,
+            "2026-09-04": true,
+            "2026-09-11": true,
+            "2026-08-07": true,
+            "2026-10-29": true,
+            "2026-08-31": true,
+            "2026-08-19": true,
+            "2026-09-09": true,
+            "2026-11-03": true,
+            "2026-10-12": true,
+            "2026-08-11": true,
+            "2026-08-28": true,
+            "2026-10-15": true,
+            "2026-09-03": true,
+            "2026-09-10": true,
+            "2026-10-22": true,
+            "2026-08-27": true,
+            "2026-08-14": true,
+            "2026-10-19": true,
+            "2026-10-02": true,
+            "2026-09-16": true,
+            "2026-08-04": true,
+            "2026-09-02": true,
+            "2026-09-29": true,
+            "2026-09-30": true,
+            "2026-08-13": true,
+            "2026-08-25": true,
+            "2026-10-01": true,
+            "2026-09-28": true,
+            "2026-09-18": true,
+            "2026-08-24": true,
+            "2026-08-06": true,
+            "2026-10-14": true,
+            "2026-09-08": true,
+            "2026-08-20": true,
+            "2026-09-07": true,
+            "2026-08-18": true
+          },
+          "reasons": {
+            "2026-08-03": "Diatur oleh admin",
+            "2026-10-28": "Diatur manual oleh admin"
+          }
+        },
+        {
+          "attendance": {
+            "2026-09-07": true,
+            "2026-08-20": true,
+            "2026-09-08": true,
+            "2026-09-28": true,
+            "2026-08-25": true,
+            "2026-10-14": true,
+            "2026-08-06": true,
+            "2026-09-18": true,
+            "2026-08-24": true,
+            "2026-09-30": true,
+            "2026-09-29": true,
+            "2026-09-02": true,
+            "2026-08-04": true,
+            "2026-09-16": true,
+            "2026-10-02": true,
+            "2026-08-03": true,
+            "2026-10-28": true,
+            "2026-10-06": true,
+            "2026-09-03": true,
+            "2026-09-10": true,
+            "2026-10-15": true,
+            "2026-08-28": true,
+            "2026-10-12": true,
+            "2026-09-09": true,
+            "2026-11-03": true,
+            "2026-10-22": true,
+            "2026-08-27": true,
+            "2026-09-15": true,
+            "2026-08-19": true,
+            "2026-08-31": true,
+            "2026-08-07": true,
+            "2026-10-29": true,
+            "2026-09-11": true,
+            "2026-09-04": true,
+            "2026-11-02": true,
+            "2026-10-27": true,
+            "2026-10-05": true,
+            "2026-08-05": true,
+            "2026-08-21": true,
+            "2026-08-26": true,
+            "2026-10-30": true,
+            "2026-10-23": true,
+            "2026-10-16": true,
+            "2026-07-27": true,
+            "2026-10-21": true,
+            "2026-09-17": true,
+            "2026-10-26": true,
+            "2026-09-01": true,
+            "2026-10-13": true,
+            "2026-11-04": true,
+            "2026-10-20": true
+          },
+          "workerId": "W04",
+          "customStatus": {
+            "2026-09-14": "Sakit",
+            "2026-10-19": "Izin",
+            "2026-10-01": "Izin",
+            "2026-08-14": "Cuti",
+            "2026-08-12": "Cuti",
+            "2026-08-13": "Cuti",
+            "2026-08-10": "Cuti",
+            "2026-08-11": "Cuti"
+          },
+          "reasons": {
+            "2026-08-10": "Diatur oleh admin",
+            "2026-08-11": "Diatur oleh admin",
+            "2026-08-13": "Diatur oleh admin",
+            "2026-08-12": "Diatur oleh admin",
+            "2026-10-01": "Diatur manual oleh admin",
+            "2026-08-14": "Diatur oleh admin",
+            "2026-10-19": "Diatur manual oleh admin",
+            "2026-09-14": "Diatur manual oleh admin"
+          },
+          "dailyAllowance": 25000
+        },
+        {
+          "reasons": {
+            "2026-10-02": "Diatur manual oleh admin",
+            "2026-09-09": "Diatur oleh admin",
+            "2026-09-10": "Diatur oleh admin"
+          },
+          "dailyAllowance": 25000,
+          "attendance": {
+            "2026-08-03": true,
+            "2026-10-28": true,
+            "2026-09-29": true,
+            "2026-09-30": true,
+            "2026-09-16": true,
+            "2026-08-04": true,
+            "2026-09-02": true,
+            "2026-10-06": true,
+            "2026-08-14": true,
+            "2026-10-19": true,
+            "2026-09-14": true,
+            "2026-08-18": true,
+            "2026-08-20": true,
+            "2026-09-07": true,
+            "2026-09-08": true,
+            "2026-08-06": true,
+            "2026-10-14": true,
+            "2026-09-18": true,
+            "2026-08-24": true,
+            "2026-10-01": true,
+            "2026-09-28": true,
+            "2026-08-13": true,
+            "2026-08-25": true,
+            "2026-08-05": true,
+            "2026-08-26": true,
+            "2026-08-21": true,
+            "2026-11-02": true,
+            "2026-08-12": true,
+            "2026-10-05": true,
+            "2026-10-27": true,
+            "2026-08-10": true,
+            "2026-10-26": true,
+            "2026-09-17": true,
+            "2026-11-04": true,
+            "2026-10-20": true,
+            "2026-10-13": true,
+            "2026-09-01": true,
+            "2026-10-16": true,
+            "2026-10-23": true,
+            "2026-10-30": true,
+            "2026-10-21": true,
+            "2026-07-27": true,
+            "2026-08-27": true,
+            "2026-10-22": true,
+            "2026-08-28": true,
+            "2026-10-15": true,
+            "2026-09-03": true,
+            "2026-11-03": true,
+            "2026-10-12": true,
+            "2026-08-11": true,
+            "2026-08-31": true,
+            "2026-08-19": true,
+            "2026-09-04": true,
+            "2026-10-29": true,
+            "2026-08-07": true,
+            "2026-09-15": true
+          },
+          "customStatus": {
+            "2026-09-10": "Sakit",
+            "2026-10-02": "Izin",
+            "2026-09-09": "Sakit"
+          },
+          "workerId": "W05"
+        },
+        {
+          "reasons": {
+            "2026-10-30": "Diatur manual oleh admin"
+          },
+          "dailyAllowance": 25000,
+          "attendance": {
+            "2026-08-21": true,
+            "2026-08-26": true,
+            "2026-08-05": true,
+            "2026-10-27": true,
+            "2026-08-10": true,
+            "2026-08-12": true,
+            "2026-10-05": true,
+            "2026-11-02": true,
+            "2026-09-01": true,
+            "2026-10-13": true,
+            "2026-11-04": true,
+            "2026-10-20": true,
+            "2026-09-17": true,
+            "2026-10-26": true,
+            "2026-07-27": true,
+            "2026-10-21": true,
+            "2026-10-23": true,
+            "2026-10-16": true,
+            "2026-08-27": true,
+            "2026-10-22": true,
+            "2026-08-11": true,
+            "2026-10-12": true,
+            "2026-09-09": true,
+            "2026-11-03": true,
+            "2026-09-10": true,
+            "2026-10-15": true,
+            "2026-08-28": true,
+            "2026-08-07": true,
+            "2026-10-29": true,
+            "2026-09-11": true,
+            "2026-09-04": true,
+            "2026-08-19": true,
+            "2026-08-31": true,
+            "2026-09-15": true,
+            "2026-10-28": true,
+            "2026-08-03": true,
+            "2026-09-02": true,
+            "2026-08-04": true,
+            "2026-09-16": true,
+            "2026-10-02": true,
+            "2026-09-30": true,
+            "2026-09-29": true,
+            "2026-10-19": true,
+            "2026-10-06": true,
+            "2026-08-14": true,
+            "2026-08-18": true,
+            "2026-09-14": true,
+            "2026-09-08": true,
+            "2026-09-07": true,
+            "2026-08-20": true,
+            "2026-09-18": true,
+            "2026-08-24": true,
+            "2026-10-14": true,
+            "2026-08-06": true,
+            "2026-08-25": true,
+            "2026-08-13": true,
+            "2026-09-28": true,
+            "2026-10-01": true
+          },
+          "customStatus": {
+            "2026-10-30": "Izin"
+          },
+          "workerId": "W06"
+        },
+        {
+          "reasons": {
+            "2026-09-14": "Diatur manual oleh admin",
+            "2026-07-07": "Diatur manual oleh admin",
+            "2026-09-17": "Diatur manual oleh admin",
+            "2026-08-19": "Diatur oleh admin",
+            "2026-09-11": "Diatur oleh admin",
+            "2026-08-24": "Kantor memutuskan work from home (WFH)",
+            "2026-08-21": "Diatur oleh admin",
+            "2026-09-18": "Diatur manual oleh admin",
+            "2026-10-16": "Diatur manual oleh admin"
+          },
+          "workerId": "W07",
+          "customStatus": {
+            "2026-10-16": "Sakit",
+            "2026-08-20": "Sakit",
+            "2026-08-21": "Sakit",
+            "2026-09-18": "Sakit",
+            "2026-08-24": "Meeting",
+            "2026-08-27": "Meeting",
+            "2026-09-11": "Sakit",
+            "2026-09-17": "Sakit",
+            "2026-08-19": "Sakit",
+            "2026-09-14": "Sakit",
+            "2026-07-07": "Meeting"
+          },
+          "dailyAllowance": 25000,
+          "attendance": {
+            "2026-07-27": true,
+            "2026-06-30": true,
+            "2026-08-14": true,
+            "2026-07-03": true,
+            "2026-07-02": true,
+            "2026-09-01": true,
+            "2026-10-26": true,
+            "2026-09-02": true,
+            "2026-08-10": true,
+            "2026-08-04": true,
+            "2026-09-16": true,
+            "2026-10-05": true,
+            "2026-08-12": true,
+            "2026-10-02": true,
+            "2026-09-30": true,
+            "2026-11-02": true,
+            "2026-09-29": true,
+            "2026-08-26": true,
+            "2026-08-03": true,
+            "2026-08-05": true,
+            "2026-08-25": true,
+            "2026-09-15": true,
+            "2026-08-13": true,
+            "2026-09-28": true,
+            "2026-10-01": true,
+            "2026-06-29": true,
+            "2026-08-07": true,
+            "2026-09-04": true,
+            "2026-08-06": true,
+            "2026-08-31": true,
+            "2026-07-01": true,
+            "2026-08-11": true,
+            "2026-09-08": true,
+            "2026-10-12": true,
+            "2026-09-09": true,
+            "2026-09-10": true,
+            "2026-09-03": true,
+            "2026-09-07": true,
+            "2026-10-15": true,
+            "2026-08-28": true,
+            "2026-08-18": true,
+            "2026-08-27": true
+          }
+        },
+        {
+          "customStatus": {
+            "2026-09-23": "Meeting",
+            "2026-10-02": "Izin",
+            "2026-09-16": "Izin",
+            "2026-10-05": "Izin",
+            "2026-08-12": "Meeting",
+            "2026-08-04": "Sakit",
+            "2026-10-27": "Izin",
+            "2026-08-10": "Izin",
+            "2026-09-30": "Meeting",
+            "2026-07-09": "Meeting",
+            "2026-10-28": "Izin",
+            "2026-08-21": "Meeting",
+            "2026-07-07": "Meeting",
+            "2026-08-03": "Sakit",
+            "2026-07-08": "Meeting",
+            "2026-09-28": "Izin",
+            "2026-07-06": "Meeting",
+            "2026-09-11": "Cuti",
+            "2026-08-07": "Izin",
+            "2026-08-24": "Sakit",
+            "2026-08-06": "Meeting",
+            "2026-09-09": "Cuti",
+            "2026-09-08": "Cuti",
+            "2026-09-24": "Meeting",
+            "2026-08-11": "Meeting",
+            "2026-09-07": "Cuti",
+            "2026-09-10": "Cuti",
+            "2026-07-10": "Meeting"
+          },
+          "workerId": "W08",
+          "attendance": {
+            "2026-09-02": true,
+            "2026-09-30": true,
+            "2026-11-02": true,
+            "2026-09-29": true,
+            "2026-08-26": true,
+            "2026-08-05": true,
+            "2026-07-27": true,
+            "2026-06-30": true,
+            "2026-10-19": true,
+            "2026-08-14": true,
+            "2026-10-06": true,
+            "2026-07-03": true,
+            "2026-10-23": true,
+            "2026-07-02": true,
+            "2026-10-16": true,
+            "2026-09-01": true,
+            "2026-10-13": true,
+            "2026-11-04": true,
+            "2026-10-20": true,
+            "2026-09-17": true,
+            "2026-10-26": true,
+            "2026-10-12": true,
+            "2026-09-03": true,
+            "2026-10-15": true,
+            "2026-08-28": true,
+            "2026-08-20": true,
+            "2026-08-18": true,
+            "2026-08-27": true,
+            "2026-10-22": true,
+            "2026-08-25": true,
+            "2026-08-13": true,
+            "2026-09-15": true,
+            "2026-06-29": true,
+            "2026-10-01": true,
+            "2026-10-29": true,
+            "2026-09-04": true,
+            "2026-08-19": true,
+            "2026-10-14": true,
+            "2026-08-31": true,
+            "2026-07-01": true
+          },
+          "dailyAllowance": 25000,
+          "reasons": {
+            "2026-09-30": "Rapat AUDIENSI di KEMENTRIAN PERTANIAN., Bersama Mentri Pertanian,. PT. GSI., PT.CSCEC., Bupati Kabupaten Tulang Bawang",
+            "2026-08-04": "Diatur oleh admin",
+            "2026-08-10": "Diatur oleh admin",
+            "2026-10-27": "Diatur manual oleh admin",
+            "2026-10-02": "Diatur manual oleh admin",
+            "2026-08-12": "Diatur oleh admin",
+            "2026-10-05": "Diatur manual oleh admin",
+            "2026-09-16": "Diatur manual oleh admin",
+            "2026-07-08": "Diatur manual oleh admin",
+            "2026-08-03": "Diatur oleh admin",
+            "2026-07-07": "Diatur manual oleh admin",
+            "2026-07-09": "Diatur manual oleh admin",
+            "2026-10-28": "Diatur manual oleh admin",
+            "2026-09-23": "Diatur manual oleh admin",
+            "2026-09-10": "Diatur oleh admin",
+            "2026-09-07": "Diatur oleh admin",
+            "2026-09-24": "Diatur manual oleh admin",
+            "2026-09-09": "Diatur oleh admin",
+            "2026-09-08": "Diatur oleh admin",
+            "2026-07-10": "Diatur manual oleh admin",
+            "2026-09-28": "Diatur manual oleh admin",
+            "2026-08-07": "Diatur oleh admin",
+            "2026-08-24": "Diatur oleh admin",
+            "2026-07-06": "Diatur manual oleh admin",
+            "2026-09-11": "Diatur oleh admin"
+          }
+        },
+        {
+          "dailyAllowance": 25000,
+          "reasons": {
+            "2026-08-21": "Diatur oleh admin"
+          },
+          "workerId": "W09",
+          "attendance": {
+            "2026-10-26": true,
+            "2026-09-17": true,
+            "2026-11-04": true,
+            "2026-10-20": true,
+            "2026-10-13": true,
+            "2026-09-01": true,
+            "2026-10-16": true,
+            "2026-07-02": true,
+            "2026-10-23": true,
+            "2026-10-30": true,
+            "2026-10-21": true,
+            "2026-07-27": true,
+            "2026-07-07": true,
+            "2026-08-05": true,
+            "2026-07-08": true,
+            "2026-08-26": true,
+            "2026-11-02": true,
+            "2026-10-05": true,
+            "2026-08-12": true,
+            "2026-10-27": true,
+            "2026-08-10": true,
+            "2026-08-31": true,
+            "2026-08-19": true,
+            "2026-07-06": true,
+            "2026-09-04": true,
+            "2026-09-11": true,
+            "2026-08-07": true,
+            "2026-10-29": true,
+            "2026-06-29": true,
+            "2026-09-15": true,
+            "2026-10-22": true,
+            "2026-08-27": true,
+            "2026-08-28": true,
+            "2026-10-15": true,
+            "2026-09-03": true,
+            "2026-09-10": true,
+            "2026-09-09": true,
+            "2026-11-03": true,
+            "2026-10-12": true,
+            "2026-08-11": true,
+            "2026-07-03": true,
+            "2026-08-14": true,
+            "2026-10-06": true,
+            "2026-10-19": true,
+            "2026-06-30": true,
+            "2026-08-03": true,
+            "2026-07-09": true,
+            "2026-10-28": true,
+            "2026-09-29": true,
+            "2026-09-30": true,
+            "2026-10-02": true,
+            "2026-09-16": true,
+            "2026-08-04": true,
+            "2026-09-02": true,
+            "2026-07-01": true,
+            "2026-08-06": true,
+            "2026-10-14": true,
+            "2026-08-24": true,
+            "2026-09-18": true,
+            "2026-10-01": true,
+            "2026-09-28": true,
+            "2026-08-13": true,
+            "2026-08-25": true,
+            "2026-09-14": true,
+            "2026-08-18": true,
+            "2026-07-10": true,
+            "2026-08-20": true,
+            "2026-09-07": true,
+            "2026-09-08": true
+          },
+          "customStatus": {
+            "2026-08-21": "Sakit"
+          }
+        }
+      ],
+      "submittedAt": "2026-11-04T05:25:56.786Z",
+      "pdfDriveUrl": "https://drive.google.com/file/d/1oLDGjxwgIfbYvUGczqE5Vxg3ScRIl5YY/view?usp=drivesdk",
+      "weekEndDate": "2026-11-06",
+      "id": "REP-766923"
+    },
+    {
+      "totalAmount": 900000,
+      "status": "locked",
+      "isSubmitted": true,
+      "id": "REP-798134",
+      "weekStartDate": "2026-10-26",
+      "submittedAt": "2026-10-30T17:00:00.000Z",
+      "records": [
+        {
+          "customStatus": {},
+          "reasons": {},
+          "signatures": {},
+          "workerId": "W01",
+          "dailyAllowance": 25000,
+          "attendance": {
+            "2026-10-30": true,
+            "2026-10-26": true,
+            "2026-10-29": true,
+            "2026-10-27": true,
+            "2026-10-28": true
+          }
+        },
+        {
+          "signatures": {},
+          "reasons": {},
+          "attendance": {
+            "2026-10-26": true,
+            "2026-10-30": true,
+            "2026-10-28": true,
+            "2026-10-27": true,
+            "2026-10-29": true
+          },
+          "customStatus": {},
+          "workerId": "W02",
+          "dailyAllowance": 25000
+        },
+        {
+          "dailyAllowance": 25000,
+          "workerId": "W03",
+          "customStatus": {
+            "2026-10-28": "Izin"
+          },
+          "attendance": {
+            "2026-10-26": true,
+            "2026-10-29": true,
+            "2026-10-30": true,
+            "2026-10-27": true
+          },
+          "signatures": {},
+          "reasons": {
+            "2026-10-28": "Diatur manual oleh admin"
+          }
+        },
+        {
+          "customStatus": {},
+          "reasons": {},
+          "workerId": "W04",
+          "signatures": {},
+          "attendance": {
+            "2026-10-30": true,
+            "2026-10-26": true,
+            "2026-10-29": true,
+            "2026-10-27": true,
+            "2026-10-28": true
+          },
+          "dailyAllowance": 25000
+        },
+        {
+          "workerId": "W05",
+          "customStatus": {},
+          "dailyAllowance": 25000,
+          "signatures": {},
+          "attendance": {
+            "2026-10-26": true,
+            "2026-10-30": true,
+            "2026-10-28": true,
+            "2026-10-29": true,
+            "2026-10-27": true
+          },
+          "reasons": {}
+        },
+        {
+          "reasons": {
+            "2026-10-30": "Diatur manual oleh admin"
+          },
+          "signatures": {},
+          "dailyAllowance": 25000,
+          "attendance": {
+            "2026-10-29": true,
+            "2026-10-27": true,
+            "2026-10-26": true,
+            "2026-10-28": true
+          },
+          "customStatus": {
+            "2026-10-30": "Izin"
+          },
+          "workerId": "W06"
+        },
+        {
+          "dailyAllowance": 25000,
+          "workerId": "W07",
+          "attendance": {
+            "2026-10-26": true
+          },
+          "signatures": {},
+          "customStatus": {},
+          "reasons": {}
+        },
+        {
+          "reasons": {
+            "2026-10-27": "Diatur manual oleh admin",
+            "2026-10-28": "Diatur manual oleh admin"
+          },
+          "dailyAllowance": 25000,
+          "workerId": "W08",
+          "customStatus": {
+            "2026-10-28": "Izin",
+            "2026-10-27": "Izin"
+          },
+          "attendance": {
+            "2026-10-26": true,
+            "2026-10-29": true
+          },
+          "signatures": {}
+        },
+        {
+          "signatures": {},
+          "dailyAllowance": 25000,
+          "attendance": {
+            "2026-10-28": true,
+            "2026-10-29": true,
+            "2026-10-27": true,
+            "2026-10-26": true,
+            "2026-10-30": true
+          },
+          "reasons": {},
+          "customStatus": {},
+          "workerId": "W09"
+        }
+      ],
+      "weekEndDate": "2026-10-30"
+    },
+    {
+      "isSubmitted": true,
+      "totalAmount": 800000,
+      "weekEndDate": "2026-10-23",
+      "weekStartDate": "2026-10-19",
+      "status": "locked",
+      "id": "REP-788635",
+      "records": [
+        {
+          "workerId": "W01",
+          "reasons": {
+            "2026-10-22": "Diatur manual oleh admin",
+            "2026-10-20": "Diatur manual oleh admin",
+            "2026-10-21": "Diatur manual oleh admin",
+            "2026-10-19": "Diatur manual oleh admin"
+          },
+          "dailyAllowance": 25000,
+          "customStatus": {
+            "2026-10-21": "Cuti",
+            "2026-10-20": "Cuti",
+            "2026-10-22": "Cuti",
+            "2026-10-19": "Cuti"
+          },
+          "attendance": {
+            "2026-10-23": true
+          },
+          "signatures": {}
+        },
+        {
+          "workerId": "W02",
+          "dailyAllowance": 25000,
+          "customStatus": {
+            "2026-10-21": "Izin",
+            "2026-10-23": "Izin"
+          },
+          "attendance": {
+            "2026-10-22": true,
+            "2026-10-20": true,
+            "2026-10-19": true
+          },
+          "reasons": {
+            "2026-10-21": "Diatur manual oleh admin",
+            "2026-10-23": "Diatur manual oleh admin"
+          },
+          "signatures": {}
+        },
+        {
+          "customStatus": {},
+          "dailyAllowance": 25000,
+          "attendance": {
+            "2026-10-23": true,
+            "2026-10-19": true,
+            "2026-10-21": true,
+            "2026-10-22": true,
+            "2026-10-20": true
+          },
+          "workerId": "W03",
+          "signatures": {},
+          "reasons": {}
+        },
+        {
+          "signatures": {},
+          "workerId": "W04",
+          "attendance": {
+            "2026-10-20": true,
+            "2026-10-22": true,
+            "2026-10-21": true,
+            "2026-10-23": true
+          },
+          "reasons": {
+            "2026-10-19": "Diatur manual oleh admin"
+          },
+          "customStatus": {
+            "2026-10-19": "Izin"
+          },
+          "dailyAllowance": 25000
+        },
+        {
+          "dailyAllowance": 25000,
+          "reasons": {},
+          "workerId": "W05",
+          "attendance": {
+            "2026-10-22": true,
+            "2026-10-20": true,
+            "2026-10-21": true,
+            "2026-10-19": true,
+            "2026-10-23": true
+          },
+          "customStatus": {},
+          "signatures": {}
+        },
+        {
+          "attendance": {
+            "2026-10-19": true,
+            "2026-10-23": true,
+            "2026-10-21": true,
+            "2026-10-22": true,
+            "2026-10-20": true
+          },
+          "signatures": {},
+          "customStatus": {},
+          "dailyAllowance": 25000,
+          "workerId": "W06",
+          "reasons": {}
+        },
+        {
+          "signatures": {},
+          "attendance": {},
+          "reasons": {},
+          "dailyAllowance": 25000,
+          "workerId": "W07",
+          "customStatus": {}
+        },
+        {
+          "dailyAllowance": 25000,
+          "signatures": {},
+          "workerId": "W08",
+          "customStatus": {},
+          "attendance": {
+            "2026-10-19": true,
+            "2026-10-20": true,
+            "2026-10-22": true,
+            "2026-10-23": true
+          },
+          "reasons": {}
+        },
+        {
+          "attendance": {
+            "2026-10-19": true,
+            "2026-10-23": true,
+            "2026-10-21": true,
+            "2026-10-20": true,
+            "2026-10-22": true
+          },
+          "workerId": "W09",
+          "signatures": {},
+          "dailyAllowance": 25000,
+          "customStatus": {},
+          "reasons": {}
+        }
+      ],
+      "submittedAt": "2026-10-23T17:00:00.000Z"
+    },
+    {
+      "weekEndDate": "2026-10-16",
+      "submittedAt": "2026-10-16T17:00:00.000Z",
+      "id": "REP-779136",
+      "records": [
+        {
+          "signatures": {},
+          "attendance": {},
+          "workerId": "W01",
+          "customStatus": {
+            "2026-10-12": "Cuti",
+            "2026-10-13": "Cuti",
+            "2026-10-14": "Cuti",
+            "2026-10-15": "Cuti",
+            "2026-10-16": "Cuti"
+          },
+          "reasons": {
+            "2026-10-14": "Diatur manual oleh admin",
+            "2026-10-15": "Diatur manual oleh admin",
+            "2026-10-16": "Diatur manual oleh admin",
+            "2026-10-13": "Diatur manual oleh admin",
+            "2026-10-12": "Diatur manual oleh admin"
+          },
+          "dailyAllowance": 25000
+        },
+        {
+          "dailyAllowance": 25000,
+          "workerId": "W02",
+          "customStatus": {},
+          "attendance": {
+            "2026-10-12": true,
+            "2026-10-13": true,
+            "2026-10-15": true,
+            "2026-10-16": true,
+            "2026-10-14": true
+          },
+          "signatures": {},
+          "reasons": {}
+        },
+        {
+          "reasons": {},
+          "workerId": "W03",
+          "customStatus": {},
+          "attendance": {
+            "2026-10-13": true,
+            "2026-10-12": true,
+            "2026-10-15": true,
+            "2026-10-16": true,
+            "2026-10-14": true
+          },
+          "dailyAllowance": 25000,
+          "signatures": {}
+        },
+        {
+          "signatures": {},
+          "attendance": {
+            "2026-10-13": true,
+            "2026-10-12": true,
+            "2026-10-14": true,
+            "2026-10-16": true,
+            "2026-10-15": true
+          },
+          "dailyAllowance": 25000,
+          "customStatus": {},
+          "reasons": {},
+          "workerId": "W04"
+        },
+        {
+          "workerId": "W05",
+          "customStatus": {},
+          "signatures": {},
+          "attendance": {
+            "2026-10-12": true,
+            "2026-10-13": true,
+            "2026-10-16": true,
+            "2026-10-15": true,
+            "2026-10-14": true
+          },
+          "dailyAllowance": 25000,
+          "reasons": {}
+        },
+        {
+          "workerId": "W06",
+          "attendance": {
+            "2026-10-12": true,
+            "2026-10-13": true,
+            "2026-10-14": true,
+            "2026-10-16": true,
+            "2026-10-15": true
+          },
+          "signatures": {},
+          "dailyAllowance": 25000,
+          "customStatus": {},
+          "reasons": {}
+        },
+        {
+          "reasons": {
+            "2026-10-16": "Diatur manual oleh admin"
+          },
+          "dailyAllowance": 25000,
+          "workerId": "W07",
+          "attendance": {
+            "2026-10-12": true,
+            "2026-10-15": true
+          },
+          "signatures": {},
+          "customStatus": {
+            "2026-10-16": "Sakit"
+          }
+        },
+        {
+          "signatures": {},
+          "attendance": {
+            "2026-10-15": true,
+            "2026-10-16": true,
+            "2026-10-14": true,
+            "2026-10-13": true,
+            "2026-10-12": true
+          },
+          "reasons": {},
+          "workerId": "W08",
+          "customStatus": {},
+          "dailyAllowance": 25000
+        },
+        {
+          "dailyAllowance": 25000,
+          "customStatus": {},
+          "signatures": {},
+          "workerId": "W09",
+          "attendance": {
+            "2026-10-13": true,
+            "2026-10-12": true,
+            "2026-10-15": true,
+            "2026-10-16": true,
+            "2026-10-14": true
+          },
+          "reasons": {}
+        }
+      ],
+      "totalAmount": 925000,
+      "weekStartDate": "2026-10-12",
+      "isSubmitted": true,
+      "status": "locked"
+    },
+    {
       "id": "REP-769637",
+      "weekEndDate": "2026-10-09",
+      "weekStartDate": "2026-10-05",
+      "pdfDriveUrl": "https://drive.google.com/file/d/1J7ZqDT00VEQhPQ884z4HGReLChaNsHCA/view?usp=drivesdk",
       "records": [
         {
           "workerId": "W01",
@@ -1124,10 +2430,13 @@
           "reasons": {}
         }
       ],
-      "pdfDriveUrl": "https://drive.google.com/file/d/1J7ZqDT00VEQhPQ884z4HGReLChaNsHCA/view?usp=drivesdk",
-      "weekEndDate": "2026-10-09"
+      "isSubmitted": true,
+      "totalAmount": 0,
+      "submittedAt": "2026-10-09T17:00:00.000Z",
+      "status": "locked"
     },
     {
+      "weekStartDate": "2026-09-28",
       "records": [
         {
           "customStatus": {
@@ -1529,16 +2838,14 @@
           "reasons": {}
         }
       ],
-      "isSubmitted": true,
-      "weekStartDate": "2026-09-28",
-      "submittedAt": "2026-10-06T07:37:07.435Z",
       "id": "REP-20260928-401",
+      "isSubmitted": true,
       "pdfDriveUrl": "https://drive.google.com/file/d/1t4Yez2PTO2tG1se9S3OseNcuNDROM-hG/view?usp=drivesdk",
-      "weekEndDate": "2026-10-02"
+      "weekEndDate": "2026-10-02",
+      "submittedAt": "2026-10-06T07:37:07.435Z"
     },
     {
-      "isSubmitted": true,
-      "totalAmount": 0,
+      "submittedAt": "2026-09-25T17:00:00.000Z",
       "records": [
         {
           "workerId": "W01",
@@ -1658,15 +2965,162 @@
           "reasons": {}
         }
       ],
-      "id": "REP-789992",
-      "status": "locked",
       "weekEndDate": "2026-09-25",
+      "totalAmount": 0,
       "weekStartDate": "2026-09-21",
-      "submittedAt": "2026-09-25T17:00:00.000Z"
+      "isSubmitted": true,
+      "status": "locked",
+      "id": "REP-789992"
     },
     {
-      "weekStartDate": "2026-09-07",
+      "totalAmount": 925000,
+      "isSubmitted": true,
+      "id": "REP-780493",
+      "submittedAt": "2026-09-18T17:00:00.000Z",
+      "status": "locked",
+      "weekStartDate": "2026-09-14",
+      "records": [
+        {
+          "signatures": {},
+          "dailyAllowance": 25000,
+          "attendance": {
+            "2026-09-18": true,
+            "2026-09-15": true,
+            "2026-09-16": true,
+            "2026-09-17": true,
+            "2026-09-14": true
+          },
+          "reasons": {},
+          "workerId": "W01",
+          "customStatus": {}
+        },
+        {
+          "workerId": "W02",
+          "customStatus": {},
+          "dailyAllowance": 25000,
+          "attendance": {
+            "2026-09-14": true,
+            "2026-09-17": true,
+            "2026-09-16": true,
+            "2026-09-15": true,
+            "2026-09-18": true
+          },
+          "reasons": {},
+          "signatures": {}
+        },
+        {
+          "dailyAllowance": 25000,
+          "customStatus": {},
+          "signatures": {},
+          "workerId": "W03",
+          "reasons": {},
+          "attendance": {
+            "2026-09-18": true,
+            "2026-09-17": true,
+            "2026-09-15": true,
+            "2026-09-16": true
+          }
+        },
+        {
+          "workerId": "W04",
+          "attendance": {
+            "2026-09-15": true,
+            "2026-09-16": true,
+            "2026-09-18": true,
+            "2026-09-17": true
+          },
+          "signatures": {},
+          "reasons": {
+            "2026-09-14": "Diatur manual oleh admin"
+          },
+          "dailyAllowance": 25000,
+          "customStatus": {
+            "2026-09-14": "Sakit"
+          }
+        },
+        {
+          "dailyAllowance": 25000,
+          "customStatus": {},
+          "workerId": "W05",
+          "attendance": {
+            "2026-09-15": true,
+            "2026-09-16": true,
+            "2026-09-18": true,
+            "2026-09-14": true,
+            "2026-09-17": true
+          },
+          "reasons": {},
+          "signatures": {}
+        },
+        {
+          "workerId": "W06",
+          "dailyAllowance": 25000,
+          "customStatus": {},
+          "signatures": {},
+          "reasons": {},
+          "attendance": {
+            "2026-09-14": true,
+            "2026-09-17": true,
+            "2026-09-15": true,
+            "2026-09-16": true,
+            "2026-09-18": true
+          }
+        },
+        {
+          "workerId": "W07",
+          "signatures": {},
+          "attendance": {
+            "2026-09-15": true,
+            "2026-09-16": true
+          },
+          "reasons": {
+            "2026-09-14": "Diatur manual oleh admin",
+            "2026-09-18": "Diatur manual oleh admin",
+            "2026-09-17": "Diatur manual oleh admin"
+          },
+          "customStatus": {
+            "2026-09-18": "Sakit",
+            "2026-09-17": "Sakit",
+            "2026-09-14": "Sakit"
+          },
+          "dailyAllowance": 25000
+        },
+        {
+          "customStatus": {
+            "2026-09-16": "Izin"
+          },
+          "workerId": "W08",
+          "dailyAllowance": 25000,
+          "attendance": {
+            "2026-09-17": true,
+            "2026-09-15": true
+          },
+          "reasons": {
+            "2026-09-16": "Diatur manual oleh admin"
+          },
+          "signatures": {}
+        },
+        {
+          "workerId": "W09",
+          "reasons": {},
+          "dailyAllowance": 25000,
+          "signatures": {},
+          "attendance": {
+            "2026-09-16": true,
+            "2026-09-15": true,
+            "2026-09-18": true,
+            "2026-09-14": true,
+            "2026-09-17": true
+          },
+          "customStatus": {}
+        }
+      ],
+      "weekEndDate": "2026-09-18"
+    },
+    {
+      "isSubmitted": true,
       "id": "1789098053536",
+      "weekStartDate": "2026-09-07",
       "records": [
         {
           "workerId": "W01",
@@ -2103,14 +3557,10 @@
           "customStatus": {}
         }
       ],
-      "isSubmitted": true,
       "weekEndDate": "2026-09-11"
     },
     {
       "isSubmitted": true,
-      "id": "REP-991272",
-      "weekStartDate": "2026-08-31",
-      "submittedAt": "2026-09-11T03:54:48.000Z",
       "records": [
         {
           "workerId": "W01",
@@ -2295,13 +3745,12 @@
           }
         }
       ],
+      "submittedAt": "2026-09-11T03:54:48.000Z",
+      "id": "REP-991272",
+      "weekStartDate": "2026-08-31",
       "weekEndDate": "2026-09-04"
     },
     {
-      "weekEndDate": "2026-08-28",
-      "isSubmitted": true,
-      "weekStartDate": "2026-08-24",
-      "id": "1787875593084",
       "records": [
         {
           "customStatus": {},
@@ -3152,10 +4601,154 @@
             "2026-08-28": false
           }
         }
-      ]
+      ],
+      "weekStartDate": "2026-08-24",
+      "id": "1787875593084",
+      "isSubmitted": true,
+      "weekEndDate": "2026-08-28"
     },
     {
       "isSubmitted": true,
+      "records": [
+        {
+          "workerId": "W01",
+          "signatures": {},
+          "attendance": {
+            "2026-08-20": true,
+            "2026-08-19": true,
+            "2026-08-21": true
+          },
+          "customStatus": {
+            "2026-08-18": "Sakit"
+          },
+          "reasons": {
+            "2026-08-18": "Diatur oleh admin"
+          },
+          "dailyAllowance": 25000
+        },
+        {
+          "dailyAllowance": 25000,
+          "signatures": {},
+          "attendance": {
+            "2026-08-19": true,
+            "2026-08-21": true,
+            "2026-08-18": true,
+            "2026-08-20": true
+          },
+          "reasons": {},
+          "workerId": "W02",
+          "customStatus": {}
+        },
+        {
+          "customStatus": {},
+          "dailyAllowance": 25000,
+          "reasons": {},
+          "workerId": "W03",
+          "attendance": {
+            "2026-08-21": true,
+            "2026-08-19": true,
+            "2026-08-20": true,
+            "2026-08-18": true
+          },
+          "signatures": {}
+        },
+        {
+          "attendance": {
+            "2026-08-20": true,
+            "2026-08-19": true,
+            "2026-08-21": true
+          },
+          "reasons": {},
+          "signatures": {},
+          "workerId": "W04",
+          "dailyAllowance": 25000,
+          "customStatus": {}
+        },
+        {
+          "attendance": {
+            "2026-08-21": true,
+            "2026-08-19": true,
+            "2026-08-20": true,
+            "2026-08-18": true
+          },
+          "workerId": "W05",
+          "signatures": {},
+          "customStatus": {},
+          "reasons": {},
+          "dailyAllowance": 25000
+        },
+        {
+          "customStatus": {},
+          "dailyAllowance": 25000,
+          "workerId": "W06",
+          "reasons": {},
+          "signatures": {},
+          "attendance": {
+            "2026-08-21": true,
+            "2026-08-19": true,
+            "2026-08-20": true,
+            "2026-08-18": true
+          }
+        },
+        {
+          "workerId": "W07",
+          "dailyAllowance": 25000,
+          "reasons": {
+            "2026-08-19": "Diatur oleh admin",
+            "2026-08-21": "Diatur oleh admin"
+          },
+          "attendance": {
+            "2026-08-18": true
+          },
+          "signatures": {},
+          "customStatus": {
+            "2026-08-21": "Sakit",
+            "2026-08-19": "Sakit",
+            "2026-08-20": "Sakit"
+          }
+        },
+        {
+          "workerId": "W08",
+          "attendance": {
+            "2026-08-20": true,
+            "2026-08-18": true,
+            "2026-08-19": true
+          },
+          "customStatus": {
+            "2026-08-21": "Meeting"
+          },
+          "signatures": {},
+          "dailyAllowance": 25000,
+          "reasons": {}
+        },
+        {
+          "workerId": "W09",
+          "attendance": {
+            "2026-08-19": true,
+            "2026-08-18": true,
+            "2026-08-20": true
+          },
+          "signatures": {},
+          "customStatus": {
+            "2026-08-21": "Sakit"
+          },
+          "reasons": {
+            "2026-08-21": "Diatur oleh admin"
+          },
+          "dailyAllowance": 25000
+        }
+      ],
+      "totalAmount": 725000,
+      "weekEndDate": "2026-08-21",
+      "status": "locked",
+      "id": "REP-783207",
+      "weekStartDate": "2026-08-17",
+      "submittedAt": "2026-08-21T17:00:00.000Z"
+    },
+    {
+      "isSubmitted": true,
+      "weekStartDate": "2026-08-10",
+      "weekEndDate": "2026-08-14",
       "records": [
         {
           "workerId": "W01",
@@ -3675,13 +5268,12 @@
           "dailyAllowance": 25000
         }
       ],
-      "id": "1786688011511",
-      "weekEndDate": "2026-08-14",
-      "weekStartDate": "2026-08-10"
+      "id": "1786688011511"
     },
     {
-      "id": "1786074840484",
+      "weekEndDate": "2026-08-07",
       "weekStartDate": "2026-08-03",
+      "isSubmitted": true,
       "records": [
         {
           "dailyAllowance": 25000,
@@ -3998,12 +5590,13 @@
           "workerId": "W09"
         }
       ],
-      "weekEndDate": "2026-08-07",
-      "isSubmitted": true
+      "id": "1786074840484"
     },
     {
-      "id": "1785462942413",
       "weekEndDate": "2026-07-31",
+      "id": "1785462942413",
+      "weekStartDate": "2026-07-27",
+      "isSubmitted": true,
       "records": [
         {
           "dailyAllowance": 25000,
@@ -4375,13 +5968,13 @@
           "dailyAllowance": 25000,
           "customStatus": {}
         }
-      ],
-      "isSubmitted": true,
-      "weekStartDate": "2026-07-27"
+      ]
     },
     {
-      "submittedAt": "2026-09-11T04:06:40.000Z",
+      "isSubmitted": true,
+      "weekStartDate": "2026-07-06",
       "weekEndDate": "2026-07-10",
+      "id": "REP-883068",
       "records": [
         {
           "workerId": "W01",
@@ -4566,1549 +6159,117 @@
           }
         }
       ],
-      "isSubmitted": true,
-      "weekStartDate": "2026-07-06",
-      "id": "REP-883068"
+      "submittedAt": "2026-09-11T04:06:40.000Z"
     },
     {
-      "submittedAt": "2026-07-03T17:00:00.000Z",
-      "records": [
-        {
-          "workerId": "W01",
-          "attendance": {
-            "2026-06-29": false,
-            "2026-06-30": false,
-            "2026-07-01": false,
-            "2026-07-02": false,
-            "2026-07-03": false
-          },
-          "dailyAllowance": 25000,
-          "customStatus": {},
-          "reasons": {}
-        },
-        {
-          "workerId": "W02",
-          "attendance": {
-            "2026-06-29": false,
-            "2026-06-30": false,
-            "2026-07-01": false,
-            "2026-07-02": false,
-            "2026-07-03": false
-          },
-          "dailyAllowance": 25000,
-          "customStatus": {},
-          "reasons": {}
-        },
-        {
-          "workerId": "W03",
-          "attendance": {
-            "2026-06-29": false,
-            "2026-06-30": false,
-            "2026-07-01": false,
-            "2026-07-02": false,
-            "2026-07-03": false
-          },
-          "dailyAllowance": 25000,
-          "customStatus": {},
-          "reasons": {}
-        },
-        {
-          "workerId": "W04",
-          "attendance": {
-            "2026-06-29": false,
-            "2026-06-30": false,
-            "2026-07-01": false,
-            "2026-07-02": false,
-            "2026-07-03": false
-          },
-          "dailyAllowance": 25000,
-          "customStatus": {},
-          "reasons": {}
-        },
-        {
-          "workerId": "W05",
-          "attendance": {
-            "2026-06-29": false,
-            "2026-06-30": false,
-            "2026-07-01": false,
-            "2026-07-02": false,
-            "2026-07-03": false
-          },
-          "dailyAllowance": 25000,
-          "customStatus": {},
-          "reasons": {}
-        },
-        {
-          "workerId": "W06",
-          "attendance": {
-            "2026-06-29": false,
-            "2026-06-30": false,
-            "2026-07-01": false,
-            "2026-07-02": false,
-            "2026-07-03": false
-          },
-          "dailyAllowance": 25000,
-          "customStatus": {},
-          "reasons": {}
-        },
-        {
-          "workerId": "W07",
-          "attendance": {},
-          "dailyAllowance": 25000,
-          "customStatus": {},
-          "reasons": {}
-        },
-        {
-          "workerId": "W08",
-          "attendance": {},
-          "dailyAllowance": 25000,
-          "customStatus": {},
-          "reasons": {}
-        },
-        {
-          "workerId": "W09",
-          "attendance": {},
-          "dailyAllowance": 25000,
-          "customStatus": {},
-          "reasons": {}
-        }
-      ],
-      "id": "REP-796777",
       "weekEndDate": "2026-07-03",
       "status": "locked",
-      "isSubmitted": true,
-      "weekStartDate": "2026-06-29",
-      "totalAmount": 0
-    },
-    {
-      "id": "REP-766923",
-      "isSubmitted": true,
-      "records": [
-        {
-          "dailyAllowance": 25000,
-          "attendance": {
-            "2026-10-30": true,
-            "2026-08-14": true,
-            "2026-10-23": true,
-            "2026-07-27": true,
-            "2026-09-17": true,
-            "2026-10-26": true,
-            "2026-09-01": true,
-            "2026-11-04": true,
-            "2026-09-29": true,
-            "2026-11-02": true,
-            "2026-08-10": true,
-            "2026-10-27": true,
-            "2026-09-02": true,
-            "2026-08-04": true,
-            "2026-09-16": true,
-            "2026-08-12": true,
-            "2026-10-02": true,
-            "2026-08-03": true,
-            "2026-08-05": true,
-            "2026-08-21": true,
-            "2026-10-28": true,
-            "2026-08-26": true,
-            "2026-09-28": true,
-            "2026-10-01": true,
-            "2026-08-25": true,
-            "2026-08-13": true,
-            "2026-09-15": true,
-            "2026-08-19": true,
-            "2026-08-06": true,
-            "2026-08-31": true,
-            "2026-09-18": true,
-            "2026-08-07": true,
-            "2026-10-29": true,
-            "2026-08-24": true,
-            "2026-09-11": true,
-            "2026-09-04": true,
-            "2026-09-10": true,
-            "2026-09-07": true,
-            "2026-08-20": true,
-            "2026-08-28": true,
-            "2026-08-11": true,
-            "2026-09-08": true,
-            "2026-09-09": true,
-            "2026-11-03": true,
-            "2026-09-14": true,
-            "2026-08-27": true
-          },
-          "reasons": {
-            "2026-10-14": "Diatur manual oleh admin",
-            "2026-10-13": "Diatur manual oleh admin",
-            "2026-10-20": "Diatur manual oleh admin",
-            "2026-10-08": "Diatur manual oleh admin",
-            "2026-10-16": "Diatur manual oleh admin",
-            "2026-10-19": "Diatur manual oleh admin",
-            "2026-10-06": "Diatur manual oleh admin",
-            "2026-10-21": "Diatur manual oleh admin",
-            "2026-10-09": "Diatur manual oleh admin",
-            "2026-10-07": "Diatur manual oleh admin",
-            "2026-08-18": "Diatur oleh admin",
-            "2026-10-22": "Diatur manual oleh admin",
-            "2026-10-15": "Diatur manual oleh admin",
-            "2026-09-30": "Diatur manual oleh admin",
-            "2026-10-05": "Diatur manual oleh admin",
-            "2026-10-12": "Diatur manual oleh admin"
-          },
-          "customStatus": {
-            "2026-10-14": "Cuti",
-            "2026-10-20": "Cuti",
-            "2026-10-13": "Cuti",
-            "2026-10-08": "Cuti",
-            "2026-10-16": "Cuti",
-            "2026-10-06": "Cuti",
-            "2026-10-19": "Cuti",
-            "2026-10-21": "Cuti",
-            "2026-10-07": "Cuti",
-            "2026-10-09": "Cuti",
-            "2026-10-22": "Cuti",
-            "2026-08-18": "Sakit",
-            "2026-10-15": "Cuti",
-            "2026-09-30": "Sakit",
-            "2026-10-12": "Cuti",
-            "2026-10-05": "Cuti"
-          },
-          "workerId": "W01"
-        },
-        {
-          "workerId": "W02",
-          "dailyAllowance": 25000,
-          "reasons": {
-            "2026-10-21": "Diatur manual oleh admin",
-            "2026-10-02": "Diatur manual oleh admin",
-            "2026-11-04": "Diatur manual oleh admin",
-            "2026-08-07": "Diatur oleh admin",
-            "2026-08-05": "Diatur oleh admin",
-            "2026-10-23": "Diatur manual oleh admin"
-          },
-          "attendance": {
-            "2026-08-03": true,
-            "2026-10-28": true,
-            "2026-09-29": true,
-            "2026-09-30": true,
-            "2026-09-16": true,
-            "2026-08-04": true,
-            "2026-09-02": true,
-            "2026-08-14": true,
-            "2026-10-06": true,
-            "2026-10-19": true,
-            "2026-09-14": true,
-            "2026-08-18": true,
-            "2026-08-20": true,
-            "2026-09-08": true,
-            "2026-08-06": true,
-            "2026-10-14": true,
-            "2026-08-24": true,
-            "2026-09-18": true,
-            "2026-10-01": true,
-            "2026-09-28": true,
-            "2026-08-13": true,
-            "2026-08-25": true,
-            "2026-08-26": true,
-            "2026-08-21": true,
-            "2026-11-02": true,
-            "2026-10-05": true,
-            "2026-08-12": true,
-            "2026-10-27": true,
-            "2026-08-10": true,
-            "2026-10-26": true,
-            "2026-09-17": true,
-            "2026-10-20": true,
-            "2026-10-13": true,
-            "2026-09-01": true,
-            "2026-10-16": true,
-            "2026-10-30": true,
-            "2026-07-27": true,
-            "2026-08-27": true,
-            "2026-10-22": true,
-            "2026-08-28": true,
-            "2026-10-15": true,
-            "2026-09-03": true,
-            "2026-09-10": true,
-            "2026-11-03": true,
-            "2026-09-09": true,
-            "2026-10-12": true,
-            "2026-08-11": true,
-            "2026-08-31": true,
-            "2026-08-19": true,
-            "2026-09-04": true,
-            "2026-09-11": true,
-            "2026-10-29": true,
-            "2026-09-15": true
-          },
-          "customStatus": {
-            "2026-10-02": "Izin",
-            "2026-11-04": "Sakit",
-            "2026-10-21": "Izin",
-            "2026-08-07": "Sakit",
-            "2026-08-05": "Sakit",
-            "2026-10-23": "Izin"
-          }
-        },
-        {
-          "workerId": "W03",
-          "dailyAllowance": 25000,
-          "customStatus": {
-            "2026-08-03": "Izin",
-            "2026-10-28": "Izin"
-          },
-          "attendance": {
-            "2026-10-21": true,
-            "2026-07-27": true,
-            "2026-10-16": true,
-            "2026-10-23": true,
-            "2026-10-30": true,
-            "2026-10-20": true,
-            "2026-11-04": true,
-            "2026-10-13": true,
-            "2026-09-01": true,
-            "2026-10-26": true,
-            "2026-09-17": true,
-            "2026-10-05": true,
-            "2026-08-12": true,
-            "2026-08-10": true,
-            "2026-10-27": true,
-            "2026-11-02": true,
-            "2026-08-26": true,
-            "2026-08-21": true,
-            "2026-08-05": true,
-            "2026-09-15": true,
-            "2026-09-04": true,
-            "2026-09-11": true,
-            "2026-08-07": true,
-            "2026-10-29": true,
-            "2026-08-31": true,
-            "2026-08-19": true,
-            "2026-09-09": true,
-            "2026-11-03": true,
-            "2026-10-12": true,
-            "2026-08-11": true,
-            "2026-08-28": true,
-            "2026-10-15": true,
-            "2026-09-03": true,
-            "2026-09-10": true,
-            "2026-10-22": true,
-            "2026-08-27": true,
-            "2026-08-14": true,
-            "2026-10-19": true,
-            "2026-10-02": true,
-            "2026-09-16": true,
-            "2026-08-04": true,
-            "2026-09-02": true,
-            "2026-09-29": true,
-            "2026-09-30": true,
-            "2026-08-13": true,
-            "2026-08-25": true,
-            "2026-10-01": true,
-            "2026-09-28": true,
-            "2026-09-18": true,
-            "2026-08-24": true,
-            "2026-08-06": true,
-            "2026-10-14": true,
-            "2026-09-08": true,
-            "2026-08-20": true,
-            "2026-09-07": true,
-            "2026-08-18": true
-          },
-          "reasons": {
-            "2026-08-03": "Diatur oleh admin",
-            "2026-10-28": "Diatur manual oleh admin"
-          }
-        },
-        {
-          "attendance": {
-            "2026-09-07": true,
-            "2026-08-20": true,
-            "2026-09-08": true,
-            "2026-09-28": true,
-            "2026-08-25": true,
-            "2026-10-14": true,
-            "2026-08-06": true,
-            "2026-09-18": true,
-            "2026-08-24": true,
-            "2026-09-30": true,
-            "2026-09-29": true,
-            "2026-09-02": true,
-            "2026-08-04": true,
-            "2026-09-16": true,
-            "2026-10-02": true,
-            "2026-08-03": true,
-            "2026-10-28": true,
-            "2026-10-06": true,
-            "2026-09-03": true,
-            "2026-09-10": true,
-            "2026-10-15": true,
-            "2026-08-28": true,
-            "2026-10-12": true,
-            "2026-09-09": true,
-            "2026-11-03": true,
-            "2026-10-22": true,
-            "2026-08-27": true,
-            "2026-09-15": true,
-            "2026-08-19": true,
-            "2026-08-31": true,
-            "2026-08-07": true,
-            "2026-10-29": true,
-            "2026-09-11": true,
-            "2026-09-04": true,
-            "2026-11-02": true,
-            "2026-10-27": true,
-            "2026-10-05": true,
-            "2026-08-05": true,
-            "2026-08-21": true,
-            "2026-08-26": true,
-            "2026-10-30": true,
-            "2026-10-23": true,
-            "2026-10-16": true,
-            "2026-07-27": true,
-            "2026-10-21": true,
-            "2026-09-17": true,
-            "2026-10-26": true,
-            "2026-09-01": true,
-            "2026-10-13": true,
-            "2026-11-04": true,
-            "2026-10-20": true
-          },
-          "workerId": "W04",
-          "customStatus": {
-            "2026-09-14": "Sakit",
-            "2026-10-19": "Izin",
-            "2026-10-01": "Izin",
-            "2026-08-14": "Cuti",
-            "2026-08-12": "Cuti",
-            "2026-08-13": "Cuti",
-            "2026-08-10": "Cuti",
-            "2026-08-11": "Cuti"
-          },
-          "reasons": {
-            "2026-08-10": "Diatur oleh admin",
-            "2026-08-11": "Diatur oleh admin",
-            "2026-08-13": "Diatur oleh admin",
-            "2026-08-12": "Diatur oleh admin",
-            "2026-10-01": "Diatur manual oleh admin",
-            "2026-08-14": "Diatur oleh admin",
-            "2026-10-19": "Diatur manual oleh admin",
-            "2026-09-14": "Diatur manual oleh admin"
-          },
-          "dailyAllowance": 25000
-        },
-        {
-          "reasons": {
-            "2026-10-02": "Diatur manual oleh admin",
-            "2026-09-09": "Diatur oleh admin",
-            "2026-09-10": "Diatur oleh admin"
-          },
-          "dailyAllowance": 25000,
-          "attendance": {
-            "2026-08-03": true,
-            "2026-10-28": true,
-            "2026-09-29": true,
-            "2026-09-30": true,
-            "2026-09-16": true,
-            "2026-08-04": true,
-            "2026-09-02": true,
-            "2026-10-06": true,
-            "2026-08-14": true,
-            "2026-10-19": true,
-            "2026-09-14": true,
-            "2026-08-18": true,
-            "2026-08-20": true,
-            "2026-09-07": true,
-            "2026-09-08": true,
-            "2026-08-06": true,
-            "2026-10-14": true,
-            "2026-09-18": true,
-            "2026-08-24": true,
-            "2026-10-01": true,
-            "2026-09-28": true,
-            "2026-08-13": true,
-            "2026-08-25": true,
-            "2026-08-05": true,
-            "2026-08-26": true,
-            "2026-08-21": true,
-            "2026-11-02": true,
-            "2026-08-12": true,
-            "2026-10-05": true,
-            "2026-10-27": true,
-            "2026-08-10": true,
-            "2026-10-26": true,
-            "2026-09-17": true,
-            "2026-11-04": true,
-            "2026-10-20": true,
-            "2026-10-13": true,
-            "2026-09-01": true,
-            "2026-10-16": true,
-            "2026-10-23": true,
-            "2026-10-30": true,
-            "2026-10-21": true,
-            "2026-07-27": true,
-            "2026-08-27": true,
-            "2026-10-22": true,
-            "2026-08-28": true,
-            "2026-10-15": true,
-            "2026-09-03": true,
-            "2026-11-03": true,
-            "2026-10-12": true,
-            "2026-08-11": true,
-            "2026-08-31": true,
-            "2026-08-19": true,
-            "2026-09-04": true,
-            "2026-10-29": true,
-            "2026-08-07": true,
-            "2026-09-15": true
-          },
-          "customStatus": {
-            "2026-09-10": "Sakit",
-            "2026-10-02": "Izin",
-            "2026-09-09": "Sakit"
-          },
-          "workerId": "W05"
-        },
-        {
-          "reasons": {
-            "2026-10-30": "Diatur manual oleh admin"
-          },
-          "dailyAllowance": 25000,
-          "attendance": {
-            "2026-08-21": true,
-            "2026-08-26": true,
-            "2026-08-05": true,
-            "2026-10-27": true,
-            "2026-08-10": true,
-            "2026-08-12": true,
-            "2026-10-05": true,
-            "2026-11-02": true,
-            "2026-09-01": true,
-            "2026-10-13": true,
-            "2026-11-04": true,
-            "2026-10-20": true,
-            "2026-09-17": true,
-            "2026-10-26": true,
-            "2026-07-27": true,
-            "2026-10-21": true,
-            "2026-10-23": true,
-            "2026-10-16": true,
-            "2026-08-27": true,
-            "2026-10-22": true,
-            "2026-08-11": true,
-            "2026-10-12": true,
-            "2026-09-09": true,
-            "2026-11-03": true,
-            "2026-09-10": true,
-            "2026-10-15": true,
-            "2026-08-28": true,
-            "2026-08-07": true,
-            "2026-10-29": true,
-            "2026-09-11": true,
-            "2026-09-04": true,
-            "2026-08-19": true,
-            "2026-08-31": true,
-            "2026-09-15": true,
-            "2026-10-28": true,
-            "2026-08-03": true,
-            "2026-09-02": true,
-            "2026-08-04": true,
-            "2026-09-16": true,
-            "2026-10-02": true,
-            "2026-09-30": true,
-            "2026-09-29": true,
-            "2026-10-19": true,
-            "2026-10-06": true,
-            "2026-08-14": true,
-            "2026-08-18": true,
-            "2026-09-14": true,
-            "2026-09-08": true,
-            "2026-09-07": true,
-            "2026-08-20": true,
-            "2026-09-18": true,
-            "2026-08-24": true,
-            "2026-10-14": true,
-            "2026-08-06": true,
-            "2026-08-25": true,
-            "2026-08-13": true,
-            "2026-09-28": true,
-            "2026-10-01": true
-          },
-          "customStatus": {
-            "2026-10-30": "Izin"
-          },
-          "workerId": "W06"
-        },
-        {
-          "reasons": {
-            "2026-09-14": "Diatur manual oleh admin",
-            "2026-07-07": "Diatur manual oleh admin",
-            "2026-09-17": "Diatur manual oleh admin",
-            "2026-08-19": "Diatur oleh admin",
-            "2026-09-11": "Diatur oleh admin",
-            "2026-08-24": "Kantor memutuskan work from home (WFH)",
-            "2026-08-21": "Diatur oleh admin",
-            "2026-09-18": "Diatur manual oleh admin",
-            "2026-10-16": "Diatur manual oleh admin"
-          },
-          "workerId": "W07",
-          "customStatus": {
-            "2026-10-16": "Sakit",
-            "2026-08-20": "Sakit",
-            "2026-08-21": "Sakit",
-            "2026-09-18": "Sakit",
-            "2026-08-24": "Meeting",
-            "2026-08-27": "Meeting",
-            "2026-09-11": "Sakit",
-            "2026-09-17": "Sakit",
-            "2026-08-19": "Sakit",
-            "2026-09-14": "Sakit",
-            "2026-07-07": "Meeting"
-          },
-          "dailyAllowance": 25000,
-          "attendance": {
-            "2026-07-27": true,
-            "2026-06-30": true,
-            "2026-08-14": true,
-            "2026-07-03": true,
-            "2026-07-02": true,
-            "2026-09-01": true,
-            "2026-10-26": true,
-            "2026-09-02": true,
-            "2026-08-10": true,
-            "2026-08-04": true,
-            "2026-09-16": true,
-            "2026-10-05": true,
-            "2026-08-12": true,
-            "2026-10-02": true,
-            "2026-09-30": true,
-            "2026-11-02": true,
-            "2026-09-29": true,
-            "2026-08-26": true,
-            "2026-08-03": true,
-            "2026-08-05": true,
-            "2026-08-25": true,
-            "2026-09-15": true,
-            "2026-08-13": true,
-            "2026-09-28": true,
-            "2026-10-01": true,
-            "2026-06-29": true,
-            "2026-08-07": true,
-            "2026-09-04": true,
-            "2026-08-06": true,
-            "2026-08-31": true,
-            "2026-07-01": true,
-            "2026-08-11": true,
-            "2026-09-08": true,
-            "2026-10-12": true,
-            "2026-09-09": true,
-            "2026-09-10": true,
-            "2026-09-03": true,
-            "2026-09-07": true,
-            "2026-10-15": true,
-            "2026-08-28": true,
-            "2026-08-18": true,
-            "2026-08-27": true
-          }
-        },
-        {
-          "customStatus": {
-            "2026-09-23": "Meeting",
-            "2026-10-02": "Izin",
-            "2026-09-16": "Izin",
-            "2026-10-05": "Izin",
-            "2026-08-12": "Meeting",
-            "2026-08-04": "Sakit",
-            "2026-10-27": "Izin",
-            "2026-08-10": "Izin",
-            "2026-09-30": "Meeting",
-            "2026-07-09": "Meeting",
-            "2026-10-28": "Izin",
-            "2026-08-21": "Meeting",
-            "2026-07-07": "Meeting",
-            "2026-08-03": "Sakit",
-            "2026-07-08": "Meeting",
-            "2026-09-28": "Izin",
-            "2026-07-06": "Meeting",
-            "2026-09-11": "Cuti",
-            "2026-08-07": "Izin",
-            "2026-08-24": "Sakit",
-            "2026-08-06": "Meeting",
-            "2026-09-09": "Cuti",
-            "2026-09-08": "Cuti",
-            "2026-09-24": "Meeting",
-            "2026-08-11": "Meeting",
-            "2026-09-07": "Cuti",
-            "2026-09-10": "Cuti",
-            "2026-07-10": "Meeting"
-          },
-          "workerId": "W08",
-          "attendance": {
-            "2026-09-02": true,
-            "2026-09-30": true,
-            "2026-11-02": true,
-            "2026-09-29": true,
-            "2026-08-26": true,
-            "2026-08-05": true,
-            "2026-07-27": true,
-            "2026-06-30": true,
-            "2026-10-19": true,
-            "2026-08-14": true,
-            "2026-10-06": true,
-            "2026-07-03": true,
-            "2026-10-23": true,
-            "2026-07-02": true,
-            "2026-10-16": true,
-            "2026-09-01": true,
-            "2026-10-13": true,
-            "2026-11-04": true,
-            "2026-10-20": true,
-            "2026-09-17": true,
-            "2026-10-26": true,
-            "2026-10-12": true,
-            "2026-09-03": true,
-            "2026-10-15": true,
-            "2026-08-28": true,
-            "2026-08-20": true,
-            "2026-08-18": true,
-            "2026-08-27": true,
-            "2026-10-22": true,
-            "2026-08-25": true,
-            "2026-08-13": true,
-            "2026-09-15": true,
-            "2026-06-29": true,
-            "2026-10-01": true,
-            "2026-10-29": true,
-            "2026-09-04": true,
-            "2026-08-19": true,
-            "2026-10-14": true,
-            "2026-08-31": true,
-            "2026-07-01": true
-          },
-          "dailyAllowance": 25000,
-          "reasons": {
-            "2026-09-30": "Rapat AUDIENSI di KEMENTRIAN PERTANIAN., Bersama Mentri Pertanian,. PT. GSI., PT.CSCEC., Bupati Kabupaten Tulang Bawang",
-            "2026-08-04": "Diatur oleh admin",
-            "2026-08-10": "Diatur oleh admin",
-            "2026-10-27": "Diatur manual oleh admin",
-            "2026-10-02": "Diatur manual oleh admin",
-            "2026-08-12": "Diatur oleh admin",
-            "2026-10-05": "Diatur manual oleh admin",
-            "2026-09-16": "Diatur manual oleh admin",
-            "2026-07-08": "Diatur manual oleh admin",
-            "2026-08-03": "Diatur oleh admin",
-            "2026-07-07": "Diatur manual oleh admin",
-            "2026-07-09": "Diatur manual oleh admin",
-            "2026-10-28": "Diatur manual oleh admin",
-            "2026-09-23": "Diatur manual oleh admin",
-            "2026-09-10": "Diatur oleh admin",
-            "2026-09-07": "Diatur oleh admin",
-            "2026-09-24": "Diatur manual oleh admin",
-            "2026-09-09": "Diatur oleh admin",
-            "2026-09-08": "Diatur oleh admin",
-            "2026-07-10": "Diatur manual oleh admin",
-            "2026-09-28": "Diatur manual oleh admin",
-            "2026-08-07": "Diatur oleh admin",
-            "2026-08-24": "Diatur oleh admin",
-            "2026-07-06": "Diatur manual oleh admin",
-            "2026-09-11": "Diatur oleh admin"
-          }
-        },
-        {
-          "dailyAllowance": 25000,
-          "reasons": {
-            "2026-08-21": "Diatur oleh admin"
-          },
-          "workerId": "W09",
-          "attendance": {
-            "2026-10-26": true,
-            "2026-09-17": true,
-            "2026-11-04": true,
-            "2026-10-20": true,
-            "2026-10-13": true,
-            "2026-09-01": true,
-            "2026-10-16": true,
-            "2026-07-02": true,
-            "2026-10-23": true,
-            "2026-10-30": true,
-            "2026-10-21": true,
-            "2026-07-27": true,
-            "2026-07-07": true,
-            "2026-08-05": true,
-            "2026-07-08": true,
-            "2026-08-26": true,
-            "2026-11-02": true,
-            "2026-10-05": true,
-            "2026-08-12": true,
-            "2026-10-27": true,
-            "2026-08-10": true,
-            "2026-08-31": true,
-            "2026-08-19": true,
-            "2026-07-06": true,
-            "2026-09-04": true,
-            "2026-09-11": true,
-            "2026-08-07": true,
-            "2026-10-29": true,
-            "2026-06-29": true,
-            "2026-09-15": true,
-            "2026-10-22": true,
-            "2026-08-27": true,
-            "2026-08-28": true,
-            "2026-10-15": true,
-            "2026-09-03": true,
-            "2026-09-10": true,
-            "2026-09-09": true,
-            "2026-11-03": true,
-            "2026-10-12": true,
-            "2026-08-11": true,
-            "2026-07-03": true,
-            "2026-08-14": true,
-            "2026-10-06": true,
-            "2026-10-19": true,
-            "2026-06-30": true,
-            "2026-08-03": true,
-            "2026-07-09": true,
-            "2026-10-28": true,
-            "2026-09-29": true,
-            "2026-09-30": true,
-            "2026-10-02": true,
-            "2026-09-16": true,
-            "2026-08-04": true,
-            "2026-09-02": true,
-            "2026-07-01": true,
-            "2026-08-06": true,
-            "2026-10-14": true,
-            "2026-08-24": true,
-            "2026-09-18": true,
-            "2026-10-01": true,
-            "2026-09-28": true,
-            "2026-08-13": true,
-            "2026-08-25": true,
-            "2026-09-14": true,
-            "2026-08-18": true,
-            "2026-07-10": true,
-            "2026-08-20": true,
-            "2026-09-07": true,
-            "2026-09-08": true
-          },
-          "customStatus": {
-            "2026-08-21": "Sakit"
-          }
-        }
-      ],
-      "submittedAt": "2026-11-04T05:25:56.786Z",
-      "pdfDriveUrl": "https://drive.google.com/file/d/1oLDGjxwgIfbYvUGczqE5Vxg3ScRIl5YY/view?usp=drivesdk",
-      "weekStartDate": "2026-11-02",
-      "weekEndDate": "2026-11-06"
-    },
-    {
-      "weekStartDate": "2026-10-26",
-      "status": "locked",
-      "submittedAt": "2026-10-30T17:00:00.000Z",
-      "weekEndDate": "2026-10-30",
-      "records": [
-        {
-          "customStatus": {},
-          "reasons": {},
-          "signatures": {},
-          "workerId": "W01",
-          "dailyAllowance": 25000,
-          "attendance": {
-            "2026-10-30": true,
-            "2026-10-26": true,
-            "2026-10-29": true,
-            "2026-10-27": true,
-            "2026-10-28": true
-          }
-        },
-        {
-          "signatures": {},
-          "reasons": {},
-          "attendance": {
-            "2026-10-26": true,
-            "2026-10-30": true,
-            "2026-10-28": true,
-            "2026-10-27": true,
-            "2026-10-29": true
-          },
-          "customStatus": {},
-          "workerId": "W02",
-          "dailyAllowance": 25000
-        },
-        {
-          "dailyAllowance": 25000,
-          "workerId": "W03",
-          "customStatus": {
-            "2026-10-28": "Izin"
-          },
-          "attendance": {
-            "2026-10-26": true,
-            "2026-10-29": true,
-            "2026-10-30": true,
-            "2026-10-27": true
-          },
-          "signatures": {},
-          "reasons": {
-            "2026-10-28": "Diatur manual oleh admin"
-          }
-        },
-        {
-          "customStatus": {},
-          "reasons": {},
-          "workerId": "W04",
-          "signatures": {},
-          "attendance": {
-            "2026-10-30": true,
-            "2026-10-26": true,
-            "2026-10-29": true,
-            "2026-10-27": true,
-            "2026-10-28": true
-          },
-          "dailyAllowance": 25000
-        },
-        {
-          "workerId": "W05",
-          "customStatus": {},
-          "dailyAllowance": 25000,
-          "signatures": {},
-          "attendance": {
-            "2026-10-26": true,
-            "2026-10-30": true,
-            "2026-10-28": true,
-            "2026-10-29": true,
-            "2026-10-27": true
-          },
-          "reasons": {}
-        },
-        {
-          "reasons": {
-            "2026-10-30": "Diatur manual oleh admin"
-          },
-          "signatures": {},
-          "dailyAllowance": 25000,
-          "attendance": {
-            "2026-10-29": true,
-            "2026-10-27": true,
-            "2026-10-26": true,
-            "2026-10-28": true
-          },
-          "customStatus": {
-            "2026-10-30": "Izin"
-          },
-          "workerId": "W06"
-        },
-        {
-          "dailyAllowance": 25000,
-          "workerId": "W07",
-          "attendance": {
-            "2026-10-26": true
-          },
-          "signatures": {},
-          "customStatus": {},
-          "reasons": {}
-        },
-        {
-          "reasons": {
-            "2026-10-27": "Diatur manual oleh admin",
-            "2026-10-28": "Diatur manual oleh admin"
-          },
-          "dailyAllowance": 25000,
-          "workerId": "W08",
-          "customStatus": {
-            "2026-10-28": "Izin",
-            "2026-10-27": "Izin"
-          },
-          "attendance": {
-            "2026-10-26": true,
-            "2026-10-29": true
-          },
-          "signatures": {}
-        },
-        {
-          "signatures": {},
-          "dailyAllowance": 25000,
-          "attendance": {
-            "2026-10-28": true,
-            "2026-10-29": true,
-            "2026-10-27": true,
-            "2026-10-26": true,
-            "2026-10-30": true
-          },
-          "reasons": {},
-          "customStatus": {},
-          "workerId": "W09"
-        }
-      ],
-      "id": "REP-798134",
-      "isSubmitted": true,
-      "totalAmount": 900000
-    },
-    {
-      "submittedAt": "2026-10-23T17:00:00.000Z",
-      "weekEndDate": "2026-10-23",
-      "id": "REP-788635",
-      "isSubmitted": true,
-      "totalAmount": 800000,
-      "status": "locked",
       "records": [
         {
           "workerId": "W01",
-          "reasons": {
-            "2026-10-22": "Diatur manual oleh admin",
-            "2026-10-20": "Diatur manual oleh admin",
-            "2026-10-21": "Diatur manual oleh admin",
-            "2026-10-19": "Diatur manual oleh admin"
+          "attendance": {
+            "2026-06-29": false,
+            "2026-06-30": false,
+            "2026-07-01": false,
+            "2026-07-02": false,
+            "2026-07-03": false
           },
           "dailyAllowance": 25000,
-          "customStatus": {
-            "2026-10-21": "Cuti",
-            "2026-10-20": "Cuti",
-            "2026-10-22": "Cuti",
-            "2026-10-19": "Cuti"
-          },
-          "attendance": {
-            "2026-10-23": true
-          },
-          "signatures": {}
-        },
-        {
-          "workerId": "W02",
-          "dailyAllowance": 25000,
-          "customStatus": {
-            "2026-10-21": "Izin",
-            "2026-10-23": "Izin"
-          },
-          "attendance": {
-            "2026-10-22": true,
-            "2026-10-20": true,
-            "2026-10-19": true
-          },
-          "reasons": {
-            "2026-10-21": "Diatur manual oleh admin",
-            "2026-10-23": "Diatur manual oleh admin"
-          },
-          "signatures": {}
-        },
-        {
           "customStatus": {},
-          "dailyAllowance": 25000,
-          "attendance": {
-            "2026-10-23": true,
-            "2026-10-19": true,
-            "2026-10-21": true,
-            "2026-10-22": true,
-            "2026-10-20": true
-          },
-          "workerId": "W03",
-          "signatures": {},
           "reasons": {}
         },
         {
-          "signatures": {},
+          "workerId": "W02",
+          "attendance": {
+            "2026-06-29": false,
+            "2026-06-30": false,
+            "2026-07-01": false,
+            "2026-07-02": false,
+            "2026-07-03": false
+          },
+          "dailyAllowance": 25000,
+          "customStatus": {},
+          "reasons": {}
+        },
+        {
+          "workerId": "W03",
+          "attendance": {
+            "2026-06-29": false,
+            "2026-06-30": false,
+            "2026-07-01": false,
+            "2026-07-02": false,
+            "2026-07-03": false
+          },
+          "dailyAllowance": 25000,
+          "customStatus": {},
+          "reasons": {}
+        },
+        {
           "workerId": "W04",
           "attendance": {
-            "2026-10-20": true,
-            "2026-10-22": true,
-            "2026-10-21": true,
-            "2026-10-23": true
+            "2026-06-29": false,
+            "2026-06-30": false,
+            "2026-07-01": false,
+            "2026-07-02": false,
+            "2026-07-03": false
           },
-          "reasons": {
-            "2026-10-19": "Diatur manual oleh admin"
-          },
-          "customStatus": {
-            "2026-10-19": "Izin"
-          },
-          "dailyAllowance": 25000
+          "dailyAllowance": 25000,
+          "customStatus": {},
+          "reasons": {}
         },
         {
-          "dailyAllowance": 25000,
-          "reasons": {},
           "workerId": "W05",
           "attendance": {
-            "2026-10-22": true,
-            "2026-10-20": true,
-            "2026-10-21": true,
-            "2026-10-19": true,
-            "2026-10-23": true
+            "2026-06-29": false,
+            "2026-06-30": false,
+            "2026-07-01": false,
+            "2026-07-02": false,
+            "2026-07-03": false
           },
+          "dailyAllowance": 25000,
           "customStatus": {},
-          "signatures": {}
+          "reasons": {}
         },
         {
-          "attendance": {
-            "2026-10-19": true,
-            "2026-10-23": true,
-            "2026-10-21": true,
-            "2026-10-22": true,
-            "2026-10-20": true
-          },
-          "signatures": {},
-          "customStatus": {},
-          "dailyAllowance": 25000,
           "workerId": "W06",
+          "attendance": {
+            "2026-06-29": false,
+            "2026-06-30": false,
+            "2026-07-01": false,
+            "2026-07-02": false,
+            "2026-07-03": false
+          },
+          "dailyAllowance": 25000,
+          "customStatus": {},
           "reasons": {}
         },
         {
-          "signatures": {},
+          "workerId": "W07",
           "attendance": {},
-          "reasons": {},
           "dailyAllowance": 25000,
-          "workerId": "W07",
-          "customStatus": {}
+          "customStatus": {},
+          "reasons": {}
         },
         {
-          "dailyAllowance": 25000,
-          "signatures": {},
           "workerId": "W08",
-          "customStatus": {},
-          "attendance": {
-            "2026-10-19": true,
-            "2026-10-20": true,
-            "2026-10-22": true,
-            "2026-10-23": true
-          },
-          "reasons": {}
-        },
-        {
-          "attendance": {
-            "2026-10-19": true,
-            "2026-10-23": true,
-            "2026-10-21": true,
-            "2026-10-20": true,
-            "2026-10-22": true
-          },
-          "workerId": "W09",
-          "signatures": {},
-          "dailyAllowance": 25000,
-          "customStatus": {},
-          "reasons": {}
-        }
-      ],
-      "weekStartDate": "2026-10-19"
-    },
-    {
-      "records": [
-        {
-          "signatures": {},
           "attendance": {},
-          "workerId": "W01",
-          "customStatus": {
-            "2026-10-12": "Cuti",
-            "2026-10-13": "Cuti",
-            "2026-10-14": "Cuti",
-            "2026-10-15": "Cuti",
-            "2026-10-16": "Cuti"
-          },
-          "reasons": {
-            "2026-10-14": "Diatur manual oleh admin",
-            "2026-10-15": "Diatur manual oleh admin",
-            "2026-10-16": "Diatur manual oleh admin",
-            "2026-10-13": "Diatur manual oleh admin",
-            "2026-10-12": "Diatur manual oleh admin"
-          },
-          "dailyAllowance": 25000
-        },
-        {
-          "dailyAllowance": 25000,
-          "workerId": "W02",
-          "customStatus": {},
-          "attendance": {
-            "2026-10-12": true,
-            "2026-10-13": true,
-            "2026-10-15": true,
-            "2026-10-16": true,
-            "2026-10-14": true
-          },
-          "signatures": {},
-          "reasons": {}
-        },
-        {
-          "reasons": {},
-          "workerId": "W03",
-          "customStatus": {},
-          "attendance": {
-            "2026-10-13": true,
-            "2026-10-12": true,
-            "2026-10-15": true,
-            "2026-10-16": true,
-            "2026-10-14": true
-          },
-          "dailyAllowance": 25000,
-          "signatures": {}
-        },
-        {
-          "signatures": {},
-          "attendance": {
-            "2026-10-13": true,
-            "2026-10-12": true,
-            "2026-10-14": true,
-            "2026-10-16": true,
-            "2026-10-15": true
-          },
           "dailyAllowance": 25000,
           "customStatus": {},
-          "reasons": {},
-          "workerId": "W04"
-        },
-        {
-          "workerId": "W05",
-          "customStatus": {},
-          "signatures": {},
-          "attendance": {
-            "2026-10-12": true,
-            "2026-10-13": true,
-            "2026-10-16": true,
-            "2026-10-15": true,
-            "2026-10-14": true
-          },
-          "dailyAllowance": 25000,
-          "reasons": {}
-        },
-        {
-          "workerId": "W06",
-          "attendance": {
-            "2026-10-12": true,
-            "2026-10-13": true,
-            "2026-10-14": true,
-            "2026-10-16": true,
-            "2026-10-15": true
-          },
-          "signatures": {},
-          "dailyAllowance": 25000,
-          "customStatus": {},
-          "reasons": {}
-        },
-        {
-          "reasons": {
-            "2026-10-16": "Diatur manual oleh admin"
-          },
-          "dailyAllowance": 25000,
-          "workerId": "W07",
-          "attendance": {
-            "2026-10-12": true,
-            "2026-10-15": true
-          },
-          "signatures": {},
-          "customStatus": {
-            "2026-10-16": "Sakit"
-          }
-        },
-        {
-          "signatures": {},
-          "attendance": {
-            "2026-10-15": true,
-            "2026-10-16": true,
-            "2026-10-14": true,
-            "2026-10-13": true,
-            "2026-10-12": true
-          },
-          "reasons": {},
-          "workerId": "W08",
-          "customStatus": {},
-          "dailyAllowance": 25000
-        },
-        {
-          "dailyAllowance": 25000,
-          "customStatus": {},
-          "signatures": {},
-          "workerId": "W09",
-          "attendance": {
-            "2026-10-13": true,
-            "2026-10-12": true,
-            "2026-10-15": true,
-            "2026-10-16": true,
-            "2026-10-14": true
-          },
-          "reasons": {}
-        }
-      ],
-      "submittedAt": "2026-10-16T17:00:00.000Z",
-      "status": "locked",
-      "weekEndDate": "2026-10-16",
-      "isSubmitted": true,
-      "id": "REP-779136",
-      "totalAmount": 925000,
-      "weekStartDate": "2026-10-12"
-    },
-    {
-      "weekStartDate": "2026-09-14",
-      "records": [
-        {
-          "signatures": {},
-          "dailyAllowance": 25000,
-          "attendance": {
-            "2026-09-18": true,
-            "2026-09-15": true,
-            "2026-09-16": true,
-            "2026-09-17": true,
-            "2026-09-14": true
-          },
-          "reasons": {},
-          "workerId": "W01",
-          "customStatus": {}
-        },
-        {
-          "workerId": "W02",
-          "customStatus": {},
-          "dailyAllowance": 25000,
-          "attendance": {
-            "2026-09-14": true,
-            "2026-09-17": true,
-            "2026-09-16": true,
-            "2026-09-15": true,
-            "2026-09-18": true
-          },
-          "reasons": {},
-          "signatures": {}
-        },
-        {
-          "dailyAllowance": 25000,
-          "customStatus": {},
-          "signatures": {},
-          "workerId": "W03",
-          "reasons": {},
-          "attendance": {
-            "2026-09-18": true,
-            "2026-09-17": true,
-            "2026-09-15": true,
-            "2026-09-16": true
-          }
-        },
-        {
-          "workerId": "W04",
-          "attendance": {
-            "2026-09-15": true,
-            "2026-09-16": true,
-            "2026-09-18": true,
-            "2026-09-17": true
-          },
-          "signatures": {},
-          "reasons": {
-            "2026-09-14": "Diatur manual oleh admin"
-          },
-          "dailyAllowance": 25000,
-          "customStatus": {
-            "2026-09-14": "Sakit"
-          }
-        },
-        {
-          "dailyAllowance": 25000,
-          "customStatus": {},
-          "workerId": "W05",
-          "attendance": {
-            "2026-09-15": true,
-            "2026-09-16": true,
-            "2026-09-18": true,
-            "2026-09-14": true,
-            "2026-09-17": true
-          },
-          "reasons": {},
-          "signatures": {}
-        },
-        {
-          "workerId": "W06",
-          "dailyAllowance": 25000,
-          "customStatus": {},
-          "signatures": {},
-          "reasons": {},
-          "attendance": {
-            "2026-09-14": true,
-            "2026-09-17": true,
-            "2026-09-15": true,
-            "2026-09-16": true,
-            "2026-09-18": true
-          }
-        },
-        {
-          "workerId": "W07",
-          "signatures": {},
-          "attendance": {
-            "2026-09-15": true,
-            "2026-09-16": true
-          },
-          "reasons": {
-            "2026-09-14": "Diatur manual oleh admin",
-            "2026-09-18": "Diatur manual oleh admin",
-            "2026-09-17": "Diatur manual oleh admin"
-          },
-          "customStatus": {
-            "2026-09-18": "Sakit",
-            "2026-09-17": "Sakit",
-            "2026-09-14": "Sakit"
-          },
-          "dailyAllowance": 25000
-        },
-        {
-          "customStatus": {
-            "2026-09-16": "Izin"
-          },
-          "workerId": "W08",
-          "dailyAllowance": 25000,
-          "attendance": {
-            "2026-09-17": true,
-            "2026-09-15": true
-          },
-          "reasons": {
-            "2026-09-16": "Diatur manual oleh admin"
-          },
-          "signatures": {}
-        },
-        {
-          "workerId": "W09",
-          "reasons": {},
-          "dailyAllowance": 25000,
-          "signatures": {},
-          "attendance": {
-            "2026-09-16": true,
-            "2026-09-15": true,
-            "2026-09-18": true,
-            "2026-09-14": true,
-            "2026-09-17": true
-          },
-          "customStatus": {}
-        }
-      ],
-      "status": "locked",
-      "id": "REP-780493",
-      "isSubmitted": true,
-      "totalAmount": 925000,
-      "weekEndDate": "2026-09-18",
-      "submittedAt": "2026-09-18T17:00:00.000Z"
-    },
-    {
-      "weekEndDate": "2026-08-21",
-      "submittedAt": "2026-08-21T17:00:00.000Z",
-      "status": "locked",
-      "isSubmitted": true,
-      "records": [
-        {
-          "workerId": "W01",
-          "signatures": {},
-          "attendance": {
-            "2026-08-20": true,
-            "2026-08-19": true,
-            "2026-08-21": true
-          },
-          "customStatus": {
-            "2026-08-18": "Sakit"
-          },
-          "reasons": {
-            "2026-08-18": "Diatur oleh admin"
-          },
-          "dailyAllowance": 25000
-        },
-        {
-          "dailyAllowance": 25000,
-          "signatures": {},
-          "attendance": {
-            "2026-08-19": true,
-            "2026-08-21": true,
-            "2026-08-18": true,
-            "2026-08-20": true
-          },
-          "reasons": {},
-          "workerId": "W02",
-          "customStatus": {}
-        },
-        {
-          "customStatus": {},
-          "dailyAllowance": 25000,
-          "reasons": {},
-          "workerId": "W03",
-          "attendance": {
-            "2026-08-21": true,
-            "2026-08-19": true,
-            "2026-08-20": true,
-            "2026-08-18": true
-          },
-          "signatures": {}
-        },
-        {
-          "attendance": {
-            "2026-08-20": true,
-            "2026-08-19": true,
-            "2026-08-21": true
-          },
-          "reasons": {},
-          "signatures": {},
-          "workerId": "W04",
-          "dailyAllowance": 25000,
-          "customStatus": {}
-        },
-        {
-          "attendance": {
-            "2026-08-21": true,
-            "2026-08-19": true,
-            "2026-08-20": true,
-            "2026-08-18": true
-          },
-          "workerId": "W05",
-          "signatures": {},
-          "customStatus": {},
-          "reasons": {},
-          "dailyAllowance": 25000
-        },
-        {
-          "customStatus": {},
-          "dailyAllowance": 25000,
-          "workerId": "W06",
-          "reasons": {},
-          "signatures": {},
-          "attendance": {
-            "2026-08-21": true,
-            "2026-08-19": true,
-            "2026-08-20": true,
-            "2026-08-18": true
-          }
-        },
-        {
-          "workerId": "W07",
-          "dailyAllowance": 25000,
-          "reasons": {
-            "2026-08-19": "Diatur oleh admin",
-            "2026-08-21": "Diatur oleh admin"
-          },
-          "attendance": {
-            "2026-08-18": true
-          },
-          "signatures": {},
-          "customStatus": {
-            "2026-08-21": "Sakit",
-            "2026-08-19": "Sakit",
-            "2026-08-20": "Sakit"
-          }
-        },
-        {
-          "workerId": "W08",
-          "attendance": {
-            "2026-08-20": true,
-            "2026-08-18": true,
-            "2026-08-19": true
-          },
-          "customStatus": {
-            "2026-08-21": "Meeting"
-          },
-          "signatures": {},
-          "dailyAllowance": 25000,
           "reasons": {}
         },
         {
           "workerId": "W09",
-          "attendance": {
-            "2026-08-19": true,
-            "2026-08-18": true,
-            "2026-08-20": true
-          },
-          "signatures": {},
-          "customStatus": {
-            "2026-08-21": "Sakit"
-          },
-          "reasons": {
-            "2026-08-21": "Diatur oleh admin"
-          },
-          "dailyAllowance": 25000
+          "attendance": {},
+          "dailyAllowance": 25000,
+          "customStatus": {},
+          "reasons": {}
         }
       ],
-      "totalAmount": 725000,
-      "id": "REP-783207",
-      "weekStartDate": "2026-08-17"
+      "submittedAt": "2026-07-03T17:00:00.000Z",
+      "id": "REP-796777",
+      "totalAmount": 0,
+      "isSubmitted": true,
+      "weekStartDate": "2026-06-29"
     }
   ],
   "pettyCashReports": [
@@ -7893,141 +8054,141 @@
   "attendanceLogs": [],
   "npwpRecords": [
     {
-      "npwpNumber": "123",
+      "id": "test-rec",
       "companyName": "Test",
-      "id": "test-rec"
+      "npwpNumber": "123"
     },
     {
-      "notes": "",
-      "npwpNumber": "00.100.047.4-505.1000",
-      "id": "npwp_1792114642323",
+      "createdAt": "2026-10-16T01:37:22.323Z",
+      "contactPerson": "",
       "address": "",
       "companyName": "PT. SEMEN TONASA",
-      "createdAt": "2026-10-16T01:37:22.323Z",
+      "kppName": "",
       "taxStatus": "PKP",
-      "contactPerson": "",
-      "kppName": ""
+      "id": "npwp_1792114642323",
+      "notes": "",
+      "npwpNumber": "00.100.047.4-505.1000"
     },
     {
-      "createdAt": "2026-10-16T01:37:50.002Z",
-      "address": "",
+      "contactPerson": "",
+      "notes": "",
       "npwpNumber": "00.325.739.6-600.8000",
-      "contactPerson": "",
-      "id": "npwp_1792114670002",
-      "notes": "",
       "kppName": "",
+      "createdAt": "2026-10-16T01:37:50.002Z",
+      "taxStatus": "PKP",
       "companyName": "PT. OOWL INDONESIA",
-      "taxStatus": "PKP"
-    },
-    {
-      "address": "",
-      "notes": "",
-      "companyName": "PT. ANINDYA WIRAPUTRA CONSULT",
-      "taxStatus": "PKP",
-      "createdAt": "2026-10-16T01:38:24.045Z",
-      "kppName": "",
-      "contactPerson": "",
-      "id": "npwp_1792114704045",
-      "npwpNumber": "00.121.099.4-842.4000"
-    },
-    {
-      "contactPerson": "",
-      "npwpNumber": "00.137.076.7-441.5000",
-      "id": "npwp_1792114732205",
-      "kppName": "",
-      "notes": "",
-      "taxStatus": "PKP",
-      "companyName": "PT. KARAKATAU SAMUDERA SOLUSI",
-      "createdAt": "2026-10-16T01:38:52.205Z",
+      "id": "npwp_1792114670002",
       "address": ""
     },
     {
-      "createdAt": "2026-10-16T01:40:24.211Z",
-      "address": "",
-      "npwpNumber": "00.130.099.2-309.3000",
+      "companyName": "PT. ANINDYA WIRAPUTRA CONSULT",
       "taxStatus": "PKP",
-      "companyName": "PT. SUCOFINDO",
+      "npwpNumber": "00.121.099.4-842.4000",
+      "address": "",
+      "createdAt": "2026-10-16T01:38:24.045Z",
+      "id": "npwp_1792114704045",
       "notes": "",
       "contactPerson": "",
-      "kppName": "",
-      "id": "npwp_1792114824211"
+      "kppName": ""
     },
     {
       "contactPerson": "",
       "taxStatus": "PKP",
-      "id": "npwp_1792114845839",
-      "address": "",
-      "companyName": "PT. GEOSERVICES",
+      "companyName": "PT. KARAKATAU SAMUDERA SOLUSI",
+      "kppName": "",
+      "id": "npwp_1792114732205",
+      "npwpNumber": "00.137.076.7-441.5000",
+      "createdAt": "2026-10-16T01:38:52.205Z",
       "notes": "",
+      "address": ""
+    },
+    {
+      "contactPerson": "",
+      "createdAt": "2026-10-16T01:40:24.211Z",
+      "id": "npwp_1792114824211",
+      "npwpNumber": "00.130.099.2-309.3000",
+      "address": "",
+      "companyName": "PT. SUCOFINDO",
+      "taxStatus": "PKP",
+      "notes": "",
+      "kppName": ""
+    },
+    {
+      "taxStatus": "PKP",
+      "kppName": "",
       "createdAt": "2026-10-16T01:40:45.839Z",
       "npwpNumber": "01.130.821.0-441.00",
-      "kppName": ""
+      "contactPerson": "",
+      "id": "npwp_1792114845839",
+      "notes": "",
+      "companyName": "PT. GEOSERVICES",
+      "address": ""
     },
     {
       "address": "",
-      "notes": "",
-      "createdAt": "2026-10-16T01:41:06.375Z",
-      "companyName": "PT. SURVEYOR INDONESIA",
-      "contactPerson": "",
       "id": "npwp_1792114866375",
+      "companyName": "PT. SURVEYOR INDONESIA",
+      "taxStatus": "PKP",
+      "createdAt": "2026-10-16T01:41:06.375Z",
+      "contactPerson": "",
+      "kppName": "",
       "npwpNumber": "001.069.474.3-093.000",
-      "kppName": "",
-      "taxStatus": "PKP"
+      "notes": ""
     },
     {
-      "contactPerson": "",
-      "notes": "",
-      "id": "npwp_1792114887296",
-      "npwpNumber": "01.984.035.7-8732.000",
       "address": "",
-      "taxStatus": "PKP",
-      "companyName": "PT. RAHMAT ALAM INDONESIA",
       "createdAt": "2026-10-16T01:41:27.296Z",
-      "kppName": ""
-    },
-    {
-      "contactPerson": "",
-      "npwpNumber": "00.309.856.2-602.7000",
-      "address": "",
-      "createdAt": "2026-10-16T01:42:00.769Z",
-      "taxStatus": "PKP",
-      "kppName": "",
-      "id": "npwp_1792114920769",
+      "npwpNumber": "01.984.035.7-8732.000",
+      "id": "npwp_1792114887296",
       "notes": "",
-      "companyName": "GRISELDA, WISNU & ARUM ( AKUNTAN PUBLIK )"
-    },
-    {
-      "taxStatus": "PKP",
       "kppName": "",
-      "notes": "",
-      "companyName": "KJPP SUMERTADANA DAN REKAN",
-      "address": "",
-      "npwpNumber": "08.319.848.8-500.5001",
-      "createdAt": "2026-10-16T01:42:32.625Z",
-      "id": "npwp_1792114952625",
+      "companyName": "PT. RAHMAT ALAM INDONESIA",
+      "taxStatus": "PKP",
       "contactPerson": ""
     },
     {
-      "contactPerson": "",
-      "id": "npwp_1792115050483",
-      "address": "",
-      "createdAt": "2026-10-16T01:44:10.483Z",
-      "companyName": "PT. BUNGO BERKAH JAYA",
-      "npwpNumber": "02.693.895.1-332.000",
       "taxStatus": "PKP",
+      "contactPerson": "",
+      "npwpNumber": "00.309.856.2-602.7000",
+      "kppName": "",
+      "companyName": "GRISELDA, WISNU & ARUM ( AKUNTAN PUBLIK )",
       "notes": "",
-      "kppName": ""
+      "createdAt": "2026-10-16T01:42:00.769Z",
+      "id": "npwp_1792114920769",
+      "address": ""
     },
     {
+      "createdAt": "2026-10-16T01:42:32.625Z",
+      "npwpNumber": "08.319.848.8-500.5001",
+      "kppName": "",
+      "notes": "",
+      "id": "npwp_1792114952625",
+      "companyName": "KJPP SUMERTADANA DAN REKAN",
+      "contactPerson": "",
+      "taxStatus": "PKP",
+      "address": ""
+    },
+    {
+      "id": "npwp_1792115050483",
+      "kppName": "",
+      "taxStatus": "PKP",
+      "npwpNumber": "02.693.895.1-332.000",
+      "notes": "",
+      "address": "",
+      "createdAt": "2026-10-16T01:44:10.483Z",
+      "contactPerson": "",
+      "companyName": "PT. BUNGO BERKAH JAYA"
+    },
+    {
+      "createdAt": "2026-10-16T01:45:11.614Z",
       "npwpNumber": "21.011.994.7-014.000",
       "kppName": "",
-      "createdAt": "2026-10-16T01:45:11.614Z",
+      "notes": "",
+      "contactPerson": "",
       "id": "npwp_1792115111614",
-      "companyName": "PT. PRIMA BARA MAHADANA",
       "taxStatus": "PKP",
       "address": "",
-      "contactPerson": "",
-      "notes": ""
+      "companyName": "PT. PRIMA BARA MAHADANA"
     }
   ],
   "sppdRecords": [],
@@ -41929,6 +42090,5 @@
   "lastPinDate": "2026-11-13",
   "bankStatements": [],
   "internalMemos": [],
-  "waConnected": false,
-  "waUser": null
+  "lastHostOrigin": "http://localhost:3000"
 }

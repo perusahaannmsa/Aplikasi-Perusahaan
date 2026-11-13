@@ -2062,22 +2062,46 @@ app.post("/api/shared-state", (req, res) => {
     } = req.body;
     const currentState = readState();
 
-    // Merge workers list to avoid overwriting worker-updated profiles with stale admin state
+    // Merge workers list safely: preserve existing server workers not explicitly deleted,
+    // while keeping newer updatedAt changes from either side.
+    const incomingDeletedIds: string[] = Array.isArray(req.body.deletedWorkerIds)
+      ? req.body.deletedWorkerIds.map(String)
+      : [];
+    const mergedDeletedWorkerIds = Array.from(
+      new Set([...(currentState.deletedWorkerIds || []).map(String), ...incomingDeletedIds])
+    );
+
     let mergedWorkers = currentState.workers || [];
-    if (workers !== undefined) {
-      const currentWorkersMap = new Map(mergedWorkers.map((w: any) => [w.id, w]));
-      mergedWorkers = workers.map((incomingWorker: any) => {
-        const serverWorker = currentWorkersMap.get(incomingWorker.id) as any;
-        if (serverWorker) {
-          const serverTime = serverWorker.updatedAt || 0;
-          const incomingTime = incomingWorker.updatedAt || 0;
-          if (serverTime > incomingTime) {
-            // Keep the server's version of the worker (which was updated by the worker more recently)
-            return serverWorker;
-          }
+    if (workers !== undefined && Array.isArray(workers)) {
+      const workerMap = new Map<string, any>();
+      // First put current server workers (except explicitly deleted IDs)
+      for (const sw of mergedWorkers) {
+        if (sw && sw.id && !mergedDeletedWorkerIds.includes(String(sw.id))) {
+          workerMap.set(String(sw.id), sw);
         }
-        return incomingWorker;
-      });
+      }
+      // Merge incoming workers by updatedAt timestamp
+      for (const incomingWorker of workers) {
+        if (!incomingWorker || !incomingWorker.id) continue;
+        const wId = String(incomingWorker.id);
+        // If worker is explicitly re-added with newer timestamp, allow un-deleting
+        if (mergedDeletedWorkerIds.includes(wId) && !incomingDeletedIds.includes(wId)) {
+          continue;
+        }
+        const serverWorker = workerMap.get(wId);
+        if (serverWorker) {
+          const serverTime = Number(serverWorker.updatedAt || 0);
+          const incomingTime = Number(incomingWorker.updatedAt || 0);
+          if (incomingTime >= serverTime) {
+            workerMap.set(wId, { ...serverWorker, ...incomingWorker });
+          }
+        } else {
+          workerMap.set(wId, incomingWorker);
+        }
+      }
+      mergedWorkers = Array.from(workerMap.values()).sort((a: any, b: any) =>
+        String(a.id || "").localeCompare(String(b.id || ""), undefined, { numeric: true })
+      );
     }
 
     // Merge attendance records worker-by-worker authoritatively
@@ -2198,6 +2222,7 @@ app.post("/api/shared-state", (req, res) => {
 
     const updatedState = {
       workers: mergedWorkers,
+      deletedWorkerIds: mergedDeletedWorkerIds,
       attendanceRecords: mergedAttendance,
       weeklyReports: mergedWeeklyReports,
       pettyCashReports: pettyCashReports !== undefined ? pettyCashReports : currentState.pettyCashReports,
@@ -2383,7 +2408,28 @@ app.post("/api/unified-storage", (req, res) => {
     if (incoming.submissions !== undefined) state.submissions = (incoming.submissions || []).map(enforceSubmissionIdFormat);
     if (incoming.pettyCashReports !== undefined) state.pettyCashReports = incoming.pettyCashReports;
     if (incoming.pettyCashHolders !== undefined) state.pettyCashHolders = incoming.pettyCashHolders;
-    if (incoming.workers !== undefined) state.workers = incoming.workers;
+    if (incoming.deletedWorkerIds !== undefined && Array.isArray(incoming.deletedWorkerIds)) {
+      state.deletedWorkerIds = Array.from(new Set([...(state.deletedWorkerIds || []), ...incoming.deletedWorkerIds.map(String)]));
+    }
+    if (incoming.workers !== undefined && Array.isArray(incoming.workers)) {
+      const delSet = new Set((state.deletedWorkerIds || []).map(String));
+      const wMap = new Map<string, any>();
+      (state.workers || []).forEach((sw: any) => {
+        if (sw && sw.id && !delSet.has(String(sw.id))) wMap.set(String(sw.id), sw);
+      });
+      incoming.workers.forEach((iw: any) => {
+        if (!iw || !iw.id) return;
+        const id = String(iw.id);
+        if (delSet.has(id)) return;
+        const prev = wMap.get(id);
+        if (!prev || Number(iw.updatedAt || 0) >= Number(prev.updatedAt || 0)) {
+          wMap.set(id, { ...(prev || {}), ...iw });
+        }
+      });
+      state.workers = Array.from(wMap.values()).sort((a: any, b: any) =>
+        String(a.id || "").localeCompare(String(b.id || ""), undefined, { numeric: true })
+      );
+    }
     if (incoming.attendanceRecords !== undefined) state.attendanceRecords = incoming.attendanceRecords;
     if (incoming.attendanceLogs !== undefined) state.attendanceLogs = incoming.attendanceLogs;
     if (incoming.attendancePin !== undefined) state.attendancePin = incoming.attendancePin;
@@ -5477,10 +5523,11 @@ async function bootstrap() {
         if (
           restAttCount > curAttCount || 
           (restoredBoth.attendanceRecords && restoredBoth.attendanceRecords.length > (cur.attendanceRecords || []).length) ||
-          ((restoredBoth.weeklyReports || []).length > (cur.weeklyReports || []).length)
+          ((restoredBoth.weeklyReports || []).length > (cur.weeklyReports || []).length) ||
+          ((restoredBoth.workers || []).length > (cur.workers || []).length)
         ) {
           shouldWrite = true;
-          console.log(`[Startup] Berhasil memulihkan ${restAttCount} catatan absensi & ${(restoredBoth.weeklyReports || []).length} laporan mingguan dari Firebase Firestore!`);
+          console.log(`[Startup] Berhasil memulihkan ${restAttCount} catatan absensi, ${(restoredBoth.workers || []).length} karyawan & ${(restoredBoth.weeklyReports || []).length} laporan mingguan dari Firebase Firestore!`);
         }
         if (restoredBoth.npwpRecords && restoredBoth.npwpRecords.length > (cur.npwpRecords || []).length) {
           shouldWrite = true;

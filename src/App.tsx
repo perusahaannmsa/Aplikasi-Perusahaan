@@ -84,7 +84,7 @@ import {
   getPendingFirestoreSyncCount,
   flushFirestoreQueue
 } from './firebase';
-import { loadAttendanceFromFirestore } from './lib/firebaseAbsen';
+import { loadAttendanceFromFirestore, loadWorkersFromFirestore, mergeWorkerListsSafely, getDeletedWorkerIds } from './lib/firebaseAbsen';
 
 import { CleanFirestoreModal } from './components/CleanFirestoreModal';
 import { DriveDeduplicateModal } from './components/DriveDeduplicateModal';
@@ -327,7 +327,13 @@ export default function App() {
             const fbData = await fbRes.json();
             if (fbData) {
               if (fbData.workers && Array.isArray(fbData.workers) && fbData.workers.length > 0) {
-                localStorage.setItem('karyawan_uang_makan', JSON.stringify(fbData.workers));
+                try {
+                  const existingRaw = localStorage.getItem('karyawan_uang_makan') || localStorage.getItem('workers_v1');
+                  const existingList = existingRaw ? JSON.parse(existingRaw) : [];
+                  const merged = mergeWorkerListsSafely(existingList, fbData.workers, getDeletedWorkerIds());
+                  localStorage.setItem('karyawan_uang_makan', JSON.stringify(merged));
+                  localStorage.setItem('workers_v1', JSON.stringify(merged));
+                } catch (_) {}
               }
               if (fbData.pettyCashHolders && Array.isArray(fbData.pettyCashHolders) && fbData.pettyCashHolders.length > 0) {
                 setPettyCashHolders(fbData.pettyCashHolders);
@@ -381,7 +387,13 @@ export default function App() {
           if (data && data.success) {
             const raw = data.raw || {};
             if (raw.workers && Array.isArray(raw.workers) && raw.workers.length > 0) {
-              localStorage.setItem('karyawan_uang_makan', JSON.stringify(raw.workers));
+              try {
+                const existingRaw = localStorage.getItem('karyawan_uang_makan') || localStorage.getItem('workers_v1');
+                const existingList = existingRaw ? JSON.parse(existingRaw) : [];
+                const merged = mergeWorkerListsSafely(existingList, raw.workers, getDeletedWorkerIds());
+                localStorage.setItem('karyawan_uang_makan', JSON.stringify(merged));
+                localStorage.setItem('workers_v1', JSON.stringify(merged));
+              } catch (_) {}
             }
             if (raw.pettyCashHolders && Array.isArray(raw.pettyCashHolders) && raw.pettyCashHolders.length > 0) {
               setPettyCashHolders(raw.pettyCashHolders);
@@ -963,12 +975,23 @@ export default function App() {
         })
         .catch(err => console.warn('Auto-read Submissions from Firestore failed:', err));
     } else if (view === 'absen' || view === 'pinjaman') {
-      loadAttendanceFromFirestore()
-        .then(res => {
+      Promise.all([
+        loadAttendanceFromFirestore().catch(() => null),
+        loadWorkersFromFirestore().catch(() => [])
+      ])
+        .then(([res, masterWorkers]) => {
+          const deletedIds = getDeletedWorkerIds();
+          const mergedWorkers = mergeWorkerListsSafely(
+            masterWorkers || [],
+            res?.workers || [],
+            deletedIds
+          );
+          if (mergedWorkers.length > 0) {
+            localStorage.setItem('karyawan_uang_makan', JSON.stringify(mergedWorkers));
+            localStorage.setItem('workers_v1', JSON.stringify(mergedWorkers));
+            window.dispatchEvent(new CustomEvent('nmsa-workers-updated', { detail: { workers: mergedWorkers } }));
+          }
           if (res) {
-            if (res.workers && res.workers.length > 0) {
-              localStorage.setItem('karyawan_uang_makan', JSON.stringify(res.workers));
-            }
             if (res.attendanceRecords && res.attendanceRecords.length > 0) {
               localStorage.setItem('absensi_uang_makan_records', JSON.stringify(res.attendanceRecords));
             }
@@ -977,7 +1000,7 @@ export default function App() {
               localStorage.setItem('weekly_reports', JSON.stringify(res.weeklyReports));
               localStorage.setItem('laporan_uang_makan_log', JSON.stringify(res.weeklyReports));
             }
-            console.log(`☁️ [Auto-Fetch] ${(res.workers || []).length} data karyawan & ${(res.attendanceRecords || []).length} absensi berhasil dibaca langsung dari Firebase.`);
+            console.log(`☁️ [Auto-Fetch] ${mergedWorkers.length} data karyawan & ${(res.attendanceRecords || []).length} absensi berhasil dibaca langsung dari Firebase.`);
           }
         })
         .catch(err => console.warn('Auto-read Attendance from Firestore failed:', err));
@@ -4307,6 +4330,7 @@ export default function App() {
         onWorkersSynced={(wrks) => {
           localStorage.setItem('karyawan_uang_makan', JSON.stringify(wrks));
           localStorage.setItem('workers_v1', JSON.stringify(wrks));
+          window.dispatchEvent(new CustomEvent('nmsa-workers-updated', { detail: { workers: wrks } }));
         }}
       />
 

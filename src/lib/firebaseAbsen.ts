@@ -20,11 +20,25 @@ import {
   loadWorkersFromFirestore,
   saveWorkerToFirestore,
   deleteWorkerFromFirestore,
+  saveWorkersListToFirestore,
+  subscribeToWorkersMasterFromFirestore,
+  mergeWorkerListsSafely,
+  getDeletedWorkerIds,
+  saveDeletedWorkerIds,
   recordFirestoreWrites,
   recordFirestoreReads
 } from "../firebase";
 
-export { loadWorkersFromFirestore, saveWorkerToFirestore, deleteWorkerFromFirestore };
+export {
+  loadWorkersFromFirestore,
+  saveWorkerToFirestore,
+  deleteWorkerFromFirestore,
+  saveWorkersListToFirestore,
+  subscribeToWorkersMasterFromFirestore,
+  mergeWorkerListsSafely,
+  getDeletedWorkerIds,
+  saveDeletedWorkerIds
+};
 import firebaseAppletConfig from "../../firebase-applet-config.json";
 
 // Initialize Firebase with unified applet credentials & target database
@@ -294,15 +308,34 @@ export const loadAttendanceFromFirestore = async (): Promise<{
 } | null> => {
   try {
     const masterDoc = await getDoc(doc(db, "attendance", "current_records"));
-    recordFirestoreReads(1);
+    const workersMasterDoc = await getDoc(doc(db, "attendance", "workers_master")).catch(() => null);
+    recordFirestoreReads(workersMasterDoc ? 2 : 1);
     let wrks: any[] = [];
     const workerMap = new Map<string, any>();
     const repMap = new Map<string, any>();
 
+    let deletedIds = getDeletedWorkerIds();
+    const workersMasterList: any[] = [];
+    if (workersMasterDoc && workersMasterDoc.exists()) {
+      const wmData = workersMasterDoc.data();
+      if (Array.isArray(wmData?.deletedWorkerIds)) {
+        deletedIds = saveDeletedWorkerIds([...deletedIds, ...wmData.deletedWorkerIds]);
+      }
+      if (Array.isArray(wmData?.workers)) {
+        workersMasterList.push(...wmData.workers);
+      }
+    }
+
     // 1. Load from master document if present
     if (masterDoc.exists()) {
       const data = masterDoc.data();
-      wrks = data.workers || [];
+      wrks = mergeWorkerListsSafely(workersMasterList, data.workers || [], deletedIds);
+    } else if (workersMasterList.length > 0) {
+      wrks = mergeWorkerListsSafely(workersMasterList, [], deletedIds);
+    }
+
+    if (masterDoc.exists()) {
+      const data = masterDoc.data();
 
       // A. Master attendance records snapshot
       if (Array.isArray(data.attendanceRecords)) {

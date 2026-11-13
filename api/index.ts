@@ -38,13 +38,8 @@ function loadState(): any {
   // Safe fallback state
   cachedState = {
     submissions: [],
-    workers: [
-      { id: "w-01", name: "Suryo Pranoto", role: "Supervisi Lapangan", isActive: true },
-      { id: "w-02", name: "Abdul Rahman Zainuddin", role: "Operasional Site", isActive: true },
-      { id: "w-03", name: "Ichwan Al Islami", role: "Operasional Site", isActive: true },
-      { id: "w-04", name: "Hasnawi", role: "Logistik & Checker", isActive: true },
-      { id: "w-05", name: "Usmar", role: "Operasional Site", isActive: true }
-    ],
+    workers: [],
+    deletedWorkerIds: [],
     attendanceRecords: [],
     weeklyReports: [],
     pettyCashReports: [],
@@ -351,6 +346,10 @@ export default async function handler(req: any, res: any) {
         success: true,
         count: (state.submissions || []).length,
         submissions: state.submissions || [],
+        raw: {
+          workers: state.workers || [],
+          deletedWorkerIds: state.deletedWorkerIds || []
+        },
         companyId: "nmsa",
         source: "vercel-serverless",
         timestamp: new Date().toISOString()

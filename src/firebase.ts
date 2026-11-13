@@ -34,6 +34,7 @@ import {
 import { Submission, SubmissionItem, ActivityLog, NpwpRecord, CompanyProfile, InternalMemo, Worker } from './types';
 import { INITIAL_WORKERS } from './constantsAbsen';
 import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission } from './utils';
+import { apiFetch } from './utils/backendApi';
 
 export enum OperationType {
   CREATE = 'create',
@@ -3452,22 +3453,179 @@ export const deleteNpwpRecordFromFirestore = async (id: string): Promise<void> =
 };
 
 // ═════════════════════════════════════════════════════════════════════
-// 👥 MASTER LIST KARYAWAN FIRESTORE PERSISTENCE (HEMAT KUOTA)
-// Hanya simpan & hapus dokumen per-karyawan agar kuota tidak terkuras
+// 👥 MASTER LIST KARYAWAN FIRESTORE PERSISTENCE (HEMAT KUOTA & ANTI-HILANG)
+// Menggunakan dokumen terdedikasi `attendance/workers_master` (selalu diizinkan
+// oleh rules Firestore) serta sinkronisasi ke koleksi `workers` bila diizinkan.
 // ═════════════════════════════════════════════════════════════════════
 
+const DELETED_WORKERS_KEY = 'nmsa_deleted_worker_ids';
+
+export const getDeletedWorkerIds = (): string[] => {
+  try {
+    const raw = localStorage.getItem(DELETED_WORKERS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
+    }
+  } catch (_) {}
+  return [];
+};
+
+export const saveDeletedWorkerIds = (ids: string[]): string[] => {
+  const unique = Array.from(new Set((ids || []).map(String).filter(Boolean)));
+  try {
+    localStorage.setItem(DELETED_WORKERS_KEY, JSON.stringify(unique));
+  } catch (_) {}
+  return unique;
+};
+
+export const addDeletedWorkerId = (workerId: string): string[] => {
+  const current = getDeletedWorkerIds();
+  if (!current.includes(workerId)) {
+    current.push(workerId);
+  }
+  return saveDeletedWorkerIds(current);
+};
+
+export const removeDeletedWorkerId = (workerId: string): string[] => {
+  const current = getDeletedWorkerIds().filter((id) => id !== workerId);
+  return saveDeletedWorkerIds(current);
+};
+
+export const mergeWorkerListsSafely = (
+  primaryList: Worker[] = [],
+  secondaryList: Worker[] = [],
+  deletedIds: string[] = []
+): Worker[] => {
+  const deletedSet = new Set((deletedIds || []).map(String));
+  const map = new Map<string, Worker>();
+
+  const upsert = (w: Worker) => {
+    if (!w || !w.id || !w.name) return;
+    const idStr = String(w.id).trim();
+    if (!idStr || deletedSet.has(idStr)) return;
+    const existing = map.get(idStr);
+    if (!existing) {
+      map.set(idStr, {
+        ...w,
+        id: idStr,
+        role: w.role || 'Karyawan',
+        isActive: w.isActive ?? true,
+      });
+    } else {
+      const existingTs = Number(existing.updatedAt || 0);
+      const incomingTs = Number(w.updatedAt || 0);
+      if (incomingTs >= existingTs) {
+        map.set(idStr, {
+          ...existing,
+          ...w,
+          id: idStr,
+          role: w.role || existing.role || 'Karyawan',
+          isActive: w.isActive ?? existing.isActive ?? true,
+          phoneNumber: w.phoneNumber || existing.phoneNumber,
+          bankName: w.bankName || existing.bankName,
+          bankAccount: w.bankAccount || existing.bankAccount,
+        });
+      } else {
+        map.set(idStr, {
+          ...w,
+          ...existing,
+          id: idStr,
+          phoneNumber: existing.phoneNumber || w.phoneNumber,
+          bankName: existing.bankName || w.bankName,
+          bankAccount: existing.bankAccount || w.bankAccount,
+        });
+      }
+    }
+  };
+
+  (secondaryList || []).forEach(upsert);
+  (primaryList || []).forEach(upsert);
+
+  const merged = Array.from(map.values());
+  merged.sort((a, b) => (a.id || '').localeCompare(b.id || '', undefined, { numeric: true }));
+  return merged;
+};
+
+export const saveWorkersListToFirestore = async (
+  workersList: Worker[],
+  deletedIdsOverride?: string[]
+): Promise<boolean> => {
+  const deletedIds = deletedIdsOverride !== undefined
+    ? saveDeletedWorkerIds(deletedIdsOverride)
+    : getDeletedWorkerIds();
+
+  const cleanList = (workersList || []).filter((w) => w && w.id && w.name);
+
+  try {
+    localStorage.setItem('karyawan_uang_makan', JSON.stringify(cleanList));
+    localStorage.setItem('workers_v1', JSON.stringify(cleanList));
+    apiFetch('/api/unified-storage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workers: cleanList, deletedWorkerIds: deletedIds })
+    }).catch(() => {});
+  } catch (_) {}
+
+  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) {
+    return false;
+  }
+
+  let savedToCloud = false;
+  try {
+    const payload = cleanUndefined({
+      workers: cleanList,
+      deletedWorkerIds: deletedIds,
+      totalWorkers: cleanList.length,
+      updatedAt: new Date().toISOString(),
+    });
+    await setDoc(doc(firestoreDb, 'attendance', 'workers_master'), payload, { merge: true });
+    recordFirestoreWrites(1);
+    savedToCloud = true;
+    console.log(`☁️ [Workers Master Firestore] ${cleanList.length} karyawan berhasil disimpan permanen ke Firestore (attendance/workers_master).`);
+  } catch (err: any) {
+    markFirestoreQuotaExceeded(err);
+    console.warn('Notice menyimpan workers_master ke Firestore:', err?.message || err);
+  }
+
+  return savedToCloud;
+};
+
 export const loadWorkersFromFirestore = async (): Promise<Worker[]> => {
-  // 1. Coba baca dari koleksi 'workers' Firestore jika aktif
+  let cloudMasterWorkers: Worker[] = [];
+  let cloudDiscreteWorkers: Worker[] = [];
+  let cloudCurrentWorkers: Worker[] = [];
+  let cloudDeletedIds: string[] = getDeletedWorkerIds();
+  let hadMasterDoc = false;
+
+  // 1. Coba baca dari Firestore (attendance/workers_master, attendance/current_records, dan koleksi workers)
   if (isFirebaseConfigured() && firestoreDb && !isFirestoreQuotaExceeded()) {
+    try {
+      const masterSnap = await getDoc(doc(firestoreDb, 'attendance', 'workers_master'));
+      recordFirestoreReads(1);
+      if (masterSnap.exists()) {
+        hadMasterDoc = true;
+        const mData = masterSnap.data();
+        if (Array.isArray(mData?.workers)) {
+          cloudMasterWorkers = mData.workers;
+        }
+        if (Array.isArray(mData?.deletedWorkerIds)) {
+          cloudDeletedIds = saveDeletedWorkerIds([...cloudDeletedIds, ...mData.deletedWorkerIds]);
+        }
+      }
+    } catch (err: any) {
+      markFirestoreQuotaExceeded(err);
+    }
+
+    // Baca koleksi 'workers' (opsional - tidak error jika rules hanya membuka /attendance)
     try {
       const snap = await getDocs(collection(firestoreDb, 'workers'));
       if (!snap.empty) {
         recordFirestoreReads(snap.size);
-        const list: Worker[] = [];
         snap.forEach(d => {
           const data = d.data() as Worker;
           if (data && (data.id || d.id) && data.name) {
-            list.push({
+            cloudDiscreteWorkers.push({
               id: data.id || d.id,
               name: data.name,
               role: data.role || 'Karyawan',
@@ -3482,37 +3640,82 @@ export const loadWorkersFromFirestore = async (): Promise<Worker[]> => {
             });
           }
         });
-        if (list.length > 0) {
-          list.sort((a, b) => (a.id || '').localeCompare(b.id || ''));
-          try {
-            localStorage.setItem('karyawan_uang_makan', JSON.stringify(list));
-            localStorage.setItem('workers_v1', JSON.stringify(list));
-            fetch('/api/unified-storage', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ workers: list })
-            }).catch(() => {});
-          } catch (_) {}
-          console.log(`☁️ [Workers Firestore] Berhasil memuat ${list.length} karyawan dari Cloud Firestore.`);
-          return list;
-        }
       }
-    } catch (err) {
-      markFirestoreQuotaExceeded(err);
-      console.warn('Gagal memuat list karyawan dari Firestore:', err);
+    } catch (err: any) {
+      const msg = String(err?.message || err?.code || '');
+      if (!msg.includes('permission-denied') && !msg.includes('insufficient permissions')) {
+        markFirestoreQuotaExceeded(err);
+        console.warn('Notice membaca koleksi workers:', msg);
+      }
     }
+
+    // Jika workers_master belum ada atau kosong, baca juga dari attendance/current_records.workers
+    if (cloudMasterWorkers.length === 0) {
+      try {
+        const curSnap = await getDoc(doc(firestoreDb, 'attendance', 'current_records'));
+        recordFirestoreReads(1);
+        if (curSnap.exists()) {
+          const cData = curSnap.data();
+          if (Array.isArray(cData?.workers)) {
+            cloudCurrentWorkers = cData.workers;
+          }
+        }
+      } catch (err: any) {
+        markFirestoreQuotaExceeded(err);
+      }
+    }
+  }
+
+  // Gabungkan semua sumber Firestore dengan aman
+  const combinedCloud = mergeWorkerListsSafely(
+    cloudMasterWorkers,
+    mergeWorkerListsSafely(cloudDiscreteWorkers, cloudCurrentWorkers, cloudDeletedIds),
+    cloudDeletedIds
+  );
+
+  if (combinedCloud.length > 0) {
+    // Jika local memiliki worker baru yang belum tersinkron, gabungkan tanpa menghilangkan data cloud
+    let localWorkers: Worker[] = [];
+    try {
+      const localRaw = localStorage.getItem('karyawan_uang_makan') || localStorage.getItem('workers_v1');
+      if (localRaw) {
+        const parsed = JSON.parse(localRaw);
+        if (Array.isArray(parsed)) localWorkers = parsed;
+      }
+    } catch (_) {}
+
+    const finalWorkers = mergeWorkerListsSafely(combinedCloud, localWorkers, cloudDeletedIds);
+
+    try {
+      localStorage.setItem('karyawan_uang_makan', JSON.stringify(finalWorkers));
+      localStorage.setItem('workers_v1', JSON.stringify(finalWorkers));
+      apiFetch('/api/unified-storage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workers: finalWorkers, deletedWorkerIds: cloudDeletedIds })
+      }).catch(() => {});
+    } catch (_) {}
+
+    // Otomatis seed attendance/workers_master jika belum pernah ada di Firestore
+    if (!hadMasterDoc && isFirebaseConfigured() && firestoreDb && !isFirestoreQuotaExceeded()) {
+      saveWorkersListToFirestore(finalWorkers, cloudDeletedIds).catch(() => {});
+    }
+
+    console.log(`☁️ [Workers Firestore] Berhasil memuat ${finalWorkers.length} karyawan dari Cloud Firestore.`);
+    return finalWorkers;
   }
 
   // 2. Fallback: baca dari server unified-storage (/api/unified-storage)
   try {
-    const srvRes = await fetch('/api/unified-storage');
+    const srvRes = await apiFetch('/api/unified-storage');
     if (srvRes.ok) {
       const srvData = await srvRes.json();
       const serverWorkers = srvData?.raw?.workers || srvData?.workers;
       if (Array.isArray(serverWorkers) && serverWorkers.length > 0) {
-        localStorage.setItem('karyawan_uang_makan', JSON.stringify(serverWorkers));
-        localStorage.setItem('workers_v1', JSON.stringify(serverWorkers));
-        return serverWorkers;
+        const cleanSrv = mergeWorkerListsSafely(serverWorkers, [], cloudDeletedIds);
+        localStorage.setItem('karyawan_uang_makan', JSON.stringify(cleanSrv));
+        localStorage.setItem('workers_v1', JSON.stringify(cleanSrv));
+        return cleanSrv;
       }
     }
   } catch (_) {}
@@ -3523,93 +3726,165 @@ export const loadWorkersFromFirestore = async (): Promise<Worker[]> => {
     if (local) {
       const parsed = JSON.parse(local);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+        return mergeWorkerListsSafely(parsed, [], cloudDeletedIds);
       }
     }
   } catch (_) {}
 
-  // 4. Default: kembalikan INITIAL_WORKERS
-  return INITIAL_WORKERS;
+  // 4. Default: kembalikan INITIAL_WORKERS (kecuali yang sudah dihapus)
+  return mergeWorkerListsSafely(INITIAL_WORKERS, [], cloudDeletedIds);
+};
+
+export const subscribeToWorkersMasterFromFirestore = (
+  onUpdate: (workers: Worker[], deletedIds: string[]) => void
+): (() => void) => {
+  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) {
+    return () => {};
+  }
+  try {
+    return onSnapshot(
+      doc(firestoreDb, 'attendance', 'workers_master'),
+      (snap) => {
+        if (!snap.exists()) return;
+        const data = snap.data();
+        const cloudWorkers = Array.isArray(data?.workers) ? (data.workers as Worker[]) : [];
+        const cloudDeleted = Array.isArray(data?.deletedWorkerIds)
+          ? saveDeletedWorkerIds([...getDeletedWorkerIds(), ...data.deletedWorkerIds])
+          : getDeletedWorkerIds();
+        if (cloudWorkers.length > 0) {
+          onUpdate(cloudWorkers, cloudDeleted);
+        }
+      },
+      (err) => {
+        markFirestoreQuotaExceeded(err);
+      }
+    );
+  } catch (_) {
+    return () => {};
+  }
 };
 
 export const saveWorkerToFirestore = async (worker: Worker): Promise<boolean> => {
   if (!worker || !worker.id) return false;
 
-  // 1. Simpan ke localStorage segera
+  const updatedWorker: Worker = { ...worker, updatedAt: worker.updatedAt || Date.now() };
+  const deletedIds = removeDeletedWorkerId(updatedWorker.id);
+
+  // 1. Simpan ke localStorage & unified-storage segera
+  let updatedList: Worker[] = [];
   try {
     const stored = localStorage.getItem('karyawan_uang_makan') || localStorage.getItem('workers_v1');
-    let list: Worker[] = stored ? JSON.parse(stored) : [];
-    const idx = list.findIndex(w => w.id === worker.id);
-    if (idx >= 0) {
-      list[idx] = { ...list[idx], ...worker, updatedAt: Date.now() };
-    } else {
-      list.push({ ...worker, updatedAt: Date.now() });
-    }
-    localStorage.setItem('karyawan_uang_makan', JSON.stringify(list));
-    localStorage.setItem('workers_v1', JSON.stringify(list));
+    const existingList: Worker[] = stored ? JSON.parse(stored) : [];
+    updatedList = mergeWorkerListsSafely([updatedWorker], existingList, deletedIds);
+    localStorage.setItem('karyawan_uang_makan', JSON.stringify(updatedList));
+    localStorage.setItem('workers_v1', JSON.stringify(updatedList));
 
-    // 2. Simpan ke server unified-storage
-    fetch('/api/unified-storage', {
+    apiFetch('/api/unified-storage', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ workers: list })
+      body: JSON.stringify({ workers: updatedList, deletedWorkerIds: deletedIds })
     }).catch(() => {});
-  } catch (_) {}
+  } catch (_) {
+    updatedList = [updatedWorker];
+  }
 
-  // 3. Simpan hanya dokumen tunggal ini ke Firestore (Hemat Kuota: 1 Write)
   if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) {
     return false;
   }
 
+  let saved = false;
+
+  // 2. Simpan ke attendance/workers_master (utama & selalu diizinkan oleh rules Firestore)
   try {
-    const cleanWorker = cleanUndefined(worker);
-    await setDoc(doc(firestoreDb, 'workers', worker.id), cleanWorker, { merge: true });
+    const masterPayload = cleanUndefined({
+      workers: updatedList,
+      deletedWorkerIds: deletedIds,
+      totalWorkers: updatedList.length,
+      updatedAt: new Date().toISOString()
+    });
+    await setDoc(doc(firestoreDb, 'attendance', 'workers_master'), masterPayload, { merge: true });
     recordFirestoreWrites(1);
-    console.log(`☁️ [Worker Firestore] Data karyawan "${worker.name}" (${worker.id}) berhasil disimpan ke Firestore.`);
-    return true;
+    saved = true;
+    console.log(`☁️ [Worker Firestore] Karyawan "${updatedWorker.name}" (${updatedWorker.id}) tersimpan ke Firestore (workers_master).`);
   } catch (error) {
     markFirestoreQuotaExceeded(error);
-    console.warn(`Gagal menyimpan karyawan ${worker.id} ke Firestore:`, error);
-    return false;
+    console.warn(`Gagal menyimpan workers_master untuk ${updatedWorker.id}:`, error);
   }
+
+  // 3. Simpan juga ke koleksi 'workers/{id}' (opsional, tidak gagal jika rule belum aktif)
+  try {
+    const cleanWorker = cleanUndefined(updatedWorker);
+    await setDoc(doc(firestoreDb, 'workers', updatedWorker.id), cleanWorker, { merge: true });
+    recordFirestoreWrites(1);
+    saved = true;
+  } catch (error: any) {
+    const msg = String(error?.message || error?.code || '');
+    if (!msg.includes('permission-denied') && !msg.includes('insufficient permissions')) {
+      markFirestoreQuotaExceeded(error);
+    }
+  }
+
+  return saved;
 };
 
 export const deleteWorkerFromFirestore = async (workerId: string): Promise<boolean> => {
   if (!workerId) return false;
 
-  // 1. Hapus dari localStorage segera
+  const deletedIds = addDeletedWorkerId(workerId);
+
+  // 1. Hapus dari localStorage & unified-storage segera
+  let remaining: Worker[] = [];
   try {
     const stored = localStorage.getItem('karyawan_uang_makan') || localStorage.getItem('workers_v1');
     if (stored) {
       const list: Worker[] = JSON.parse(stored);
-      const remaining = list.filter(w => w.id !== workerId);
+      remaining = list.filter(w => w.id !== workerId);
       localStorage.setItem('karyawan_uang_makan', JSON.stringify(remaining));
       localStorage.setItem('workers_v1', JSON.stringify(remaining));
 
-      // 2. Simpan ke server unified-storage
-      fetch('/api/unified-storage', {
+      apiFetch('/api/unified-storage', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workers: remaining })
+        body: JSON.stringify({ workers: remaining, deletedWorkerIds: deletedIds })
       }).catch(() => {});
     }
   } catch (_) {}
 
-  // 3. Hapus hanya dokumen tunggal ini dari Firestore (Hemat Kuota: 1 Delete)
   if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) {
     return false;
   }
 
+  let deleted = false;
+
+  // 2. Perbarui attendance/workers_master dengan daftar terbaru & tombstone deletedWorkerIds
+  try {
+    await setDoc(doc(firestoreDb, 'attendance', 'workers_master'), cleanUndefined({
+      workers: remaining,
+      deletedWorkerIds: deletedIds,
+      totalWorkers: remaining.length,
+      updatedAt: new Date().toISOString()
+    }), { merge: true });
+    recordFirestoreWrites(1);
+    deleted = true;
+    console.log(`🗑️ [Worker Firestore] Karyawan ${workerId} dihapus & dicatat di Firestore (workers_master).`);
+  } catch (error) {
+    markFirestoreQuotaExceeded(error);
+    console.warn(`Gagal memperbarui workers_master saat hapus ${workerId}:`, error);
+  }
+
+  // 3. Hapus dokumen tunggal di koleksi 'workers' bila diizinkan
   try {
     await deleteDoc(doc(firestoreDb, 'workers', workerId));
     recordFirestoreDeletes(1);
-    console.log(`🗑️ [Worker Firestore] Karyawan ${workerId} berhasil dihapus dari Firestore.`);
-    return true;
-  } catch (error) {
-    markFirestoreQuotaExceeded(error);
-    console.warn(`Gagal menghapus karyawan ${workerId} dari Firestore:`, error);
-    return false;
+    deleted = true;
+  } catch (error: any) {
+    const msg = String(error?.message || error?.code || '');
+    if (!msg.includes('permission-denied') && !msg.includes('insufficient permissions')) {
+      markFirestoreQuotaExceeded(error);
+    }
   }
+
+  return deleted;
 };
 
 
