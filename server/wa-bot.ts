@@ -1,6 +1,7 @@
 import pino from "pino";
 import path from "path";
 import fs from "fs";
+import os from "os";
 import QRCode from "qrcode";
 
 // Safely dynamically load @whiskeysockets/baileys to support both ESM and CJS (Node 20+ on Railway & Replit)
@@ -65,9 +66,25 @@ async function getFetchLatestBaileysVersion() {
   }
 }
 
-const AUTH_DIR = process.env.VERCEL ? path.join("/tmp", "auth_info_baileys") : path.join(process.cwd(), "auth_info_baileys");
-const BACKUP_FILE = process.env.VERCEL ? path.join("/tmp", "wa_session_backup.json") : path.join(process.cwd(), "wa_session_backup.json");
+const IS_PERSISTENT_PROD_HOST = Boolean(
+  process.env.RENDER ||
+  process.env.RAILWAY_ENVIRONMENT ||
+  (process.env.NODE_ENV === "production" && !process.env.VERCEL)
+);
+const TMP_WA_BASE = process.env.VERCEL ? "/tmp" : path.join(os.tmpdir(), "nmsa-wa-bot");
+const AUTH_DIR = IS_PERSISTENT_PROD_HOST
+  ? path.join(process.cwd(), "auth_info_baileys")
+  : path.join(TMP_WA_BASE, "auth_info_baileys");
+const BACKUP_FILE = IS_PERSISTENT_PROD_HOST
+  ? path.join(process.cwd(), "wa_session_backup.json")
+  : path.join(TMP_WA_BASE, "wa_session_backup.json");
 const DATA_FILE = process.env.VERCEL ? path.join("/tmp", "data-store.json") : path.join(process.cwd(), "data-store.json");
+
+try {
+  if (!fs.existsSync(TMP_WA_BASE)) {
+    fs.mkdirSync(TMP_WA_BASE, { recursive: true });
+  }
+} catch (_) {}
 
 // Ensure /tmp copy of data-store.json on Vercel
 if (process.env.VERCEL && !fs.existsSync(DATA_FILE)) {
@@ -141,12 +158,17 @@ export function hasAuthBackup(): boolean {
   return false;
 }
 
-// Backup all auth credentials files to persistent store (files & data-store.json)
+export function hasWhatsAppCredentials(): boolean {
+  return fs.existsSync(path.join(AUTH_DIR, "creds.json")) || hasAuthBackup();
+}
+
+// Backup all auth credentials files to persistent store ONLY once creds are registered
 export function backupAuthStateToPersistentStore() {
   try {
     if (!fs.existsSync(AUTH_DIR)) return;
     const credsFile = path.join(AUTH_DIR, "creds.json");
     if (!fs.existsSync(credsFile)) return;
+    if (!hasRegisteredLocalCreds()) return;
 
     const files = fs.readdirSync(AUTH_DIR);
     const bundle: Record<string, string> = {};
@@ -158,10 +180,8 @@ export function backupAuthStateToPersistentStore() {
     }
 
     if (Object.keys(bundle).length > 0) {
-      // 1. Save to dedicated backup file
       fs.writeFileSync(BACKUP_FILE, JSON.stringify(bundle), "utf-8");
-      
-      // 2. Also persist into data-store.json so it survives container restarts
+
       if (fs.existsSync(DATA_FILE)) {
         try {
           const ds = JSON.parse(fs.readFileSync(DATA_FILE, "utf-8"));
@@ -181,7 +201,7 @@ export function restoreAuthStateFromPersistentStore(): boolean {
   try {
     const credsFile = path.join(AUTH_DIR, "creds.json");
     if (fs.existsSync(credsFile)) {
-      return true; // Local folder already has creds
+      return true;
     }
 
     let bundle: Record<string, string> | null = null;
@@ -225,11 +245,12 @@ export function clearAuthBackup() {
     if (fs.existsSync(DATA_FILE)) {
       try {
         const ds = JSON.parse(fs.readFileSync(DATA_FILE, "utf-8"));
-        delete ds.waSessionBackup;
-        fs.writeFileSync(DATA_FILE, JSON.stringify(ds, null, 2), "utf-8");
+        if (ds.waSessionBackup !== undefined) {
+          delete ds.waSessionBackup;
+          fs.writeFileSync(DATA_FILE, JSON.stringify(ds, null, 2), "utf-8");
+        }
       } catch (e) {}
     }
-    console.log("[WhatsApp Bot] Semua backup sesi WhatsApp telah dibersihkan.");
   } catch (err) {
     console.error("[WhatsApp Bot] Gagal membersihkan backup auth:", err);
   }
@@ -384,7 +405,7 @@ async function _doInitWhatsApp(forceRestart = false) {
       return sock;
     }
 
-    if (forceRestart && sock) {
+    if (sock) {
       try {
         sock.ev?.removeAllListeners?.("connection.update");
         sock.ev?.removeAllListeners?.("creds.update");
@@ -472,7 +493,9 @@ async function _doInitWhatsApp(forceRestart = false) {
       pendingCredsSave = pendingCredsSave
         .then(async () => {
           await saveCreds();
-          backupAuthStateToPersistentStore();
+          if (state?.creds?.registered) {
+            backupAuthStateToPersistentStore();
+          }
         })
         .catch((e) => {
           console.warn("Error updating WhatsApp creds:", e);
@@ -1013,6 +1036,10 @@ export async function disconnectWhatsApp(autoRestart = false, skipRemoteLogout =
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
+    if (presenceKeepAliveTimer) {
+      clearInterval(presenceKeepAliveTimer);
+      presenceKeepAliveTimer = null;
+    }
     const wasConnected = connectionStatus === "connected";
     qrCodeDataUrl = null;
     qrUpdatedAt = null;
@@ -1023,15 +1050,17 @@ export async function disconnectWhatsApp(autoRestart = false, skipRemoteLogout =
     connectedUser = null;
     connectionStatus = "disconnected";
     
-    // Clear in data-store.json
+    // Clear in data-store.json only if WA fields are actually set
     try {
-      const dsPath = path.join(process.cwd(), "data-store.json");
+      const dsPath = DATA_FILE;
       if (fs.existsSync(dsPath)) {
         const ds = JSON.parse(fs.readFileSync(dsPath, "utf-8"));
-        ds.waConnected = false;
-        ds.waUser = null;
-        delete ds.waSessionBackup;
-        fs.writeFileSync(dsPath, JSON.stringify(ds, null, 2), "utf-8");
+        if (ds.waConnected || ds.waUser || ds.waSessionBackup !== undefined) {
+          ds.waConnected = false;
+          ds.waUser = null;
+          delete ds.waSessionBackup;
+          fs.writeFileSync(dsPath, JSON.stringify(ds, null, 2), "utf-8");
+        }
       }
     } catch (e) {}
 

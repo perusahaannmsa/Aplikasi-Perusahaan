@@ -1642,11 +1642,16 @@ export function AbsensiHarianNmsa({
     }
   }, [isDashWaOpen, waActivityTick]);
 
-  // Periodically fetch WhatsApp Gateway status from Express backend
+  // Periodically fetch WhatsApp Gateway status from Express backend (single-flight guarded)
   const isWaConnected = waBotStatus === "connected";
+  const waStatusInFlightRef = useRef<boolean>(false);
   useEffect(() => {
     let active = true;
+    let pollTimer: ReturnType<typeof setTimeout> | null = null;
+
     const checkWaStatus = async () => {
+      if (waStatusInFlightRef.current) return;
+      waStatusInFlightRef.current = true;
       try {
         const res = await apiFetch("/api/wa/status", {
           headers: { Accept: "application/json" }
@@ -1655,10 +1660,18 @@ export function AbsensiHarianNmsa({
         if (res.ok && active && contentType && contentType.includes("application/json")) {
           const data = await res.json();
           setWaBotStatus(data.status || "disconnected");
-          setWaBotQr(data.isPairingInProgress ? null : (data.qr || null));
+          setWaBotQr((prev) => {
+            const nextQr = data.isPairingInProgress ? null : (data.qr || null);
+            return prev === nextQr ? prev : nextQr;
+          });
           setWaBotUser(data.user || null);
           setWaBotPairingInProgress(Boolean(data.isPairingInProgress));
           setWaIsVercelServerless(Boolean(data.isVercelServerless));
+          if (data.status === "connected") {
+            setWaPairingCode(null);
+          } else if (data.pairingCode) {
+            setWaPairingCode((prev) => prev || String(data.pairingCode));
+          }
           setWaBotError(data.error ? (typeof data.error === 'object' ? data.error?.message || JSON.stringify(data.error) : String(data.error)) : null);
 
           // If there is a late reminder pending, show confirmation popup unless dismissed today
@@ -1676,15 +1689,22 @@ export function AbsensiHarianNmsa({
         }
       } catch (err) {
         // Silently capture network/parsing transitions
+      } finally {
+        waStatusInFlightRef.current = false;
       }
     };
-    
-    checkWaStatus(); // run immediately
-    const pollMs = isDashWaOpen && !isWaConnected ? 1500 : 5000;
-    const interval = setInterval(checkWaStatus, pollMs);
+
+    const runPoll = async () => {
+      await checkWaStatus();
+      if (!active) return;
+      const pollMs = isDashWaOpen ? (isWaConnected ? 8000 : 2000) : 30000;
+      pollTimer = setTimeout(runPoll, pollMs);
+    };
+
+    runPoll();
     return () => {
       active = false;
-      clearInterval(interval);
+      if (pollTimer) clearTimeout(pollTimer);
     };
   }, [isDashWaOpen, isWaConnected]);
 
@@ -4478,27 +4498,32 @@ export function AbsensiHarianNmsa({
 
   // --- WhatsApp Baileys Controller Handlers ---
   const handleRequestWaPairingCode = async () => {
-    if (!waPairingPhone) {
-      alert("Silakan masukkan nomor WhatsApp Anda terlebih dahulu.");
+    let clean = waPairingPhone.replace(/[^0-9]/g, "");
+    if (clean.startsWith("0")) clean = "62" + clean.slice(1);
+    else if (clean.startsWith("8")) clean = "62" + clean;
+
+    if (!clean || clean.length < 9) {
+      setWaBotError("Silakan masukkan nomor WhatsApp yang valid terlebih dahulu (contoh: 0812xxxxxx).");
       return;
     }
     setWaPairingLoading(true);
     setWaPairingCode(null);
+    setWaBotError(null);
     try {
       const res = await apiFetch("/api/wa/pairing-code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: waPairingPhone }),
+        body: JSON.stringify({ phone: clean }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (res.ok && (data.code || data.pairingCode)) {
         setWaPairingCode(data.code || data.pairingCode);
       } else {
-        alert("Gagal membuat Kode Pairing: " + (data.error || "Pastikan Server Backend sedang aktif."));
+        setWaBotError("Gagal membuat Kode Pairing: " + (data.error || "Pastikan Server Backend sedang aktif."));
       }
     } catch (err: any) {
       console.error("Failed to request pairing code:", err);
-      alert("Kesalahan jaringan saat meminta kode pairing.");
+      setWaBotError("Kesalahan jaringan saat meminta kode pairing.");
     } finally {
       setWaPairingLoading(false);
     }
@@ -4508,6 +4533,7 @@ export function AbsensiHarianNmsa({
     setIsRefreshingWaQr(true);
     setWaBotError(null);
     setWaBotPairingInProgress(false);
+    setWaPairingCode(null);
     setWaBotQr(null);
     setWaBotStatus("connecting");
     try {
@@ -4531,20 +4557,21 @@ export function AbsensiHarianNmsa({
 
   const handleDisconnectWa = async () => {
     if (!window.confirm("Apakah Anda yakin ingin memutuskan koneksi WhatsApp? Sesi Anda akan dihapus dan Anda harus melakukan scan QR code kembali.")) return;
+    setWaBotError(null);
     try {
       const res = await apiFetch("/api/wa/disconnect", { method: "POST" });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (data.success) {
         setWaBotStatus("disconnected");
         setWaBotQr(null);
         setWaBotUser(null);
-        alert("Berhasil memutuskan koneksi WhatsApp. QR Code baru sedang disiapkan, mohon tunggu beberapa detik...");
+        setWaPairingCode(null);
       } else {
-        alert("Gagal memutuskan koneksi WhatsApp: " + (data.error || "Kesalahan server"));
+        setWaBotError("Gagal memutuskan koneksi WhatsApp: " + (data.error || "Kesalahan server"));
       }
     } catch (err: any) {
       console.error("Failed to disconnect WhatsApp:", err);
-      alert("Kesalahan jaringan saat memutuskan koneksi.");
+      setWaBotError("Kesalahan jaringan saat memutuskan koneksi.");
     }
   };
 
@@ -7614,12 +7641,12 @@ export function AbsensiHarianNmsa({
                                       setWaBotStatus("disconnected");
                                       setWaBotQr(null);
                                       setWaBotUser(null);
+                                      setWaPairingCode(null);
                                       setWaBotError(null);
-                                      alert("Sesi berhasil dibersihkan! Anda sekarang dapat mencoba menghubungkan kembali.");
                                     }
                                   } catch (e) {
                                     console.error("Gagal membersihkan sesi:", e);
-                                    alert("Gagal membersihkan sesi server.");
+                                    setWaBotError("Gagal membersihkan sesi server.");
                                   }
                                 }}
                                 className="bg-rose-600 hover:bg-rose-700 text-white font-bold px-2.5 py-1 rounded-lg transition text-[9px] cursor-pointer shadow-xs"

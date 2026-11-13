@@ -4378,11 +4378,12 @@ export default function App() {
       />
 
       {/* Integrasi WhatsApp Business AI & Pusat Data Modal */}
-      <WhatsAppAiModal
-        isOpen={isWhatsAppModalOpen}
-        onClose={() => setIsWhatsAppModalOpen(false)}
-        submissions={submissions}
-      />
+      {isWhatsAppModalOpen && (
+        <WhatsAppAiModal
+          isOpen={isWhatsAppModalOpen}
+          onClose={() => setIsWhatsAppModalOpen(false)}
+        />
+      )}
 
       {/* Salin Data ke Akun Firebase Lain (Migrasi Proyek) Modal */}
       {isFirebaseMigrationOpen && (

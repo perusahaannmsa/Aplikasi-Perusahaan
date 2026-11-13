@@ -18,6 +18,14 @@ export default defineConfig(() => {
       allowedHosts: true as const,
       hmr: false,
       ws: false as const,
+      watch: {
+        ignored: [
+          '**/auth_info_baileys/**',
+          '**/data-store.json',
+          '**/wa_session_backup.json',
+          '**/tmp/**',
+        ],
+      },
     },
     build: {
       chunkSizeWarningLimit: 3000,

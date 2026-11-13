@@ -25,6 +25,7 @@ import {
   recordKeepAlivePing,
   getKeepAliveInfo,
   hasAuthBackup,
+  hasWhatsAppCredentials,
   isWhatsAppConnected
 } from "./server/wa-bot";
 import { getDynamicReminderMessage } from "./src/utils/reminderMessageGenerator";
@@ -3761,7 +3762,7 @@ app.all(["/api/health", "/api/ping", "/api/keepalive", "/health", "/ping"], (req
 
   const pingResult = recordKeepAlivePing(originInfo);
   const waStatus = getWhatsAppStatus();
-  const hasCreds = fs.existsSync(path.join(process.cwd(), "auth_info_baileys", "creds.json")) || hasAuthBackup();
+  const hasCreds = hasWhatsAppCredentials();
   
   let revived = false;
   // If credentials exist but WhatsApp dropped or disconnected, revive it on ping!
@@ -3799,7 +3800,7 @@ app.all(["/api/health", "/api/ping", "/api/keepalive", "/health", "/ping"], (req
 app.get("/api/wa/keepalive-stats", (req, res) => {
   const info = getKeepAliveInfo();
   const waStatus = getWhatsAppStatus();
-  const hasCreds = fs.existsSync(path.join(process.cwd(), "auth_info_baileys", "creds.json")) || hasAuthBackup();
+  const hasCreds = hasWhatsAppCredentials();
   res.json({
     success: true,
     ...info,
@@ -5459,6 +5460,14 @@ async function bootstrap() {
         middlewareMode: true,
         hmr: false,
         ws: false,
+        watch: {
+          ignored: [
+            "**/auth_info_baileys/**",
+            "**/data-store.json",
+            "**/wa_session_backup.json",
+            "**/tmp/**",
+          ],
+        },
       },
       appType: "spa",
     });
@@ -5497,7 +5506,7 @@ async function bootstrap() {
     // Delay WhatsApp Bot service boot so Vite dev server stabilizes completely first
     setTimeout(() => {
       try {
-        if (fs.existsSync(path.join(process.cwd(), "auth_info_baileys", "creds.json")) || hasAuthBackup()) {
+        if (hasWhatsAppCredentials()) {
           console.log("[Startup] Kredensial / backup sesi WhatsApp terdeteksi.");
           // Only start socket connection gracefully in background
           initWhatsApp().catch((err) => console.warn("Notice: WhatsApp Bot initialization postponed:", err?.message || err));

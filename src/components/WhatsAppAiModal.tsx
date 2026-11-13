@@ -42,8 +42,7 @@ import {
   Bell
 } from 'lucide-react';
 import { Submission } from '../types';
-import { apiFetch, getBackendBaseUrl, setBackendBaseUrl, buildApiUrl } from '../utils/backendApi';
-import QRCode from 'qrcode';
+import { apiFetch, getBackendBaseUrl, setBackendBaseUrl } from '../utils/backendApi';
 
 interface WhatsAppAiModalProps {
   isOpen: boolean;
@@ -80,7 +79,7 @@ const TABS = [
   { id: 'server' as const, number: 8, label: 'Server Backend ⚙️', shortLabel: 'Backend ⚙️', icon: Server },
 ];
 
-export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClose, submissions = [] }) => {
+export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClose }) => {
   const [activeTab, setActiveTab] = useState<'connect' | 'automation' | 'uptime' | 'security' | 'attendance' | 'test' | 'webhook' | 'server'>('connect');
   
   // Vercel host detection
@@ -117,6 +116,9 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
   const [isPairingInProgress, setIsPairingInProgress] = useState<boolean>(false);
   const [isVercelServerless, setIsVercelServerless] = useState<boolean>(false);
   const lastQrSeqRef = useRef<number>(0);
+  const isFetchingStatusRef = useRef<boolean>(false);
+  const statusRef = useRef<string>(status);
+  const pairingCodeRef = useRef<string | null>(null);
 
   // Server Backend Config states
   const [backendUrlInput, setBackendUrlInput] = useState<string>(getBackendBaseUrl());
@@ -411,7 +413,17 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
     return () => clearInterval(timer);
   }, [isOpen, activeLinkMethod, status, isPairingInProgress]);
 
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
+
+  useEffect(() => {
+    pairingCodeRef.current = pairingCode;
+  }, [pairingCode]);
+
   const fetchStatus = async () => {
+    if (isFetchingStatusRef.current) return;
+    isFetchingStatusRef.current = true;
     try {
       // 1. Check server status for real Baileys connection / live QR code
       let serverStatus = '';
@@ -433,11 +445,11 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
           setErrorMessage(null);
           return;
         }
-        if (data.pairingCode && !pairingCode) {
+        if (data.pairingCode && !pairingCodeRef.current) {
           setPairingCode(safeString(data.pairingCode));
         }
         if ((data.status === 'qr' || data.qr) && data.qr && !data.isPairingInProgress) {
-          setQrCode(data.qr);
+          setQrCode((prev) => (prev === data.qr ? prev : data.qr));
           setStatus('qr');
           setErrorMessage(null);
           if (typeof data.qrSeq === 'number' && data.qrSeq !== lastQrSeqRef.current) {
@@ -465,21 +477,20 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
         }
       }
 
-      // 2. Fallback: Check localStorage only on Vercel serverless (never override live Node.js server state)
-      const savedPhone = typeof window !== 'undefined' ? localStorage.getItem('nmsa_wa_phone') : null;
-      const isCustomConnected = typeof window !== 'undefined' && localStorage.getItem('nmsa_wa_connected') === 'true';
-      if (serverIsVercel && isCustomConnected && savedPhone && serverStatus === 'disconnected') {
-        setStatus('connected');
-        setConnectedUser({
-          id: `${savedPhone}@s.whatsapp.net`,
-          name: localStorage.getItem('nmsa_wa_name') || `WhatsApp Pribadi (${savedPhone})`
-        });
-        setErrorMessage(null);
-        return;
-      }
-
-      // 3. Fallback: Check Firebase Firestore (for Vercel serverless syncing with active backend)
+      // 2. Fallback: Check localStorage/Firestore ONLY on Vercel serverless
       if (serverIsVercel) {
+        const savedPhone = typeof window !== 'undefined' ? localStorage.getItem('nmsa_wa_phone') : null;
+        const isCustomConnected = typeof window !== 'undefined' && localStorage.getItem('nmsa_wa_connected') === 'true';
+        if (isCustomConnected && savedPhone && serverStatus === 'disconnected') {
+          setStatus('connected');
+          setConnectedUser({
+            id: `${savedPhone}@s.whatsapp.net`,
+            name: localStorage.getItem('nmsa_wa_name') || `WhatsApp Pribadi (${savedPhone})`
+          });
+          setErrorMessage(null);
+          return;
+        }
+
         try {
           const { getDoc, doc } = await import('firebase/firestore');
           const { firestoreDb } = await import('../firebase');
@@ -506,6 +517,8 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
       }
     } catch (err: any) {
       console.warn('Error fetching WA status:', err);
+    } finally {
+      isFetchingStatusRef.current = false;
     }
   };
 
@@ -514,6 +527,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
     setIsRefreshingQr(true);
     setErrorMessage(null);
     setIsPairingInProgress(false);
+    setPairingCode(null);
     setQrCode(null);
     setQrCountdown(45);
     try {
@@ -534,55 +548,6 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
     } finally {
       setIsRefreshingQr(false);
     }
-  };
-
-  // Connect personal WhatsApp account with real phone number
-  const handleConnectPersonalPhone = async (phoneInput: string, customName?: string) => {
-    let clean = phoneInput.replace(/[^0-9]/g, '');
-    if (clean.startsWith('0')) clean = '62' + clean.slice(1);
-    else if (clean.startsWith('8')) clean = '62' + clean;
-    if (!clean || clean.length < 9) {
-      setErrorMessage('Harap masukkan nomor WhatsApp yang valid (contoh: 081234567890 atau 62812...).');
-      return;
-    }
-
-    const resolvedName = customName?.trim() || `WhatsApp Pribadi (+${clean})`;
-
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('nmsa_wa_connected', 'true');
-      localStorage.setItem('nmsa_wa_phone', clean);
-      localStorage.setItem('nmsa_wa_name', resolvedName);
-      localStorage.removeItem('nmsa_wa_connected_sim');
-    }
-
-    setStatus('connected');
-    setConnectedUser({ id: `${clean}@s.whatsapp.net`, name: resolvedName });
-    setErrorMessage(null);
-    setIsLinkingNewAccount(false);
-    setPairingSuccessMsg(`Nomor WhatsApp pribadi +${clean} (${resolvedName}) berhasil ditautkan dan aktif melayani sistem PT NMSA!`);
-    setTimeout(() => setPairingSuccessMsg(null), 6000);
-
-    // Sync to backend / Vercel API
-    try {
-      await apiFetch('/api/wa/connect-phone', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: clean, name: resolvedName })
-      });
-    } catch (_) {}
-
-    // 4. Sync to Firebase Firestore so Vercel and all devices see the connection
-    try {
-      const { saveCompanySettingsToFirestore } = await import('../firebase');
-      await saveCompanySettingsToFirestore({
-        waConnected: true,
-        waPhone: clean,
-        waName: resolvedName,
-        waUser: { id: `${clean}@s.whatsapp.net`, name: resolvedName },
-        waStatus: 'connected',
-        waQr: null
-      });
-    } catch (_) {}
   };
 
   // Fetch security settings
@@ -606,41 +571,40 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
     }
   };
 
-  useEffect(() => {
-    if (isOpen) {
-      setBackendUrlInput(getBackendBaseUrl());
-      fetchStatus();
-      fetchSecuritySettings();
-      fetchKeepAliveStats();
-      fetchAutomationSettings();
-      const interval = setInterval(() => {
-        fetchKeepAliveStats();
-        fetchAutomationSettings();
-      }, 5000);
-      return () => clearInterval(interval);
-    }
-  }, [isOpen]);
-
-  // Fast status polling while linking (1.5s) so QR rotations & post-scan connection appear immediately
+  // Single unified lifecycle & adaptive polling loop when modal is open
   useEffect(() => {
     if (!isOpen) return;
-    const pollMs = status === 'connected' ? 5000 : 1500;
-    const statusInterval = setInterval(() => {
-      fetchStatus();
-    }, pollMs);
-    return () => clearInterval(statusInterval);
-  }, [isOpen, status]);
+    let active = true;
+    let statusTimer: ReturnType<typeof setTimeout> | null = null;
+    let metaTimer: ReturnType<typeof setInterval> | null = null;
 
-  // Sync submissions to server whenever modal opens so AI has latest state
-  useEffect(() => {
-    if (isOpen && submissions.length > 0) {
-      apiFetch('/api/sync-submissions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ submissions })
-      }).catch(err => console.warn('Submissions sync warning:', err));
-    }
-  }, [isOpen, submissions]);
+    setBackendUrlInput(getBackendBaseUrl());
+    fetchSecuritySettings();
+    fetchKeepAliveStats();
+    fetchAutomationSettings();
+
+    const scheduleStatusPoll = async () => {
+      if (!active) return;
+      await fetchStatus();
+      if (!active) return;
+      const delayMs = statusRef.current === 'connected' ? 6000 : 2000;
+      statusTimer = setTimeout(scheduleStatusPoll, delayMs);
+    };
+
+    scheduleStatusPoll();
+
+    metaTimer = setInterval(() => {
+      if (!active) return;
+      fetchKeepAliveStats();
+      fetchAutomationSettings();
+    }, 8000);
+
+    return () => {
+      active = false;
+      if (statusTimer) clearTimeout(statusTimer);
+      if (metaTimer) clearInterval(metaTimer);
+    };
+  }, [isOpen]);
 
   const handleCopy = (text: string, key: string) => {
     navigator.clipboard.writeText(text);
