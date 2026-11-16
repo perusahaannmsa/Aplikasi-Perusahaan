@@ -66,6 +66,17 @@ async function getFetchLatestBaileysVersion() {
   }
 }
 
+async function getFetchLatestWaWebVersion() {
+  try {
+    const pkg = await getBaileysModule();
+    if (typeof pkg.fetchLatestWaWebVersion === "function") return pkg.fetchLatestWaWebVersion;
+    if (pkg.default && typeof pkg.default.fetchLatestWaWebVersion === "function") return pkg.default.fetchLatestWaWebVersion;
+    return (pkg as any).fetchLatestWaWebVersion;
+  } catch (e) {
+    return null;
+  }
+}
+
 const IS_PERSISTENT_PROD_HOST = Boolean(
   process.env.RENDER ||
   process.env.RAILWAY_ENVIRONMENT ||
@@ -102,8 +113,11 @@ let connectionStatus: "disconnected" | "connecting" | "connected" | "qr" = "disc
 let qrCodeDataUrl: string | null = null;
 let qrSeq = 0;
 let qrUpdatedAt: number | null = null;
+let qrExpiresAt: number | null = null;
+let qrTtlMs = 60000;
 let isPairingInProgress = false;
 let pendingCredsSave: Promise<void> = Promise.resolve();
+let activeSaveCreds: (() => Promise<void>) | null = null;
 let reconnectTimer: NodeJS.Timeout | null = null;
 let connectedUser: { id: string; name?: string } | null = null;
 let lastError: string | null = null;
@@ -112,6 +126,19 @@ let presenceKeepAliveTimer: NodeJS.Timeout | null = null;
 let activePairingCode: string | null = null;
 let activePairingPhone: string | null = null;
 let activePairingRequestedAt: number | null = null;
+let lastUiPollAt = 0;
+let cachedWaVersion: { version: [number, number, number]; fetchedAt: number } | null = null;
+
+export function markUiStatusPoll() {
+  lastUiPollAt = Date.now();
+}
+
+function isCredsAuthenticated(parsed: any): boolean {
+  if (!parsed || typeof parsed !== "object") return false;
+  if (parsed.registered === true) return true;
+  // During QR pair-success, Baileys sets account + me.id with device suffix (e.g. 628xxx:12@s.whatsapp.net)
+  return Boolean(parsed.account && parsed.me?.id && String(parsed.me.id).includes(":"));
+}
 
 function hasRegisteredLocalCreds(): boolean {
   try {
@@ -119,7 +146,7 @@ function hasRegisteredLocalCreds(): boolean {
     if (!fs.existsSync(credsPath)) return false;
     const raw = fs.readFileSync(credsPath, "utf-8");
     const parsed = JSON.parse(raw);
-    return parsed?.registered === true;
+    return isCredsAuthenticated(parsed);
   } catch {
     return false;
   }
@@ -320,6 +347,9 @@ export function getWhatsAppStatus() {
     qr: qrCodeDataUrl,
     qrSeq,
     qrUpdatedAt,
+    qrExpiresAt,
+    qrTtlMs,
+    serverNow: Date.now(),
     isPairingInProgress,
     pairingCode: activePairingCode,
     pairingPhone: activePairingPhone,
@@ -398,6 +428,14 @@ async function _doInitWhatsApp(forceRestart = false) {
     // Ensure any in-flight creds.update write finishes BEFORE reading auth state
     await pendingCredsSave.catch(() => {});
 
+    // Discard partial unregistered creds (e.g. leftover pairing-code creds without account/registered)
+    // so validateConnection never sends generateLoginNode on an unlinked JID (which triggers 401 loggedOut).
+    const localCredsPath = path.join(AUTH_DIR, "creds.json");
+    if (fs.existsSync(localCredsPath) && !hasRegisteredLocalCreds()) {
+      console.log("[WhatsApp Bot] Membersihkan kredensial sementara yang belum selesai ditautkan...");
+      cleanupAuthFolder();
+    }
+
     // Restore persistent session from backup if local folder is empty
     restoreAuthStateFromPersistentStore();
 
@@ -414,13 +452,20 @@ async function _doInitWhatsApp(forceRestart = false) {
       } catch (_) {}
       sock = null;
     }
+    activeSaveCreds = null;
 
     connectionStatus = "connecting";
     lastError = null;
+    if (forceRestart) {
+      qrCodeDataUrl = null;
+      qrUpdatedAt = null;
+      qrExpiresAt = null;
+    }
 
     const makeWASocket = await getMakeWASocket();
     const useMultiFileAuthState = await getUseMultiFileAuthState();
     const DisconnectReason = await getDisconnectReason();
+    const fetchLatestWaWebVersion = await getFetchLatestWaWebVersion();
     const fetchLatestBaileysVersion = await getFetchLatestBaileysVersion();
 
     console.log("Baileys integration checks:", {
@@ -437,22 +482,42 @@ async function _doInitWhatsApp(forceRestart = false) {
       throw new Error("makeWASocket is not a function. Check baileys bundle/import.");
     }
 
-    // Retrieve latest protocol version to prevent WhatsApp companion device pairing rejection
+    // Retrieve live WhatsApp Web protocol version (cached 30 min) so pairing/QR never uses stale buildHash
     let waVersion: [number, number, number] | undefined = undefined;
-    if (typeof fetchLatestBaileysVersion === "function") {
-      try {
-        const vResult = await fetchLatestBaileysVersion();
-        if (vResult && Array.isArray(vResult.version)) {
-          waVersion = vResult.version as [number, number, number];
-          console.log(`[WhatsApp Bot] Menggunakan versi protokol WhatsApp Web: ${waVersion.join(".")} (isLatest: ${vResult.isLatest})`);
+    if (cachedWaVersion && Date.now() - cachedWaVersion.fetchedAt < 30 * 60 * 1000) {
+      waVersion = cachedWaVersion.version;
+    } else {
+      if (typeof fetchLatestWaWebVersion === "function") {
+        try {
+          const controller = new AbortController();
+          const tid = setTimeout(() => controller.abort(), 4500);
+          const vWebResult = await fetchLatestWaWebVersion({ signal: controller.signal }).finally(() => clearTimeout(tid));
+          if (vWebResult && vWebResult.isLatest && Array.isArray(vWebResult.version)) {
+            waVersion = vWebResult.version as [number, number, number];
+            cachedWaVersion = { version: waVersion, fetchedAt: Date.now() };
+            console.log(`[WhatsApp Bot] Menggunakan versi live WhatsApp Web: ${waVersion.join(".")}`);
+          }
+        } catch (vWebErr) {
+          console.warn("[WhatsApp Bot] Gagal fetch WA Web sw.js, mencoba fallback Baileys version:", vWebErr);
         }
-      } catch (vErr) {
-        console.warn("[WhatsApp Bot] Tidak dapat mengambil versi WA terbaru, menggunakan default:", vErr);
+      }
+      if (!waVersion && typeof fetchLatestBaileysVersion === "function") {
+        try {
+          const vResult = await fetchLatestBaileysVersion();
+          if (vResult && Array.isArray(vResult.version)) {
+            waVersion = vResult.version as [number, number, number];
+            cachedWaVersion = { version: waVersion, fetchedAt: Date.now() };
+            console.log(`[WhatsApp Bot] Menggunakan versi protokol fallback Baileys: ${waVersion.join(".")}`);
+          }
+        } catch (vErr) {
+          console.warn("[WhatsApp Bot] Tidak dapat mengambil versi WA terbaru, menggunakan default:", vErr);
+        }
       }
     }
 
     // Initialize Auth state folder
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+    activeSaveCreds = saveCreds;
     const Browsers = await getBrowsers();
     const makeCacheableSignalKeyStore = await getMakeCacheableSignalKeyStore();
 
@@ -460,15 +525,14 @@ async function _doInitWhatsApp(forceRestart = false) {
       ? makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" }) as any)
       : state.keys;
 
-    // Use official WhatsApp Web browser identity matching syncFullHistory: false
-    // (Browsers.macOS("Chrome") matches Baileys v7 DEFAULT_CONNECTION_CONFIG for reliable QR pairing)
-    const browserConfig = Browsers && typeof Browsers.macOS === "function"
+    // Match official WhatsApp Web browser identity for Linux container (Ubuntu Chrome)
+    const browserConfig = Browsers && typeof Browsers.ubuntu === "function"
+      ? Browsers.ubuntu("Chrome")
+      : Browsers && typeof Browsers.macOS === "function"
       ? Browsers.macOS("Chrome")
-      : Browsers && typeof Browsers.windows === "function"
-      ? Browsers.windows("Chrome")
-      : ["Mac OS", "Chrome", "14.4.1"];
+      : ["Ubuntu", "Chrome", "22.04.4"];
 
-    // Create Socket with official WhatsApp Web header & cacheable keys
+    // Create Socket WITHOUT overriding qrTimeout so Baileys rotates QR in exact sync with WhatsApp servers (60s first, 20s next)
     sock = makeWASocket({
       ...(waVersion ? { version: waVersion } : {}),
       auth: {
@@ -481,7 +545,6 @@ async function _doInitWhatsApp(forceRestart = false) {
       connectTimeoutMs: 60000,
       defaultQueryTimeoutMs: 60000,
       keepAliveIntervalMs: 25000,
-      qrTimeout: 90000,
       emitOwnEvents: false,
       syncFullHistory: false,
       markOnlineOnConnect: true,
@@ -493,7 +556,7 @@ async function _doInitWhatsApp(forceRestart = false) {
       pendingCredsSave = pendingCredsSave
         .then(async () => {
           await saveCreds();
-          if (state?.creds?.registered) {
+          if (isCredsAuthenticated(state?.creds)) {
             backupAuthStateToPersistentStore();
           }
         })
@@ -866,6 +929,7 @@ Silakan buka tautan di atas untuk mengakses menu absensi dan mencatat kehadiran 
     });
 
     // Handle connection updates
+    let qrIndexInCycle = 0;
     sock.ev.on("connection.update", async (update: any) => {
       const { connection, lastDisconnect, qr, isNewLogin } = update;
 
@@ -874,30 +938,38 @@ Silakan buka tautan di atas untuk mengakses menu absensi dan mencatat kehadiran 
         isPairingInProgress = true;
         qrCodeDataUrl = null;
         qrUpdatedAt = null;
+        qrExpiresAt = null;
         connectionStatus = "connecting";
         lastError = null;
       }
 
       if (qr) {
-        connectionStatus = "qr";
         isPairingInProgress = false;
         lastError = null;
         try {
-          qrCodeDataUrl = await QRCode.toDataURL(qr, {
-            width: 320,
-            margin: 3,
-            errorCorrectionLevel: "M",
+          const renderedQr = await QRCode.toDataURL(qr, {
+            width: 440,
+            margin: 4,
+            errorCorrectionLevel: "L",
             color: {
               dark: "#000000",
               light: "#ffffff",
             },
           });
+          qrCodeDataUrl = renderedQr;
           qrSeq += 1;
-          qrUpdatedAt = Date.now();
-          console.log(`[WhatsApp Bot] QR Code #${qrSeq} siap dipindai.`);
+          qrIndexInCycle += 1;
+          const now = Date.now();
+          qrUpdatedAt = now;
+          // Matches Baileys native genPairQR timing (60s first QR, 20s subsequent refs)
+          qrTtlMs = qrIndexInCycle <= 1 ? 60000 : 20000;
+          qrExpiresAt = now + qrTtlMs;
+          connectionStatus = "qr";
+          console.log(`[WhatsApp Bot] QR Code #${qrSeq} (cycle #${qrIndexInCycle}, TTL ${qrTtlMs / 1000}s) siap dipindai.`);
         } catch (err: any) {
           console.error("Failed to generate QR data URL", err);
           qrCodeDataUrl = null;
+          qrExpiresAt = null;
         }
       }
 
@@ -909,6 +981,7 @@ Silakan buka tautan di atas untuk mengakses menu absensi dan mencatat kehadiran 
         activePairingRequestedAt = null;
         qrCodeDataUrl = null;
         qrUpdatedAt = null;
+        qrExpiresAt = null;
         reconnectAttempts = 0;
         lastError = null;
         const user = sock?.user;
@@ -917,6 +990,9 @@ Silakan buka tautan di atas untuk mengakses menu absensi dan mencatat kehadiran 
 
         // Backup session files immediately upon successful connection
         await pendingCredsSave.catch(() => {});
+        if (activeSaveCreds) {
+          await activeSaveCreds().catch(() => {});
+        }
         backupAuthStateToPersistentStore();
 
         // Start presence keep-alive loop (send presence update every 45s)
@@ -939,11 +1015,12 @@ Silakan buka tautan di atas untuk mengakses menu absensi dan mencatat kehadiran 
         const errMsg = String((lastDisconnect?.error as any)?.message || "");
         const isQrTimedOut = errMsg.includes("QR refs attempts ended") || statusCode === 408 || statusCode === DisconnectReason?.timedOut;
         
-        console.log(`[WhatsApp Bot] Connection closed. StatusCode: ${statusCode}, RestartRequired: ${isRestartRequired}, LoggedOut: ${isLoggedOut}, QrTimedOut: ${isQrTimedOut}, Attempts: ${reconnectAttempts}`);
+        console.log(`[WhatsApp Bot] Connection closed. StatusCode: ${statusCode}, RestartRequired: ${isRestartRequired}, LoggedOut: ${isLoggedOut}, QrTimedOut: ${isQrTimedOut}, HadPairingCode: ${Boolean(activePairingCode)}, Attempts: ${reconnectAttempts}`);
         
         connectedUser = null;
         qrCodeDataUrl = null;
         qrUpdatedAt = null;
+        qrExpiresAt = null;
 
         if (presenceKeepAliveTimer) {
           clearInterval(presenceKeepAliveTimer);
@@ -952,13 +1029,15 @@ Silakan buka tautan di atas untuk mengakses menu absensi dan mencatat kehadiran 
 
         // 1. Critical for WhatsApp Web & WhatsApp Business: DisconnectReason 515 (restartRequired)
         // Emitted right after initial QR scan or pairing code handshake to finalize authentication keys.
-        // Wait for creds.json flush, then reconnect immediately (< 250ms).
         if (isRestartRequired) {
           console.log("[WhatsApp Bot] Penautan WhatsApp meminta restart segera (515 restartRequired). Menyimpan kredensial & menghubungkan ulang...");
           reconnectAttempts = 0;
           isPairingInProgress = true;
           connectionStatus = "connecting";
           await pendingCredsSave.catch(() => {});
+          if (activeSaveCreds) {
+            await activeSaveCreds().catch(() => {});
+          }
           reconnectTimer = setTimeout(() => {
             initWhatsApp(true).catch((err) => console.error("Error in restartRequired reconnect:", err));
           }, 150);
@@ -967,12 +1046,15 @@ Silakan buka tautan di atas untuk mengakses menu absensi dan mencatat kehadiran 
 
         // 2. Logged out, forbidden, or bad auth session
         if (isLoggedOut || isForbidden) {
+          const hadPairing = Boolean(activePairingCode);
           isPairingInProgress = false;
           activePairingCode = null;
           activePairingPhone = null;
           activePairingRequestedAt = null;
           connectionStatus = "disconnected";
-          lastError = "Sesi WhatsApp telah dikeluarkan (logged out) atau kedaluwarsa. Silakan scan ulang QR Code atau minta Kode Pairing baru.";
+          lastError = hadPairing
+            ? `Permintaan Kode Pairing ditolak atau dibatalkan oleh server WhatsApp (kode ${statusCode}). Pastikan nomor aktif di WhatsApp dan perangkat tertaut belum penuh (maks 4), lalu minta kode baru atau gunakan QR.`
+            : "Sesi WhatsApp telah dikeluarkan (logged out) atau kedaluwarsa. Klik 'Refresh QR Baru' atau minta Kode Pairing baru.";
           cleanupAuthFolder();
           clearAuthBackup();
           reconnectAttempts = 0;
@@ -981,15 +1063,34 @@ Silakan buka tautan di atas untuk mengakses menu absensi dan mencatat kehadiran 
 
         // 3. QR/Pairing refs exhausted before user scanned or entered pairing code
         if (isQrTimedOut && !hasRegisteredLocalCreds()) {
-          console.log("[WhatsApp Bot] Siklus QR/Pairing selesai sebelum tertaut. Membersihkan sesi sementara & memulai sesi baru...");
+          const hadPairing = Boolean(activePairingCode);
           isPairingInProgress = false;
           activePairingCode = null;
           activePairingPhone = null;
           activePairingRequestedAt = null;
           reconnectAttempts = 0;
-          connectionStatus = "connecting";
           cleanupAuthFolder();
           clearAuthBackup();
+
+          if (hadPairing) {
+            console.log("[WhatsApp Bot] Waktu konfirmasi Kode Pairing habis sebelum dimasukkan di HP.");
+            connectionStatus = "disconnected";
+            lastError = "Waktu konfirmasi Kode Pairing habis (~2 menit) sebelum dimasukkan di WhatsApp HP Anda. Klik 'Minta Kode Pairing' lagi untuk membuat kode baru.";
+            return;
+          }
+
+          // Only auto-start next QR cycle if the linking UI is actively open & polling;
+          // otherwise stay idle in disconnected so we don't churn Meta endpoints continuously.
+          const isUiActivelyPolling = Date.now() - lastUiPollAt < 25000;
+          if (!isUiActivelyPolling) {
+            console.log("[WhatsApp Bot] Siklus QR selesai tanpa UI aktif. Menunggu pengguna membuka menu QR...");
+            connectionStatus = "disconnected";
+            lastError = null;
+            return;
+          }
+
+          console.log("[WhatsApp Bot] Siklus QR selesai, memulai siklus QR baru (60 detik)...");
+          connectionStatus = "connecting";
           reconnectTimer = setTimeout(() => {
             initWhatsApp(true).catch((err) => console.error("Error restarting QR stream:", err));
           }, 500);
@@ -997,6 +1098,12 @@ Silakan buka tautan di atas untuk mengakses menu absensi dan mencatat kehadiran 
         }
 
         // 4. Normal transient disconnect (e.g. 428 connection closed, network drop)
+        if (activePairingCode && !hasRegisteredLocalCreds()) {
+          activePairingCode = null;
+          activePairingPhone = null;
+          activePairingRequestedAt = null;
+          cleanupAuthFolder();
+        }
         reconnectAttempts++;
         connectionStatus = "connecting";
         const delay = Math.min(15000, 1500 + Math.min(reconnectAttempts, 5) * 2000);
@@ -1043,6 +1150,7 @@ export async function disconnectWhatsApp(autoRestart = false, skipRemoteLogout =
     const wasConnected = connectionStatus === "connected";
     qrCodeDataUrl = null;
     qrUpdatedAt = null;
+    qrExpiresAt = null;
     isPairingInProgress = false;
     activePairingCode = null;
     activePairingPhone = null;
@@ -1155,7 +1263,9 @@ export async function sendWhatsAppMessage(phoneNumber: string, text: string): Pr
 // Request pairing code helper (Link via Phone Number)
 export async function requestWhatsAppPairingCode(phone: string): Promise<string> {
   let cleaned = phone.replace(/[^0-9]/g, "");
-  if (cleaned.startsWith("0")) {
+  if (cleaned.startsWith("620")) {
+    cleaned = "62" + cleaned.slice(3);
+  } else if (cleaned.startsWith("0")) {
     cleaned = "62" + cleaned.slice(1);
   } else if (cleaned.startsWith("8")) {
     cleaned = "62" + cleaned;
@@ -1165,20 +1275,12 @@ export async function requestWhatsAppPairingCode(phone: string): Promise<string>
     throw new Error("Nomor WhatsApp tidak valid. Masukkan nomor lengkap dengan kode negara (contoh: 0812xxxxxx atau 62812xxxxxx).");
   }
 
-  // Always reset if already connected or if previous unregistered socket has dirty creds.me or closed WebSocket
-  const hasDirtyUnregisteredState =
-    Boolean(sock?.authState?.creds?.me?.id && !sock?.authState?.creds?.registered) ||
-    (fs.existsSync(path.join(AUTH_DIR, "creds.json")) && !hasRegisteredLocalCreds()) ||
-    Boolean(activePairingCode);
-
-  if (connectionStatus === "connected" && sock) {
-    await disconnectWhatsApp(false);
-    await initWhatsApp(true);
-  } else if (hasDirtyUnregisteredState || !sock || !sock?.ws?.isOpen || connectionStatus !== "qr") {
-    console.log("[WhatsApp Bot] Menyiapkan socket Baileys baru yang bersih khusus untuk Kode Pairing...");
-    await disconnectWhatsApp(false, true);
-    await initWhatsApp(true);
-  }
+  // Always start a brand-new, unpolluted socket specifically for this pairing code request
+  // so the user gets a full timeout window and clean unregistered creds without stale refs.
+  console.log("[WhatsApp Bot] Menyiapkan socket Baileys baru yang bersih khusus untuk Kode Pairing...");
+  await disconnectWhatsApp(false, connectionStatus !== "connected");
+  lastError = null;
+  await initWhatsApp(true);
 
   // Wait until WebSocket is TRULY open AND WhatsApp server finished pair-device handshake (connectionStatus === 'qr')
   const waitStart = Date.now();
@@ -1207,6 +1309,7 @@ export async function requestWhatsAppPairingCode(phone: string): Promise<string>
     }
 
     // Monitor incoming IQ result/error frames from WhatsApp servers during pairing request
+    // Note: Meta sends attrs.from === "@s.whatsapp.net" (with leading @).
     let iqErrorCode: string | null = null;
     let iqErrorText: string | null = null;
     let iqSettled = false;
@@ -1215,7 +1318,8 @@ export async function requestWhatsAppPairingCode(phone: string): Promise<string>
     const frameListener = (frame: any) => {
       try {
         if (!frame || typeof frame !== "object" || frame instanceof Uint8Array) return;
-        if (frame.tag === "iq" && frame.attrs?.from === "s.whatsapp.net") {
+        const fromAttr = frame.attrs?.from || "";
+        if (frame.tag === "iq" && (!fromAttr || fromAttr === "@s.whatsapp.net" || fromAttr === "s.whatsapp.net")) {
           if (frame.attrs?.type === "error") {
             const errChild = Array.isArray(frame.content)
               ? frame.content.find((c: any) => c?.tag === "error")
@@ -1227,7 +1331,7 @@ export async function requestWhatsAppPairingCode(phone: string): Promise<string>
             const regChild = Array.isArray(frame.content)
               ? frame.content.find((c: any) => c?.tag === "link_code_companion_reg")
               : null;
-            if (regChild || !Array.isArray(frame.content) || frame.content.length === 0) {
+            if (regChild) {
               iqSettled = true;
             }
           }
@@ -1239,9 +1343,9 @@ export async function requestWhatsAppPairingCode(phone: string): Promise<string>
     let rawCode: string | undefined;
     try {
       rawCode = await sock.requestPairingCode(cleaned);
-      // Wait up to 1.8s to see if WhatsApp immediately rejects the IQ stanza
+      // Wait up to 2.5s to confirm WhatsApp accepted companion_hello without IQ error
       const iqWaitStart = Date.now();
-      while (!iqSettled && Date.now() - iqWaitStart < 1800) {
+      while (!iqSettled && Date.now() - iqWaitStart < 2500) {
         await new Promise((r) => setTimeout(r, 100));
       }
     } finally {

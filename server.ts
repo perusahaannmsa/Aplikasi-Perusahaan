@@ -26,7 +26,8 @@ import {
   getKeepAliveInfo,
   hasAuthBackup,
   hasWhatsAppCredentials,
-  isWhatsAppConnected
+  isWhatsAppConnected,
+  markUiStatusPoll
 } from "./server/wa-bot";
 import { getDynamicReminderMessage } from "./src/utils/reminderMessageGenerator";
 
@@ -3818,8 +3819,12 @@ app.get("/api/wa/keepalive-stats", (req, res) => {
 // GET WhatsApp connection status
 app.get("/api/wa/status", (req, res) => {
   try {
+    const isBackgroundPoll = req.query.background === "1";
+    if (!isBackgroundPoll) {
+      markUiStatusPoll();
+    }
     let status = getWhatsAppStatus();
-    if (status.status === "disconnected") {
+    if (status.status === "disconnected" && (hasWhatsAppCredentials() || (!isBackgroundPoll && !status.error))) {
       initWhatsApp().catch((err) => console.error("Auto init WA on status error:", err));
       status = getWhatsAppStatus();
     }
@@ -3881,6 +3886,7 @@ app.get("/api/wa/status", (req, res) => {
 // POST Refresh QR code manually
 app.post("/api/wa/refresh-qr", async (req, res) => {
   try {
+    markUiStatusPoll();
     console.log("[WhatsApp Bot] Memperbarui QR Code atas permintaan pengguna...");
     await disconnectWhatsApp(false, true);
     await initWhatsApp(true);
@@ -3918,6 +3924,7 @@ app.post("/api/wa/disconnect", async (req, res) => {
 
 // POST Request pairing code for phone linking
 app.post("/api/wa/pairing-code", async (req, res) => {
+  markUiStatusPoll();
   const { phone } = req.body || {};
   if (!phone || !String(phone).trim()) {
     return res.status(400).json({ success: false, error: "Nomor WhatsApp wajib diisi." });

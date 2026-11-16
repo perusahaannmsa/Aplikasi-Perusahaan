@@ -116,6 +116,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
   const [isPairingInProgress, setIsPairingInProgress] = useState<boolean>(false);
   const [isVercelServerless, setIsVercelServerless] = useState<boolean>(false);
   const lastQrSeqRef = useRef<number>(0);
+  const qrExpiresAtRef = useRef<number | null>(null);
   const isFetchingStatusRef = useRef<boolean>(false);
   const statusRef = useRef<string>(status);
   const pairingCodeRef = useRef<string | null>(null);
@@ -400,18 +401,24 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
     }
   };
 
-  const [qrCountdown, setQrCountdown] = useState<number>(45);
+  const [qrCountdown, setQrCountdown] = useState<number>(60);
   const [isQrZoomed, setIsQrZoomed] = useState<boolean>(false);
 
-  // Non-destructive display timer only (Baileys rotates QR automatically on the live socket;
-  // NEVER call disconnect/refresh-qr automatically because that destroys active QR handshakes!)
+  // Accurate display timer synced strictly to server's qrExpiresAt (no fake random jumps)
   useEffect(() => {
     if (!isOpen || activeLinkMethod !== 'qr' || status !== 'qr' || isPairingInProgress) return;
-    const timer = setInterval(() => {
-      setQrCountdown((prev) => (prev > 1 ? prev - 1 : 20));
-    }, 1000);
+    const syncRemaining = () => {
+      if (qrExpiresAtRef.current) {
+        const secs = Math.max(0, Math.ceil((qrExpiresAtRef.current - Date.now()) / 1000));
+        setQrCountdown(secs);
+      } else {
+        setQrCountdown((prev) => (prev > 0 ? prev - 1 : 0));
+      }
+    };
+    syncRemaining();
+    const timer = setInterval(syncRemaining, 1000);
     return () => clearInterval(timer);
-  }, [isOpen, activeLinkMethod, status, isPairingInProgress]);
+  }, [isOpen, activeLinkMethod, status, isPairingInProgress, qrCode]);
 
   useEffect(() => {
     statusRef.current = status;
@@ -428,7 +435,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
       // 1. Check server status for real Baileys connection / live QR code
       let serverStatus = '';
       let serverIsVercel = false;
-      const res = await apiFetch('/api/wa/status');
+      const res = await apiFetch('/api/wa/status?activeUi=1');
       if (res.ok) {
         const data = await res.json().catch(() => ({}));
         serverStatus = data.status || '';
@@ -440,21 +447,38 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
           setStatus('connected');
           setConnectedUser(data.user);
           setQrCode(null);
+          qrExpiresAtRef.current = null;
           setPairingCode(null);
           setIsPairingInProgress(false);
           setErrorMessage(null);
           return;
         }
-        if (data.pairingCode && !pairingCodeRef.current) {
-          setPairingCode(safeString(data.pairingCode));
+        if (data.pairingCode) {
+          const nextCode = safeString(data.pairingCode);
+          if (pairingCodeRef.current !== nextCode) {
+            setPairingCode(nextCode);
+          }
+        } else if (pairingCodeRef.current) {
+          setPairingCode(null);
         }
         if ((data.status === 'qr' || data.qr) && data.qr && !data.isPairingInProgress) {
           setQrCode((prev) => (prev === data.qr ? prev : data.qr));
           setStatus('qr');
-          setErrorMessage(null);
+          if (data.error) {
+            setErrorMessage(safeString(data.error));
+          }
+          if (data.qrExpiresAt) {
+            const clockOffset = data.serverNow ? Date.now() - Number(data.serverNow) : 0;
+            qrExpiresAtRef.current = Number(data.qrExpiresAt) + clockOffset;
+            setQrCountdown(Math.max(0, Math.ceil((qrExpiresAtRef.current - Date.now()) / 1000)));
+          }
           if (typeof data.qrSeq === 'number' && data.qrSeq !== lastQrSeqRef.current) {
             lastQrSeqRef.current = data.qrSeq;
-            setQrCountdown(data.qrSeq <= 1 ? 45 : 20);
+            if (!data.qrExpiresAt) {
+              const fallbackTtl = data.qrTtlMs || (data.qrSeq <= 1 ? 60000 : 20000);
+              qrExpiresAtRef.current = Date.now() + fallbackTtl;
+              setQrCountdown(Math.ceil(fallbackTtl / 1000));
+            }
           }
           return;
         }
@@ -462,6 +486,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
           setStatus('connecting');
           if (data.isPairingInProgress) {
             setQrCode(null);
+            qrExpiresAtRef.current = null;
           }
           setErrorMessage(null);
           return;
@@ -473,6 +498,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
           setStatus(data.status);
           if (data.status === 'disconnected') {
             setQrCode(null);
+            qrExpiresAtRef.current = null;
           }
         }
       }
@@ -529,13 +555,19 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
     setIsPairingInProgress(false);
     setPairingCode(null);
     setQrCode(null);
-    setQrCountdown(45);
+    qrExpiresAtRef.current = null;
+    setQrCountdown(60);
     try {
       const res = await apiFetch('/api/wa/refresh-qr', { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (data.qr) {
         setQrCode(data.qr);
         setStatus('qr');
+        if (data.qrExpiresAt) {
+          const clockOffset = data.serverNow ? Date.now() - Number(data.serverNow) : 0;
+          qrExpiresAtRef.current = Number(data.qrExpiresAt) + clockOffset;
+          setQrCountdown(Math.max(0, Math.ceil((qrExpiresAtRef.current - Date.now()) / 1000)));
+        }
         if (typeof data.qrSeq === 'number') {
           lastQrSeqRef.current = data.qrSeq;
         }
@@ -657,10 +689,11 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
     setErrorMessage(null);
     try {
       let clean = pairingPhone.replace(/[^0-9]/g, '');
-      if (clean.startsWith('0')) clean = '62' + clean.slice(1);
+      if (clean.startsWith('620')) clean = '62' + clean.slice(3);
+      else if (clean.startsWith('0')) clean = '62' + clean.slice(1);
       else if (clean.startsWith('8')) clean = '62' + clean;
 
-      if (clean.length < 9) {
+      if (clean.length < 9 || clean.length > 15) {
         setErrorMessage('Format nomor tidak valid. Masukkan nomor WhatsApp lengkap (minimal 9 digit, contoh: 0812xxxxxx).');
         setPairingLoading(false);
         return;
@@ -1497,6 +1530,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                             <img 
                               src={qrCode} 
                               alt="WhatsApp QR Code" 
+                              style={{ imageRendering: 'pixelated' }}
                               className="w-full h-full object-contain rounded-lg select-all"
                             />
                           ) : isVercelServerless ? (
@@ -1566,9 +1600,22 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                               </span>
                             </span>
                             <span className={`font-bold ${qrCountdown <= 8 ? 'text-amber-800' : 'text-emerald-700'}`}>
-                              {isPairingInProgress ? 'Sinkron' : qrCode ? `${qrCountdown} Detik` : '...'}
+                              {isPairingInProgress
+                                ? 'Sinkron'
+                                : qrCode
+                                ? qrCountdown > 0
+                                  ? `${qrCountdown} Detik`
+                                  : 'Rotasi QR...'
+                                : '...'}
                             </span>
                           </div>
+
+                          {errorMessage && (
+                            <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-800 text-[11px] rounded-lg flex items-start gap-2 text-left">
+                              <AlertCircle size={14} className="shrink-0 mt-0.5 text-rose-600" />
+                              <span className="flex-1">{safeString(errorMessage)}</span>
+                            </div>
+                          )}
 
                           <div className="flex items-center gap-2">
                             <button

@@ -1653,7 +1653,7 @@ export function AbsensiHarianNmsa({
       if (waStatusInFlightRef.current) return;
       waStatusInFlightRef.current = true;
       try {
-        const res = await apiFetch("/api/wa/status", {
+        const res = await apiFetch(isDashWaOpen ? "/api/wa/status?activeUi=1" : "/api/wa/status?background=1", {
           headers: { Accept: "application/json" }
         });
         const contentType = res.headers.get("content-type");
@@ -4499,10 +4499,11 @@ export function AbsensiHarianNmsa({
   // --- WhatsApp Baileys Controller Handlers ---
   const handleRequestWaPairingCode = async () => {
     let clean = waPairingPhone.replace(/[^0-9]/g, "");
-    if (clean.startsWith("0")) clean = "62" + clean.slice(1);
+    if (clean.startsWith("620")) clean = "62" + clean.slice(3);
+    else if (clean.startsWith("0")) clean = "62" + clean.slice(1);
     else if (clean.startsWith("8")) clean = "62" + clean;
 
-    if (!clean || clean.length < 9) {
+    if (!clean || clean.length < 9 || clean.length > 15) {
       setWaBotError("Silakan masukkan nomor WhatsApp yang valid terlebih dahulu (contoh: 0812xxxxxx).");
       return;
     }
@@ -7471,10 +7472,10 @@ export function AbsensiHarianNmsa({
                                   <img 
                                     src={waBotQr} 
                                     alt="WhatsApp QR Code Scanner" 
-                                    className="w-48 h-48 block mx-auto rounded-lg object-contain"
+                                    style={{ imageRendering: "pixelated" }}
+                                    className="w-52 h-52 block mx-auto rounded-lg object-contain"
                                     referrerPolicy="no-referrer"
                                   />
-                                  <div className="absolute inset-0 border-2 border-emerald-500/20 rounded-2xl pointer-events-none animate-pulse" />
                                 </div>
 
                                 <div className="text-[10px] text-amber-800 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-medium leading-normal max-w-xs mx-auto">
