@@ -145,6 +145,10 @@ export interface Submission {
   loanId?: string;
   loanNumber?: string;
 
+  // Monthly Recurring Transaction link (Transaksi Bulanan Otomatis)
+  recurringTemplateId?: string;
+  recurringMonth?: string; // YYYY-MM
+
   items: SubmissionItem[];
   createdAt: string;
   updatedAt?: string;
@@ -672,4 +676,37 @@ export interface EmployeeLoan {
   createdAt: string;
   updatedAt?: string;
 }
+
+/* ============================================================================
+ * TRANSAKSI BULANAN OTOMATIS (DETEKSI BERKELANJUTAN TIAP BULAN < TGL 15)
+ * ============================================================================ */
+export interface MonthlyExecutionRecord {
+  monthKey: string; // Format YYYY-MM (misal: "2026-11")
+  status: 'paid' | 'skipped';
+  paidAt: string; // ISO string atau YYYY-MM-DD
+  submissionId?: string;
+  submissionCode?: string;
+  amount?: number;
+  markedManually?: boolean;
+  note?: string;
+}
+
+export interface MonthlyRecurringTransaction {
+  id: string;
+  title: string;
+  category: string; // Jenis pengajuan Voucher HO (e.g. "Biaya Gaji", "Biaya Operasional")
+  recipient: string; // Dibayarkan kepada / vendor / penerima
+  defaultAmount: number; // Estimasi nominal rutin
+  paymentMethod: PaymentMethod;
+  dueDay: number; // Tanggal batas pembayaran tiap bulan (default 15)
+  matchKeywords: string[]; // Kata kunci untuk deteksi otomatis di Voucher HO
+  notes?: string;
+  isActive: boolean; // Berkelanjutan otomatis tiap 1 bulan sekali
+  startMonth?: string; // YYYY-MM
+  companyId?: string;
+  paidMonths?: Record<string, MonthlyExecutionRecord>;
+  createdAt: string;
+  updatedAt?: string;
+}
+
 

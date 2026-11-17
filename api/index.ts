@@ -44,6 +44,8 @@ function loadState(): any {
     npwpRecords: [],
     sppdRecords: [],
     agendaItems: [],
+    monthlyTransactions: [],
+    deletedMonthlyIds: [],
     projects: [],
     internalMemos: [],
     adminUsername: "admin",
@@ -411,8 +413,15 @@ export default async function handler(req: any, res: any) {
         const body = await parseRequestBody(req);
         if (Array.isArray(body)) {
           state.submissions = body;
-        } else if (body && Array.isArray(body.submissions)) {
-          state.submissions = body.submissions;
+        } else if (body && typeof body === "object") {
+          if (Array.isArray(body.submissions)) state.submissions = body.submissions;
+          if (Array.isArray(body.deletedMonthlyIds)) {
+            state.deletedMonthlyIds = Array.from(new Set([...(state.deletedMonthlyIds || []), ...body.deletedMonthlyIds.map(String)]));
+          }
+          if (Array.isArray(body.monthlyTransactions)) {
+            const delSet = new Set((state.deletedMonthlyIds || []).map(String));
+            state.monthlyTransactions = body.monthlyTransactions.filter((m: any) => m && m.id && !delSet.has(String(m.id)));
+          }
         }
         saveState(state);
         return res.end(
@@ -431,6 +440,8 @@ export default async function handler(req: any, res: any) {
           raw: {
             workers: state.workers || [],
             deletedWorkerIds: state.deletedWorkerIds || [],
+            monthlyTransactions: state.monthlyTransactions || [],
+            deletedMonthlyIds: state.deletedMonthlyIds || [],
           },
           companyId: "nmsa",
           source: "vercel-serverless",

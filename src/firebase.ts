@@ -31,7 +31,7 @@ import {
   signInWithPopup,
   sendPasswordResetEmail
 } from 'firebase/auth';
-import { Submission, SubmissionItem, ActivityLog, NpwpRecord, CompanyProfile, InternalMemo, Worker } from './types';
+import { Submission, SubmissionItem, ActivityLog, NpwpRecord, CompanyProfile, InternalMemo, Worker, MonthlyRecurringTransaction } from './types';
 import { INITIAL_WORKERS } from './constantsAbsen';
 import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission } from './utils';
 import { apiFetch } from './utils/backendApi';
@@ -263,6 +263,10 @@ export const mapFirestoreToSubmission = (docId: string, data: any): Submission =
     accurateKasAccountCode: data.accurateKasAccountCode || '',
     accurateReportTitle: data.accurateReportTitle || '',
 
+    // Recurring Monthly Transaction Link
+    recurringTemplateId: data.recurringTemplateId || undefined,
+    recurringMonth: data.recurringMonth || undefined,
+
     items: mappedItems,
     createdAt: createdAtStr,
     deletedPageIds: Array.isArray(data.deletedPageIds) ? data.deletedPageIds : []
@@ -446,6 +450,8 @@ export const mapSubmissionToFirestore = (
     disetujuiJabatan2: sub.disetujuiJabatan2 || '',
     dibukukanOleh: sub.dibukukanOleh || '',
     dibukukanJabatan: sub.dibukukanJabatan || '',
+    recurringTemplateId: sub.recurringTemplateId || null,
+    recurringMonth: sub.recurringMonth || null,
     deletedPageIds: sub.deletedPageIds || []
   };
 };
@@ -3989,6 +3995,93 @@ export const deleteInternalMemoFromFirestore = async (id: string): Promise<void>
   } catch (err) {
     console.warn('Failed to delete internal memo locally:', err);
   }
+};
+
+// --- Monthly Recurring Transactions Cloud Sync (Single master doc on existing attendance collection) ---
+export const loadMonthlyTransactionsFromFirestore = async (): Promise<{ items: MonthlyRecurringTransaction[]; deletedIds: string[] } | null> => {
+  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return null;
+  const docPath = 'attendance/monthly_transactions_master';
+  try {
+    const docRef = doc(firestoreDb, 'attendance', 'monthly_transactions_master');
+    const snap = await getDoc(docRef);
+    recordFirestoreReads(1);
+    if (snap.exists()) {
+      const data = snap.data() || {};
+      const items: MonthlyRecurringTransaction[] = Array.isArray(data.monthlyTransactions) ? data.monthlyTransactions : [];
+      const deletedIds: string[] = Array.isArray(data.deletedMonthlyIds) ? data.deletedMonthlyIds.map(String) : [];
+      return { items, deletedIds };
+    }
+    return { items: [], deletedIds: [] };
+  } catch (err: any) {
+    if (err?.code === 'resource-exhausted' || err?.message?.includes('Quota exceeded')) {
+      markFirestoreQuotaExceeded();
+    } else {
+      console.warn(`⚠️ Gagal memuat ${docPath} dari Firestore:`, err?.message || err);
+    }
+    return null;
+  }
+};
+
+export const saveMonthlyTransactionsToFirestore = async (
+  items: MonthlyRecurringTransaction[],
+  deletedIds: string[] = []
+): Promise<boolean> => {
+  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return false;
+  const docPath = 'attendance/monthly_transactions_master';
+  try {
+    const docRef = doc(firestoreDb, 'attendance', 'monthly_transactions_master');
+    const delSet = new Set(deletedIds.map(String));
+    const cleanItems = cleanUndefined(
+      items.filter(item => item && item.id && !delSet.has(String(item.id)))
+    );
+    await setDoc(
+      docRef,
+      {
+        monthlyTransactions: cleanItems,
+        deletedMonthlyIds: Array.from(delSet).slice(-200),
+        totalItems: cleanItems.length,
+        updatedAt: new Date().toISOString()
+      },
+      { merge: true }
+    );
+    recordFirestoreWrites(1);
+    return true;
+  } catch (err: any) {
+    if (err?.code === 'resource-exhausted' || err?.message?.includes('Quota exceeded')) {
+      markFirestoreQuotaExceeded();
+    } else {
+      console.warn(`⚠️ Gagal menyimpan ${docPath} ke Firestore:`, err?.message || err);
+    }
+    return false;
+  }
+};
+
+export const subscribeToMonthlyTransactionsFromFirestore = (
+  onUpdate: (items: MonthlyRecurringTransaction[], deletedIds: string[]) => void
+): (() => void) => {
+  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) {
+    return () => {};
+  }
+  const docRef = doc(firestoreDb, 'attendance', 'monthly_transactions_master');
+  return onSnapshot(
+    docRef,
+    (snap) => {
+      recordFirestoreReads(1);
+      if (snap.exists()) {
+        const data = snap.data() || {};
+        const items: MonthlyRecurringTransaction[] = Array.isArray(data.monthlyTransactions) ? data.monthlyTransactions : [];
+        const deletedIds: string[] = Array.isArray(data.deletedMonthlyIds) ? data.deletedMonthlyIds.map(String) : [];
+        onUpdate(items, deletedIds);
+      }
+    },
+    (err: any) => {
+      if (err?.code === 'resource-exhausted' || err?.message?.includes('Quota exceeded')) {
+        markFirestoreQuotaExceeded();
+      } else {
+        console.warn('⚠️ Realtime listener monthly_transactions_master notice:', err?.message || err);
+      }
+    }
+  );
 };
 
 // Load initial config checking

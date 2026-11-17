@@ -1862,6 +1862,8 @@ function readState() {
     npwpRecords: [],
     sppdRecords: [],
     agendaItems: [],
+    monthlyTransactions: [],
+    deletedMonthlyIds: [],
     submissions: [],
     internalMemos: [],
     accurateAccounts: [],
@@ -2038,6 +2040,8 @@ app.post("/api/shared-state", (req, res) => {
       npwpRecords,
       sppdRecords,
       agendaItems,
+      monthlyTransactions,
+      deletedMonthlyIds,
       submissions,
       projects,
       projectRab,
@@ -2237,6 +2241,8 @@ app.post("/api/shared-state", (req, res) => {
       npwpRecords: npwpRecords !== undefined ? npwpRecords : currentState.npwpRecords,
       sppdRecords: sppdRecords !== undefined ? sppdRecords : currentState.sppdRecords,
       agendaItems: agendaItems !== undefined ? agendaItems : currentState.agendaItems,
+      monthlyTransactions: monthlyTransactions !== undefined ? monthlyTransactions : (currentState.monthlyTransactions || []),
+      deletedMonthlyIds: deletedMonthlyIds !== undefined ? deletedMonthlyIds : (currentState.deletedMonthlyIds || []),
       submissions: submissions !== undefined ? submissions : currentState.submissions,
       projects: projects !== undefined ? projects : currentState.projects,
       projectRab: projectRab !== undefined ? projectRab : currentState.projectRab,
@@ -2383,6 +2389,10 @@ app.get("/api/unified-storage", (req, res) => {
       menu6_agenda_kerja: {
         agendaItems: state.agendaItems || []
       },
+      menu_transaksi_bulanan: {
+        monthlyTransactions: state.monthlyTransactions || [],
+        deletedMonthlyIds: state.deletedMonthlyIds || []
+      },
       menu_internal_memos: {
         internalMemos: state.internalMemos || []
       },
@@ -2440,6 +2450,13 @@ app.post("/api/unified-storage", (req, res) => {
     if (incoming.npwpRecords !== undefined) state.npwpRecords = incoming.npwpRecords;
     if (incoming.sppdRecords !== undefined) state.sppdRecords = incoming.sppdRecords;
     if (incoming.agendaItems !== undefined) state.agendaItems = incoming.agendaItems;
+    if (incoming.deletedMonthlyIds !== undefined && Array.isArray(incoming.deletedMonthlyIds)) {
+      state.deletedMonthlyIds = Array.from(new Set([...(state.deletedMonthlyIds || []), ...incoming.deletedMonthlyIds.map(String)]));
+    }
+    if (incoming.monthlyTransactions !== undefined && Array.isArray(incoming.monthlyTransactions)) {
+      const delMonthly = new Set((state.deletedMonthlyIds || []).map(String));
+      state.monthlyTransactions = incoming.monthlyTransactions.filter((m: any) => m && m.id && !delMonthly.has(String(m.id)));
+    }
     if (incoming.internalMemos !== undefined) state.internalMemos = incoming.internalMemos;
     if (incoming.projects !== undefined) state.projects = incoming.projects;
     if (incoming.projectRab !== undefined) state.projectRab = incoming.projectRab;

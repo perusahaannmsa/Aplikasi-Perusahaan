@@ -2500,6 +2500,10 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         projectAccountCode: projectAccountCode || undefined,
         projectAccountName: projectAccountName || undefined,
 
+        // Link to Monthly Recurring Transaction
+        recurringTemplateId: initialSubmission?.recurringTemplateId || undefined,
+        recurringMonth: initialSubmission?.recurringMonth || undefined,
+
         items: cleanedItems,
         createdAt: initialSubmission ? initialSubmission.createdAt : new Date().toISOString(),
         updatedAt: new Date().toISOString()

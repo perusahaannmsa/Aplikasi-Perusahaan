@@ -70,6 +70,26 @@
         "updatedAt": { "type": "number" }
       },
       "required": ["id", "name"]
+    },
+    "monthlyTransaction": {
+      "title": "MonthlyRecurringTransaction",
+      "description": "Recurring monthly transaction schedule detected automatically every month before due day 15.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "recipient": { "type": "string" },
+        "defaultAmount": { "type": "number" },
+        "paymentMethod": { "type": "string", "enum": ["Tunai", "Cek/Transfer"] },
+        "dueDay": { "type": "number" },
+        "isActive": { "type": "boolean" },
+        "startMonth": { "type": "string" },
+        "companyId": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "title", "category", "recipient", "dueDay", "isActive"]
     }
   },
   "firestore": {
@@ -87,7 +107,7 @@
     },
     "attendance": {
       "schema": "attendanceRecord",
-      "description": "Daily employee attendance, weekly meal allowance reports, and workers_master list."
+      "description": "Daily employee attendance, weekly meal allowance reports, workers_master, and monthly_transactions_master schedule."
     }
   }
 }

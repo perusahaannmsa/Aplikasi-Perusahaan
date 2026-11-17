@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Submission, SubmissionItem, PettyCashReport, TransactionType, NpwpRecord, AgendaItem, Project, ProjectRabItem, ProjectExpense, InternalMemo, EmployeeLoan } from './types';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Submission, SubmissionItem, PettyCashReport, TransactionType, NpwpRecord, AgendaItem, Project, ProjectRabItem, ProjectExpense, InternalMemo, EmployeeLoan, MonthlyRecurringTransaction } from './types';
 import { INITIAL_SUBMISSIONS } from './data/initialData';
 import { INITIAL_AGENDA_ITEMS } from './data/initialAgenda';
 import { SubmissionsList } from './components/SubmissionsList';
@@ -43,6 +43,15 @@ import { ProjectBudgetRab } from './components/ProjectBudgetRab';
 import { CompanySwitcherModal } from './components/CompanySwitcherModal';
 import { InternalMemoManager } from './components/InternalMemoManager';
 import { EmployeeLoanManager } from './components/EmployeeLoanManager';
+import { MonthlyTransactionsManager } from './components/MonthlyTransactionsManager';
+import { MenuAlatView, AppViewMode } from './components/MenuAlatView';
+import { PengaturanView } from './components/PengaturanView';
+import {
+  STORAGE_KEY_MONTHLY_TRANSACTIONS,
+  getJakartaTodayParts,
+  getPendingMonthlySummary,
+  getSubmissionTotalAmount,
+} from './utils/monthlyTransactions';
 import { ThemeSelectorModal, AppTheme } from './components/ThemeSelectorModal';
 import { getSynchronizedAttendanceWorkers, getSavedEmployeeLoans, saveEmployeeLoans, isLoanSubmission, syncLoansWithSubmissions } from './utils/loanUtils';
 import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, syncInvoiceSubmissionToAgenda, formatDateIndonesian } from './utils';
@@ -82,13 +91,16 @@ import {
   isFirestoreQuotaExceeded,
   resetFirestoreQuotaCooldown,
   getPendingFirestoreSyncCount,
-  flushFirestoreQueue
+  flushFirestoreQueue,
+  loadMonthlyTransactionsFromFirestore,
+  saveMonthlyTransactionsToFirestore,
+  subscribeToMonthlyTransactionsFromFirestore
 } from './firebase';
 import { loadAttendanceFromFirestore, loadWorkersFromFirestore, mergeWorkerListsSafely, getDeletedWorkerIds } from './lib/firebaseAbsen';
 
 import { CleanFirestoreModal } from './components/CleanFirestoreModal';
 import { DriveDeduplicateModal } from './components/DriveDeduplicateModal';
-import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, ArrowLeftRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, Bell, MessageSquare, Bot, Sparkles, BookOpen, Wrench, Building2, Plus, HandCoins, ExternalLink, RefreshCw, FolderSync, Trash2 } from 'lucide-react';
+import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, ArrowLeftRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, CalendarClock, Bell, MessageSquare, Bot, Sparkles, BookOpen, Wrench, Building2, Plus, HandCoins, ExternalLink, RefreshCw, FolderSync, Trash2 } from 'lucide-react';
 
 export default function App() {
   const [theme, setTheme] = useState<AppTheme>(() => {
@@ -242,6 +254,91 @@ export default function App() {
     return [];
   });
 
+  // Transaksi Bulanan Otomatis (Jatuh Tempo Sebelum Tanggal 15)
+  const [deletedMonthlyIds, setDeletedMonthlyIds] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem('nmsa_monthly_deleted_ids_v1');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) return parsed.map(String);
+      }
+    } catch (e) {}
+    return [];
+  });
+
+  const [monthlyTransactions, setMonthlyTransactions] = useState<MonthlyRecurringTransaction[]>(() => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY_MONTHLY_TRANSACTIONS);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {}
+    return [];
+  });
+
+  const mergeMonthlyListsSafely = (
+    localList: MonthlyRecurringTransaction[],
+    incomingList: MonthlyRecurringTransaction[],
+    deletedIds: string[]
+  ): MonthlyRecurringTransaction[] => {
+    const delSet = new Set((deletedIds || []).map(String));
+    const map = new Map<string, MonthlyRecurringTransaction>();
+    for (const item of localList || []) {
+      if (item && item.id && !delSet.has(String(item.id))) {
+        map.set(String(item.id), item);
+      }
+    }
+    for (const item of incomingList || []) {
+      if (!item || !item.id || delSet.has(String(item.id))) continue;
+      const existing = map.get(String(item.id));
+      if (!existing) {
+        map.set(String(item.id), item);
+      } else {
+        const tEx = new Date(existing.updatedAt || existing.createdAt || 0).getTime();
+        const tIn = new Date(item.updatedAt || item.createdAt || 0).getTime();
+        if (tIn >= tEx) {
+          map.set(String(item.id), {
+            ...existing,
+            ...item,
+            paidMonths: { ...(existing.paidMonths || {}), ...(item.paidMonths || {}) },
+          });
+        }
+      }
+    }
+    return Array.from(map.values());
+  };
+
+  const handleSaveMonthlyTransactions = async (
+    updatedList: MonthlyRecurringTransaction[],
+    deletedId?: string
+  ) => {
+    const nextDeleted = deletedId
+      ? Array.from(new Set([...deletedMonthlyIds, String(deletedId)]))
+      : deletedMonthlyIds;
+    const delSet = new Set(nextDeleted.map(String));
+    const cleanList = (updatedList || []).filter((it) => it && it.id && !delSet.has(String(it.id)));
+
+    setDeletedMonthlyIds(nextDeleted);
+    setMonthlyTransactions(cleanList);
+    try {
+      localStorage.setItem(STORAGE_KEY_MONTHLY_TRANSACTIONS, JSON.stringify(cleanList));
+      localStorage.setItem('nmsa_monthly_deleted_ids_v1', JSON.stringify(nextDeleted));
+    } catch (e) {}
+
+    saveMonthlyTransactionsToFirestore(cleanList, nextDeleted).catch(() => {});
+    try {
+      fetch('/api/unified-storage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          monthlyTransactions: cleanList,
+          deletedMonthlyIds: nextDeleted,
+        }),
+      }).catch(() => {});
+    } catch (e) {}
+  };
+
   const [isHoldersModalOpen, setIsHoldersModalOpen] = useState(false);
   const [isConsolidateNamesModalOpen, setIsConsolidateNamesModalOpen] = useState(false);
   const [isDriveOrphanCleanerOpen, setIsDriveOrphanCleanerOpen] = useState(false);
@@ -314,6 +411,20 @@ export default function App() {
       }
     });
 
+    // 1c. Subscribe directly to monthly_transactions_master for real-time cross-device sync
+    const unsubscribeMonthly = subscribeToMonthlyTransactionsFromFirestore((cloudItems, cloudDeletedIds) => {
+      setDeletedMonthlyIds(prevDel => {
+        const mergedDel = Array.from(new Set([...prevDel, ...cloudDeletedIds]));
+        try { localStorage.setItem('nmsa_monthly_deleted_ids_v1', JSON.stringify(mergedDel)); } catch (e) {}
+        setMonthlyTransactions(prevItems => {
+          const merged = mergeMonthlyListsSafely(prevItems, cloudItems, mergedDel);
+          try { localStorage.setItem(STORAGE_KEY_MONTHLY_TRANSACTIONS, JSON.stringify(merged)); } catch (e) {}
+          return merged;
+        });
+        return mergedDel;
+      });
+    });
+
 
     // 2. Initial fallback fetch from server /api/unified-storage & /api/shared-state with resilient retry
     const loadSharedState = async (retries = 3, delay = 800) => {
@@ -366,6 +477,18 @@ export default function App() {
               if (fbData.agendaItems && Array.isArray(fbData.agendaItems) && fbData.agendaItems.length > 0) {
                 setAgendaItems(fbData.agendaItems);
                 localStorage.setItem('nmsa_agenda_items_v1', JSON.stringify(fbData.agendaItems));
+              }
+              if (fbData.monthlyTransactions && Array.isArray(fbData.monthlyTransactions)) {
+                const delIds = Array.from(new Set([...deletedMonthlyIds, ...((fbData.deletedMonthlyIds || []) as string[]).map(String)]));
+                setDeletedMonthlyIds(delIds);
+                setMonthlyTransactions(prev => {
+                  const merged = mergeMonthlyListsSafely(prev, fbData.monthlyTransactions, delIds);
+                  try {
+                    localStorage.setItem(STORAGE_KEY_MONTHLY_TRANSACTIONS, JSON.stringify(merged));
+                    localStorage.setItem('nmsa_monthly_deleted_ids_v1', JSON.stringify(delIds));
+                  } catch (_) {}
+                  return merged;
+                });
               }
               if (fbData.projects && Array.isArray(fbData.projects) && fbData.projects.length > 0) {
                 setProjects(fbData.projects);
@@ -426,6 +549,18 @@ export default function App() {
             if (raw.agendaItems && Array.isArray(raw.agendaItems) && raw.agendaItems.length > 0) {
               setAgendaItems(raw.agendaItems);
               localStorage.setItem('nmsa_agenda_items_v1', JSON.stringify(raw.agendaItems));
+            }
+            if (raw.monthlyTransactions && Array.isArray(raw.monthlyTransactions)) {
+              const delIds = Array.from(new Set([...deletedMonthlyIds, ...((raw.deletedMonthlyIds || []) as string[]).map(String)]));
+              setDeletedMonthlyIds(delIds);
+              setMonthlyTransactions(prev => {
+                const merged = mergeMonthlyListsSafely(prev, raw.monthlyTransactions, delIds);
+                try {
+                  localStorage.setItem(STORAGE_KEY_MONTHLY_TRANSACTIONS, JSON.stringify(merged));
+                  localStorage.setItem('nmsa_monthly_deleted_ids_v1', JSON.stringify(delIds));
+                } catch (_) {}
+                return merged;
+              });
             }
             if (raw.projects && Array.isArray(raw.projects) && raw.projects.length > 0) {
               setProjects(raw.projects);
@@ -537,9 +672,27 @@ export default function App() {
     window.addEventListener('pointerdown', handleFirstUserInteraction, { once: true });
     window.addEventListener('keydown', handleFirstUserInteraction, { once: true });
 
+    loadMonthlyTransactionsFromFirestore()
+      .then(cloudRes => {
+        if (cloudRes) {
+          const mergedDel = Array.from(new Set([...deletedMonthlyIds, ...(cloudRes.deletedIds || [])]));
+          setDeletedMonthlyIds(mergedDel);
+          setMonthlyTransactions(prev => {
+            const merged = mergeMonthlyListsSafely(prev, cloudRes.items || [], mergedDel);
+            try {
+              localStorage.setItem(STORAGE_KEY_MONTHLY_TRANSACTIONS, JSON.stringify(merged));
+              localStorage.setItem('nmsa_monthly_deleted_ids_v1', JSON.stringify(mergedDel));
+            } catch (_) {}
+            return merged;
+          });
+        }
+      })
+      .catch(err => console.warn('Firestore Monthly sync skipped:', err));
+
     return () => {
       unsubscribeCompany();
       if (typeof unsubscribeNpwp === 'function') unsubscribeNpwp();
+      if (typeof unsubscribeMonthly === 'function') unsubscribeMonthly();
       stopAutoRefresh();
       window.removeEventListener('pointerdown', handleFirstUserInteraction);
       window.removeEventListener('keydown', handleFirstUserInteraction);
@@ -893,7 +1046,7 @@ export default function App() {
     };
   }, []);
 
-  const [view, setViewInternal] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab' | 'memo' | 'pinjaman'>(() => {
+  const [view, setViewInternal] = useState<AppViewMode>(() => {
     try {
       const sp = new URLSearchParams(window.location.search);
       const h = window.location.hash;
@@ -912,19 +1065,28 @@ export default function App() {
       if (sp.get('view') === 'pinjaman' || sp.get('tab') === 'pinjaman') {
         return 'pinjaman';
       }
+      if (sp.get('view') === 'bulanan' || sp.get('tab') === 'bulanan') {
+        return 'bulanan';
+      }
+      if (sp.get('view') === 'menu_alat') {
+        return 'menu_alat';
+      }
+      if (sp.get('view') === 'pengaturan') {
+        return 'pengaturan';
+      }
       const saved = sessionStorage.getItem('NUSANTARA_ACTIVE_VIEW');
-      if (saved) return saved as any;
+      if (saved) return saved as AppViewMode;
     } catch (e) {}
     return 'list';
   });
 
-  const [previousView, setPreviousView] = useState<'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab' | 'memo' | 'pinjaman'>('list');
+  const [previousView, setPreviousView] = useState<AppViewMode>('list');
 
   const [memoSubmissionTarget, setMemoSubmissionTarget] = useState<Submission | null>(null);
   const [targetAccurateSubmission, setTargetAccurateSubmission] = useState<Submission | null>(null);
 
   const setView = (
-    newView: 'list' | 'form' | 'print' | 'sppd' | 'absen' | 'npwp' | 'accurate' | 'agenda' | 'ledger' | 'pph23' | 'rab' | 'memo' | 'pinjaman',
+    newView: AppViewMode,
     options?: { preservePrevious?: boolean }
   ) => {
     // ⚡ Proactively refresh and extend Google Drive token silently when user switches view
@@ -1004,6 +1166,23 @@ export default function App() {
           }
         })
         .catch(err => console.warn('Auto-read Attendance from Firestore failed:', err));
+    } else if (view === 'bulanan') {
+      loadMonthlyTransactionsFromFirestore()
+        .then(cloudRes => {
+          if (cloudRes) {
+            const mergedDel = Array.from(new Set([...deletedMonthlyIds, ...(cloudRes.deletedIds || [])]));
+            setDeletedMonthlyIds(mergedDel);
+            setMonthlyTransactions(prev => {
+              const merged = mergeMonthlyListsSafely(prev, cloudRes.items || [], mergedDel);
+              try {
+                localStorage.setItem(STORAGE_KEY_MONTHLY_TRANSACTIONS, JSON.stringify(merged));
+                localStorage.setItem('nmsa_monthly_deleted_ids_v1', JSON.stringify(mergedDel));
+              } catch (_) {}
+              return merged;
+            });
+          }
+        })
+        .catch(err => console.warn('Auto-read Monthly transactions from Firestore failed:', err));
     }
   }, [view]);
 
@@ -1218,7 +1397,6 @@ export default function App() {
   const [userProfile, setUserProfile] = useState<any>(null);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isCompanyModalOpen, setIsCompanyModalOpen] = useState(false);
-  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isCloudModalOpen, setIsCloudModalOpen] = useState(false);
   const [isFirebaseMigrationOpen, setIsFirebaseMigrationOpen] = useState(false);
   const [isGoogleDriveSettingsOpen, setIsGoogleDriveSettingsOpen] = useState(false);
@@ -1364,22 +1542,39 @@ export default function App() {
     return agendaItems.filter(item => item.status === 'pending' && item.dueDate <= today).length;
   }, [agendaItems]);
 
-  const userMenuRef = useRef<HTMLDivElement>(null);
-  const toolsDropdownRef = useRef<HTMLDivElement>(null);
-  const [isToolsDropdownOpen, setIsToolsDropdownOpen] = useState(false);
+  const pendingMonthlySummary = useMemo(
+    () => getPendingMonthlySummary(monthlyTransactions, submissions, userProfile?.companyId),
+    [monthlyTransactions, submissions, userProfile?.companyId]
+  );
 
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
-        setIsUserMenuOpen(false);
-      }
-      if (toolsDropdownRef.current && !toolsDropdownRef.current.contains(event.target as Node)) {
-        setIsToolsDropdownOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+  const handleCreateVoucherFromMonthly = (item: MonthlyRecurringTransaction, targetMonth: string) => {
+    const todayParts = getJakartaTodayParts();
+    const defaultDate = targetMonth === todayParts.monthKey ? todayParts.dateStr : `${targetMonth}-01`;
+    setEditingSubmission({
+      id: '',
+      kode: 'HO',
+      tanggal: defaultDate,
+      jenisPengajuan: item.category || 'Biaya Operasional',
+      dibayarkanKepada: item.recipient || item.title,
+      dibayarkanDengan: item.paymentMethod || 'Cek/Transfer',
+      status: 'Belum Lunas',
+      notes: item.notes || `Pembayaran rutin bulanan (${targetMonth}): ${item.title}`,
+      recurringTemplateId: item.id,
+      recurringMonth: targetMonth,
+      items: [
+        {
+          id: 'it-1',
+          item: item.title,
+          jumlahVolume: '1 Bulan',
+          harga: item.defaultAmount || 0,
+          total: item.defaultAmount || 0,
+          keterangan: `Tagihan rutin periode ${targetMonth}`,
+        },
+      ],
+    } as any);
+    setPreviousView('bulanan');
+    setView('form');
+  };
 
   const [currentPath, setCurrentPath] = useState(window.location.pathname);
   const [currentHash, setCurrentHash] = useState(window.location.hash);
@@ -2071,6 +2266,33 @@ export default function App() {
       } catch (loanSyncErr) {
         console.warn('Gagal sinkronisasi transaksi pinjaman:', loanSyncErr);
       }
+    }
+
+    // If this submission was created from a Monthly Recurring Transaction, auto-mark that month paid
+    if (savedSub.recurringTemplateId && savedSub.recurringMonth) {
+      const targetId = savedSub.recurringTemplateId;
+      const targetMonth = savedSub.recurringMonth;
+      const updatedMonthly = monthlyTransactions.map((m) =>
+        m.id === targetId
+          ? {
+              ...m,
+              paidMonths: {
+                ...(m.paidMonths || {}),
+                [targetMonth]: {
+                  monthKey: targetMonth,
+                  status: 'paid' as const,
+                  paidAt: savedSub.tanggal || new Date().toISOString().split('T')[0],
+                  submissionId: savedSub.id,
+                  submissionCode: savedSub.kode,
+                  amount: getSubmissionTotalAmount(savedSub),
+                  markedManually: false,
+                },
+              },
+              updatedAt: new Date().toISOString(),
+            }
+          : m
+      );
+      handleSaveMonthlyTransactions(updatedMonthly);
     }
 
     // If this submission is an SPPD (Perjalanan Dinas), automatically sync/create record in SPPD Manager
@@ -2889,184 +3111,29 @@ export default function App() {
                   </div>
                 )}
 
-                {/* User Dropdown Menu (Contains Theme, Profile, & Logout) */}
-                <div className="relative" ref={userMenuRef}>
-                  <button
-                    onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-                    className="flex items-center gap-2 py-1.5 px-3 rounded-2xl hover:bg-stone-100 border border-stone-200 transition cursor-pointer select-none bg-stone-50"
-                    title="Klik untuk menu profil, ganti tema, & logout"
-                  >
-                    <div className="w-7 h-7 rounded-full bg-emerald-100 border border-emerald-300 flex items-center justify-center text-emerald-800 font-bold text-xs">
-                      {(userProfile?.fullName || 'Nur Wahyudi').substring(0, 2).toUpperCase()}
-                    </div>
-                    <div className="hidden sm:flex flex-col items-start text-left">
-                      <div className="flex items-center gap-1 text-xs font-sans font-black text-stone-900 leading-tight">
-                        <span className="truncate max-w-[120px] sm:max-w-[160px]">
-                          {userProfile?.fullName || 'Nur Wahyudi'}
-                        </span>
-                        <ChevronDown size={13} className={`text-stone-400 transition-transform duration-200 ${isUserMenuOpen ? 'rotate-180' : ''}`} />
-                      </div>
-                      <span className="text-[10px] text-stone-400 font-mono leading-tight">
-                        {userProfile?.role || 'Divisi Keuangan'}
-                      </span>
-                    </div>
-                  </button>
-
-                  {/* User Dropdown Popover */}
-                  {isUserMenuOpen && (
-                    <div className="absolute right-0 top-full mt-2 w-72 bg-white rounded-2xl shadow-xl border border-stone-200 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150 font-sans">
-                      <div className="p-3.5 bg-stone-50 border-b border-stone-200">
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center text-sm shadow-xs shrink-0">
-                            {(userProfile?.fullName || 'Nur Wahyudi').substring(0, 2).toUpperCase()}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <h4 className="text-xs font-black text-stone-900 truncate">
-                              {userProfile?.fullName || 'Nur Wahyudi'}
-                            </h4>
-                            <p className="text-[10px] text-stone-500 font-mono truncate">
-                              {authUser?.email || 'keuangan@nmsa.co.id'}
-                            </p>
-                            <span className="inline-block mt-0.5 text-[9px] font-mono font-bold bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded">
-                              {userProfile?.role || 'Divisi Keuangan HO'}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="mt-3 space-y-1.5">
-                          {/* Company Switcher */}
-                          <button
-                            onClick={() => {
-                              setIsUserMenuOpen(false);
-                              setIsCompanyModalOpen(true);
-                            }}
-                            className="w-full bg-amber-500/10 hover:bg-amber-500/20 text-amber-900 border border-amber-300 font-bold px-3 py-2 rounded-xl text-xs transition cursor-pointer flex items-center justify-between font-sans shadow-3xs"
-                          >
-                            <div className="flex items-center gap-2 truncate">
-                              <Building2 size={15} className="text-amber-700 shrink-0" />
-                              <span className="truncate">Ganti / Tambah Perusahaan</span>
-                            </div>
-                            <span className="text-[9px] font-mono bg-amber-200 text-amber-900 px-1.5 py-0.5 rounded font-bold shrink-0">
-                              {userProfile?.companyDetails?.code || userProfile?.companyId?.toUpperCase() || 'NMSA'}
-                            </span>
-                          </button>
-
-                          {/* Master Drive Quick Access */}
-                          <button
-                            onClick={() => {
-                              setIsUserMenuOpen(false);
-                              setIsGoogleDriveSettingsOpen(true);
-                            }}
-                            className="w-full bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold px-3 py-2 rounded-xl text-xs transition cursor-pointer flex items-center justify-between font-sans shadow-3xs"
-                          >
-                            <div className="flex items-center gap-2 truncate">
-                              <Cloud size={15} className="text-amber-600 shrink-0" />
-                              <span className="truncate">Pengaturan Master Drive</span>
-                            </div>
-                            <span className="text-[9px] font-mono bg-amber-200 text-amber-900 px-1.5 py-0.5 rounded font-bold shrink-0">
-                              24/7
-                            </span>
-                          </button>
-
-                          {/* Ekspor / Impor Data Backup */}
-                          <button
-                            onClick={() => {
-                              setIsUserMenuOpen(false);
-                              setIsExportImportModalOpen(true);
-                            }}
-                            className="w-full bg-stone-100 hover:bg-stone-200 text-stone-850 border border-stone-250 font-bold px-3 py-2 rounded-xl text-xs transition cursor-pointer flex items-center justify-between font-sans shadow-3xs"
-                          >
-                            <div className="flex items-center gap-2 truncate">
-                              <FileSpreadsheet size={15} className="text-amber-600 shrink-0" />
-                              <span className="truncate">Ekspor / Impor Data (Backup)</span>
-                            </div>
-                            <span className="text-[9px] font-mono bg-amber-100 text-amber-900 border border-amber-300 px-1.5 py-0.5 rounded font-bold shrink-0">
-                              JSON / ZIP
-                            </span>
-                          </button>
-
-                          <button
-                            onClick={() => {
-                              setIsUserMenuOpen(false);
-                              setIsProfileOpen(true);
-                            }}
-                            className="w-full bg-white hover:bg-stone-100 border border-stone-250 text-stone-700 font-bold px-3 py-1.5 rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 font-mono shadow-3xs"
-                          >
-                            <Settings size={13} className="text-stone-500" />
-                            <span>Pengaturan Profil & Storage</span>
-                          </button>
-                        </div>
-                      </div>
-
-                    <div className="p-3 border-b border-stone-200 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-mono font-bold text-stone-400 uppercase tracking-wider block">
-                          Pilihan Tema Tampilan:
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsUserMenuOpen(false);
-                            setIsThemeModalOpen(true);
-                          }}
-                          className="text-[10px] font-mono font-bold text-amber-600 hover:text-amber-700 flex items-center gap-1 transition cursor-pointer"
-                        >
-                          <Sparkles size={11} />
-                          <span>Galeri Tema</span>
-                        </button>
-                      </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-xs font-mono">
-                        {[
-                          { id: 'classic', label: 'Classic', grad: 'linear-gradient(135deg, #ffffff 50%, #D4AF37 50%)', bdr: 'border-amber-300', act: 'bg-amber-100 text-amber-950 border-amber-400 font-black shadow-xs' },
-                          { id: 'gold-dark', label: 'Gold Dark', grad: 'linear-gradient(135deg, #07070a 50%, #fbbf24 50%)', bdr: 'border-stone-700', act: 'bg-stone-900 text-amber-400 border-amber-500 font-black shadow-xs' },
-                          { id: 'emerald', label: 'Emerald', grad: 'linear-gradient(135deg, #f1f9f4 50%, #059669 50%)', bdr: 'border-emerald-300', act: 'bg-emerald-900 text-emerald-100 border-emerald-500 font-black shadow-xs' },
-                          { id: 'slate', label: 'Slate', grad: 'linear-gradient(135deg, #03060f 50%, #06b6d4 50%)', bdr: 'border-cyan-700', act: 'bg-cyan-950 text-cyan-200 border-cyan-400 font-black shadow-xs' },
-                          { id: 'sunset', label: 'Sunset', grad: 'linear-gradient(135deg, #fff7ed 50%, #f97316 50%)', bdr: 'border-orange-300', act: 'bg-orange-100 text-orange-950 border-orange-400 font-black shadow-xs' },
-                          { id: 'nordic', label: 'Nordic', grad: 'linear-gradient(135deg, #f8fafc 50%, #0284c7 50%)', bdr: 'border-sky-300', act: 'bg-sky-100 text-sky-950 border-sky-400 font-black shadow-xs' },
-                          { id: 'cyberpunk', label: 'Synthwave', grad: 'linear-gradient(135deg, #110c1f 50%, #ec4899 50%)', bdr: 'border-pink-500', act: 'bg-purple-950 text-pink-300 border-pink-500 font-black shadow-xs' },
-                          { id: 'cozy', label: 'Cozy', grad: 'linear-gradient(135deg, #faf6f0 50%, #b45309 50%)', bdr: 'border-amber-700', act: 'bg-amber-900/15 text-amber-950 border-amber-600/50 font-black shadow-xs' }
-                        ].map(t => (
-                          <button
-                            key={t.id}
-                            onClick={() => { handleSelectTheme(t.id as any); setIsUserMenuOpen(false); }}
-                            className={`p-1.5 sm:p-2 rounded-xl border flex items-center gap-1.5 transition cursor-pointer text-left ${
-                              theme === t.id ? t.act : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
-                            }`}
-                          >
-                            <span className={`w-3.5 h-3.5 rounded-full shrink-0 border ${t.bdr}`} style={{ background: t.grad }} />
-                            <span className="text-[10px] sm:text-[11px] truncate">{t.label}</span>
-                          </button>
-                        ))}
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsUserMenuOpen(false);
-                          setIsThemeModalOpen(true);
-                        }}
-                        className="w-full mt-2 py-1.5 px-2 bg-gradient-to-r from-amber-500/10 to-amber-500/20 hover:from-amber-500/20 hover:to-amber-500/30 text-amber-900 border border-amber-300/80 rounded-xl text-[11px] font-bold font-mono flex items-center justify-center gap-1.5 transition cursor-pointer shadow-3xs"
-                      >
-                        <Sparkles size={12} className="text-amber-600" />
-                        <span>Buka Galeri &amp; Detail Tema ✨</span>
-                      </button>
-                    </div>
-
-                    <div className="p-2 bg-stone-50">
-                      <button
-                        onClick={() => {
-                          setIsUserMenuOpen(false);
-                          handleLogout();
-                        }}
-                        className="w-full bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 font-bold px-3 py-2 rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-2 border border-rose-200"
-                      >
-                        <LogOut size={14} />
-                        <span>Keluar dari Sesi (Logout)</span>
-                      </button>
-                    </div>
+                {/* Direct Pengaturan Page Button (Replaces User Dropdown) */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigateTo('/');
+                    setView('pengaturan');
+                  }}
+                  className="flex items-center gap-2 py-1.5 px-3 rounded-2xl hover:bg-stone-100 border border-stone-200 transition cursor-pointer select-none bg-stone-50"
+                  title="Buka Halaman Pengaturan Akun, Tema & Cloud"
+                >
+                  <div className="w-7 h-7 rounded-full bg-emerald-100 border border-emerald-300 flex items-center justify-center text-emerald-800 font-bold text-xs">
+                    {(userProfile?.fullName || 'Nur Wahyudi').substring(0, 2).toUpperCase()}
                   </div>
-                )}
-              </div>
+                  <div className="hidden sm:flex flex-col items-start text-left">
+                    <span className="text-xs font-sans font-black text-stone-900 leading-tight truncate max-w-[120px] sm:max-w-[160px]">
+                      {userProfile?.fullName || 'Nur Wahyudi'}
+                    </span>
+                    <span className="text-[10px] text-stone-500 font-mono leading-tight flex items-center gap-1">
+                      <Settings size={10} />
+                      <span>Pengaturan</span>
+                    </span>
+                  </div>
+                </button>
             </div>
           </div>
         </div>
@@ -3175,657 +3242,69 @@ export default function App() {
                 <Sparkles size={11} className="text-amber-500 animate-pulse" />
               </button>
 
-              {/* UNIFIED TOOLS & INTEGRATIONS DROPDOWN (WhatsApp AI, Drive, Buku Besar, dll) */}
-              <div className="relative" ref={toolsDropdownRef}>
-                <button
-                  type="button"
-                  onClick={() => setIsToolsDropdownOpen(!isToolsDropdownOpen)}
-                  className="flex items-center gap-1.5 py-1.5 px-3 rounded-xl bg-stone-50 hover:bg-stone-100 border border-stone-200 text-stone-850 transition cursor-pointer shadow-3xs text-xs font-bold font-sans"
-                  title="Pusat Alat, Pengaturan & Layanan Cloud NMSA"
-                >
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
-                  <div className="flex items-center -space-x-1 text-amber-600 shrink-0">
-                    <Settings size={13} />
-                    <Wrench size={13} className="text-stone-700" />
-                  </div>
-                  <span className="hidden sm:inline font-sans">Menu &amp; Alat</span>
-                  <ChevronDown size={13} className={`text-stone-400 transition-transform duration-200 ${isToolsDropdownOpen ? 'rotate-180' : ''}`} />
-                </button>
-
-                {/* Dropdown Popover */}
-                {isToolsDropdownOpen && (
-                  <div 
-                    className="app-header-dropdown absolute right-0 top-full mt-2 w-[min(22rem,calc(100vw-1.5rem))] max-h-[calc(100vh-5rem)] bg-white rounded-2xl shadow-2xl border border-stone-200 z-[1010] overflow-y-auto p-2.5 animate-in fade-in zoom-in-95 duration-150 font-sans space-y-2"
-                    style={{ position: 'absolute' }}
-                  >
-                    <div className="px-2.5 py-1 border-b border-stone-150 flex items-center justify-between">
-                      <span className="text-[10px] font-mono font-bold text-stone-400 uppercase tracking-wider">
-                        Layanan &amp; Integrasi Cloud
-                      </span>
-                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                        <span>Online</span>
-                      </span>
-                    </div>
-
-                    {/* 1. WhatsApp AI */}
-                    <div className="p-2.5 rounded-xl bg-emerald-50/70 border border-emerald-200/80 flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <div className="p-2 bg-emerald-600 text-white rounded-lg">
-                          <MessageSquare size={14} />
-                        </div>
-                        <div>
-                          <h5 className="font-bold text-xs text-stone-900 leading-tight">WhatsApp AI Assistant</h5>
-                          <p className="text-[10px] text-stone-500 font-mono">Pusat Data &amp; Notifikasi</p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsToolsDropdownOpen(false);
-                          setIsWhatsAppModalOpen(true);
-                        }}
-                        className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-[11px] shadow-3xs cursor-pointer transition"
-                      >
-                        Buka
-                      </button>
-                    </div>
-
-                    {/* 2. Master Google Drive 24/7 */}
-                    <div className="p-2.5 rounded-xl bg-amber-50/70 border border-amber-200/80 flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div className="p-2 bg-amber-500 text-stone-950 rounded-lg shrink-0">
-                          <Cloud size={14} />
-                        </div>
-                        <div className="min-w-0">
-                          <h5 className="font-bold text-xs text-stone-900 leading-tight truncate">Master Google Drive</h5>
-                          <p className="text-[10px] text-stone-500 font-mono truncate" title={masterDriveEmail}>
-                            {masterDriveEmail}
-                          </p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsToolsDropdownOpen(false);
-                          setIsGoogleDriveSettingsOpen(true);
-                        }}
-                        className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-stone-950 font-bold rounded-lg text-[11px] shadow-3xs cursor-pointer transition shrink-0"
-                      >
-                        Kelola
-                      </button>
-                    </div>
-
-                    {/* Pembersih Folder Drive Transaksi Terhapus */}
-                    <div className="p-2.5 rounded-xl bg-rose-50/70 border border-rose-200/80 flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div className="p-2 bg-rose-600 text-white rounded-lg shrink-0">
-                          <Trash2 size={14} />
-                        </div>
-                        <div className="min-w-0">
-                          <h5 className="font-bold text-xs text-stone-900 leading-tight truncate">Pembersih Folder Drive</h5>
-                          <p className="text-[10px] text-stone-500 font-mono truncate">
-                            Hapus folder transaksi terhapus (No. 1088)
-                          </p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsToolsDropdownOpen(false);
-                          setIsDriveOrphanCleanerOpen(true);
-                        }}
-                        className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg text-[11px] shadow-3xs cursor-pointer transition shrink-0"
-                      >
-                        Buka
-                      </button>
-                    </div>
-
-                    {/* 3. Monitoring Kuota Firebase */}
-                    <div className="p-2.5 rounded-xl bg-indigo-50/70 border border-indigo-200/80 flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div className="p-2 bg-indigo-600 text-white rounded-lg shrink-0">
-                          <Database size={14} />
-                        </div>
-                        <div className="min-w-0">
-                          <h5 className="font-bold text-xs text-stone-900 leading-tight truncate">Monitoring Kuota Firebase</h5>
-                          <p className="text-[10px] text-stone-500 font-mono truncate">
-                            Read, Write &amp; Sinkronisasi Data
-                          </p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsToolsDropdownOpen(false);
-                          setIsFirebaseQuotaModalOpen(true);
-                        }}
-                        className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-[11px] shadow-3xs cursor-pointer transition shrink-0"
-                      >
-                        Pantau
-                      </button>
-                    </div>
-
-                    {/* Quick Access Menu Items - All Modules */}
-                    <div className="pt-1.5 border-t border-stone-150 space-y-1">
-                      <div className="px-2 py-0.5 text-[10px] font-mono font-bold text-stone-400 uppercase tracking-wider">
-                        Semua Menu Dashboard &amp; Modul:
-                      </div>
-
-                      {/* 1. Voucher HO */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsToolsDropdownOpen(false);
-                          setView('list');
-                        }}
-                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
-                          view === 'list' ? 'bg-amber-100 text-amber-950 border border-amber-300 font-black' : 'text-stone-750 hover:bg-stone-100'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <Database size={14} className={view === 'list' ? 'text-amber-700' : 'text-amber-600'} />
-                          <span>Voucher HO (Kas &amp; Bank)</span>
-                        </div>
-                        <span className="text-[9px] font-mono text-stone-400">Utama</span>
-                      </button>
-
-                      {/* 2. Absen Harian NMSA */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsToolsDropdownOpen(false);
-                          setView('absen');
-                        }}
-                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
-                          view === 'absen' ? 'bg-emerald-100 text-emerald-950 border border-emerald-300 font-black' : 'text-stone-750 hover:bg-stone-100'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <Users size={14} className="text-emerald-600" />
-                          <span>Absen Harian NMSA</span>
-                        </div>
-                        <span className="text-[9px] font-mono text-stone-400">Absensi</span>
-                      </button>
-
-                      {/* 3. Pemetaan Akun Accurate & SPPD */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsToolsDropdownOpen(false);
-                          setView('accurate');
-                        }}
-                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
-                          view === 'accurate' ? 'bg-emerald-100 text-emerald-950 border border-emerald-300 font-black' : 'text-stone-750 hover:bg-stone-100'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <Layers size={14} className="text-emerald-700" />
-                          <span>Pemetaan Akun Accurate &amp; SPPD</span>
-                        </div>
-                        <span className="text-[9px] font-mono text-stone-400">Akun</span>
-                      </button>
-
-                      {/* 4. Pengingat & Agenda Kerja */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsToolsDropdownOpen(false);
-                          setView('agenda');
-                        }}
-                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
-                          view === 'agenda' ? 'bg-amber-100 text-amber-950 border border-amber-300 font-black' : 'text-stone-750 hover:bg-stone-100'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <Calendar size={14} className="text-amber-600" />
-                          <span>Pengingat &amp; Agenda Kerja</span>
-                        </div>
-                        {agendaDueCount > 0 ? (
-                          <span className="text-[9px] font-mono bg-rose-600 text-white px-1.5 py-0.2 rounded-full font-bold">
-                            {agendaDueCount}
-                          </span>
-                        ) : (
-                          <span className="text-[9px] font-mono text-stone-400">Jadwal</span>
-                        )}
-                      </button>
-
-                      {/* 5. Bukti Potong PPh 23 & Master NPWP Perusahaan */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsToolsDropdownOpen(false);
-                          setView('pph23');
-                        }}
-                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
-                          view === 'pph23' || view === 'npwp' ? 'bg-amber-100 text-amber-950 border border-amber-300 font-black' : 'text-stone-750 hover:bg-amber-50'
-                        }`}
-                        title="Rekapitulasi Bukti Potong PPh 23 Coretax dan Master Daftar NPWP Perusahaan"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Receipt size={14} className="text-amber-600" />
-                          <span>Bukti Potong PPh 23 &amp; Master NPWP</span>
-                        </div>
-                        <span className="text-[9px] font-mono text-amber-800 bg-amber-100 px-1.5 rounded font-bold">Coretax + NPWP</span>
-                      </button>
-
-                      {/* 6. SPPD Dinas */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsToolsDropdownOpen(false);
-                          setView('sppd');
-                        }}
-                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
-                          view === 'sppd' ? 'bg-amber-100 text-amber-950 border border-amber-300 font-black' : 'text-stone-750 hover:bg-stone-100'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <Briefcase size={14} className="text-amber-600" />
-                          <span>Formulir &amp; SPPD Dinas</span>
-                        </div>
-                        <span className="text-[9px] font-mono text-stone-400">Tugas</span>
-                      </button>
-
-                      {/* 7. Buku Besar & Anggaran RAB Proyek */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsToolsDropdownOpen(false);
-                          setView('ledger');
-                        }}
-                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
-                          view === 'ledger' || view === 'rab' ? 'bg-amber-100 text-amber-950 border border-amber-300 font-black' : 'text-stone-750 hover:bg-stone-100'
-                        }`}
-                        title="Buku Besar Akuntansi Sub-Jenis dan Rencana Anggaran Biaya (RAB) Proyek"
-                      >
-                        <div className="flex items-center gap-2">
-                          <BookOpen size={14} className="text-amber-600" />
-                          <span>Buku Besar &amp; Anggaran RAB Proyek</span>
-                        </div>
-                        <span className="text-[9px] font-mono text-stone-400">Akuntansi</span>
-                      </button>
-
-                      {/* 10. Internal Memo Resmi Direksi */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsToolsDropdownOpen(false);
-                          setMemoSubmissionTarget(null);
-                          setView('memo');
-                        }}
-                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
-                          view === 'memo' ? 'bg-amber-100 text-amber-950 border border-amber-300 font-black' : 'text-stone-750 hover:bg-stone-100'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <FileText size={14} className="text-amber-600" />
-                          <span>Internal Memo Direksi</span>
-                        </div>
-                        <span className="text-[9px] font-mono bg-amber-200 text-amber-900 px-1.5 rounded font-bold">Resmi</span>
-                      </button>
-
-                      {/* 11. Pinjaman Karyawan & Perhitungan Cicilan */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsToolsDropdownOpen(false);
-                          setView('pinjaman');
-                        }}
-                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
-                          view === 'pinjaman' ? 'bg-amber-100 text-amber-950 border border-amber-300 font-black' : 'text-stone-750 hover:bg-stone-100'
-                        }`}
-                        title="Form Pinjaman Karyawan Resmi PT NMSA, Pencatatan & Perhitungan Pembayaran Cicilan"
-                      >
-                        <div className="flex items-center gap-2">
-                          <HandCoins size={14} className="text-amber-600" />
-                          <span>Pinjaman Karyawan &amp; Cicilan</span>
-                        </div>
-                        <span className="text-[9px] font-mono bg-emerald-100 text-emerald-800 border border-emerald-300 px-1.5 rounded font-bold">Form Resmi</span>
-                      </button>
-
-                      {/* 11b. Form Mandiri Pengajuan Pinjaman Karyawan (Portal Terpisah) */}
-                      <a
-                        href="#/form-pinjaman"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={() => setIsToolsDropdownOpen(false)}
-                        className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-[11px] font-semibold text-stone-600 hover:text-amber-900 hover:bg-amber-50/70 transition cursor-pointer pl-6"
-                        title="Buka website terpisah formulir mandiri karyawan (Unduh PDF otomatis setelah diisi)"
-                      >
-                        <div className="flex items-center gap-1.5">
-                          <ExternalLink size={12} className="text-amber-600" />
-                          <span>Portal Formulir Karyawan</span>
-                        </div>
-                        <span className="text-[9px] font-mono bg-stone-100 text-stone-600 border border-stone-200 px-1 rounded">Tab Baru ↗</span>
-                      </a>
-
-                      {/* 11. Pengaturan & Switcher Perusahaan */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsToolsDropdownOpen(false);
-                          setIsCompanyModalOpen(true);
-                        }}
-                        className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold text-amber-900 bg-amber-50 hover:bg-amber-100 transition cursor-pointer border border-amber-200/80 mt-1"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Building2 size={14} className="text-amber-700" />
-                          <span>Kelola &amp; Ganti Perusahaan</span>
-                        </div>
-                        <span className="text-[9px] font-mono bg-amber-200/80 text-amber-900 px-1.5 py-0.5 rounded font-bold">
-                          Multi-PT
-                        </span>
-                      </button>
-
-                      {/* 12. Salin Data ke Akun Firebase Lain */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsToolsDropdownOpen(false);
-                          setIsFirebaseMigrationOpen(true);
-                        }}
-                        className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold text-amber-950 bg-amber-50 hover:bg-amber-100 transition cursor-pointer border border-amber-300 mt-1 shadow-3xs"
-                      >
-                        <div className="flex items-center gap-2">
-                          <ArrowLeftRight size={14} className="text-amber-600" />
-                          <span>Salin Data ke Firebase Lain</span>
-                        </div>
-                        <span className="text-[9px] font-mono bg-amber-200 text-amber-950 px-1.5 py-0.5 rounded font-black">
-                          Migrasi
-                        </span>
-                      </button>
-
-                      {/* 13. Auto-Refresh & Bersihkan Duplikat Google Drive */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsToolsDropdownOpen(false);
-                          setIsDriveDeduplicateModalOpen(true);
-                        }}
-                        className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold text-sky-950 bg-sky-50 hover:bg-sky-100 transition cursor-pointer border border-sky-300 mt-1 shadow-3xs"
-                      >
-                        <div className="flex items-center gap-2">
-                          <FolderSync size={14} className="text-sky-600" />
-                          <span>Refresh &amp; Duplikat Drive</span>
-                        </div>
-                        <span className="text-[9px] font-mono bg-sky-200 text-sky-950 px-1.5 py-0.5 rounded font-black">
-                          Sinkron
-                        </span>
-                      </button>
-
-                      {/* 14. Bersihkan Koleksi Tak Terpakai di Firebase */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsToolsDropdownOpen(false);
-                          setIsCleanFirestoreModalOpen(true);
-                        }}
-                        className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-bold text-rose-950 bg-rose-50 hover:bg-rose-100 transition cursor-pointer border border-rose-300 mt-1 shadow-3xs"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Trash2 size={14} className="text-rose-600" />
-                          <span>Bersihkan Koleksi Tak Terpakai</span>
-                        </div>
-                        <span className="text-[9px] font-mono bg-rose-200 text-rose-950 px-1.5 py-0.5 rounded font-black">
-                          Firebase
-                        </span>
-                      </button>
-
-                      {/* Tombol Cepat Kembali ke Voucher HO jika berada di menu lain */}
-                      {view !== 'list' && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsToolsDropdownOpen(false);
-                            setView('list');
-                          }}
-                          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs font-black transition cursor-pointer text-amber-950 bg-amber-200 hover:bg-amber-300 mt-2 border border-amber-400 shadow-3xs"
-                        >
-                          <ArrowRight size={14} className="rotate-180 text-amber-950" />
-                          <span>Kembali ke Voucher HO</span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
+              {/* Direct Dedicated Button: Transaksi Bulanan (< Tgl 15) */}
+              <button
+                type="button"
+                onClick={() => setView(view === 'bulanan' ? 'list' : 'bulanan')}
+                className={`relative flex items-center gap-1.5 py-1.5 px-3 rounded-xl border transition cursor-pointer shadow-3xs text-xs font-bold font-sans whitespace-nowrap shrink-0 ${
+                  view === 'bulanan'
+                    ? 'bg-amber-500 text-stone-950 border-amber-600'
+                    : pendingMonthlySummary.overdueCount > 0
+                    ? 'bg-rose-50 hover:bg-rose-100 border-rose-300 text-rose-900'
+                    : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-800'
+                }`}
+                title="Deteksi & Kelola Transaksi Rutin Bulanan (Jatuh Tempo Sebelum Tgl 15)"
+              >
+                <CalendarClock size={14} className={view === 'bulanan' ? 'text-stone-950' : pendingMonthlySummary.overdueCount > 0 ? 'text-rose-600' : 'text-amber-600'} />
+                <span className="hidden lg:inline">Bulanan</span>
+                {pendingMonthlySummary.pendingCount > 0 && (
+                  <span className="inline-flex h-4 min-w-[16px] px-1 items-center justify-center rounded-full bg-rose-600 text-[10px] font-mono font-bold text-white tabular-nums">
+                    {pendingMonthlySummary.pendingCount}
+                  </span>
                 )}
-              </div>
+              </button>
 
-              {/* User Profile Dropdown Menu (Contains Theme, Profile, Cloud Center & Logout) */}
-              <div className="relative" ref={userMenuRef}>
-                <button
-                  onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-                  className="flex items-center gap-1.5 sm:gap-2 py-1.5 px-2 sm:px-3 rounded-2xl hover:bg-stone-100 border border-stone-200 transition cursor-pointer select-none bg-stone-50 shrink-0"
-                  title="Klik untuk menu profil, ganti tema, & logout"
-                >
-                  <div className="w-7 h-7 rounded-full bg-emerald-100 border border-emerald-300 flex items-center justify-center text-emerald-800 font-bold text-xs shrink-0">
-                    {(userProfile?.fullName || 'Nur Wahyudi').substring(0, 2).toUpperCase()}
-                  </div>
-                  <div className="hidden sm:flex flex-col items-start text-left">
-                    <div className="flex items-center gap-1 text-xs font-sans font-black text-stone-900 leading-tight">
-                      <span className="truncate max-w-[120px] sm:max-w-[160px]">
-                        {userProfile?.fullName || 'Nur Wahyudi'}
-                      </span>
-                      <ChevronDown size={13} className={`text-stone-400 transition-transform duration-200 ${isUserMenuOpen ? 'rotate-180' : ''}`} />
-                    </div>
-                    <span className="text-[10px] text-stone-400 font-mono leading-tight">
-                      {userProfile?.role || 'Divisi Keuangan'}
-                    </span>
-                  </div>
-                  <ChevronDown size={13} className={`sm:hidden text-stone-400 transition-transform duration-200 ${isUserMenuOpen ? 'rotate-180' : ''}`} />
-                </button>
+              {/* Direct Dedicated Button: Menu & Alat View (Replaces Dropdown) */}
+              <button
+                type="button"
+                onClick={() => setView(view === 'menu_alat' ? 'list' : 'menu_alat')}
+                className={`flex items-center gap-1.5 py-1.5 px-3 rounded-xl border transition cursor-pointer shadow-3xs text-xs font-bold font-sans whitespace-nowrap shrink-0 ${
+                  view === 'menu_alat'
+                    ? 'bg-amber-500 text-stone-950 border-amber-600'
+                    : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-850'
+                }`}
+                title="Buka Tampilan Lengkap Menu & Alat Operasional"
+              >
+                <LayoutGrid size={14} className={view === 'menu_alat' ? 'text-stone-950' : 'text-amber-600'} />
+                <span className="hidden sm:inline font-sans">Menu &amp; Alat</span>
+              </button>
 
-                {/* User Dropdown Popover */}
-                {isUserMenuOpen && (
-                  <div 
-                    className="app-header-dropdown absolute right-0 top-full mt-2 w-72 sm:w-80 max-w-[calc(100vw-1.5rem)] max-h-[calc(100vh-5rem)] bg-white rounded-2xl shadow-2xl border border-stone-200 z-[1010] overflow-y-auto animate-in fade-in zoom-in-95 duration-150 font-sans"
-                    style={{ position: 'absolute' }}
-                  >
-                    <div className="p-3.5 bg-stone-50 border-b border-stone-200">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-9 h-9 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center text-sm shadow-xs shrink-0">
-                          {(userProfile?.fullName || 'Nur Wahyudi').substring(0, 2).toUpperCase()}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <h4 className="text-xs font-black text-stone-900 truncate">
-                            {userProfile?.fullName || 'Nur Wahyudi'}
-                          </h4>
-                          <p className="text-[10px] text-stone-500 font-mono truncate">
-                            {authUser?.email || 'keuangan@nmsa.co.id'}
-                          </p>
-                          <span className="inline-block mt-0.5 text-[9px] font-mono font-bold bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded">
-                            {userProfile?.role || 'Divisi Keuangan HO'}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="mt-3 space-y-1.5">
-                        {/* Company Switcher */}
-                        <button
-                          onClick={() => {
-                            setIsUserMenuOpen(false);
-                            setIsCompanyModalOpen(true);
-                          }}
-                          className="w-full bg-amber-500/10 hover:bg-amber-500/20 text-amber-900 border border-amber-300 font-bold px-3 py-2 rounded-xl text-xs transition cursor-pointer flex items-center justify-between font-sans shadow-3xs"
-                        >
-                          <div className="flex items-center gap-2 truncate">
-                            <Building2 size={15} className="text-amber-700 shrink-0" />
-                            <span className="truncate">Ganti / Tambah Perusahaan</span>
-                          </div>
-                          <span className="text-[9px] font-mono bg-amber-200 text-amber-900 px-1.5 py-0.5 rounded font-bold shrink-0">
-                            {userProfile?.companyDetails?.code || userProfile?.companyId?.toUpperCase() || 'NMSA'}
-                          </span>
-                        </button>
-
-                        {/* Master Drive Quick Access */}
-                        <button
-                          onClick={() => {
-                            setIsUserMenuOpen(false);
-                            setIsGoogleDriveSettingsOpen(true);
-                          }}
-                          className="w-full bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold px-3 py-2 rounded-xl text-xs transition cursor-pointer flex items-center justify-between font-sans shadow-3xs"
-                        >
-                          <div className="flex items-center gap-2 truncate">
-                            <Cloud size={15} className="text-amber-600 shrink-0" />
-                            <span className="truncate">Pengaturan Master Drive</span>
-                          </div>
-                          <span className="text-[9px] font-mono bg-amber-200 text-amber-900 px-1.5 py-0.5 rounded font-bold shrink-0">
-                            24/7
-                          </span>
-                        </button>
-
-                        {/* Monitoring Kuota Firebase */}
-                        <button
-                          onClick={() => {
-                            setIsUserMenuOpen(false);
-                            setIsFirebaseQuotaModalOpen(true);
-                          }}
-                          className="w-full bg-indigo-50/70 hover:bg-indigo-100 text-indigo-950 border border-indigo-300 font-bold px-3 py-2 rounded-xl text-xs transition cursor-pointer flex items-center justify-between font-sans shadow-3xs"
-                        >
-                          <div className="flex items-center gap-2 truncate">
-                            <Database size={15} className="text-indigo-600 shrink-0" />
-                            <span className="truncate">Monitoring Kuota Firebase</span>
-                          </div>
-                          <span className="text-[9px] font-mono bg-indigo-200 text-indigo-950 px-1.5 py-0.5 rounded font-bold shrink-0">
-                            Read/Write
-                          </span>
-                        </button>
-
-                        {/* PUSAT LAYANAN AWAN & INTEGRASI (Unified into Nur Wahyudi dropdown!) */}
-                        <button
-                          onClick={() => {
-                            setIsUserMenuOpen(false);
-                            setIsCloudModalOpen(true);
-                          }}
-                          className="w-full bg-stone-100 hover:bg-stone-200 text-stone-800 border border-stone-250 font-bold px-3 py-2 rounded-xl text-xs transition cursor-pointer flex items-center justify-between font-sans shadow-3xs"
-                        >
-                          <div className="flex items-center gap-2">
-                            <Cloud size={15} className="text-stone-600" />
-                            <span>Pusat Layanan Awan & Integrasi</span>
-                          </div>
-                          <span className="text-[9px] font-mono bg-stone-300 text-stone-900 px-1.5 py-0.5 rounded font-bold">
-                            Ready
-                          </span>
-                        </button>
-
-                        {/* SALIN / MIGRASI DATA FIREBASE */}
-                        <button
-                          onClick={() => {
-                            setIsUserMenuOpen(false);
-                            setIsFirebaseMigrationOpen(true);
-                          }}
-                          className="w-full bg-amber-50 hover:bg-amber-100 text-amber-950 border border-amber-300 font-bold px-3 py-2 rounded-xl text-xs transition cursor-pointer flex items-center justify-between font-sans shadow-3xs"
-                        >
-                          <div className="flex items-center gap-2">
-                            <ArrowLeftRight size={15} className="text-amber-600" />
-                            <span>Salin / Migrasi Data Firebase</span>
-                          </div>
-                          <span className="text-[9px] font-mono bg-amber-200 text-amber-950 px-1.5 py-0.5 rounded font-black">
-                            Multi-Akun
-                          </span>
-                        </button>
-
-                        {/* EKSPOR / IMPOR DATA BACKUP */}
-                        <button
-                          onClick={() => {
-                            setIsUserMenuOpen(false);
-                            setIsExportImportModalOpen(true);
-                          }}
-                          className="w-full bg-stone-100 hover:bg-stone-200 text-stone-850 border border-stone-250 font-bold px-3 py-2 rounded-xl text-xs transition cursor-pointer flex items-center justify-between font-sans shadow-3xs"
-                        >
-                          <div className="flex items-center gap-2 truncate">
-                            <FileSpreadsheet size={15} className="text-amber-600 shrink-0" />
-                            <span className="truncate">Ekspor / Impor Data (Backup)</span>
-                          </div>
-                          <span className="text-[9px] font-mono bg-amber-100 text-amber-900 border border-amber-300 px-1.5 py-0.5 rounded font-bold shrink-0">
-                            JSON / ZIP
-                          </span>
-                        </button>
-
-                        <button
-                          onClick={() => {
-                            setIsUserMenuOpen(false);
-                            setIsProfileOpen(true);
-                          }}
-                          className="w-full bg-white hover:bg-stone-100 border border-stone-250 text-stone-700 font-bold px-3 py-1.5 rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 font-mono shadow-3xs"
-                        >
-                          <Settings size={13} className="text-stone-500" />
-                          <span>Pengaturan Profil & Storage</span>
-                        </button>
-                      </div>
-                    </div>
-
-                  <div className="p-3 border-b border-stone-200 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-mono font-bold text-stone-400 uppercase tracking-wider block">
-                        Pilihan Tema Tampilan:
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsUserMenuOpen(false);
-                          setIsThemeModalOpen(true);
-                        }}
-                        className="text-[10px] font-mono font-bold text-amber-600 hover:text-amber-700 flex items-center gap-1 transition cursor-pointer"
-                      >
-                        <Sparkles size={11} />
-                        <span>Galeri Tema</span>
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-xs font-mono">
-                      {[
-                        { id: 'classic', label: 'Classic', grad: 'linear-gradient(135deg, #ffffff 50%, #D4AF37 50%)', bdr: 'border-amber-300', act: 'bg-amber-100 text-amber-950 border-amber-400 font-black shadow-xs' },
-                        { id: 'gold-dark', label: 'Gold Dark', grad: 'linear-gradient(135deg, #07070a 50%, #fbbf24 50%)', bdr: 'border-stone-700', act: 'bg-stone-900 text-amber-400 border-amber-500 font-black shadow-xs' },
-                        { id: 'emerald', label: 'Emerald', grad: 'linear-gradient(135deg, #f1f9f4 50%, #059669 50%)', bdr: 'border-emerald-300', act: 'bg-emerald-900 text-emerald-100 border-emerald-500 font-black shadow-xs' },
-                        { id: 'slate', label: 'Slate', grad: 'linear-gradient(135deg, #03060f 50%, #06b6d4 50%)', bdr: 'border-cyan-700', act: 'bg-cyan-950 text-cyan-200 border-cyan-400 font-black shadow-xs' },
-                        { id: 'sunset', label: 'Sunset', grad: 'linear-gradient(135deg, #fff7ed 50%, #f97316 50%)', bdr: 'border-orange-300', act: 'bg-orange-100 text-orange-950 border-orange-400 font-black shadow-xs' },
-                        { id: 'nordic', label: 'Nordic', grad: 'linear-gradient(135deg, #f8fafc 50%, #0284c7 50%)', bdr: 'border-sky-300', act: 'bg-sky-100 text-sky-950 border-sky-400 font-black shadow-xs' },
-                        { id: 'cyberpunk', label: 'Synthwave', grad: 'linear-gradient(135deg, #110c1f 50%, #ec4899 50%)', bdr: 'border-pink-500', act: 'bg-purple-950 text-pink-300 border-pink-500 font-black shadow-xs' },
-                        { id: 'cozy', label: 'Cozy', grad: 'linear-gradient(135deg, #faf6f0 50%, #b45309 50%)', bdr: 'border-amber-700', act: 'bg-amber-900/15 text-amber-950 border-amber-600/50 font-black shadow-xs' }
-                      ].map(t => (
-                        <button
-                          key={t.id}
-                          onClick={() => { handleSelectTheme(t.id as any); setIsUserMenuOpen(false); }}
-                          className={`p-1.5 sm:p-2 rounded-xl border flex items-center gap-1.5 transition cursor-pointer text-left ${
-                            theme === t.id ? t.act : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
-                          }`}
-                        >
-                          <span className={`w-3.5 h-3.5 rounded-full shrink-0 border ${t.bdr}`} style={{ background: t.grad }} />
-                          <span className="text-[10px] sm:text-[11px] truncate">{t.label}</span>
-                        </button>
-                      ))}
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsUserMenuOpen(false);
-                        setIsThemeModalOpen(true);
-                      }}
-                      className="w-full mt-2 py-1.5 px-2 bg-gradient-to-r from-amber-500/10 to-amber-500/20 hover:from-amber-500/20 hover:to-amber-500/30 text-amber-900 border border-amber-300/80 rounded-xl text-[11px] font-bold font-mono flex items-center justify-center gap-1.5 transition cursor-pointer shadow-3xs"
-                    >
-                      <Sparkles size={12} className="text-amber-600" />
-                      <span>Buka Galeri &amp; Detail Tema ✨</span>
-                    </button>
-                  </div>
-
-                  <div className="p-2 bg-stone-50">
-                    <button
-                      onClick={() => {
-                        setIsUserMenuOpen(false);
-                        handleLogout();
-                      }}
-                      className="w-full bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 font-bold px-3 py-2 rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-2 border border-rose-200"
-                    >
-                      <LogOut size={14} />
-                      <span>Keluar dari Sesi (Logout)</span>
-                    </button>
-                  </div>
+              {/* Direct Dedicated Button: Pengaturan View (Replaces User Dropdown) */}
+              <button
+                type="button"
+                onClick={() => setView(view === 'pengaturan' ? 'list' : 'pengaturan')}
+                className={`flex items-center gap-1.5 sm:gap-2 py-1.5 px-2.5 sm:px-3 rounded-2xl border transition cursor-pointer select-none shrink-0 ${
+                  view === 'pengaturan'
+                    ? 'bg-amber-500 text-stone-950 border-amber-600'
+                    : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-900'
+                }`}
+                title="Buka Tampilan Pengaturan (Profil, Perusahaan, Tema, Drive, Firebase & Logout)"
+              >
+                <div className="w-7 h-7 rounded-full bg-emerald-100 border border-emerald-300 flex items-center justify-center text-emerald-800 font-bold text-xs shrink-0">
+                  {(userProfile?.fullName || 'Nur Wahyudi').substring(0, 2).toUpperCase()}
                 </div>
-              )}
+                <div className="hidden sm:flex flex-col items-start text-left">
+                  <span className="text-xs font-sans font-black leading-tight truncate max-w-[120px] sm:max-w-[160px]">
+                    {userProfile?.fullName || 'Nur Wahyudi'}
+                  </span>
+                  <span className={`text-[10px] font-mono leading-tight flex items-center gap-1 ${view === 'pengaturan' ? 'text-stone-900 font-bold' : 'text-stone-500'}`}>
+                    <Settings size={10} />
+                    <span>Pengaturan</span>
+                  </span>
+                </div>
+              </button>
             </div>
           </div>
-        </div>
       </div>
     </header>
 
@@ -3889,6 +3368,50 @@ export default function App() {
         
         {/* VIEW 1: Submissions Data History & Backup Operations */}
         <div className={view === 'list' ? 'space-y-6' : 'hidden'}>
+          {/* Compact Monthly Recurring Transaction Reminder Strip (< Tgl 15) */}
+          {pendingMonthlySummary.pendingCount > 0 && (
+            <div
+              className={`rounded-2xl border px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-3xs ${
+                pendingMonthlySummary.overdueCount > 0
+                  ? 'bg-rose-50/80 border-rose-200 text-rose-950'
+                  : 'bg-amber-50/80 border-amber-300 text-amber-950'
+              }`}
+            >
+              <div className="flex items-start sm:items-center gap-3 min-w-0">
+                <div
+                  className={`p-2 rounded-xl shrink-0 ${
+                    pendingMonthlySummary.overdueCount > 0
+                      ? 'bg-rose-600 text-white'
+                      : 'bg-amber-500 text-stone-950'
+                  }`}
+                >
+                  <CalendarClock size={16} />
+                </div>
+                <div className="min-w-0 text-xs">
+                  <div className="font-black">
+                    Transaksi Bulanan {pendingMonthlySummary.monthLabel}:{' '}
+                    <span className="tabular-nums">{pendingMonthlySummary.pendingCount}</span> belum dijalankan (batas sebelum Tgl 15)
+                  </div>
+                  <div className="text-[11px] text-stone-600 truncate">
+                    {pendingMonthlySummary.pendingItems
+                      .slice(0, 3)
+                      .map((p) => `${p.item.title} (Tgl ${p.detection.dueDay})`)
+                      .join(' · ')}
+                    {pendingMonthlySummary.pendingItems.length > 3 ? ` · +${pendingMonthlySummary.pendingItems.length - 3} lainnya` : ''}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setView('bulanan')}
+                className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-stone-900 hover:bg-stone-800 text-white text-xs font-bold transition cursor-pointer shrink-0"
+              >
+                <span>Buka Transaksi Bulanan</span>
+                <ArrowRight size={13} />
+              </button>
+            </div>
+          )}
+
           {/* Main Listing components */}
           <SubmissionsList
             submissions={submissions}
@@ -4237,6 +3760,67 @@ export default function App() {
               setEditingSubmission(sub);
               setView('form');
             }}
+          />
+        )}
+
+        {/* VIEW 14: Modul Transaksi Bulanan Otomatis (Sebelum Tgl 15) */}
+        {view === 'bulanan' && (
+          <MonthlyTransactionsManager
+            items={monthlyTransactions}
+            submissions={submissions}
+            activeCompanyId={userProfile?.companyId}
+            userProfile={userProfile}
+            onSaveItems={handleSaveMonthlyTransactions}
+            onCreateVoucher={handleCreateVoucherFromMonthly}
+            onViewVoucher={(sub) => {
+              setActiveSubmission(sub);
+              setPrintInitialTab('both');
+              setPreviousView('bulanan');
+              setView('print', { preservePrevious: true });
+            }}
+            onBackToList={() => setView('list')}
+          />
+        )}
+
+        {/* VIEW 15: Tampilan Khusus Menu & Alat Operasional */}
+        {view === 'menu_alat' && (
+          <MenuAlatView
+            currentView={view}
+            pendingMonthlySummary={pendingMonthlySummary}
+            agendaDueCount={agendaDueCount}
+            masterDriveEmail={masterDriveEmail}
+            onBackToDashboard={() => setView('list')}
+            onNavigateView={(target) => {
+              if (target === 'memo') setMemoSubmissionTarget(null);
+              setView(target);
+            }}
+            onOpenWhatsApp={() => setIsWhatsAppModalOpen(true)}
+            onOpenGoogleDrive={() => setIsGoogleDriveSettingsOpen(true)}
+            onOpenDriveCleaner={() => setIsDriveOrphanCleanerOpen(true)}
+          />
+        )}
+
+        {/* VIEW 16: Tampilan Khusus Pengaturan Sistem & Akun */}
+        {view === 'pengaturan' && (
+          <PengaturanView
+            userProfile={userProfile}
+            authUser={authUser}
+            theme={theme}
+            masterDriveEmail={masterDriveEmail}
+            onSelectTheme={(t) => handleSelectTheme(t)}
+            onBackToDashboard={() => setView('list')}
+            onOpenProfile={() => setIsProfileOpen(true)}
+            onOpenCompanyModal={() => setIsCompanyModalOpen(true)}
+            onOpenThemeGallery={() => setIsThemeModalOpen(true)}
+            onOpenGoogleDrive={() => setIsGoogleDriveSettingsOpen(true)}
+            onOpenDriveDeduplicate={() => setIsDriveDeduplicateModalOpen(true)}
+            onOpenDriveCleaner={() => setIsDriveOrphanCleanerOpen(true)}
+            onOpenFirebaseQuota={() => setIsFirebaseQuotaModalOpen(true)}
+            onOpenCloudModal={() => setIsCloudModalOpen(true)}
+            onOpenFirebaseMigration={() => setIsFirebaseMigrationOpen(true)}
+            onOpenExportImport={() => setIsExportImportModalOpen(true)}
+            onOpenCleanFirestore={() => setIsCleanFirestoreModalOpen(true)}
+            onLogout={handleLogout}
           />
         )}
 
