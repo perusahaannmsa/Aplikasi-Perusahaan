@@ -1642,9 +1642,11 @@ export function AbsensiHarianNmsa({
     }
   }, [isDashWaOpen, waActivityTick]);
 
-  // Periodically fetch WhatsApp Gateway status from Express backend (single-flight guarded)
+  // Periodically fetch WhatsApp Gateway status from Express backend (single-flight + sequence guarded)
   const isWaConnected = waBotStatus === "connected";
   const waStatusInFlightRef = useRef<boolean>(false);
+  const waStatusSeqRef = useRef<number>(0);
+  const waPairingGraceUntilRef = useRef<number>(0);
   useEffect(() => {
     let active = true;
     let pollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1652,25 +1654,44 @@ export function AbsensiHarianNmsa({
     const checkWaStatus = async () => {
       if (waStatusInFlightRef.current) return;
       waStatusInFlightRef.current = true;
+      const mySeq = ++waStatusSeqRef.current;
       try {
         const res = await apiFetch(isDashWaOpen ? "/api/wa/status?activeUi=1" : "/api/wa/status?background=1", {
           headers: { Accept: "application/json" }
         });
+        if (!active || mySeq !== waStatusSeqRef.current) return;
         const contentType = res.headers.get("content-type");
-        if (res.ok && active && contentType && contentType.includes("application/json")) {
+        if (res.ok && contentType && contentType.includes("application/json")) {
           const data = await res.json();
-          setWaBotStatus(data.status || "disconnected");
+          if (!active || mySeq !== waStatusSeqRef.current) return;
+          if (data.proxyError) return;
+
+          setWaIsVercelServerless(Boolean(data.isVercelServerless));
+          if (data.isVercelServerless && data.needsBackendServer) {
+            setWaBotStatus("disconnected");
+            setWaBotQr(null);
+            setWaBotUser(null);
+            setWaPairingCode(null);
+            setWaBotPairingInProgress(false);
+            return;
+          }
+
+          if (data.status !== "connecting" || Date.now() > waPairingGraceUntilRef.current) {
+            setWaBotStatus(data.status || "disconnected");
+          }
           setWaBotQr((prev) => {
             const nextQr = data.isPairingInProgress ? null : (data.qr || null);
             return prev === nextQr ? prev : nextQr;
           });
           setWaBotUser(data.user || null);
           setWaBotPairingInProgress(Boolean(data.isPairingInProgress));
-          setWaIsVercelServerless(Boolean(data.isVercelServerless));
           if (data.status === "connected") {
+            waPairingGraceUntilRef.current = 0;
             setWaPairingCode(null);
           } else if (data.pairingCode) {
-            setWaPairingCode((prev) => prev || String(data.pairingCode));
+            setWaPairingCode(String(data.pairingCode));
+          } else if (Date.now() > waPairingGraceUntilRef.current && data.status !== "connecting") {
+            setWaPairingCode(null);
           }
           setWaBotError(data.error ? (typeof data.error === 'object' ? data.error?.message || JSON.stringify(data.error) : String(data.error)) : null);
 
@@ -4507,6 +4528,8 @@ export function AbsensiHarianNmsa({
       setWaBotError("Silakan masukkan nomor WhatsApp yang valid terlebih dahulu (contoh: 0812xxxxxx).");
       return;
     }
+    waStatusSeqRef.current += 1;
+    waPairingGraceUntilRef.current = Date.now() + 12000;
     setWaPairingLoading(true);
     setWaPairingCode(null);
     setWaBotError(null);
@@ -4516,13 +4539,23 @@ export function AbsensiHarianNmsa({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phone: clean }),
       });
+      waStatusSeqRef.current += 1;
       const data = await res.json().catch(() => ({}));
+      if (data.isVercelServerless) {
+        waPairingGraceUntilRef.current = 0;
+        setWaIsVercelServerless(true);
+        setWaBotError(data.error || "Mode Vercel Serverless: Atur URL Server Backend (Tab 8 pada popup AI WhatsApp) agar Baileys aktif.");
+        return;
+      }
       if (res.ok && (data.code || data.pairingCode)) {
+        waPairingGraceUntilRef.current = Date.now() + 8000;
         setWaPairingCode(data.code || data.pairingCode);
       } else {
+        waPairingGraceUntilRef.current = 0;
         setWaBotError("Gagal membuat Kode Pairing: " + (data.error || "Pastikan Server Backend sedang aktif."));
       }
     } catch (err: any) {
+      waPairingGraceUntilRef.current = 0;
       console.error("Failed to request pairing code:", err);
       setWaBotError("Kesalahan jaringan saat meminta kode pairing.");
     } finally {
@@ -4531,6 +4564,8 @@ export function AbsensiHarianNmsa({
   };
 
   const handleRefreshWaQr = async () => {
+    waStatusSeqRef.current += 1;
+    waPairingGraceUntilRef.current = 0;
     setIsRefreshingWaQr(true);
     setWaBotError(null);
     setWaBotPairingInProgress(false);
@@ -4539,6 +4574,7 @@ export function AbsensiHarianNmsa({
     setWaBotStatus("connecting");
     try {
       const res = await apiFetch("/api/wa/refresh-qr", { method: "POST" });
+      waStatusSeqRef.current += 1;
       const data = await res.json().catch(() => ({}));
       if (data.status) setWaBotStatus(data.status);
       if (data.qr) setWaBotQr(data.qr);
@@ -4558,6 +4594,8 @@ export function AbsensiHarianNmsa({
 
   const handleDisconnectWa = async () => {
     if (!window.confirm("Apakah Anda yakin ingin memutuskan koneksi WhatsApp? Sesi Anda akan dihapus dan Anda harus melakukan scan QR code kembali.")) return;
+    waStatusSeqRef.current += 1;
+    waPairingGraceUntilRef.current = 0;
     setWaBotError(null);
     try {
       const res = await apiFetch("/api/wa/disconnect", { method: "POST" });
@@ -4606,7 +4644,7 @@ export function AbsensiHarianNmsa({
   const handleTriggerCronManual = async () => {
     setIsCronRunning(true);
     try {
-      const res = await fetch("/api/cron-reminder?force=true");
+      const res = await apiFetch("/api/cron-reminder?force=true");
       const data = await res.json();
       if (res.ok) {
         alert(data.message || "Berhasil memproses pengingat harian!");
@@ -7520,6 +7558,12 @@ export function AbsensiHarianNmsa({
                               <p className="text-[11px] text-slate-500">Dapatkan kode 8 karakter untuk dimasukkan di WhatsApp HP Anda.</p>
                             </div>
 
+                            {waIsVercelServerless && (
+                              <div className="p-3 bg-amber-50/90 border border-amber-200 rounded-xl text-[11px] text-amber-900 leading-relaxed">
+                                <b>☁️ Mode Vercel Serverless:</b> Atur URL Server Backend (Render / Railway / VPS) pada popup <b>AI WhatsApp Gateway &rarr; Tab 8 (Server Backend)</b> untuk mendapatkan kode pairing Baileys resmi.
+                              </div>
+                            )}
+
                             <div className="space-y-2">
                               <label className="text-[10px] font-bold text-slate-700 uppercase tracking-wider block">Nomor WhatsApp Bot</label>
                               <div className="flex gap-2">
@@ -7527,13 +7571,14 @@ export function AbsensiHarianNmsa({
                                   type="text"
                                   placeholder="Contoh: 08123456789"
                                   value={waPairingPhone}
+                                  disabled={waIsVercelServerless}
                                   onChange={(e) => setWaPairingPhone(e.target.value)}
-                                  className="flex-1 bg-white text-slate-950 text-xs px-3 py-2.5 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium shadow-xs"
+                                  className="flex-1 bg-white text-slate-950 text-xs px-3 py-2.5 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium shadow-xs disabled:bg-slate-100 disabled:text-slate-400"
                                 />
                                 <button
                                   type="button"
                                   onClick={handleRequestWaPairingCode}
-                                  disabled={waPairingLoading || !waPairingPhone}
+                                  disabled={waIsVercelServerless || waPairingLoading || !waPairingPhone}
                                   className="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-[11px] px-3.5 rounded-xl transition shadow-xs flex items-center justify-center gap-1 cursor-pointer disabled:bg-slate-200 disabled:text-slate-400 disabled:pointer-events-none"
                                 >
                                   {waPairingLoading ? (

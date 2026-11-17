@@ -83,10 +83,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
   const [activeTab, setActiveTab] = useState<'connect' | 'automation' | 'uptime' | 'security' | 'attendance' | 'test' | 'webhook' | 'server'>('connect');
   
   // Vercel host detection
-  const [isVercelHost, setIsVercelHost] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    return window.location.hostname.includes('vercel.app');
-  });
+  const isVercelHost = typeof window !== 'undefined' && window.location.hostname.includes('vercel.app');
 
   const tabsContainerRef = useRef<HTMLDivElement>(null);
 
@@ -118,6 +115,8 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
   const lastQrSeqRef = useRef<number>(0);
   const qrExpiresAtRef = useRef<number | null>(null);
   const isFetchingStatusRef = useRef<boolean>(false);
+  const statusFetchSeqRef = useRef<number>(0);
+  const pairingGraceUntilRef = useRef<number>(0);
   const statusRef = useRef<string>(status);
   const pairingCodeRef = useRef<string | null>(null);
 
@@ -418,7 +417,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
     syncRemaining();
     const timer = setInterval(syncRemaining, 1000);
     return () => clearInterval(timer);
-  }, [isOpen, activeLinkMethod, status, isPairingInProgress, qrCode]);
+  }, [isOpen, activeLinkMethod, status, isPairingInProgress]);
 
   useEffect(() => {
     statusRef.current = status;
@@ -431,118 +430,112 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
   const fetchStatus = async () => {
     if (isFetchingStatusRef.current) return;
     isFetchingStatusRef.current = true;
+    const mySeq = ++statusFetchSeqRef.current;
     try {
-      // 1. Check server status for real Baileys connection / live QR code
-      let serverStatus = '';
-      let serverIsVercel = false;
       const res = await apiFetch('/api/wa/status?activeUi=1');
-      if (res.ok) {
-        const data = await res.json().catch(() => ({}));
-        serverStatus = data.status || '';
-        serverIsVercel = Boolean(data.isVercelServerless);
-        setIsVercelServerless(serverIsVercel);
-        setIsPairingInProgress(Boolean(data.isPairingInProgress));
+      if (mySeq !== statusFetchSeqRef.current) return;
 
-        if (data.status === 'connected' && data.user) {
-          setStatus('connected');
-          setConnectedUser(data.user);
+      const data = await res.json().catch(() => ({}));
+      if (mySeq !== statusFetchSeqRef.current) return;
+
+      if (!res.ok || data.proxyError) {
+        if (data.error) {
+          setErrorMessage(safeString(data.error));
+        }
+        return;
+      }
+
+      const serverIsVercel = Boolean(data.isVercelServerless);
+      setIsVercelServerless(serverIsVercel);
+
+      if (serverIsVercel && data.needsBackendServer) {
+        setStatus('disconnected');
+        setConnectedUser(null);
+        setQrCode(null);
+        qrExpiresAtRef.current = null;
+        setPairingCode(null);
+        setIsPairingInProgress(false);
+        return;
+      }
+
+      setIsPairingInProgress(Boolean(data.isPairingInProgress));
+
+      if (data.status === 'connected' && data.user) {
+        pairingGraceUntilRef.current = 0;
+        setStatus('connected');
+        setConnectedUser(data.user);
+        setQrCode(null);
+        qrExpiresAtRef.current = null;
+        setPairingCode(null);
+        setIsPairingInProgress(false);
+        setErrorMessage(null);
+        return;
+      }
+
+      if (data.pairingCode) {
+        const nextCode = safeString(data.pairingCode);
+        if (pairingCodeRef.current !== nextCode) {
+          setPairingCode(nextCode);
+        }
+      } else if (
+        pairingCodeRef.current &&
+        Date.now() > pairingGraceUntilRef.current &&
+        data.status !== 'connecting'
+      ) {
+        setPairingCode(null);
+      }
+
+      if ((data.status === 'qr' || data.qr) && data.qr && !data.isPairingInProgress) {
+        setQrCode((prev) => (prev === data.qr ? prev : data.qr));
+        setStatus('qr');
+        if (data.error) {
+          setErrorMessage(safeString(data.error));
+        } else if (data.pairingCode || Date.now() > pairingGraceUntilRef.current) {
+          setErrorMessage(null);
+        }
+        if (data.qrExpiresAt) {
+          const clockOffset = data.serverNow ? Date.now() - Number(data.serverNow) : 0;
+          qrExpiresAtRef.current = Number(data.qrExpiresAt) + clockOffset;
+          setQrCountdown(Math.max(0, Math.ceil((qrExpiresAtRef.current - Date.now()) / 1000)));
+        }
+        if (typeof data.qrSeq === 'number' && data.qrSeq !== lastQrSeqRef.current) {
+          lastQrSeqRef.current = data.qrSeq;
+          if (!data.qrExpiresAt) {
+            const fallbackTtl = data.qrTtlMs || (data.qrSeq <= 1 ? 60000 : 20000);
+            qrExpiresAtRef.current = Date.now() + fallbackTtl;
+            setQrCountdown(Math.ceil(fallbackTtl / 1000));
+          }
+        }
+        return;
+      }
+
+      if (data.isPairingInProgress || data.status === 'connecting') {
+        setStatus('connecting');
+        if (data.isPairingInProgress) {
           setQrCode(null);
           qrExpiresAtRef.current = null;
-          setPairingCode(null);
-          setIsPairingInProgress(false);
-          setErrorMessage(null);
-          return;
-        }
-        if (data.pairingCode) {
-          const nextCode = safeString(data.pairingCode);
-          if (pairingCodeRef.current !== nextCode) {
-            setPairingCode(nextCode);
-          }
-        } else if (pairingCodeRef.current) {
-          setPairingCode(null);
-        }
-        if ((data.status === 'qr' || data.qr) && data.qr && !data.isPairingInProgress) {
-          setQrCode((prev) => (prev === data.qr ? prev : data.qr));
-          setStatus('qr');
-          if (data.error) {
-            setErrorMessage(safeString(data.error));
-          }
-          if (data.qrExpiresAt) {
-            const clockOffset = data.serverNow ? Date.now() - Number(data.serverNow) : 0;
-            qrExpiresAtRef.current = Number(data.qrExpiresAt) + clockOffset;
-            setQrCountdown(Math.max(0, Math.ceil((qrExpiresAtRef.current - Date.now()) / 1000)));
-          }
-          if (typeof data.qrSeq === 'number' && data.qrSeq !== lastQrSeqRef.current) {
-            lastQrSeqRef.current = data.qrSeq;
-            if (!data.qrExpiresAt) {
-              const fallbackTtl = data.qrTtlMs || (data.qrSeq <= 1 ? 60000 : 20000);
-              qrExpiresAtRef.current = Date.now() + fallbackTtl;
-              setQrCountdown(Math.ceil(fallbackTtl / 1000));
-            }
-          }
-          return;
-        }
-        if (data.isPairingInProgress || data.status === 'connecting') {
-          setStatus('connecting');
-          if (data.isPairingInProgress) {
-            setQrCode(null);
-            qrExpiresAtRef.current = null;
-          }
-          setErrorMessage(null);
-          return;
         }
         if (data.error) {
           setErrorMessage(safeString(data.error));
         }
-        if (data.status) {
-          setStatus(data.status);
-          if (data.status === 'disconnected') {
-            setQrCode(null);
-            qrExpiresAtRef.current = null;
-          }
-        }
+        return;
       }
 
-      // 2. Fallback: Check localStorage/Firestore ONLY on Vercel serverless
-      if (serverIsVercel) {
-        const savedPhone = typeof window !== 'undefined' ? localStorage.getItem('nmsa_wa_phone') : null;
-        const isCustomConnected = typeof window !== 'undefined' && localStorage.getItem('nmsa_wa_connected') === 'true';
-        if (isCustomConnected && savedPhone && serverStatus === 'disconnected') {
-          setStatus('connected');
-          setConnectedUser({
-            id: `${savedPhone}@s.whatsapp.net`,
-            name: localStorage.getItem('nmsa_wa_name') || `WhatsApp Pribadi (${savedPhone})`
-          });
-          setErrorMessage(null);
-          return;
+      if (data.error) {
+        setErrorMessage(safeString(data.error));
+      }
+      if (data.status && Date.now() > pairingGraceUntilRef.current) {
+        setStatus(data.status);
+        if (data.status === 'disconnected') {
+          setQrCode(null);
+          qrExpiresAtRef.current = null;
         }
-
-        try {
-          const { getDoc, doc } = await import('firebase/firestore');
-          const { firestoreDb } = await import('../firebase');
-          if (firestoreDb) {
-            const snap = await getDoc(doc(firestoreDb, 'companies', 'nmsa'));
-            if (snap.exists()) {
-              const cData = snap.data();
-              if (cData?.waConnected && cData?.waUser) {
-                setStatus('connected');
-                setConnectedUser(cData.waUser);
-                setQrCode(null);
-                setErrorMessage(null);
-                return;
-              }
-              if (cData?.waQr) {
-                setQrCode(cData.waQr);
-                setStatus('qr');
-                setErrorMessage(null);
-                return;
-              }
-            }
-          }
-        } catch (_) {}
       }
     } catch (err: any) {
       console.warn('Error fetching WA status:', err);
+      if (getBackendBaseUrl()) {
+        setErrorMessage(`Tidak dapat menjangkau server backend (${getBackendBaseUrl()}). Pastikan server Render/Railway Anda aktif.`);
+      }
     } finally {
       isFetchingStatusRef.current = false;
     }
@@ -550,6 +543,8 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
 
   // Refresh QR code manually from Baileys server
   const handleRefreshQr = async () => {
+    statusFetchSeqRef.current += 1;
+    pairingGraceUntilRef.current = 0;
     setIsRefreshingQr(true);
     setErrorMessage(null);
     setIsPairingInProgress(false);
@@ -559,7 +554,14 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
     setQrCountdown(60);
     try {
       const res = await apiFetch('/api/wa/refresh-qr', { method: 'POST' });
+      statusFetchSeqRef.current += 1;
       const data = await res.json().catch(() => ({}));
+      if (data.isVercelServerless) {
+        setIsVercelServerless(true);
+        setStatus('disconnected');
+        if (data.error) setErrorMessage(safeString(data.error));
+        return;
+      }
       if (data.qr) {
         setQrCode(data.qr);
         setStatus('qr');
@@ -572,10 +574,12 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
           lastQrSeqRef.current = data.qrSeq;
         }
       } else {
+        if (data.error) setErrorMessage(safeString(data.error));
         setTimeout(fetchStatus, 1000);
       }
     } catch (err: any) {
       console.warn('Error refreshing WA QR:', err);
+      setErrorMessage(safeString(err?.message, 'Gagal menyegarkan QR Code.'));
       setTimeout(fetchStatus, 1000);
     } finally {
       setIsRefreshingQr(false);
@@ -648,6 +652,8 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
     if (!window.confirm('Putuskan koneksi WhatsApp saat ini? Anda dapat menautkan nomor WhatsApp pribadi Anda setelah ini.')) {
       return;
     }
+    statusFetchSeqRef.current += 1;
+    pairingGraceUntilRef.current = 0;
     setIsLoading(true);
     try {
       if (typeof window !== 'undefined') {
@@ -684,6 +690,8 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
   const handleRequestPairingCode = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!pairingPhone.trim()) return;
+    statusFetchSeqRef.current += 1;
+    pairingGraceUntilRef.current = Date.now() + 12000;
     setPairingLoading(true);
     setPairingCode(null);
     setErrorMessage(null);
@@ -694,6 +702,7 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
       else if (clean.startsWith('8')) clean = '62' + clean;
 
       if (clean.length < 9 || clean.length > 15) {
+        pairingGraceUntilRef.current = 0;
         setErrorMessage('Format nomor tidak valid. Masukkan nomor WhatsApp lengkap (minimal 9 digit, contoh: 0812xxxxxx).');
         setPairingLoading(false);
         return;
@@ -704,16 +713,29 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: clean })
       });
+      statusFetchSeqRef.current += 1;
       const data = await res.json().catch(() => ({}));
+      if (data.isVercelServerless) {
+        pairingGraceUntilRef.current = 0;
+        setIsVercelServerless(true);
+        setPairingCode(null);
+        setErrorMessage(safeString(data.error, 'Hosting Vercel memerlukan URL Server Backend Node.js di Tab 8 untuk membuat Kode Pairing Baileys asli.'));
+        return;
+      }
       if (data.success && (data.code || data.pairingCode)) {
+        pairingGraceUntilRef.current = Date.now() + 8000;
         setPairingCode(safeString(data.code || data.pairingCode));
+        if (data.qr) setQrCode(data.qr);
+        if (data.status) setStatus(data.status);
         setErrorMessage(null);
       } else {
-        setErrorMessage(data.error || 'Server belum siap memberikan kode pairing. Silakan coba lagi dalam beberapa detik.');
+        pairingGraceUntilRef.current = 0;
+        setErrorMessage(safeString(data.error, 'Server belum siap memberikan kode pairing. Silakan coba lagi dalam beberapa detik.'));
         setPairingCode(null);
       }
     } catch (err: any) {
-      setErrorMessage(err?.message || 'Gagal menghubungi server untuk meminta kode pairing.');
+      pairingGraceUntilRef.current = 0;
+      setErrorMessage(safeString(err?.message, 'Gagal menghubungi server untuk meminta kode pairing.'));
       setPairingCode(null);
     } finally {
       setPairingLoading(false);
@@ -1297,6 +1319,28 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                           </div>
                         </div>
 
+                        {isVercelServerless && (
+                          <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-950 space-y-2">
+                            <div className="flex items-start gap-2">
+                              <Server size={16} className="text-amber-700 shrink-0 mt-0.5" />
+                              <div className="space-y-1">
+                                <span className="font-bold block">Server Backend Baileys Belum Terhubung ke Vercel</span>
+                                <p className="text-[11px] text-amber-900 leading-relaxed">
+                                  Aplikasi ini berjalan di hosting serverless Vercel, sedangkan WhatsApp Baileys (QR Code &amp; Kode Pairing 8 digit) membutuhkan server Node.js 24/7 (Render/Railway/VPS). Tautkan URL server backend Anda di <strong>Tab 8</strong> agar Baileys aktif penuh.
+                                </p>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setActiveTab('server')}
+                              className="w-full py-1.5 px-3 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5"
+                            >
+                              <Server size={13} />
+                              <span>Hubungkan URL Server Backend (Tab 8)</span>
+                            </button>
+                          </div>
+                        )}
+
                         {/* Input Form */}
                         <form onSubmit={handleRequestPairingCode} className="space-y-3">
                           <div>
@@ -1312,16 +1356,17 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                                   type="text"
                                   placeholder="812-8899-7766 (atau 0812...)"
                                   value={pairingPhone}
+                                  disabled={isVercelServerless}
                                   onChange={e => {
                                     setPairingPhone(e.target.value);
                                     if (errorMessage) setErrorMessage(null);
                                   }}
-                                  className="w-full pl-16 pr-3 py-2 text-xs font-mono font-bold rounded-lg border border-stone-300 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 bg-white text-stone-900"
+                                  className="w-full pl-16 pr-3 py-2 text-xs font-mono font-bold rounded-lg border border-stone-300 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 bg-white text-stone-900 disabled:bg-stone-100 disabled:text-stone-400"
                                 />
                               </div>
                               <button
                                 type="submit"
-                                disabled={pairingLoading || !pairingPhone.trim()}
+                                disabled={isVercelServerless || pairingLoading || !pairingPhone.trim()}
                                 className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow-xs shrink-0"
                               >
                                 {pairingLoading ? <RefreshCw size={14} className="animate-spin" /> : <Key size={14} />}
@@ -2396,14 +2441,13 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                   <div className="min-w-0">
                     <span className="text-[10px] text-stone-500 font-bold block uppercase">URL Webhook Cron Pengingat (External Pinger):</span>
                     <span className="text-[11px] font-mono text-stone-700 truncate select-all block">
-                      {typeof window !== 'undefined' ? `${window.location.origin}/api/cron-reminder` : '/api/cron-reminder'}
+                      {`${baseUrl}/api/cron-reminder`}
                     </span>
                   </div>
                   <button
                     type="button"
                     onClick={() => {
-                      const url = typeof window !== 'undefined' ? `${window.location.origin}/api/cron-reminder` : '';
-                      handleCopy(url, 'cron-url');
+                      handleCopy(`${baseUrl}/api/cron-reminder`, 'cron-url');
                     }}
                     className="px-2.5 py-1 bg-stone-100 hover:bg-stone-200 text-stone-800 rounded-lg text-xs font-bold transition flex items-center gap-1 shrink-0 cursor-pointer"
                   >
@@ -3092,22 +3136,10 @@ export const WhatsAppAiModal: React.FC<WhatsAppAiModalProps> = ({ isOpen, onClos
                     type="button"
                     onClick={handleTestBackendConnection}
                     disabled={isTestingServer}
-                    className="px-3.5 py-1.5 bg-stone-900 hover:bg-stone-800 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition flex items-center gap-1"
+                    className="px-3.5 py-1.5 bg-stone-900 hover:bg-stone-800 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer"
                   >
                     <RefreshCw size={13} className={isTestingServer ? 'animate-spin' : ''} />
                     <span>Tes Koneksi</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setBackendUrlInput('');
-                      setBackendBaseUrl('');
-                      fetchStatus();
-                    }}
-                    className="px-3 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-lg text-xs font-medium transition"
-                  >
-                    Reset ke Asal (/api)
                   </button>
                 </div>
 

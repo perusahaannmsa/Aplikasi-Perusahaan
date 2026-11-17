@@ -128,9 +128,15 @@ let activePairingPhone: string | null = null;
 let activePairingRequestedAt: number | null = null;
 let lastUiPollAt = 0;
 let cachedWaVersion: { version: [number, number, number]; fetchedAt: number } | null = null;
+let isTransitioningSocket = false;
+let waActionMutex: Promise<any> = Promise.resolve();
 
 export function markUiStatusPoll() {
   lastUiPollAt = Date.now();
+}
+
+export function isWhatsAppTransitioning(): boolean {
+  return isTransitioningSocket || Boolean(initPromise);
 }
 
 function isCredsAuthenticated(parsed: any): boolean {
@@ -1103,6 +1109,7 @@ Silakan buka tautan di atas untuk mengakses menu absensi dan mencatat kehadiran 
           activePairingPhone = null;
           activePairingRequestedAt = null;
           cleanupAuthFolder();
+          lastError = `Koneksi WhatsApp terputus sementara (kode ${statusCode || "network"}) sebelum kode pairing dimasukkan. Klik 'Minta Kode Pairing' lagi untuk membuat kode baru.`;
         }
         reconnectAttempts++;
         connectionStatus = "connecting";
@@ -1260,125 +1267,164 @@ export async function sendWhatsAppMessage(phoneNumber: string, text: string): Pr
   }
 }
 
+// Refresh QR code cleanly with serialization lock so concurrent calls never collide
+export async function refreshWhatsAppQr(): Promise<ReturnType<typeof getWhatsAppStatus>> {
+  const run = async () => {
+    isTransitioningSocket = true;
+    try {
+      connectionStatus = "connecting";
+      await disconnectWhatsApp(false, true);
+      connectionStatus = "connecting";
+      await initWhatsApp(true);
+
+      let freshStatus = getWhatsAppStatus();
+      for (let i = 0; i < 25; i++) {
+        if (freshStatus.qr || freshStatus.status === "qr" || freshStatus.status === "connected") {
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 200));
+        freshStatus = getWhatsAppStatus();
+      }
+      return freshStatus;
+    } finally {
+      isTransitioningSocket = false;
+    }
+  };
+  const next = waActionMutex.then(run, run);
+  waActionMutex = next.catch(() => {});
+  return next;
+}
+
 // Request pairing code helper (Link via Phone Number)
 export async function requestWhatsAppPairingCode(phone: string): Promise<string> {
-  let cleaned = phone.replace(/[^0-9]/g, "");
-  if (cleaned.startsWith("620")) {
-    cleaned = "62" + cleaned.slice(3);
-  } else if (cleaned.startsWith("0")) {
-    cleaned = "62" + cleaned.slice(1);
-  } else if (cleaned.startsWith("8")) {
-    cleaned = "62" + cleaned;
-  }
-
-  if (cleaned.length < 9 || cleaned.length > 15) {
-    throw new Error("Nomor WhatsApp tidak valid. Masukkan nomor lengkap dengan kode negara (contoh: 0812xxxxxx atau 62812xxxxxx).");
-  }
-
-  // Always start a brand-new, unpolluted socket specifically for this pairing code request
-  // so the user gets a full timeout window and clean unregistered creds without stale refs.
-  console.log("[WhatsApp Bot] Menyiapkan socket Baileys baru yang bersih khusus untuk Kode Pairing...");
-  await disconnectWhatsApp(false, connectionStatus !== "connected");
-  lastError = null;
-  await initWhatsApp(true);
-
-  // Wait until WebSocket is TRULY open AND WhatsApp server finished pair-device handshake (connectionStatus === 'qr')
-  const waitStart = Date.now();
-  while (Date.now() - waitStart < 15000) {
-    if (sock && sock.ws?.isOpen && connectionStatus === "qr") {
-      break;
-    }
-    await new Promise((r) => setTimeout(r, 200));
-  }
-
-  if (!sock || !sock.ws?.isOpen || connectionStatus !== "qr") {
-    throw new Error("Koneksi WebSocket ke server WhatsApp belum siap. Silakan tunggu 2 detik lalu klik Minta Kode Pairing lagi.");
-  }
-
-  // Short stabilization delay after pair-device IQ result so WhatsApp accepts companion_hello cleanly
-  await new Promise((r) => setTimeout(r, 450));
-
-  if (!sock || !sock.ws?.isOpen) {
-    throw new Error("Koneksi WhatsApp terputus sebelum permintaan kode dikirim. Silakan coba lagi.");
-  }
-
-  console.log(`[WhatsApp Bot] Requesting pairing code for phone number: ${cleaned}`);
-  try {
-    if (typeof sock.requestPairingCode !== "function") {
-      throw new Error("Fungsi requestPairingCode tidak tersedia pada versi Baileys saat ini.");
+  const run = async () => {
+    let cleaned = phone.replace(/[^0-9]/g, "");
+    if (cleaned.startsWith("620")) {
+      cleaned = "62" + cleaned.slice(3);
+    } else if (cleaned.startsWith("0")) {
+      cleaned = "62" + cleaned.slice(1);
+    } else if (cleaned.startsWith("8")) {
+      cleaned = "62" + cleaned;
     }
 
-    // Monitor incoming IQ result/error frames from WhatsApp servers during pairing request
-    // Note: Meta sends attrs.from === "@s.whatsapp.net" (with leading @).
-    let iqErrorCode: string | null = null;
-    let iqErrorText: string | null = null;
-    let iqSettled = false;
-    const currentWs = sock.ws;
+    if (cleaned.length < 9 || cleaned.length > 15) {
+      throw new Error("Nomor WhatsApp tidak valid. Masukkan nomor lengkap dengan kode negara (contoh: 0812xxxxxx atau 62812xxxxxx).");
+    }
 
-    const frameListener = (frame: any) => {
-      try {
-        if (!frame || typeof frame !== "object" || frame instanceof Uint8Array) return;
-        const fromAttr = frame.attrs?.from || "";
-        if (frame.tag === "iq" && (!fromAttr || fromAttr === "@s.whatsapp.net" || fromAttr === "s.whatsapp.net")) {
-          if (frame.attrs?.type === "error") {
-            const errChild = Array.isArray(frame.content)
-              ? frame.content.find((c: any) => c?.tag === "error")
-              : null;
-            iqErrorCode = errChild?.attrs?.code || frame.attrs?.code || "400";
-            iqErrorText = errChild?.attrs?.text || "rejected";
-            iqSettled = true;
-          } else if (frame.attrs?.type === "result") {
-            const regChild = Array.isArray(frame.content)
-              ? frame.content.find((c: any) => c?.tag === "link_code_companion_reg")
-              : null;
-            if (regChild) {
+    // Always start a brand-new, unpolluted socket specifically for this pairing code request
+    // so the user gets a full timeout window and clean unregistered creds without stale refs.
+    isTransitioningSocket = true;
+    try {
+      console.log("[WhatsApp Bot] Menyiapkan socket Baileys baru yang bersih khusus untuk Kode Pairing...");
+      const skipRemoteLogout = connectionStatus !== "connected";
+      connectionStatus = "connecting";
+      await disconnectWhatsApp(false, skipRemoteLogout);
+      connectionStatus = "connecting";
+      lastError = null;
+      await initWhatsApp(true);
+
+      // Wait until WebSocket is TRULY open AND WhatsApp server finished pair-device handshake (connectionStatus === 'qr')
+      const waitStart = Date.now();
+      while (Date.now() - waitStart < 15000) {
+        if (sock && sock.ws?.isOpen && getWhatsAppStatus().status === "qr") {
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 200));
+      }
+
+      if (!sock || !sock.ws?.isOpen || getWhatsAppStatus().status !== "qr") {
+        throw new Error("Koneksi WebSocket ke server WhatsApp belum siap. Silakan tunggu 2 detik lalu klik Minta Kode Pairing lagi.");
+      }
+
+      // Short stabilization delay after pair-device IQ result so WhatsApp accepts companion_hello cleanly
+      await new Promise((r) => setTimeout(r, 450));
+
+      if (!sock || !sock.ws?.isOpen) {
+        throw new Error("Koneksi WhatsApp terputus sebelum permintaan kode dikirim. Silakan coba lagi.");
+      }
+
+      console.log(`[WhatsApp Bot] Requesting pairing code for phone number: ${cleaned}`);
+      if (typeof sock.requestPairingCode !== "function") {
+        throw new Error("Fungsi requestPairingCode tidak tersedia pada versi Baileys saat ini.");
+      }
+
+      // Monitor incoming IQ result/error frames from WhatsApp servers during pairing request
+      // Note: Meta sends attrs.from === "@s.whatsapp.net" (with leading @).
+      let iqErrorCode: string | null = null;
+      let iqErrorText: string | null = null;
+      let iqSettled = false;
+      const currentWs = sock.ws;
+
+      const frameListener = (frame: any) => {
+        try {
+          if (!frame || typeof frame !== "object" || frame instanceof Uint8Array) return;
+          const fromAttr = frame.attrs?.from || "";
+          if (frame.tag === "iq" && (!fromAttr || fromAttr === "@s.whatsapp.net" || fromAttr === "s.whatsapp.net")) {
+            if (frame.attrs?.type === "error") {
+              const errChild = Array.isArray(frame.content)
+                ? frame.content.find((c: any) => c?.tag === "error")
+                : null;
+              iqErrorCode = errChild?.attrs?.code || frame.attrs?.code || "400";
+              iqErrorText = errChild?.attrs?.text || "rejected";
               iqSettled = true;
+            } else if (frame.attrs?.type === "result") {
+              const regChild = Array.isArray(frame.content)
+                ? frame.content.find((c: any) => c?.tag === "link_code_companion_reg")
+                : null;
+              if (regChild) {
+                iqSettled = true;
+              }
             }
           }
+        } catch (_) {}
+      };
+
+      currentWs?.on?.("frame", frameListener);
+      let rawCode: string | undefined;
+      try {
+        rawCode = await sock.requestPairingCode(cleaned);
+        // Wait up to 2.5s to confirm WhatsApp accepted companion_hello without IQ error
+        const iqWaitStart = Date.now();
+        while (!iqSettled && Date.now() - iqWaitStart < 2500) {
+          await new Promise((r) => setTimeout(r, 100));
         }
-      } catch (_) {}
-    };
-
-    currentWs?.on?.("frame", frameListener);
-    let rawCode: string | undefined;
-    try {
-      rawCode = await sock.requestPairingCode(cleaned);
-      // Wait up to 2.5s to confirm WhatsApp accepted companion_hello without IQ error
-      const iqWaitStart = Date.now();
-      while (!iqSettled && Date.now() - iqWaitStart < 2500) {
-        await new Promise((r) => setTimeout(r, 100));
+      } finally {
+        currentWs?.off?.("frame", frameListener);
       }
+
+      if (iqErrorCode) {
+        console.warn(`[WhatsApp Bot] Server WhatsApp menolak Kode Pairing (${iqErrorCode} - ${iqErrorText}) untuk ${cleaned}`);
+        await disconnectWhatsApp(false, true);
+        initWhatsApp(true).catch(() => {});
+        if (iqErrorCode === "429") {
+          throw new Error("Terlalu sering meminta kode pairing (batas sementara WhatsApp 429). Tunggu beberapa menit atau gunakan Metode 2: Scan QR Code.");
+        }
+        throw new Error(`Server WhatsApp menolak permintaan kode pairing (kode ${iqErrorCode}: ${iqErrorText}). Pastikan nomor +${cleaned} terdaftar & aktif di WhatsApp, atau gunakan Metode Scan QR.`);
+      }
+
+      if (rawCode) {
+        const strCode = String(rawCode).trim().toUpperCase();
+        const formatted = strCode.length === 8 && !strCode.includes("-")
+          ? `${strCode.slice(0, 4)}-${strCode.slice(4)}`
+          : strCode;
+        activePairingCode = formatted;
+        activePairingPhone = cleaned;
+        activePairingRequestedAt = Date.now();
+        lastError = null;
+        return formatted;
+      }
+
+      throw new Error("Koneksi WhatsApp belum merespons permintaan kode pairing. Silakan klik tombol sekali lagi.");
+    } catch (err: any) {
+      console.error("[WhatsApp Bot] Error requesting pairing code:", err);
+      throw new Error(err?.message || "Gagal meminta kode pairing. Silakan coba lagi.");
     } finally {
-      currentWs?.off?.("frame", frameListener);
+      isTransitioningSocket = false;
     }
-
-    if (iqErrorCode) {
-      console.warn(`[WhatsApp Bot] Server WhatsApp menolak Kode Pairing (${iqErrorCode} - ${iqErrorText}) untuk ${cleaned}`);
-      await disconnectWhatsApp(false, true);
-      initWhatsApp(true).catch(() => {});
-      if (iqErrorCode === "429") {
-        throw new Error("Terlalu sering meminta kode pairing (batas sementara WhatsApp 429). Tunggu beberapa menit atau gunakan Metode 2: Scan QR Code.");
-      }
-      throw new Error(`Server WhatsApp menolak permintaan kode pairing (kode ${iqErrorCode}: ${iqErrorText}). Pastikan nomor +${cleaned} terdaftar & aktif di WhatsApp, atau gunakan Metode Scan QR.`);
-    }
-
-    if (rawCode) {
-      const strCode = String(rawCode).trim().toUpperCase();
-      const formatted = strCode.length === 8 && !strCode.includes("-")
-        ? `${strCode.slice(0, 4)}-${strCode.slice(4)}`
-        : strCode;
-      activePairingCode = formatted;
-      activePairingPhone = cleaned;
-      activePairingRequestedAt = Date.now();
-      lastError = null;
-      return formatted;
-    }
-  } catch (err: any) {
-    console.error("[WhatsApp Bot] Error requesting pairing code:", err);
-    throw new Error(err?.message || "Gagal meminta kode pairing. Silakan coba lagi.");
-  }
-
-  throw new Error("Koneksi WhatsApp belum merespons permintaan kode pairing. Silakan klik tombol sekali lagi.");
+  };
+  const next = waActionMutex.then(run, run);
+  waActionMutex = next.catch(() => {});
+  return next;
 }
 
 /**

@@ -27,7 +27,9 @@ import {
   hasAuthBackup,
   hasWhatsAppCredentials,
   isWhatsAppConnected,
-  markUiStatusPoll
+  markUiStatusPoll,
+  refreshWhatsAppQr,
+  isWhatsAppTransitioning
 } from "./server/wa-bot";
 import { getDynamicReminderMessage } from "./src/utils/reminderMessageGenerator";
 
@@ -90,7 +92,7 @@ app.use(express.static(path.join(process.cwd(), "public")));
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
-  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, x-api-key");
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, x-api-key, x-backend-url, Cache-Control, Pragma");
   if (req.method === "OPTIONS") {
     return res.sendStatus(200);
   }
@@ -3824,7 +3826,7 @@ app.get("/api/wa/status", (req, res) => {
       markUiStatusPoll();
     }
     let status = getWhatsAppStatus();
-    if (status.status === "disconnected" && (hasWhatsAppCredentials() || (!isBackgroundPoll && !status.error))) {
+    if (!isWhatsAppTransitioning() && status.status === "disconnected" && (hasWhatsAppCredentials() || (!isBackgroundPoll && !status.error))) {
       initWhatsApp().catch((err) => console.error("Auto init WA on status error:", err));
       status = getWhatsAppStatus();
     }
@@ -3888,18 +3890,7 @@ app.post("/api/wa/refresh-qr", async (req, res) => {
   try {
     markUiStatusPoll();
     console.log("[WhatsApp Bot] Memperbarui QR Code atas permintaan pengguna...");
-    await disconnectWhatsApp(false, true);
-    await initWhatsApp(true);
-
-    // Wait up to 5 seconds to return the newly generated QR code directly to the frontend
-    let freshStatus = getWhatsAppStatus();
-    for (let i = 0; i < 25; i++) {
-      if (freshStatus.qr || freshStatus.status === "qr" || freshStatus.status === "connected") {
-        break;
-      }
-      await new Promise(r => setTimeout(r, 200));
-      freshStatus = getWhatsAppStatus();
-    }
+    const freshStatus = await refreshWhatsAppQr();
 
     return res.json({
       success: true,
@@ -3931,7 +3922,8 @@ app.post("/api/wa/pairing-code", async (req, res) => {
   }
   try {
     const code = await requestWhatsAppPairingCode(String(phone).trim());
-    return res.json({ success: true, code, pairingCode: code });
+    const freshStatus = getWhatsAppStatus();
+    return res.json({ ...freshStatus, success: true, code, pairingCode: code });
   } catch (err: any) {
     console.error("[Pairing Code Error]", err);
     return res.status(400).json({ success: false, error: err.message || "Gagal membuat Kode Pairing WhatsApp." });

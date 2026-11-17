@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { saveAbsenDataToFirestore } from "../firebase";
 import { getDynamicReminderMessage } from "../utils/reminderMessageGenerator";
+import { apiFetch } from "../utils/backendApi";
 
 interface Worker {
   id: string;
@@ -96,7 +97,7 @@ export const WhatsAppBotReminderMenu: React.FC<WhatsAppBotReminderMenuProps> = (
   const fetchSettings = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch("/api/bot-reminder-settings");
+      const res = await apiFetch("/api/bot-reminder-settings");
       if (res.ok) {
         const data = await res.json();
         if (data.autoReminderHour) setAutoReminderHour(data.autoReminderHour);
@@ -118,14 +119,14 @@ export const WhatsAppBotReminderMenu: React.FC<WhatsAppBotReminderMenuProps> = (
       }
 
       // Check current holiday info
-      const holRes = await fetch("/api/check-holiday");
+      const holRes = await apiFetch("/api/check-holiday");
       if (holRes.ok) {
         const holData = await holRes.json();
         setTodayHolidayInfo({ isHoliday: !!holData.isHoliday, reason: holData.reason || null });
       }
 
       // Fetch Friday verifications
-      const verifRes = await fetch("/api/friday-verifications");
+      const verifRes = await apiFetch("/api/friday-verifications");
       if (verifRes.ok) {
         const verifData = await verifRes.json();
         if (verifData.verifications) {
@@ -150,7 +151,7 @@ export const WhatsAppBotReminderMenu: React.FC<WhatsAppBotReminderMenuProps> = (
     setIsSaving(true);
     setSaveSuccessMsg("");
     try {
-      const res = await fetch("/api/bot-reminder-settings", {
+      const res = await apiFetch("/api/bot-reminder-settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -209,7 +210,7 @@ export const WhatsAppBotReminderMenu: React.FC<WhatsAppBotReminderMenuProps> = (
     setIsTriggering(true);
     setTriggerResult(null);
     try {
-      const res = await fetch("/api/trigger-bot-reminder", { method: "POST" });
+      const res = await apiFetch("/api/trigger-bot-reminder", { method: "POST" });
       const data = await res.json();
       if (res.ok && data.success) {
         setTriggerResult({

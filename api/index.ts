@@ -12,7 +12,6 @@ function getDataFilePath(): string {
   const rootPath = path.join(process.cwd(), "data-store.json");
   if (fs.existsSync(rootPath)) {
     try {
-      // Seed /tmp from bundled data-store.json if writable
       fs.copyFileSync(rootPath, tmpPath);
       return tmpPath;
     } catch (_) {
@@ -35,7 +34,6 @@ function loadState(): any {
     console.warn("[Vercel API] Could not load data-store.json:", e);
   }
 
-  // Safe fallback state
   cachedState = {
     submissions: [],
     workers: [],
@@ -52,12 +50,12 @@ function loadState(): any {
     adminPassword: "nmsa",
     adminToken: "nmsa_admin_token_default",
     attendancePin: "1234",
-    securitySettings: {
+    waSecuritySettings: {
       privacyMode: "whitelist",
       allowedPhones: [],
       securityPin: "1234",
-      enableDriveLinks: true
-    }
+      enableDriveLinks: true,
+    },
   };
   return cachedState;
 }
@@ -74,7 +72,6 @@ function saveState(data: any): boolean {
   }
 }
 
-// Read body safely from request
 async function parseRequestBody(req: any): Promise<any> {
   if (req.body && typeof req.body === "object") return req.body;
   if (req.body && typeof req.body === "string") {
@@ -100,22 +97,54 @@ async function parseRequestBody(req: any): Promise<any> {
   });
 }
 
+function buildForwardQueryString(rawUrl: string): string {
+  if (!rawUrl || !rawUrl.includes("?")) return "";
+  const rawQuery = rawUrl.split("?")[1] || "";
+  const params = new URLSearchParams(rawQuery);
+  params.delete("_route");
+  params.delete("backendUrl");
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
+}
+
+function shouldProxyToExternalBackend(cleanPath: string): boolean {
+  return (
+    cleanPath === "wa" ||
+    cleanPath.startsWith("wa/") ||
+    cleanPath === "health" ||
+    cleanPath === "ping" ||
+    cleanPath === "keepalive" ||
+    cleanPath === "bot-reminder-settings" ||
+    cleanPath === "trigger-bot-reminder" ||
+    cleanPath === "cron-reminder" ||
+    cleanPath.startsWith("cron/") ||
+    cleanPath === "ai-query" ||
+    cleanPath === "whatsapp-webhook" ||
+    cleanPath === "fonnte-webhook" ||
+    cleanPath === "check-holiday" ||
+    cleanPath === "friday-verifications"
+  );
+}
+
+const VERCEL_NEEDS_BACKEND_MSG =
+  "Hosting Vercel bersifat Serverless sehingga koneksi WhatsApp Baileys (QR Code & Kode Pairing) memerlukan Server Backend Node.js 24/7 (Render / Railway / VPS). Buka Tab 8 'Server Backend ⚙️' atau atur Environment Variable BACKEND_URL di Vercel.";
+
 export default async function handler(req: any, res: any) {
-  // Always attach CORS headers
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
-  res.setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, x-api-key, x-backend-url");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Origin, X-Requested-With, Content-Type, Accept, Authorization, x-api-key, x-backend-url, Cache-Control, Pragma"
+  );
 
   if (req.method === "OPTIONS") {
     res.statusCode = 200;
     return res.end();
   }
 
-  // Ensure JSON response header by default
   res.setHeader("Content-Type", "application/json");
 
   try {
-    // Determine route from query param, matched path header, or URL
     const routeParam = req.query?._route;
     let cleanPath = "";
     if (routeParam) {
@@ -127,205 +156,255 @@ export default async function handler(req: any, res: any) {
     }
     cleanPath = cleanPath.replace(/^\/+/, "").replace(/\/+$/, "");
 
-    // Extract query string parameters
     const queryString = (req.url && req.url.includes("?")) ? req.url.split("?")[1] : "";
     const searchParams = new URLSearchParams(queryString);
 
-    // Check if client supplied an external backend URL to proxy to
-    const externalBackend = (req.headers["x-backend-url"] as string) || 
-                            searchParams.get("backendUrl") || 
-                            process.env.BACKEND_URL || 
-                            "";
+    const externalBackend = (
+      (req.headers["x-backend-url"] as string) ||
+      searchParams.get("backendUrl") ||
+      process.env.BACKEND_URL ||
+      process.env.VITE_BACKEND_URL ||
+      ""
+    ).trim();
 
-    // 1. WhatsApp Bot endpoints
+    // Universal proxy to persistent Node.js Baileys backend when configured
+    if (externalBackend && externalBackend.startsWith("http") && shouldProxyToExternalBackend(cleanPath)) {
+      const forwardQs = buildForwardQueryString(req.url || "");
+      const targetUrl = `${externalBackend.replace(/\/+$/, "")}/api/${cleanPath}${forwardQs}`;
+      const bodyData =
+        req.method === "POST" || req.method === "PUT" || req.method === "PATCH"
+          ? await parseRequestBody(req)
+          : undefined;
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 25000);
+      try {
+        const proxyRes = await fetch(targetUrl, {
+          method: req.method,
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+            ...(req.headers.authorization ? { Authorization: req.headers.authorization } : {}),
+            ...(req.headers["x-api-key"] ? { "x-api-key": req.headers["x-api-key"] } : {}),
+          },
+          body: bodyData !== undefined ? JSON.stringify(bodyData) : undefined,
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+
+        const rawText = await proxyRes.text();
+        res.statusCode = proxyRes.status;
+        try {
+          // Verify valid JSON or wrap cleanly
+          JSON.parse(rawText);
+          return res.end(rawText);
+        } catch {
+          return res.end(
+            JSON.stringify({
+              success: proxyRes.ok,
+              proxyError: !proxyRes.ok,
+              error: proxyRes.ok ? undefined : `Server backend mengembalikan status ${proxyRes.status}`,
+            })
+          );
+        }
+      } catch (proxyErr: any) {
+        clearTimeout(timeoutId);
+        console.warn("[Vercel Backend Proxy Error]", targetUrl, proxyErr?.message);
+        res.statusCode = 502;
+        return res.end(
+          JSON.stringify({
+            success: false,
+            proxyError: true,
+            isVercel: true,
+            isVercelServerless: false,
+            error: `Gagal menjangkau server backend Baileys (${proxyErr?.name === "AbortError" ? "Timeout / Server sedang bangun" : proxyErr?.message || "Network error"}).`,
+          })
+        );
+      }
+    }
+
+    // 1. WhatsApp Bot endpoints when Vercel runs standalone (no external persistent backend configured)
     if (cleanPath.startsWith("wa/") || cleanPath === "wa") {
       const subWa = cleanPath.replace(/^wa\/?/, "");
 
-      // If user has a persistent backend configured, proxy WhatsApp requests to it
-      if (externalBackend && externalBackend.trim().startsWith("http")) {
-        try {
-          const targetUrl = `${externalBackend.trim().replace(/\/+$/, "")}/api/${cleanPath}${queryString ? `?${queryString}` : ""}`;
-          const bodyData = (req.method === "POST" || req.method === "PUT") ? await parseRequestBody(req) : undefined;
-          
-          const proxyRes = await fetch(targetUrl, {
-            method: req.method,
-            headers: {
-              "Content-Type": "application/json",
-              ...(req.headers.authorization ? { Authorization: req.headers.authorization } : {})
-            },
-            body: bodyData ? JSON.stringify(bodyData) : undefined
-          });
-
-          const proxyJson = await proxyRes.json().catch(() => ({}));
-          res.statusCode = proxyRes.status;
-          return res.end(JSON.stringify(proxyJson));
-        } catch (proxyErr: any) {
-          console.warn("[Vercel WA Proxy Warning]", proxyErr?.message);
-          // Fall through to default response on proxy error
-        }
-      }
-
-      // WhatsApp handlers for Vercel Serverless & API proxy
       if (subWa === "status") {
-        const state = loadState();
-        const isSessionConnected = state.waConnected === true;
-        return res.end(JSON.stringify({
-          success: true,
-          status: isSessionConnected ? "connected" : "disconnected",
-          qr: null,
-          user: isSessionConnected ? state.waUser : null,
-          isVercel: true,
-          isVercelServerless: true,
-          notice: isSessionConnected 
-            ? `WhatsApp ${state.waUser?.name || 'Pribadi'} aktif dan terhubung ke sistem PT NMSA.` 
-            : "Silakan scan QR Code atau gunakan Kode Pairing untuk menautkan nomor WhatsApp Anda.",
-          error: null
-        }));
+        return res.end(
+          JSON.stringify({
+            success: true,
+            status: "disconnected",
+            isConnected: false,
+            qr: null,
+            qrSeq: 0,
+            pairingCode: null,
+            user: null,
+            isVercel: true,
+            isVercelServerless: true,
+            needsBackendServer: true,
+            hasCredentials: false,
+            hasBackup: false,
+            error: null,
+            notice: VERCEL_NEEDS_BACKEND_MSG,
+          })
+        );
       }
 
-      if (subWa === "refresh-qr") {
-        const state = loadState();
-        state.waConnected = false;
-        state.waUser = null;
-        saveState(state);
-        return res.end(JSON.stringify({
-          success: true,
-          status: "disconnected",
-          qr: null,
-          message: "Sesi disegarkan. Silakan scan QR code baru."
-        }));
-      }
-
-      if (subWa === "keepalive-stats") {
-        return res.end(JSON.stringify({
-          uptimeSeconds: Math.floor(process.uptime()),
-          totalPings: 1,
-          isVercel: true,
-          status: "active"
-        }));
-      }
-
-      if (subWa === "security-settings") {
-        const state = loadState();
-        if (req.method === "POST") {
-          const body = await parseRequestBody(req);
-          state.securitySettings = {
-            ...(state.securitySettings || {}),
-            ...body
-          };
-          saveState(state);
-          return res.end(JSON.stringify({ success: true, settings: state.securitySettings }));
-        }
-        return res.end(JSON.stringify({
-          success: true,
-          settings: state.securitySettings || {
-            privacyMode: "whitelist",
-            allowedPhones: [],
-            securityPin: "1234",
-            enableDriveLinks: true
-          }
-        }));
-      }
-
-      if (subWa === "pairing-code") {
-        const body = await parseRequestBody(req);
-        let phone = (body?.phone || searchParams.get("phone") || "").toString().replace(/[^0-9]/g, "");
-        if (phone.startsWith("0")) phone = "62" + phone.slice(1);
-        else if (phone.startsWith("8")) phone = "62" + phone;
-
-        // Generate 8-digit pairing code (format: XXXX-XXXX)
-        const part1 = Math.floor(1000 + Math.random() * 9000);
-        const part2 = Math.floor(1000 + Math.random() * 9000);
-        const code = `${part1}-${part2}`;
-
-        const state = loadState();
-        state.pairingPhone = phone;
-        state.pairingCode = code;
-        saveState(state);
-
-        return res.end(JSON.stringify({
-          success: true,
-          code,
-          pairingCode: code,
-          phone,
-          message: "Kode pairing WhatsApp 8 digit berhasil dibuat."
-        }));
-      }
-
-      if (subWa === "connect-phone") {
-        const body = await parseRequestBody(req);
-        let phone = (body?.phone || "").toString().replace(/[^0-9]/g, "");
-        if (phone.startsWith("0")) phone = "62" + phone.slice(1);
-        else if (phone.startsWith("8")) phone = "62" + phone;
-        const name = body?.name || `WhatsApp Pribadi (${phone || 'Admin'})`;
-
-        const state = loadState();
-        state.waConnected = true;
-        state.waUser = {
-          id: `${phone}@s.whatsapp.net`,
-          name
-        };
-        saveState(state);
-
-        return res.end(JSON.stringify({
-          success: true,
-          status: "connected",
-          user: state.waUser,
-          message: `Nomor WhatsApp ${phone} berhasil ditautkan ke sistem.`
-        }));
-      }
-
-      if (subWa === "connect-demo" || subWa === "simulate-connect") {
-        const body = await parseRequestBody(req);
-        let phone = (body?.phone || "").toString().replace(/[^0-9]/g, "");
-        if (phone.startsWith("0")) phone = "62" + phone.slice(1);
-        if (!phone) phone = "628123456789";
-
-        const state = loadState();
-        state.waConnected = true;
-        state.waUser = { id: `${phone}@s.whatsapp.net`, name: body?.name || "WhatsApp Pribadi Admin" };
-        saveState(state);
-        return res.end(JSON.stringify({
-          success: true,
-          status: "connected",
-          user: state.waUser,
-          message: "Sesi WhatsApp berhasil terhubung."
-        }));
+      if (subWa === "refresh-qr" || subWa === "pairing-code" || subWa === "send-test") {
+        res.statusCode = 503;
+        return res.end(
+          JSON.stringify({
+            success: false,
+            isVercel: true,
+            isVercelServerless: true,
+            needsBackendServer: true,
+            error: VERCEL_NEEDS_BACKEND_MSG,
+          })
+        );
       }
 
       if (subWa === "disconnect") {
         const state = loadState();
         state.waConnected = false;
         state.waUser = null;
+        state.waQr = null;
         state.pairingCode = null;
         state.pairingPhone = null;
         saveState(state);
-        return res.end(JSON.stringify({ success: true, message: "Koneksi WhatsApp berhasil diputuskan." }));
+        return res.end(
+          JSON.stringify({
+            success: true,
+            isVercelServerless: true,
+            message: "Status lokal WhatsApp telah dibersihkan.",
+          })
+        );
       }
 
-      if (subWa === "send-test") {
+      if (subWa === "keepalive-stats") {
+        return res.end(
+          JSON.stringify({
+            success: true,
+            uptimeSeconds: Math.floor(process.uptime()),
+            totalPings: 1,
+            lastPing: new Date().toISOString(),
+            isVercel: true,
+            isVercelServerless: true,
+            needsBackendServer: true,
+            status: "serverless",
+          })
+        );
+      }
+
+      if (subWa === "security-settings") {
+        const state = loadState();
+        const existing = state.waSecuritySettings ||
+          state.securitySettings || {
+            privacyMode: "whitelist",
+            allowedPhones: [],
+            securityPin: "1234",
+            enableDriveLinks: true,
+            unauthorizedMessage:
+              "Nomor WhatsApp Anda belum terdaftar dalam otorisasi akses voucher keuangan PT NMSA. Silakan hubungi Finance/Admin untuk mendaftarkan nomor Anda.",
+          };
+        if (req.method === "POST") {
+          const body = await parseRequestBody(req);
+          state.waSecuritySettings = {
+            ...existing,
+            ...body,
+          };
+          saveState(state);
+          return res.end(JSON.stringify({ success: true, settings: state.waSecuritySettings }));
+        }
+        return res.end(
+          JSON.stringify({
+            success: true,
+            settings: existing,
+          })
+        );
+      }
+
+      if (subWa === "automation-settings") {
+        // Handled identically below with bot-reminder-settings
+      } else {
+        return res.end(
+          JSON.stringify({
+            success: true,
+            isVercel: true,
+            isVercelServerless: true,
+            needsBackendServer: true,
+            subPath: subWa,
+          })
+        );
+      }
+    }
+
+    // 2. Bot Reminder / Automation Settings (Unified single handler)
+    if (cleanPath === "bot-reminder-settings" || cleanPath === "wa/automation-settings") {
+      const state = loadState();
+      if (req.method === "POST") {
         const body = await parseRequestBody(req);
-        return res.end(JSON.stringify({
-          success: true,
-          message: `Pesan uji coba berhasil dijadwalkan ke ${body?.phone || "nomor tujuan"}.`,
-          timestamp: new Date().toISOString()
-        }));
+        if (body && typeof body === "object") {
+          if (body.masterAutoSendEnabled !== undefined) state.masterAutoSendEnabled = body.masterAutoSendEnabled;
+          if (body.autoReminderHour !== undefined) state.autoReminderHour = body.autoReminderHour;
+          if (body.autoReminderEnabled !== undefined) state.autoReminderEnabled = body.autoReminderEnabled;
+          if (body.enableAiAutoReply !== undefined) state.enableAiAutoReply = body.enableAiAutoReply;
+          if (body.reminderActiveDays !== undefined) state.reminderActiveDays = body.reminderActiveDays;
+          if (body.skipHolidays !== undefined) state.skipHolidays = body.skipHolidays;
+          if (body.skipWeekends !== undefined) state.skipWeekends = body.skipWeekends;
+          if (body.requireFridaySignature !== undefined) state.requireFridaySignature = body.requireFridaySignature;
+          if (body.allowLocationCheckin !== undefined) state.allowLocationCheckin = body.allowLocationCheckin;
+          if (body.autoReplyScope !== undefined) state.autoReplyScope = body.autoReplyScope;
+          if (body.reminderTone !== undefined) state.reminderTone = body.reminderTone;
+          saveState(state);
+        }
+        return res.end(
+          JSON.stringify({
+            success: true,
+            message: "Pengaturan tersimpan (mode serverless).",
+            isVercelServerless: true,
+          })
+        );
       }
-
-      return res.end(JSON.stringify({ success: true, isVercel: true, subPath: subWa }));
+      return res.end(
+        JSON.stringify({
+          success: true,
+          isVercelServerless: true,
+          masterAutoSendEnabled: state.masterAutoSendEnabled !== false,
+          autoReminderHour: state.autoReminderHour || "09:00",
+          autoReminderEnabled: state.autoReminderEnabled !== false,
+          enableAiAutoReply: state.enableAiAutoReply !== false,
+          reminderActiveDays: state.reminderActiveDays || ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"],
+          skipHolidays: state.skipHolidays !== false,
+          skipWeekends: state.skipWeekends !== false,
+          requireFridaySignature: state.requireFridaySignature !== false,
+          allowLocationCheckin: state.allowLocationCheckin !== false,
+          autoReplyScope: state.autoReplyScope || "all",
+          reminderTone: state.reminderTone || "standard",
+          lastCronPing: state.lastCronPing || "",
+          lastCronStatus: state.lastCronStatus || "",
+          lastCronSentDate: state.lastCronSentDate || "",
+          serverTimeWIB: new Date().toLocaleTimeString("id-ID", { timeZone: "Asia/Jakarta" }) + " WIB",
+          totalActiveWorkers: (state.workers || []).filter((w: any) => w.isActive).length,
+          pendingAttendanceCount: 0,
+          waConnected: false,
+          waPhone: null,
+        })
+      );
     }
 
-    // 2. Health check
-    if (cleanPath === "health") {
-      return res.end(JSON.stringify({
-        status: "ok",
-        timestamp: new Date().toISOString(),
-        platform: "vercel-serverless",
-        uptimeSeconds: Math.floor(process.uptime())
-      }));
+    // 3. Health check
+    if (cleanPath === "health" || cleanPath === "ping" || cleanPath === "keepalive") {
+      return res.end(
+        JSON.stringify({
+          status: "ok",
+          timestamp: new Date().toISOString(),
+          platform: "vercel-serverless",
+          isVercelServerless: true,
+          needsBackendServer: true,
+          uptimeSeconds: Math.floor(process.uptime()),
+        })
+      );
     }
 
-    // 3. Unified Storage / Submissions
+    // 4. Unified Storage / Submissions
     if (cleanPath === "unified-storage") {
       const state = loadState();
       if (req.method === "POST") {
@@ -336,27 +415,31 @@ export default async function handler(req: any, res: any) {
           state.submissions = body.submissions;
         }
         saveState(state);
-        return res.end(JSON.stringify({
+        return res.end(
+          JSON.stringify({
+            success: true,
+            count: (state.submissions || []).length,
+            timestamp: new Date().toISOString(),
+          })
+        );
+      }
+      return res.end(
+        JSON.stringify({
           success: true,
           count: (state.submissions || []).length,
-          timestamp: new Date().toISOString()
-        }));
-      }
-      return res.end(JSON.stringify({
-        success: true,
-        count: (state.submissions || []).length,
-        submissions: state.submissions || [],
-        raw: {
-          workers: state.workers || [],
-          deletedWorkerIds: state.deletedWorkerIds || []
-        },
-        companyId: "nmsa",
-        source: "vercel-serverless",
-        timestamp: new Date().toISOString()
-      }));
+          submissions: state.submissions || [],
+          raw: {
+            workers: state.workers || [],
+            deletedWorkerIds: state.deletedWorkerIds || [],
+          },
+          companyId: "nmsa",
+          source: "vercel-serverless",
+          timestamp: new Date().toISOString(),
+        })
+      );
     }
 
-    // 4. Shared State (workers, attendance, etc.)
+    // 5. Shared State (workers, attendance, etc.)
     if (cleanPath === "shared-state") {
       const state = loadState();
       if (req.method === "POST") {
@@ -370,66 +453,7 @@ export default async function handler(req: any, res: any) {
       return res.end(JSON.stringify(state));
     }
 
-    // WhatsApp Bot Integration Endpoints (Supports Vercel & Persistent State)
-    if (cleanPath === "wa/status" || cleanPath.startsWith("wa/status")) {
-      const state = loadState();
-      return res.end(JSON.stringify({
-        success: true,
-        status: state.waConnected ? "connected" : "disconnected",
-        user: state.waConnected ? (state.waUser || (state.waPhone ? { id: `${state.waPhone}@s.whatsapp.net`, name: state.waName || 'WhatsApp Pribadi' } : null)) : null,
-        qr: state.waQr || null,
-        hasCredentials: !!state.waConnected
-      }));
-    }
-
-    if (cleanPath === "wa/disconnect") {
-      const state = loadState();
-      state.waConnected = false;
-      state.waUser = null;
-      state.waPhone = null;
-      state.waName = null;
-      state.pairingCode = null;
-      state.pairingPhone = null;
-      saveState(state);
-      return res.end(JSON.stringify({ success: true, message: "Koneksi WhatsApp berhasil diputuskan." }));
-    }
-
-    if (cleanPath === "wa/refresh-qr") {
-      const state = loadState();
-      state.waConnected = false;
-      saveState(state);
-      return res.end(JSON.stringify({ success: true, status: "qr", message: "QR Code siap dipindai." }));
-    }
-
-    if (cleanPath === "wa/pairing-code") {
-      const body = await parseRequestBody(req);
-      const phone = body.phone || "";
-      const cleanPhone = String(phone).replace(/[^0-9]/g, "");
-      const p1 = Math.floor(1000 + Math.random() * 9000);
-      const p2 = Math.floor(1000 + Math.random() * 9000);
-      const pairingCode = `${p1}-${p2}`;
-      const state = loadState();
-      state.waPhone = cleanPhone;
-      saveState(state);
-      return res.end(JSON.stringify({ success: true, code: pairingCode, pairingCode }));
-    }
-
-    if (cleanPath === "wa/connect-phone") {
-      const body = await parseRequestBody(req);
-      let phone = String(body.phone || "").replace(/[^0-9]/g, "");
-      if (phone.startsWith("0")) phone = "62" + phone.slice(1);
-      else if (phone.startsWith("8")) phone = "62" + phone;
-      const name = body.name || "WhatsApp Pribadi Admin";
-      const state = loadState();
-      state.waConnected = true;
-      state.waPhone = phone;
-      state.waName = name;
-      state.waUser = { id: `${phone}@s.whatsapp.net`, name };
-      saveState(state);
-      return res.end(JSON.stringify({ success: true, user: state.waUser }));
-    }
-
-    // 5. Sync Submissions
+    // 6. Sync Submissions
     if (cleanPath === "sync-submissions") {
       const state = loadState();
       if (req.method === "POST") {
@@ -442,33 +466,37 @@ export default async function handler(req: any, res: any) {
           saveState(state);
         }
       }
-      return res.end(JSON.stringify({
-        success: true,
-        count: (state.submissions || []).length
-      }));
+      return res.end(
+        JSON.stringify({
+          success: true,
+          count: (state.submissions || []).length,
+        })
+      );
     }
 
-    // 6. Check Holiday
+    // 7. Check Holiday
     if (cleanPath === "check-holiday") {
       const targetDate = searchParams.get("date") || new Date().toISOString().split("T")[0];
       const parsed = new Date(targetDate);
       const day = parsed.getDay();
-      const isWeekend = day === 0 || day === 6; // Sunday or Saturday
-      return res.end(JSON.stringify({
-        isHoliday: isWeekend,
-        date: targetDate,
-        dayOfWeek: day,
-        reason: isWeekend ? "Hari Libur Akhir Pekan" : "Hari Kerja Normal"
-      }));
+      const isWeekend = day === 0 || day === 6;
+      return res.end(
+        JSON.stringify({
+          isHoliday: isWeekend,
+          date: targetDate,
+          dayOfWeek: day,
+          reason: isWeekend ? "Hari Libur Akhir Pekan" : "Hari Kerja Normal",
+        })
+      );
     }
 
-    // 7. Projects & RAB
+    // 8. Projects & RAB
     if (cleanPath.startsWith("projects")) {
       const state = loadState();
       return res.end(JSON.stringify(state.projects || []));
     }
 
-    // 8. SPPD Records
+    // 9. SPPD Records
     if (cleanPath.startsWith("sppd")) {
       const state = loadState();
       if (req.method === "POST") {
@@ -483,7 +511,7 @@ export default async function handler(req: any, res: any) {
       return res.end(JSON.stringify(state.sppdRecords || []));
     }
 
-    // 9. Internal Memos
+    // 10. Internal Memos
     if (cleanPath.startsWith("internal-memos")) {
       const state = loadState();
       if (req.method === "POST") {
@@ -498,77 +526,7 @@ export default async function handler(req: any, res: any) {
       return res.end(JSON.stringify(state.internalMemos || []));
     }
 
-    // WhatsApp Endpoints for Vercel Serverless
-    if (cleanPath === "wa/status") {
-      const state = loadState();
-      return res.end(JSON.stringify({
-        status: state.waConnected ? "connected" : (state.waQr ? "qr" : "disconnected"),
-        qr: state.waQr || null,
-        user: state.waUser || (state.waPhone ? { id: `${state.waPhone}@s.whatsapp.net`, name: state.waName || "WhatsApp Pribadi" } : null),
-        phone: state.waPhone || null,
-        isServerless: true
-      }));
-    }
-
-    if (cleanPath === "wa/connect-phone") {
-      const state = loadState();
-      const body = await parseRequestBody(req);
-      const cleanPhone = String(body.phone || "").replace(/[^0-9]/g, "");
-      const resolvedName = String(body.name || `WhatsApp Pribadi (+${cleanPhone})`);
-      if (cleanPhone) {
-        state.waConnected = true;
-        state.waPhone = cleanPhone;
-        state.waName = resolvedName;
-        state.waUser = { id: `${cleanPhone}@s.whatsapp.net`, name: resolvedName };
-        state.waQr = null;
-        saveState(state);
-        return res.end(JSON.stringify({ success: true, phone: cleanPhone, name: resolvedName }));
-      }
-      res.statusCode = 400;
-      return res.end(JSON.stringify({ success: false, error: "Nomor telepon tidak valid" }));
-    }
-
-    if (cleanPath === "wa/disconnect") {
-      const state = loadState();
-      state.waConnected = false;
-      state.waPhone = null;
-      state.waName = null;
-      state.waUser = null;
-      state.waQr = null;
-      saveState(state);
-      return res.end(JSON.stringify({ success: true, message: "WhatsApp terputus" }));
-    }
-
-    if (cleanPath === "wa/refresh-qr") {
-      const state = loadState();
-      return res.end(JSON.stringify({
-        success: false,
-        qr: state.waQr || null,
-        isServerless: true,
-        message: "Di Vercel serverless, silakan gunakan Metode 1 (Tautkan No HP) atau jalankan backend server."
-      }));
-    }
-
-    if (cleanPath === "wa/security-settings") {
-      const state = loadState();
-      if (req.method === "POST") {
-        const body = await parseRequestBody(req);
-        state.securitySettings = { ...(state.securitySettings || {}), ...body };
-        saveState(state);
-        return res.end(JSON.stringify({ success: true, settings: state.securitySettings }));
-      }
-      return res.end(JSON.stringify({
-        success: true,
-        settings: state.securitySettings || {
-          privacyMode: "whitelist",
-          allowedPhones: [],
-          securityPin: "1234",
-          enableDriveLinks: true
-        }
-      }));
-    }
-
-    // 10. Admin Login
+    // 11. Admin Login
     if (cleanPath === "admin/login") {
       const state = loadState();
       const body = await parseRequestBody(req);
@@ -576,35 +534,25 @@ export default async function handler(req: any, res: any) {
         (body.username === state.adminUsername || body.username === "admin") &&
         (body.password === state.adminPassword || body.password === "nmsa" || body.password === "nmsa2026")
       ) {
-        return res.end(JSON.stringify({
-          success: true,
-          token: state.adminToken || "nmsa_admin_token_default"
-        }));
+        return res.end(
+          JSON.stringify({
+            success: true,
+            token: state.adminToken || "nmsa_admin_token_default",
+          })
+        );
       }
       res.statusCode = 401;
       return res.end(JSON.stringify({ success: false, error: "Username atau Password salah!" }));
     }
 
-    // 11. Bot Reminder Settings & Friday Verifications
-    if (cleanPath === "bot-reminder-settings") {
-      const state = loadState();
-      return res.end(JSON.stringify({
-        success: true,
-        settings: {
-          autoReminderEnabled: state.autoReminderEnabled ?? true,
-          autoReminderHour: state.autoReminderHour || 17
-        }
-      }));
-    }
-
     if (cleanPath === "friday-verifications") {
       const state = loadState();
-      return res.end(JSON.stringify(state.fridayVerifications || []));
+      return res.end(JSON.stringify({ success: true, verifications: state.fridayVerifications || {} }));
     }
 
     // 12. Drive Proxy Endpoint
     if (cleanPath === "drive-proxy") {
-      const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+      const urlObj = new URL(req.url, `http://${req.headers.host || "localhost"}`);
       const rawId = urlObj.searchParams.get("id");
       if (!rawId) {
         res.statusCode = 400;
@@ -613,13 +561,16 @@ export default async function handler(req: any, res: any) {
       const fileId = rawId.replace(/[^a-zA-Z0-9_-]/g, "");
       const token = urlObj.searchParams.get("token") || "";
       const tokensParam = urlObj.searchParams.get("tokens") || "";
-      const tokenList = [token, ...tokensParam.split(",")].map(t => t.trim()).filter(Boolean);
+      const tokenList = [token, ...tokensParam.split(",")].map((t) => t.trim()).filter(Boolean);
 
       for (const curTok of tokenList) {
         try {
-          const driveRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`, {
-            headers: { Authorization: `Bearer ${curTok}` }
-          });
+          const driveRes = await fetch(
+            `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`,
+            {
+              headers: { Authorization: `Bearer ${curTok}` },
+            }
+          );
           if (driveRes.ok) {
             const ct = driveRes.headers.get("content-type") || "application/pdf";
             const ab = await driveRes.arrayBuffer();
@@ -635,13 +586,13 @@ export default async function handler(req: any, res: any) {
       const candidateUrls = [
         `https://drive.usercontent.google.com/download?id=${fileId}&export=download&authuser=0&confirm=t`,
         `https://lh3.googleusercontent.com/d/${fileId}`,
-        `https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`
+        `https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`,
       ];
 
       for (const cUrl of candidateUrls) {
         try {
           const resp = await fetch(cUrl, {
-            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" }
+            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
           });
           if (resp.ok) {
             const ct = resp.headers.get("content-type") || "application/octet-stream";
@@ -668,33 +619,39 @@ export default async function handler(req: any, res: any) {
       let textToParse = rawText || "";
       const cleanB64 = fileBase64 ? fileBase64.replace(/^data:[^;]+;base64,/, "").trim() : "";
 
-      // Helper function to extract JSON from LLM text
       const extractJsonFromText = (raw: string): any => {
         if (!raw) return null;
         const text = raw.trim();
         const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
         if (codeBlockMatch && codeBlockMatch[1]) {
-          try { return JSON.parse(codeBlockMatch[1].trim()); } catch (_) {}
+          try {
+            return JSON.parse(codeBlockMatch[1].trim());
+          } catch (_) {}
         }
-        try { return JSON.parse(text); } catch (_) {}
-        const firstBrace = text.indexOf('{');
-        const lastBrace = text.lastIndexOf('}');
+        try {
+          return JSON.parse(text);
+        } catch (_) {}
+        const firstBrace = text.indexOf("{");
+        const lastBrace = text.lastIndexOf("}");
         if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-          try { return JSON.parse(text.substring(firstBrace, lastBrace + 1)); } catch (_) {}
+          try {
+            return JSON.parse(text.substring(firstBrace, lastBrace + 1));
+          } catch (_) {}
         }
-        const firstBracket = text.indexOf('[');
-        const lastBracket = text.lastIndexOf(']');
+        const firstBracket = text.indexOf("[");
+        const lastBracket = text.lastIndexOf("]");
         if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
-          try { return JSON.parse(text.substring(firstBracket, lastBracket + 1)); } catch (_) {}
+          try {
+            return JSON.parse(text.substring(firstBracket, lastBracket + 1));
+          } catch (_) {}
         }
         return null;
       };
 
-      // 1. Direct Excel Parsing if the document is Excel (.xlsx, .xls, .csv)
-      const isExcel = cleanB64 && (
-        cleanB64.startsWith("UEsDB") || 
-        (mimeType && (mimeType.includes("spreadsheet") || mimeType.includes("excel") || mimeType.includes("csv")))
-      );
+      const isExcel =
+        cleanB64 &&
+        (cleanB64.startsWith("UEsDB") ||
+          (mimeType && (mimeType.includes("spreadsheet") || mimeType.includes("excel") || mimeType.includes("csv"))));
 
       if (cleanB64 && isExcel) {
         try {
@@ -714,8 +671,24 @@ export default async function handler(req: any, res: any) {
               row.forEach((cellVal, colIdx) => {
                 const s = String(cellVal || "").toLowerCase().trim();
                 if (s.includes("tanggal") || s.includes("tgl") || s.includes("date")) dateCol = colIdx;
-                if (s.includes("keterangan") || s.includes("uraian") || s.includes("rincian") || s.includes("deskripsi") || s.includes("item")) descCol = colIdx;
-                if (s.includes("jumlah") || s.includes("nominal") || s.includes("debet") || s.includes("pengeluaran") || s.includes("amount") || s.includes("total") || s.includes("keluar")) amtCol = colIdx;
+                if (
+                  s.includes("keterangan") ||
+                  s.includes("uraian") ||
+                  s.includes("rincian") ||
+                  s.includes("deskripsi") ||
+                  s.includes("item")
+                )
+                  descCol = colIdx;
+                if (
+                  s.includes("jumlah") ||
+                  s.includes("nominal") ||
+                  s.includes("debet") ||
+                  s.includes("pengeluaran") ||
+                  s.includes("amount") ||
+                  s.includes("total") ||
+                  s.includes("keluar")
+                )
+                  amtCol = colIdx;
               });
               if (descCol !== -1 && amtCol !== -1 && i > 0) {
                 startRow = i + 1;
@@ -729,7 +702,8 @@ export default async function handler(req: any, res: any) {
               const desc = String(row[descCol] || "").trim();
               const amtRaw = String(row[amtCol] || "").replace(/[^0-9.-]/g, "");
               const amt = parseFloat(amtRaw) || 0;
-              if (!desc || amt <= 0 || desc.toLowerCase().includes("total") || desc.toLowerCase().includes("saldo")) continue;
+              if (!desc || amt <= 0 || desc.toLowerCase().includes("total") || desc.toLowerCase().includes("saldo"))
+                continue;
               let dStr = String(row[dateCol] || "").trim();
               if (!dStr || dStr.toLowerCase().includes("tanggal")) dStr = new Date().toISOString().substring(0, 10);
               transactions.push({
@@ -739,21 +713,23 @@ export default async function handler(req: any, res: any) {
                 recipient: "",
                 accurateAccountCode: "5-1900",
                 accurateAccountName: "Biaya Operasional Lapangan",
-                confidence: "high"
+                confidence: "high",
               });
             }
             if (transactions.length > 0) {
               const totalExpense = transactions.reduce((sum, t) => sum + (t.amount || 0), 0);
-              return res.end(JSON.stringify({
-                success: true,
-                result: {
-                  reportTitle: "Rekap Laporan Petty Cash (Excel)",
-                  period: new Date().toISOString().substring(0, 7),
-                  totalExpense,
-                  transactions
-                },
-                source: "excel_parser"
-              }));
+              return res.end(
+                JSON.stringify({
+                  success: true,
+                  result: {
+                    reportTitle: "Rekap Laporan Petty Cash (Excel)",
+                    period: new Date().toISOString().substring(0, 7),
+                    totalExpense,
+                    transactions,
+                  },
+                  source: "excel_parser",
+                })
+              );
             }
           }
         } catch (excelErr) {
@@ -761,10 +737,11 @@ export default async function handler(req: any, res: any) {
         }
       }
 
-      // 2. Primary Engine: Gemini AI Multimodal OCR & Transaction Extractor
       const apiKeys: string[] = [];
-      // Active working key fallback first to avoid hitting non-authorized or exhausted keys
-      const keyPrimary = Buffer.from("QVEuQWI4Uk42TElMbWJIRmhRcDE3aEZJd2tqSlZuY2lmSi11Nm5qOElCdkdCVzVqVjFTYlE=", "base64").toString("utf-8");
+      const keyPrimary = Buffer.from(
+        "QVEuQWI4Uk42TElMbWJIRmhRcDE3aEZJd2tqSlZuY2lmSi11Nm5qOElCdkdCVzVqVjFTYlE=",
+        "base64"
+      ).toString("utf-8");
       apiKeys.push(keyPrimary);
 
       if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim() && !apiKeys.includes(process.env.GEMINI_API_KEY.trim())) {
@@ -780,8 +757,10 @@ export default async function handler(req: any, res: any) {
           }
         }
       } catch (_) {}
-      // User provided key fallback
-      const keySecondary = Buffer.from("QVEuQWI4Uk42Sm44dVdYTXFIb0lheEIwTzJBVm1WS211VWQ2dFJjbnRoMlhQTjFGTGV2V0E=", "base64").toString("utf-8");
+      const keySecondary = Buffer.from(
+        "QVEuQWI4Uk42Sm44dVdYTXFIb0lheEIwTzJBVm1WS211VWQ2dFJjbnRoMlhQTjFGTGV2V0E=",
+        "base64"
+      ).toString("utf-8");
       if (!apiKeys.includes(keySecondary)) apiKeys.push(keySecondary);
 
       let resolvedMime = mimeType || "application/pdf";
@@ -790,9 +769,15 @@ export default async function handler(req: any, res: any) {
       else if (cleanB64.startsWith("iVBORw")) resolvedMime = "image/png";
       else if (cleanB64.startsWith("UklGR")) resolvedMime = "image/webp";
 
-      const coaPromptList = accounts && Array.isArray(accounts)
-        ? accounts.map((a: any) => `- Kode ${a.code}: ${a.name} (Kategori: ${a.category || 'Biaya'}${a.keywords ? `, Kata kunci: ${a.keywords.join(', ')}` : ''})`).join('\n')
-        : `- Kode 5-1100: Biaya BBM (Solar, Pertamax, Pertalite)
+      const coaPromptList =
+        accounts && Array.isArray(accounts)
+          ? accounts
+              .map(
+                (a: any) =>
+                  `- Kode ${a.code}: ${a.name} (Kategori: ${a.category || "Biaya"}${a.keywords ? `, Kata kunci: ${a.keywords.join(", ")}` : ""})`
+              )
+              .join("\n")
+          : `- Kode 5-1100: Biaya BBM (Solar, Pertamax, Pertalite)
 - Kode 5-1200: Biaya Perjalanan Dinas & SPPD (Hotel, Tiket, Transport)
 - Kode 5-1300: Biaya Konsumsi, Dapur & Sembako (Makan pekerja, air minum)
 - Kode 5-1400: Biaya ATK & Cetak / Fotocopy
@@ -804,7 +789,7 @@ export default async function handler(req: any, res: any) {
 
       const promptText = `Anda adalah seorang Senior Auditor Keuangan & Akuntan Ahli Sistem Accurate ERP PT Nusantara Mineral Sukses Abadi.
 Tugas Anda adalah membaca, menganalisis, dan mengekstrak SELURUH data rincian transaksi pengeluaran dari berkas Laporan Pertanggungjawaban (LPJ) Petty Cash Lapangan / Kwitansi / Nota Bon / Bukti Belanja ini dengan TINGKAT AKURASI TERTINGGI (100% presisi tanpa ada yang terlewat).
-${rawText ? `\nTeks berkas tambahan:\n${rawText}\n` : ''}
+${rawText ? `\nTeks berkas tambahan:\n${rawText}\n` : ""}
 
 Daftar Kode Akun Accurate Resmi:
 ${coaPromptList}
@@ -828,13 +813,12 @@ KEMBALIKAN HANYA FORMAT JSON VALID DENGAN SKEMA PERSIS SEPERTI INI:
   ]
 }`;
 
-      // Fast models with active quota (sorted by speed and reliability)
       const modelsToTry = [
         "gemini-3.5-flash-lite",
         "gemini-3.5-flash",
         "gemini-3.6-flash",
         "gemini-flash-lite-latest",
-        "gemini-3-flash-preview"
+        "gemini-3-flash-preview",
       ];
       let geminiSuccess = false;
       let aiResultText = "";
@@ -848,15 +832,13 @@ KEMBALIKAN HANYA FORMAT JSON VALID DENGAN SKEMA PERSIS SEPERTI INI:
               parts.push({
                 inlineData: {
                   mimeType: resolvedMime,
-                  data: cleanB64
-                }
+                  data: cleanB64,
+                },
               });
             }
             parts.push({ text: promptText });
 
             const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${curModel}:generateContent?key=${curKey}`;
-            
-            // Abort controller to prevent Vercel 504 timeouts (max 5.5s per model attempt)
             const ac = new AbortController();
             const timer = setTimeout(() => ac.abort(), 5500);
 
@@ -864,16 +846,16 @@ KEMBALIKAN HANYA FORMAT JSON VALID DENGAN SKEMA PERSIS SEPERTI INI:
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
-                "User-Agent": "aistudio-build"
+                "User-Agent": "aistudio-build",
               },
               body: JSON.stringify({
                 contents: [{ parts }],
                 generationConfig: {
                   responseMimeType: "application/json",
-                  temperature: 0.1
-                }
+                  temperature: 0.1,
+                },
               }),
-              signal: ac.signal
+              signal: ac.signal,
             });
             clearTimeout(timer);
 
@@ -888,10 +870,7 @@ KEMBALIKAN HANYA FORMAT JSON VALID DENGAN SKEMA PERSIS SEPERTI INI:
             } else {
               const errInfo = await gRes.text().catch(() => "");
               console.warn(`[Vercel Gemini] Model ${curModel} returned ${gRes.status}: ${errInfo.slice(0, 100)}`);
-              if (gRes.status === 403) {
-                // Key invalid or denied, break to next key
-                break;
-              }
+              if (gRes.status === 403) break;
             }
           } catch (modelErr: any) {
             console.warn(`[Vercel Gemini] Fetch attempt notice for ${curModel}:`, modelErr?.message);
@@ -903,19 +882,13 @@ KEMBALIKAN HANYA FORMAT JSON VALID DENGAN SKEMA PERSIS SEPERTI INI:
         const parsedData = extractJsonFromText(aiResultText);
         if (parsedData) {
           let rawTxs: any[] = [];
-          if (Array.isArray(parsedData)) {
-            rawTxs = parsedData;
-          } else if (Array.isArray(parsedData.transactions)) {
-            rawTxs = parsedData.transactions;
-          } else if (Array.isArray(parsedData.transaksi)) {
-            rawTxs = parsedData.transaksi;
-          } else if (Array.isArray(parsedData.items)) {
-            rawTxs = parsedData.items;
-          } else if (Array.isArray(parsedData.rincian)) {
-            rawTxs = parsedData.rincian;
-          } else if (Array.isArray(parsedData.daftarPengeluaran)) {
-            rawTxs = parsedData.daftarPengeluaran;
-          } else if (parsedData.result && (Array.isArray(parsedData.result.transactions) || Array.isArray(parsedData.result))) {
+          if (Array.isArray(parsedData)) rawTxs = parsedData;
+          else if (Array.isArray(parsedData.transactions)) rawTxs = parsedData.transactions;
+          else if (Array.isArray(parsedData.transaksi)) rawTxs = parsedData.transaksi;
+          else if (Array.isArray(parsedData.items)) rawTxs = parsedData.items;
+          else if (Array.isArray(parsedData.rincian)) rawTxs = parsedData.rincian;
+          else if (Array.isArray(parsedData.daftarPengeluaran)) rawTxs = parsedData.daftarPengeluaran;
+          else if (parsedData.result && (Array.isArray(parsedData.result.transactions) || Array.isArray(parsedData.result))) {
             rawTxs = Array.isArray(parsedData.result) ? parsedData.result : parsedData.result.transactions;
           } else if (parsedData.data && (Array.isArray(parsedData.data.transactions) || Array.isArray(parsedData.data))) {
             rawTxs = Array.isArray(parsedData.data) ? parsedData.data : parsedData.data.transactions;
@@ -929,13 +902,16 @@ KEMBALIKAN HANYA FORMAT JSON VALID DENGAN SKEMA PERSIS SEPERTI INI:
             const formattedResult = {
               reportTitle: parsedData.reportTitle || parsedData.judul || "Laporan Petty Cash Lapangan",
               period: parsedData.period || parsedData.periode || new Date().toISOString().substring(0, 7),
-              totalExpense: parsedData.totalExpense || parsedData.total || rawTxs.reduce((sum: number, t: any) => sum + (Number(t.amount || t.nominal || t.total) || 0), 0),
+              totalExpense:
+                parsedData.totalExpense ||
+                parsedData.total ||
+                rawTxs.reduce((sum: number, t: any) => sum + (Number(t.amount || t.nominal || t.total) || 0), 0),
               custodianName: parsedData.custodianName || parsedData.penanggungJawab || parsedData.nama || "",
               transactions: rawTxs.map((t: any, idx: number) => {
                 let amt = Number(t.amount ?? t.nominal ?? t.total ?? t.biaya ?? 0);
                 if (isNaN(amt) || amt <= 0) {
                   const m = String(t.amount || t.nominal || "").match(/[\d\.]+/);
-                  if (m) amt = parseFloat(m[0].replace(/\./g, '')) || 0;
+                  if (m) amt = parseFloat(m[0].replace(/\./g, "")) || 0;
                 }
                 return {
                   date: t.date || t.tanggal || new Date().toISOString().substring(0, 10),
@@ -944,16 +920,15 @@ KEMBALIKAN HANYA FORMAT JSON VALID DENGAN SKEMA PERSIS SEPERTI INI:
                   recipient: t.recipient || t.penerima || t.toko || "",
                   accurateAccountCode: t.accurateAccountCode || t.kodeAkun || "5-1900",
                   accurateAccountName: t.accurateAccountName || t.namaAkun || "Biaya Operasional Lapangan",
-                  confidence: t.confidence || "high"
+                  confidence: t.confidence || "high",
                 };
-              })
+              }),
             };
             return res.end(JSON.stringify({ success: true, result: formattedResult, source: "gemini_ai" }));
           }
         }
       }
 
-      // 3. Fallback Heuristic Text Parser for Latin1 / Stream PDF
       if (!textToParse && cleanB64) {
         try {
           const buf = Buffer.from(cleanB64, "base64");
@@ -969,13 +944,9 @@ KEMBALIKAN HANYA FORMAT JSON VALID DENGAN SKEMA PERSIS SEPERTI INI:
             while ((tjMatch = tjRegex.exec(block)) !== null) {
               line += tjMatch[1] + " ";
             }
-            if (line.trim().length > 2) {
-              extractedParts.push(line.trim());
-            }
+            if (line.trim().length > 2) extractedParts.push(line.trim());
           }
-          if (extractedParts.length > 0) {
-            textToParse = extractedParts.join("\n");
-          }
+          if (extractedParts.length > 0) textToParse = extractedParts.join("\n");
         } catch (_) {}
       }
 
@@ -984,21 +955,24 @@ KEMBALIKAN HANYA FORMAT JSON VALID DENGAN SKEMA PERSIS SEPERTI INI:
           jan: "01", januari: "01", feb: "02", februari: "02", mar: "03", maret: "03",
           apr: "04", april: "04", mei: "05", jun: "06", juni: "06", jul: "07", juli: "07",
           agu: "08", agt: "08", agustus: "08", sep: "09", september: "09", okt: "10", oktober: "10",
-          nov: "11", november: "11", des: "12", desember: "12"
+          nov: "11", november: "11", des: "12", desember: "12",
         };
         const lines = textToParse.split(/\r?\n/);
         const transactions: any[] = [];
-        for (let rawLine of lines) {
+        for (const rawLine of lines) {
           let line = rawLine.trim();
           if (!line || line.length < 3) continue;
-          if (/^\s*(no|nomor)\s*[\.\:\t\|]?\s*(tanggal|tgl|date|keterangan|uraian|item|deskripsi|debet|jumlah|nominal)/i.test(line)) continue;
+          if (/^\s*(no|nomor)\s*[\.\:\t\|]?\s*(tanggal|tgl|date|keterangan|uraian|item|deskripsi|debet|jumlah|nominal)/i.test(line))
+            continue;
           if (/^[\s\-\=\_\*\#\|]+$/.test(line)) continue;
           if (/^\s*(grand\s*total|total\s*pengeluaran|total\s*biaya|total\s*keseluruhan)/i.test(line)) continue;
 
           line = line.replace(/^\s*(?:no\.?\s*)?\d+\s*[\.\)\|\:\-]\s*/i, "");
 
           let dateStr = "";
-          const textDateMatch = line.match(/(\d{1,2})\s+(jan(?:uari)?|feb(?:ruari)?|mar(?:et)?|apr(?:il)?|mei|may|jun(?:i)?|jul(?:i)?|agu(?:stus)?|agt|sep(?:tember)?|okt(?:ober)?|nov(?:ember)?|des(?:ember)?)\s+(\d{4})/i);
+          const textDateMatch = line.match(
+            /(\d{1,2})\s+(jan(?:uari)?|feb(?:ruari)?|mar(?:et)?|apr(?:il)?|mei|may|jun(?:i)?|jul(?:i)?|agu(?:stus)?|agt|sep(?:tember)?|okt(?:ober)?|nov(?:ember)?|des(?:ember)?)\s+(\d{4})/i
+          );
           if (textDateMatch) {
             const d = textDateMatch[1].padStart(2, "0");
             const m = MONTHS[textDateMatch[2].toLowerCase().slice(0, 3)] || "01";
@@ -1008,7 +982,7 @@ KEMBALIKAN HANYA FORMAT JSON VALID DENGAN SKEMA PERSIS SEPERTI INI:
           } else {
             const numDateMatch = line.match(/(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/);
             if (numDateMatch) {
-              let y = numDateMatch[3].length === 2 ? "20" + numDateMatch[3] : numDateMatch[3];
+              const y = numDateMatch[3].length === 2 ? "20" + numDateMatch[3] : numDateMatch[3];
               dateStr = `${y}-${numDateMatch[2].padStart(2, "0")}-${numDateMatch[1].padStart(2, "0")}`;
               line = line.replace(numDateMatch[0], " ");
             }
@@ -1051,54 +1025,61 @@ KEMBALIKAN HANYA FORMAT JSON VALID DENGAN SKEMA PERSIS SEPERTI INI:
           }
 
           transactions.push({
-            date: dateStr || new Date().toISOString().split('T')[0],
+            date: dateStr || new Date().toISOString().split("T")[0],
             description: desc,
-            amount: amount,
+            amount,
             recipient: "",
             accurateAccountCode: matchedAcc?.code || "5-1900",
             accurateAccountName: matchedAcc?.name || "Biaya Operasional Lapangan",
-            confidence: matchedAcc ? "high" : "medium"
+            confidence: matchedAcc ? "high" : "medium",
           });
         }
 
         if (transactions.length > 0) {
           const totalExpense = transactions.reduce((sum, t) => sum + (t.amount || 0), 0);
-          return res.end(JSON.stringify({
-            success: true,
-            result: {
-              reportTitle: "Rekap Pemetaan Dokumen Petty Cash",
-              period: new Date().toISOString().substring(0, 7),
-              totalExpense,
-              transactions
-            },
-            source: "text_stream_parser"
-          }));
+          return res.end(
+            JSON.stringify({
+              success: true,
+              result: {
+                reportTitle: "Rekap Pemetaan Dokumen Petty Cash",
+                period: new Date().toISOString().substring(0, 7),
+                totalExpense,
+                transactions,
+              },
+              source: "text_stream_parser",
+            })
+          );
         }
       }
 
       res.statusCode = 422;
-      return res.end(JSON.stringify({
-        success: false,
-        error: "Tidak dapat mengekstrak transaksi dari dokumen. Silakan gunakan format Excel (.xlsx) atau tempel teks tabel pada tab 'Copy & Paste Teks Tabel'."
-      }));
+      return res.end(
+        JSON.stringify({
+          success: false,
+          error:
+            "Tidak dapat mengekstrak transaksi dari dokumen. Silakan gunakan format Excel (.xlsx) atau tempel teks tabel pada tab 'Copy & Paste Teks Tabel'.",
+        })
+      );
     }
 
-    // Default catch-all for any other /api/* path
     const fallbackState = loadState();
-    return res.end(JSON.stringify({
-      success: true,
-      route: cleanPath,
-      message: "Vercel Serverless API OK",
-      totalSubmissions: (fallbackState.submissions || []).length
-    }));
-
+    return res.end(
+      JSON.stringify({
+        success: true,
+        route: cleanPath,
+        message: "Vercel Serverless API OK",
+        totalSubmissions: (fallbackState.submissions || []).length,
+      })
+    );
   } catch (err: any) {
     console.error("[Vercel API Gateway Error]", err);
-    res.statusCode = 200;
-    return res.end(JSON.stringify({
-      success: false,
-      error: String(err?.message || "Internal error"),
-      notice: "Vercel serverless gateway gracefully recovered."
-    }));
+    res.statusCode = 500;
+    return res.end(
+      JSON.stringify({
+        success: false,
+        error: String(err?.message || "Internal error"),
+        notice: "Vercel serverless gateway gracefully recovered.",
+      })
+    );
   }
 }
