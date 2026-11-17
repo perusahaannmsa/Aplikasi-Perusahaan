@@ -5,7 +5,6 @@ import {
   ArrowRight,
   BookOpen,
   Briefcase,
-  Calendar,
   CalendarClock,
   Cloud,
   Database,
@@ -92,13 +91,13 @@ export const MenuAlatView: React.FC<MenuAlatViewProps> = ({
       {
         id: 'bulanan',
         group: 'keuangan',
-        title: 'Transaksi Bulanan Otomatis',
-        description: 'Deteksi tagihan & biaya rutin 1 bulan sekali sebelum tanggal 15.',
-        tag: 'Jatuh Tempo Tgl 15',
-        badgeCount: pendingMonthlySummary.pendingCount,
+        title: 'Transaksi Bulanan & Agenda Kerja',
+        description: 'Deteksi tagihan rutin sebelum Tgl 15, jadwal jatuh tempo invoice, dan pengingat tugas.',
+        tag: 'Jadwal & Tgl 15',
+        badgeCount: pendingMonthlySummary.pendingCount + agendaDueCount,
         icon: <CalendarClock size={18} />,
         accentBg:
-          pendingMonthlySummary.overdueCount > 0
+          pendingMonthlySummary.overdueCount > 0 || agendaDueCount > 0
             ? 'bg-rose-100 text-rose-800'
             : 'bg-amber-100 text-amber-800',
         onClick: () => onNavigateView('bulanan'),
@@ -144,17 +143,6 @@ export const MenuAlatView: React.FC<MenuAlatViewProps> = ({
         icon: <Users size={18} />,
         accentBg: 'bg-emerald-100 text-emerald-800',
         onClick: () => onNavigateView('absen'),
-      },
-      {
-        id: 'agenda',
-        group: 'operasional',
-        title: 'Pengingat & Agenda Kerja',
-        description: 'Jadwal jatuh tempo invoice vendor dan pengingat tugas administrasi.',
-        tag: 'Jadwal',
-        badgeCount: agendaDueCount,
-        icon: <Calendar size={18} />,
-        accentBg: 'bg-amber-100 text-amber-800',
-        onClick: () => onNavigateView('agenda'),
       },
       {
         id: 'sppd',

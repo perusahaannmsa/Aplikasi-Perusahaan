@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
+  AgendaItem,
   MonthlyRecurringTransaction,
   Submission,
 } from '../types';
@@ -14,9 +15,11 @@ import {
   isSubmissionSettledForMonthly,
   shiftMonthKey,
 } from '../utils/monthlyTransactions';
+import { AgendaManager } from './AgendaManager';
 import {
   ArrowLeft,
   CalendarClock,
+  CalendarDays,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -48,6 +51,10 @@ interface MonthlyTransactionsManagerProps {
   onViewVoucher: (submission: Submission) => void;
   onUploadPaymentProof?: (submission: Submission) => void;
   onBackToList: () => void;
+  agendaItems?: AgendaItem[];
+  onSaveAgendaItems?: (items: AgendaItem[]) => void;
+  initialSubTab?: 'recurring' | 'agenda';
+  onSubTabChange?: (tab: 'recurring' | 'agenda') => void;
 }
 
 const DEFAULT_CATEGORIES = [
@@ -94,11 +101,30 @@ export const MonthlyTransactionsManager: React.FC<MonthlyTransactionsManagerProp
   onViewVoucher,
   onUploadPaymentProof,
   onBackToList,
+  agendaItems = [],
+  onSaveAgendaItems,
+  initialSubTab = 'recurring',
+  onSubTabChange,
 }) => {
   const today = useMemo(() => getJakartaTodayParts(), []);
+  const [activeSubTab, setActiveSubTab] = useState<'recurring' | 'agenda'>(initialSubTab);
   const [selectedMonth, setSelectedMonth] = useState<string>(today.monthKey);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'executed' | 'overdue' | 'paused'>('all');
+
+  useEffect(() => {
+    setActiveSubTab(initialSubTab);
+  }, [initialSubTab]);
+
+  const handleSwitchSubTab = (tab: 'recurring' | 'agenda') => {
+    setActiveSubTab(tab);
+    onSubTabChange?.(tab);
+  };
+
+  const agendaDueCount = useMemo(
+    () => (agendaItems || []).filter((it) => it.status === 'pending' && it.dueDate <= today.dateStr).length,
+    [agendaItems, today.dateStr]
+  );
 
   // Add / Edit Modal State
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -474,76 +500,151 @@ export const MonthlyTransactionsManager: React.FC<MonthlyTransactionsManagerProp
   return (
     <div className="space-y-6 font-sans">
       {/* Header Bar */}
-      <div className="bg-white rounded-2xl border border-stone-200 p-5 sm:p-6 shadow-3xs flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-        <div className="space-y-1.5">
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={onBackToList}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-800 border border-stone-200 text-xs font-bold transition cursor-pointer"
-            >
-              <ArrowLeft size={14} />
-              <span>Kembali ke Dashboard</span>
-            </button>
-            <span className="inline-flex items-center gap-1 text-[11px] font-mono font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-xl">
-              <Repeat size={12} />
-              Siklus Otomatis Bulanan · Batas Sebelum Tgl 15
-            </span>
-          </div>
-          <h2 className="text-xl sm:text-2xl font-black text-stone-900 tracking-tight font-display">
-            Deteksi &amp; Jadwal Transaksi Bulanan
-          </h2>
-          <p className="text-xs sm:text-sm text-stone-500 max-w-2xl">
-            Memantau kewajiban rutin setiap 1 bulan sekali secara berkelanjutan. Sistem mendeteksi otomatis dari{' '}
-            <strong className="text-stone-800">Voucher HO</strong> pada bulan berjalan agar tidak ada tagihan sebelum tanggal 15 yang terlewat.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-          {/* Month Switcher */}
-          <div className="inline-flex items-center bg-stone-100 border border-stone-200 rounded-xl p-1 gap-1">
-            <button
-              type="button"
-              onClick={() => setSelectedMonth(shiftMonthKey(selectedMonth, -1))}
-              className="p-1.5 rounded-lg hover:bg-white text-stone-700 transition cursor-pointer"
-              title="Bulan Sebelumnya"
-            >
-              <ChevronLeft size={16} />
-            </button>
-            <div className="px-2.5 text-xs font-bold text-stone-900 min-w-[130px] text-center">
-              {formatMonthKeyIndonesian(selectedMonth)}
+      <div className="bg-white rounded-2xl border border-stone-200 p-5 sm:p-6 shadow-3xs space-y-4">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={onBackToList}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-800 border border-stone-200 text-xs font-bold transition cursor-pointer"
+              >
+                <ArrowLeft size={14} />
+                <span>Kembali ke Dashboard</span>
+              </button>
+              <span className="inline-flex items-center gap-1 text-[11px] font-mono font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-xl">
+                <Repeat size={12} />
+                Siklus Otomatis Bulanan · Batas Sebelum Tgl 15
+              </span>
             </div>
-            <button
-              type="button"
-              onClick={() => setSelectedMonth(shiftMonthKey(selectedMonth, 1))}
-              className="p-1.5 rounded-lg hover:bg-white text-stone-700 transition cursor-pointer"
-              title="Bulan Berikutnya"
-            >
-              <ChevronRight size={16} />
-            </button>
+            <h2 className="text-xl sm:text-2xl font-black text-stone-900 tracking-tight font-display">
+              Jadwal Bulanan &amp; Pengingat Agenda
+            </h2>
+            <p className="text-xs sm:text-sm text-stone-500 max-w-2xl">
+              {activeSubTab === 'recurring' ? (
+                <>
+                  Memantau kewajiban rutin setiap 1 bulan sekali secara berkelanjutan. Sistem mendeteksi otomatis bukti bayar &amp; pelunasan dari{' '}
+                  <strong className="text-stone-800">Voucher HO</strong> sebelum tanggal 15.
+                </>
+              ) : (
+                <>
+                  Pengingat kegiatan kerja, jatuh tempo invoice vendor, rekonsiliasi kas, dan tenggat waktu pajak dalam satu tampilan bulanan.
+                </>
+              )}
+            </p>
           </div>
 
-          {selectedMonth !== today.monthKey && (
+          {activeSubTab === 'recurring' && (
+            <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+              {/* Month Switcher */}
+              <div className="inline-flex items-center bg-stone-100 border border-stone-200 rounded-xl p-1 gap-1">
+                <button
+                  type="button"
+                  onClick={() => setSelectedMonth(shiftMonthKey(selectedMonth, -1))}
+                  className="p-1.5 rounded-lg hover:bg-white text-stone-700 transition cursor-pointer"
+                  title="Bulan Sebelumnya"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <div className="px-2.5 text-xs font-bold text-stone-900 min-w-[130px] text-center">
+                  {formatMonthKeyIndonesian(selectedMonth)}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedMonth(shiftMonthKey(selectedMonth, 1))}
+                  className="p-1.5 rounded-lg hover:bg-white text-stone-700 transition cursor-pointer"
+                  title="Bulan Berikutnya"
+                >
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+
+              {selectedMonth !== today.monthKey && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedMonth(today.monthKey)}
+                  className="px-3 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 border border-stone-200 text-xs font-bold text-stone-800 transition cursor-pointer"
+                >
+                  Bulan Ini
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => openAddModal()}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-stone-950 font-black text-xs shadow-3xs transition cursor-pointer"
+              >
+                <Plus size={15} />
+                <span>Tambah Transaksi Bulanan</span>
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Unified Sub-Tab Bar: Transaksi Bulanan + Agenda & Pengingat */}
+        {onSaveAgendaItems && (
+          <div className="pt-3 border-t border-stone-100 flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={() => setSelectedMonth(today.monthKey)}
-              className="px-3 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 border border-stone-200 text-xs font-bold text-stone-800 transition cursor-pointer"
+              onClick={() => handleSwitchSubTab('recurring')}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition cursor-pointer border ${
+                activeSubTab === 'recurring'
+                  ? 'bg-amber-500 text-stone-950 border-amber-600 shadow-3xs'
+                  : 'bg-stone-50 hover:bg-stone-100 text-stone-700 border-stone-200'
+              }`}
             >
-              Bulan Ini
+              <CalendarClock size={15} />
+              <span>Transaksi Bulanan (&lt; Tgl 15)</span>
+              {stats.pendingCount > 0 && (
+                <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold tabular-nums ${
+                  activeSubTab === 'recurring'
+                    ? 'bg-stone-950 text-amber-300'
+                    : stats.overdueCount > 0
+                    ? 'bg-rose-600 text-white'
+                    : 'bg-amber-200 text-amber-950'
+                }`}>
+                  {stats.pendingCount}
+                </span>
+              )}
             </button>
-          )}
 
-          <button
-            type="button"
-            onClick={() => openAddModal()}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-stone-950 font-black text-xs shadow-3xs transition cursor-pointer"
-          >
-            <Plus size={15} />
-            <span>Tambah Transaksi Bulanan</span>
-          </button>
-        </div>
+            <button
+              type="button"
+              onClick={() => handleSwitchSubTab('agenda')}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition cursor-pointer border ${
+                activeSubTab === 'agenda'
+                  ? 'bg-amber-500 text-stone-950 border-amber-600 shadow-3xs'
+                  : 'bg-stone-50 hover:bg-stone-100 text-stone-700 border-stone-200'
+              }`}
+            >
+              <CalendarDays size={15} />
+              <span>Agenda &amp; Pengingat Tugas</span>
+              {agendaDueCount > 0 && (
+                <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold tabular-nums ${
+                  activeSubTab === 'agenda'
+                    ? 'bg-stone-950 text-amber-300'
+                    : 'bg-rose-600 text-white'
+                }`}>
+                  {agendaDueCount}
+                </span>
+              )}
+            </button>
+          </div>
+        )}
       </div>
 
+      {activeSubTab === 'agenda' && onSaveAgendaItems ? (
+        <AgendaManager
+          embedded
+          agendaItems={agendaItems}
+          onSaveAgendaItems={onSaveAgendaItems}
+          submissions={submissions}
+          userProfile={userProfile}
+          onOpenSubmissionForPrint={onViewVoucher}
+          onClose={onBackToList}
+        />
+      ) : (
+        <>
       {/* KPI Strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <div className="bg-white rounded-2xl border border-stone-200 p-4 shadow-3xs">
@@ -1225,6 +1326,8 @@ export const MonthlyTransactionsManager: React.FC<MonthlyTransactionsManagerProp
             </div>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );

@@ -52,6 +52,7 @@ interface AgendaManagerProps {
   userProfile: any;
   onOpenSubmissionForPrint?: (sub: Submission) => void;
   onClose: () => void;
+  embedded?: boolean;
 }
 
 const CATEGORY_COLORS: Record<AgendaCategory, { bg: string; text: string; border: string }> = {
@@ -77,7 +78,8 @@ export function AgendaManager({
   submissions,
   userProfile,
   onOpenSubmissionForPrint,
-  onClose
+  onClose,
+  embedded = false
 }: AgendaManagerProps) {
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
   const [activeTab, setActiveTab] = useState<'due_or_overdue' | 'all_active' | 'upcoming' | 'completed'>('due_or_overdue');
@@ -413,7 +415,7 @@ export function AgendaManager({
   const selectedDateItems = selectedDateFilter ? (dateToItemsMap.get(selectedDateFilter) || []) : [];
 
   return (
-    <div className="w-full flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 font-sans space-y-6">
+    <div className={embedded ? "w-full font-sans space-y-6" : "w-full flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 font-sans space-y-6"}>
       
       {/* Top Banner / Breadcrumb & Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-stone-200 shadow-xs">

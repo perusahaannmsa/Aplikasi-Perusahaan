@@ -33,7 +33,6 @@ import {
 import { NpwpManager } from './components/NpwpManager';
 import { AccuratePettyCashMapping } from './components/AccuratePettyCashMapping';
 import { AccountMappingContainer } from './components/AccountMappingContainer';
-import { AgendaManager } from './components/AgendaManager';
 import { AgendaReminderBanner } from './components/AgendaReminderBanner';
 import { GeneralLedger } from './components/GeneralLedger';
 import { WhatsAppAiModal } from './components/WhatsAppAiModal';
@@ -101,7 +100,7 @@ import { loadAttendanceFromFirestore, loadWorkersFromFirestore, mergeWorkerLists
 
 import { CleanFirestoreModal } from './components/CleanFirestoreModal';
 import { DriveDeduplicateModal } from './components/DriveDeduplicateModal';
-import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Loader2, ArrowRight, ArrowLeftRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, CalendarClock, Bell, MessageSquare, Bot, BookOpen, Wrench, Building2, Plus, HandCoins, ExternalLink, RefreshCw, FolderSync, Trash2 } from 'lucide-react';
+import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Loader2, ArrowRight, ArrowLeftRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, CalendarClock, MessageSquare, Bot, BookOpen, Wrench, Building2, Plus, HandCoins, ExternalLink, RefreshCw, FolderSync, Trash2 } from 'lucide-react';
 
 export default function App() {
   const [theme, setTheme] = useState<AppTheme>(() => {
@@ -1066,7 +1065,7 @@ export default function App() {
       if (sp.get('view') === 'pinjaman' || sp.get('tab') === 'pinjaman') {
         return 'pinjaman';
       }
-      if (sp.get('view') === 'bulanan' || sp.get('tab') === 'bulanan') {
+      if (sp.get('view') === 'bulanan' || sp.get('tab') === 'bulanan' || sp.get('view') === 'agenda' || sp.get('tab') === 'agenda') {
         return 'bulanan';
       }
       if (sp.get('view') === 'menu_alat') {
@@ -1076,12 +1075,14 @@ export default function App() {
         return 'pengaturan';
       }
       const saved = sessionStorage.getItem('NUSANTARA_ACTIVE_VIEW');
+      if (saved === 'agenda') return 'bulanan';
       if (saved) return saved as AppViewMode;
     } catch (e) {}
     return 'list';
   });
 
   const [previousView, setPreviousView] = useState<AppViewMode>('list');
+  const [bulananInitialTab, setBulananInitialTab] = useState<'recurring' | 'agenda'>('recurring');
 
   const [memoSubmissionTarget, setMemoSubmissionTarget] = useState<Submission | null>(null);
   const [targetAccurateSubmission, setTargetAccurateSubmission] = useState<Submission | null>(null);
@@ -3211,48 +3212,37 @@ export default function App() {
               {/* Real-time System Clock (WIB) - Shown on tablet/desktop to save mobile width */}
               <LiveClock variant="badge" className="hidden sm:inline-flex min-w-0 max-w-[160px] sm:max-w-[220px]" />
 
-              {/* Compact Agenda / Notif Button with Red Badge */}
-              <button
-                type="button"
-                onClick={() => setView('agenda')}
-                className={`relative p-2 rounded-xl border transition cursor-pointer shadow-3xs ${
-                  view === 'agenda'
-                    ? 'bg-amber-500 text-stone-950 border-amber-600'
-                    : agendaDueCount > 0
-                    ? 'bg-amber-50 hover:bg-amber-100 border-amber-300 text-amber-950'
-                    : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-700'
-                }`}
-                title={`Agenda & Pengingat Tugas (${agendaDueCount} tugas jatuh tempo / hari ini)`}
-              >
-                <Bell size={16} className={agendaDueCount > 0 ? 'text-rose-600 animate-bounce' : 'text-stone-500'} />
-                {agendaDueCount > 0 && (
-                  <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] px-1 items-center justify-center rounded-full bg-rose-600 text-[9px] font-black text-white shadow-xs">
-                    {agendaDueCount}
-                  </span>
-                )}
-              </button>
-
-              {/* Direct Dedicated Button: Transaksi Bulanan (< Tgl 15) */}
-              <button
-                type="button"
-                onClick={() => setView(view === 'bulanan' ? 'list' : 'bulanan')}
-                className={`relative flex items-center gap-1.5 py-1.5 px-3 rounded-xl border transition cursor-pointer shadow-3xs text-xs font-bold font-sans whitespace-nowrap shrink-0 ${
-                  view === 'bulanan'
-                    ? 'bg-amber-500 text-stone-950 border-amber-600'
-                    : pendingMonthlySummary.overdueCount > 0
-                    ? 'bg-rose-50 hover:bg-rose-100 border-rose-300 text-rose-900'
-                    : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-800'
-                }`}
-                title="Deteksi & Kelola Transaksi Rutin Bulanan (Jatuh Tempo Sebelum Tgl 15)"
-              >
-                <CalendarClock size={14} className={view === 'bulanan' ? 'text-stone-950' : pendingMonthlySummary.overdueCount > 0 ? 'text-rose-600' : 'text-amber-600'} />
-                <span className="hidden lg:inline">Bulanan</span>
-                {pendingMonthlySummary.pendingCount > 0 && (
-                  <span className="inline-flex h-4 min-w-[16px] px-1 items-center justify-center rounded-full bg-rose-600 text-[10px] font-mono font-bold text-white tabular-nums">
-                    {pendingMonthlySummary.pendingCount}
-                  </span>
-                )}
-              </button>
+              {/* Direct Dedicated Button: Bulanan & Agenda Pengingat */}
+              {(() => {
+                const totalBulananBadge = pendingMonthlySummary.pendingCount + agendaDueCount;
+                const hasUrgent = pendingMonthlySummary.overdueCount > 0 || agendaDueCount > 0;
+                const isBulananActive = view === 'bulanan' || view === 'agenda';
+                return (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBulananInitialTab('recurring');
+                      setView(isBulananActive ? 'list' : 'bulanan');
+                    }}
+                    className={`relative flex items-center gap-1.5 py-1.5 px-3 rounded-xl border transition cursor-pointer shadow-3xs text-xs font-bold font-sans whitespace-nowrap shrink-0 ${
+                      isBulananActive
+                        ? 'bg-amber-500 text-stone-950 border-amber-600'
+                        : hasUrgent
+                        ? 'bg-rose-50 hover:bg-rose-100 border-rose-300 text-rose-900'
+                        : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-800'
+                    }`}
+                    title={`Transaksi Bulanan (${pendingMonthlySummary.pendingCount} belum bayar) & Agenda Kerja (${agendaDueCount} jatuh tempo)`}
+                  >
+                    <CalendarClock size={14} className={isBulananActive ? 'text-stone-950' : hasUrgent ? 'text-rose-600' : 'text-amber-600'} />
+                    <span className="hidden lg:inline">Bulanan</span>
+                    {totalBulananBadge > 0 && (
+                      <span className="inline-flex h-4 min-w-[16px] px-1 items-center justify-center rounded-full bg-rose-600 text-[10px] font-mono font-bold text-white tabular-nums">
+                        {totalBulananBadge}
+                      </span>
+                    )}
+                  </button>
+                );
+              })()}
 
               {/* Direct Dedicated Button: Menu & Alat View (Replaces Dropdown) */}
               <button
@@ -3302,7 +3292,10 @@ export default function App() {
     <AgendaReminderBanner
       agendaItems={agendaItems}
       onToggleComplete={handleToggleAgendaComplete}
-      onOpenAgendaView={() => setView('agenda')}
+      onOpenAgendaView={() => {
+        setBulananInitialTab('agenda');
+        setView('bulanan');
+      }}
       onPostponeOneDay={handlePostponeAgenda}
     />
 
@@ -3616,21 +3609,7 @@ export default function App() {
           />
         )}
 
-        {/* VIEW 8: Modul Pengingat & Agenda Kegiatan Kerja */}
-        {view === 'agenda' && (
-          <AgendaManager
-            agendaItems={agendaItems}
-            onSaveAgendaItems={handleSaveAgendaItems}
-            submissions={submissions}
-            userProfile={userProfile}
-            onOpenSubmissionForPrint={(sub) => {
-              setActiveSubmission(sub);
-              setPrintInitialTab('both');
-              setView('print');
-            }}
-            onClose={() => setView(previousView || 'list')}
-          />
-        )}
+        {/* Modul Agenda kini terintegrasi di dalam menu Bulanan */}
 
         {/* VIEW 9: Modul Buku Besar Sub-Jenis Pengajuan (General Ledger) */}
         {view === 'ledger' && (
@@ -3753,8 +3732,8 @@ export default function App() {
           />
         )}
 
-        {/* VIEW 14: Modul Transaksi Bulanan Otomatis (Sebelum Tgl 15) */}
-        {view === 'bulanan' && (
+        {/* VIEW 14: Modul Jadwal Bulanan & Pengingat Agenda (Terpadu) */}
+        {(view === 'bulanan' || view === 'agenda') && (
           <MonthlyTransactionsManager
             items={monthlyTransactions}
             submissions={submissions}
@@ -3773,6 +3752,10 @@ export default function App() {
               setIsUploadBuktiModalOpen(true);
             }}
             onBackToList={() => setView('list')}
+            agendaItems={agendaItems}
+            onSaveAgendaItems={handleSaveAgendaItems}
+            initialSubTab={view === 'agenda' ? 'agenda' : bulananInitialTab}
+            onSubTabChange={(tab) => setBulananInitialTab(tab)}
           />
         )}
 
