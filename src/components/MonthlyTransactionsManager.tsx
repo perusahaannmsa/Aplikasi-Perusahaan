@@ -11,6 +11,7 @@ import {
   formatMonthKeyIndonesian,
   getJakartaTodayParts,
   getSubmissionTotalAmount,
+  isSubmissionSettledForMonthly,
   shiftMonthKey,
 } from '../utils/monthlyTransactions';
 import {
@@ -32,6 +33,7 @@ import {
   Sparkles,
   Trash2,
   Unlink,
+  Upload,
   X,
   AlertTriangle,
 } from 'lucide-react';
@@ -44,6 +46,7 @@ interface MonthlyTransactionsManagerProps {
   onSaveItems: (updated: MonthlyRecurringTransaction[], deletedId?: string) => void;
   onCreateVoucher: (item: MonthlyRecurringTransaction, targetMonth: string) => void;
   onViewVoucher: (submission: Submission) => void;
+  onUploadPaymentProof?: (submission: Submission) => void;
   onBackToList: () => void;
 }
 
@@ -89,6 +92,7 @@ export const MonthlyTransactionsManager: React.FC<MonthlyTransactionsManagerProp
   onSaveItems,
   onCreateVoucher,
   onViewVoucher,
+  onUploadPaymentProof,
   onBackToList,
 }) => {
   const today = useMemo(() => getJakartaTodayParts(), []);
@@ -393,9 +397,10 @@ export const MonthlyTransactionsManager: React.FC<MonthlyTransactionsManagerProp
   const handleBindVoucherToMonth = (sub: Submission) => {
     if (!linkTargetItem) return;
     const nextPaidMonths = { ...(linkTargetItem.paidMonths || {}) };
+    const settled = isSubmissionSettledForMonthly(sub);
     nextPaidMonths[selectedMonth] = {
       monthKey: selectedMonth,
-      status: 'paid',
+      status: settled ? 'paid' : 'pending',
       paidAt: sub.tanggal || today.dateStr,
       submissionId: sub.id,
       submissionCode: sub.kode,
@@ -429,14 +434,16 @@ export const MonthlyTransactionsManager: React.FC<MonthlyTransactionsManagerProp
         return (
           <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-800 border border-emerald-200 text-[11px] font-bold">
             <CheckCircle2 size={13} />
-            Sudah Dijalankan
+            {detection.hasPaymentProof ? 'Sudah Dibayar (Ada Bukti)' : 'Sudah Dijalankan'}
           </span>
         );
       case 'overdue':
         return (
           <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-100 text-rose-800 border border-rose-200 text-[11px] font-bold">
             <AlertTriangle size={13} />
-            Lewat Tgl {detection.dueDay}
+            {detection.hasUnpaidVoucher
+              ? `Lewat Tgl ${detection.dueDay} · Belum Lunas`
+              : `Lewat Tgl ${detection.dueDay}`}
           </span>
         );
       case 'paused':
@@ -450,7 +457,7 @@ export const MonthlyTransactionsManager: React.FC<MonthlyTransactionsManagerProp
         return (
           <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-sky-50 text-sky-800 border border-sky-200 text-[11px] font-bold">
             <CalendarClock size={13} />
-            Bulan Mendatang
+            {detection.hasUnpaidVoucher ? 'Voucher Dibuat (Belum Lunas)' : 'Bulan Mendatang'}
           </span>
         );
       case 'due_soon':
@@ -458,7 +465,7 @@ export const MonthlyTransactionsManager: React.FC<MonthlyTransactionsManagerProp
         return (
           <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-100 text-amber-900 border border-amber-300 text-[11px] font-bold">
             <Clock size={13} />
-            Belum Dibayar
+            {detection.hasUnpaidVoucher ? 'Menunggu Bukti Transfer / Lunas' : 'Belum Dibayar'}
           </span>
         );
     }
@@ -730,17 +737,31 @@ export const MonthlyTransactionsManager: React.FC<MonthlyTransactionsManagerProp
 
                       {/* Matched Voucher Detail / Manual Note */}
                       {detection.matchedSubmission ? (
-                        <div className="pt-1 flex flex-wrap items-center gap-2 text-xs text-emerald-800">
-                          <Receipt size={14} className="text-emerald-600 shrink-0" />
+                        <div
+                          className={`pt-1 flex flex-wrap items-center gap-2 text-xs ${
+                            detection.isExecuted ? 'text-emerald-800' : 'text-amber-800'
+                          }`}
+                        >
+                          <Receipt
+                            size={14}
+                            className={`shrink-0 ${
+                              detection.isExecuted ? 'text-emerald-600' : 'text-amber-600'
+                            }`}
+                          />
                           <span className="font-bold">
                             Voucher {detection.matchedSubmission.kode}
                           </span>
                           <span className="text-stone-500">
                             ({detection.matchedSubmission.tanggal} · Status:{' '}
-                            {detection.matchedSubmission.status || 'Diproses'})
+                            {detection.matchedSubmission.status || 'Belum Lunas'}
+                            {detection.hasPaymentProof ? ' · Bukti Transfer Terlampir' : ''})
                           </span>
-                          <span className="text-[11px] font-mono text-emerald-700">
-                            — {detection.matchReason}
+                          <span
+                            className={`text-[11px] font-mono ${
+                              detection.isExecuted ? 'text-emerald-700' : 'text-amber-700'
+                            }`}
+                          >
+                            — {detection.isExecuted ? detection.matchReason : 'Belum ada bukti transfer / status belum Lunas'}
                           </span>
                           <button
                             type="button"
@@ -766,7 +787,7 @@ export const MonthlyTransactionsManager: React.FC<MonthlyTransactionsManagerProp
                     <div className="flex flex-col sm:flex-row lg:flex-col items-start sm:items-center lg:items-end justify-between gap-3 shrink-0">
                       <div className="text-left lg:text-right">
                         <div className="text-[10px] font-mono font-bold text-stone-400 uppercase">
-                          {detection.matchedSubmission ? 'Nominal Realisasi' : 'Estimasi / Bulan'}
+                          {detection.matchedSubmission ? 'Nominal Voucher' : 'Estimasi / Bulan'}
                         </div>
                         <div className="text-base sm:text-lg font-black text-stone-900 tabular-nums">
                           {detection.actualAmount > 0
@@ -776,6 +797,17 @@ export const MonthlyTransactionsManager: React.FC<MonthlyTransactionsManagerProp
                       </div>
 
                       <div className="flex flex-wrap items-center gap-1.5">
+                        {detection.hasUnpaidVoucher && detection.matchedSubmission && onUploadPaymentProof && (
+                          <button
+                            type="button"
+                            onClick={() => onUploadPaymentProof(detection.matchedSubmission!)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition cursor-pointer"
+                          >
+                            <Upload size={13} />
+                            <span>Upload Bukti Transfer</span>
+                          </button>
+                        )}
+
                         {!detection.matchedSubmission && (
                           <button
                             type="button"

@@ -51,6 +51,7 @@ import {
   getJakartaTodayParts,
   getPendingMonthlySummary,
   getSubmissionTotalAmount,
+  isSubmissionSettledForMonthly,
 } from './utils/monthlyTransactions';
 import { ThemeSelectorModal, AppTheme } from './components/ThemeSelectorModal';
 import { getSynchronizedAttendanceWorkers, getSavedEmployeeLoans, saveEmployeeLoans, isLoanSubmission, syncLoansWithSubmissions } from './utils/loanUtils';
@@ -100,7 +101,7 @@ import { loadAttendanceFromFirestore, loadWorkersFromFirestore, mergeWorkerLists
 
 import { CleanFirestoreModal } from './components/CleanFirestoreModal';
 import { DriveDeduplicateModal } from './components/DriveDeduplicateModal';
-import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Palette, Loader2, ArrowRight, ArrowLeftRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, CalendarClock, Bell, MessageSquare, Bot, Sparkles, BookOpen, Wrench, Building2, Plus, HandCoins, ExternalLink, RefreshCw, FolderSync, Trash2 } from 'lucide-react';
+import { Database, FileText, CheckSquare, ShieldCheck, Heart, Cloud, Loader2, ArrowRight, ArrowLeftRight, LogIn, Printer, Users, Receipt, FileSpreadsheet, ChevronDown, LogOut, LayoutGrid, Settings, Check, Coins, History, AlertCircle, X, Briefcase, Layers, Calendar, CalendarClock, Bell, MessageSquare, Bot, BookOpen, Wrench, Building2, Plus, HandCoins, ExternalLink, RefreshCw, FolderSync, Trash2 } from 'lucide-react';
 
 export default function App() {
   const [theme, setTheme] = useState<AppTheme>(() => {
@@ -2268,10 +2269,11 @@ export default function App() {
       }
     }
 
-    // If this submission was created from a Monthly Recurring Transaction, auto-mark that month paid
+    // If this submission was created from a Monthly Recurring Transaction, record link & settle only when Lunas or proof uploaded
     if (savedSub.recurringTemplateId && savedSub.recurringMonth) {
       const targetId = savedSub.recurringTemplateId;
       const targetMonth = savedSub.recurringMonth;
+      const settled = isSubmissionSettledForMonthly(savedSub);
       const updatedMonthly = monthlyTransactions.map((m) =>
         m.id === targetId
           ? {
@@ -2280,7 +2282,7 @@ export default function App() {
                 ...(m.paidMonths || {}),
                 [targetMonth]: {
                   monthKey: targetMonth,
-                  status: 'paid' as const,
+                  status: (settled ? 'paid' : 'pending') as 'paid' | 'pending',
                   paidAt: savedSub.tanggal || new Date().toISOString().split('T')[0],
                   submissionId: savedSub.id,
                   submissionCode: savedSub.kode,
@@ -3230,18 +3232,6 @@ export default function App() {
                 )}
               </button>
 
-              {/* Theme Selector Button with Animated Sparkle */}
-              <button
-                type="button"
-                onClick={() => setIsThemeModalOpen(true)}
-                className="relative p-2 rounded-xl border border-stone-250 hover:border-amber-400 bg-stone-50 hover:bg-stone-100 text-stone-750 transition cursor-pointer shadow-3xs flex items-center gap-1.5"
-                title="Pilih & Sesuaikan Tema Tampilan (Bordir, Huruf, Animasi & Kotak)"
-              >
-                <Palette size={16} className="text-amber-600 dark:text-amber-400" />
-                <span className="hidden md:inline font-sans font-bold text-xs">Tema</span>
-                <Sparkles size={11} className="text-amber-500 animate-pulse" />
-              </button>
-
               {/* Direct Dedicated Button: Transaksi Bulanan (< Tgl 15) */}
               <button
                 type="button"
@@ -3777,6 +3767,10 @@ export default function App() {
               setPrintInitialTab('both');
               setPreviousView('bulanan');
               setView('print', { preservePrevious: true });
+            }}
+            onUploadPaymentProof={(sub) => {
+              setUploadBuktiModalSub(sub);
+              setIsUploadBuktiModalOpen(true);
             }}
             onBackToList={() => setView('list')}
           />

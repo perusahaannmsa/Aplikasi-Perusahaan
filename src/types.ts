@@ -682,7 +682,7 @@ export interface EmployeeLoan {
  * ============================================================================ */
 export interface MonthlyExecutionRecord {
   monthKey: string; // Format YYYY-MM (misal: "2026-11")
-  status: 'paid' | 'skipped';
+  status: 'paid' | 'pending' | 'skipped';
   paidAt: string; // ISO string atau YYYY-MM-DD
   submissionId?: string;
   submissionCode?: string;

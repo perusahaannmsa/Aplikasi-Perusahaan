@@ -191,12 +191,35 @@ export function doesSubmissionMatchRecurring(
   return { matched: false, reason: '', score: 0 };
 }
 
+export function hasSubmissionPaymentProof(sub?: Submission | null): boolean {
+  if (!sub) return false;
+  if (sub.buktiPembayaran && (sub.buktiPembayaran.url || sub.buktiPembayaran.name)) {
+    return true;
+  }
+  if (
+    Array.isArray(sub.googleDriveFiles) &&
+    sub.googleDriveFiles.some((f) => Boolean(f?.isBuktiPembayaran))
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export function isSubmissionSettledForMonthly(sub?: Submission | null): boolean {
+  if (!sub) return false;
+  if (sub.status === 'Lunas') return true;
+  if (hasSubmissionPaymentProof(sub)) return true;
+  return false;
+}
+
 export type MonthlyDetectedState = 'executed' | 'due_soon' | 'overdue' | 'upcoming' | 'paused';
 
 export interface MonthlyDetectionResult {
   state: MonthlyDetectedState;
   isExecuted: boolean;
   isManuallyMarked: boolean;
+  hasPaymentProof: boolean;
+  hasUnpaidVoucher: boolean;
   matchedSubmission: Submission | null;
   matchReason: string;
   manualRecord: MonthlyExecutionRecord | null;
@@ -250,25 +273,34 @@ export function detectMonthlyExecutionForMonth(
     const directSub = monthSubmissions.find((s) => s.recurringTemplateId === item.id);
     if (directSub) {
       matchedSub = directSub;
-      matchReason = `Dibuat langsung dari Transaksi Bulanan (${directSub.kode})`;
+      matchReason = `Dibuat dari Transaksi Bulanan (${directSub.kode})`;
     }
   }
 
   // 3. Smart automatic keyword/recipient/title detection in monthSubmissions
+  // Prefer settled vouchers first when multiple vouchers match in the same month
   if (!matchedSub && item.isActive !== false) {
     let bestScore = 0;
     for (const sub of monthSubmissions) {
       const check = doesSubmissionMatchRecurring(sub, item);
-      if (check.matched && check.score > bestScore) {
-        bestScore = check.score;
-        matchedSub = sub;
-        matchReason = `Terdeteksi otomatis (${check.reason})`;
+      if (check.matched) {
+        const settledBonus = isSubmissionSettledForMonthly(sub) ? 1000 : 0;
+        const totalScore = check.score + settledBonus;
+        if (totalScore > bestScore) {
+          bestScore = totalScore;
+          matchedSub = sub;
+          matchReason = `Terdeteksi otomatis (${check.reason})`;
+        }
       }
     }
   }
 
-  const isManuallyMarked = Boolean(savedRec && savedRec.status === 'paid' && savedRec.markedManually);
-  const isExecuted = Boolean(matchedSub || isManuallyMarked);
+  const hasPaymentProof = hasSubmissionPaymentProof(matchedSub);
+  const voucherSettled = isSubmissionSettledForMonthly(matchedSub);
+  const isManuallyMarked = Boolean(savedRec && savedRec.status === 'paid' && savedRec.markedManually === true);
+  // Only count as executed if voucher is Lunas OR has uploaded transfer proof, OR marked complete manually
+  const isExecuted = Boolean(voucherSettled || isManuallyMarked);
+  const hasUnpaidVoucher = Boolean(matchedSub && !voucherSettled && !isManuallyMarked);
 
   // Days calculation relative to Jakarta today
   const diffDays =
@@ -299,6 +331,8 @@ export function detectMonthlyExecutionForMonth(
     state,
     isExecuted,
     isManuallyMarked,
+    hasPaymentProof,
+    hasUnpaidVoucher,
     matchedSubmission: matchedSub,
     matchReason: matchReason || (isManuallyMarked ? 'Ditandai selesai manual' : ''),
     manualRecord: savedRec,
