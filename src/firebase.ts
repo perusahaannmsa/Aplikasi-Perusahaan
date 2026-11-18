@@ -1278,8 +1278,8 @@ if (typeof window !== 'undefined') {
 }
 
 /**
- * Flexible mode allows any Google account to be linked and used as a storage target.
- * Default is TRUE so users are never blocked or rejected when connecting their accounts.
+ * Flexible mode allows any Google account to be linked.
+ * Default is FALSE so ONLY accounts registered/input by the user in the app are authorized & readable.
  */
 export const isDriveFlexibleMode = (): boolean => {
   try {
@@ -1288,7 +1288,7 @@ export const isDriveFlexibleMode = (): boolean => {
       return raw === 'true';
     }
   } catch (e) {}
-  return true;
+  return false;
 };
 
 export const setDriveFlexibleMode = async (enabled: boolean): Promise<void> => {
@@ -1369,17 +1369,11 @@ export const updateAuthorizedDriveEmail = async (oldEmail: string, newEmail: str
     await setMasterDriveEmail(cleanNew);
   }
 
-  // Update in connected drives if matching
+  // Remove old token if email changed so another account's token isn't reused
   const drives = getConnectedDrives();
-  let changed = false;
-  drives.forEach(d => {
-    if (d.email.toLowerCase() === cleanOld) {
-      d.email = cleanNew;
-      changed = true;
-    }
-  });
-  if (changed) {
-    await saveConnectedDrives(drives);
+  const filteredDrives = drives.filter(d => d.email.toLowerCase() !== cleanOld);
+  if (filteredDrives.length !== drives.length) {
+    await saveConnectedDrives(filteredDrives);
   }
 
   return current;
@@ -1390,19 +1384,44 @@ export const removeAuthorizedDriveEmail = async (emailToRemove: string): Promise
   const current = getAuthorizedDriveEmails();
   const updated = current.filter(e => e.toLowerCase() !== clean);
   await saveAuthorizedDriveEmails(updated);
+  const drives = getConnectedDrives();
+  const remainingDrives = drives.filter(d => d.email.toLowerCase() !== clean);
+  if (remainingDrives.length !== drives.length) {
+    await saveConnectedDrives(remainingDrives);
+  }
   if (getMasterDriveEmail().toLowerCase() === clean && updated.length > 0) {
     await setMasterDriveEmail(updated[0]);
   }
   return updated;
 };
 
-export const isDriveEmailAuthorized = (email?: string | null): boolean => {
+/**
+ * Strict check: verifies the email exists explicitly in the app's registered accounts list.
+ * Never bypassed by flexible mode.
+ */
+export const isStrictlyAuthorizedDriveEmail = (email?: string | null): boolean => {
   if (!email) return false;
-  // If flexible mode is active, any valid email format is authorized!
-  if (isDriveFlexibleMode()) return email.includes('@');
   const clean = email.trim().toLowerCase();
+  if (!clean || clean === 'penyimpanandrivenmsa1@gmail.com') return false;
   const list = getAuthorizedDriveEmails().map(e => e.trim().toLowerCase());
   return list.includes(clean);
+};
+
+export const isDriveEmailAuthorized = (email?: string | null): boolean => {
+  if (!email) return false;
+  if (isDriveFlexibleMode()) return email.includes('@');
+  return isStrictlyAuthorizedDriveEmail(email);
+};
+
+export const getTokenForRegisteredDriveEmail = (email?: string | null): string | null => {
+  if (!email || !isStrictlyAuthorizedDriveEmail(email)) return null;
+  const clean = email.trim().toLowerCase();
+  const drives = getConnectedDrives();
+  const match = drives.find(d => d.email.trim().toLowerCase() === clean);
+  if (match && isDriveTokenValid(match) && match.accessToken) {
+    return match.accessToken;
+  }
+  return null;
 };
 
 export const getMasterDriveEmail = (): string => {
@@ -1504,11 +1523,11 @@ export const getConnectedDrives = (): ConnectedDrive[] => {
       const parsed: ConnectedDrive[] = JSON.parse(raw);
       if (Array.isArray(parsed)) {
         let changed = false;
-        // Keep drives whose emails are authorized or present, strictly excluding legacy accounts
+        // Keep ONLY drives whose emails are explicitly authorized/registered in the app
         const filteredDrives = parsed.filter(d => 
           d && d.email && 
           d.email.toLowerCase() !== 'penyimpanandrivenmsa1@gmail.com' &&
-          (isDriveEmailAuthorized(d.email) || d.email.includes('@'))
+          isDriveEmailAuthorized(d.email)
         );
         const normalized = filteredDrives.map(d => {
           const isValidTime = isDriveTokenValid(d);
@@ -1702,7 +1721,14 @@ export const connectDriveWithManualToken = async (
     );
   }
 
-  const email = (meta.email || targetEmailHint || getMasterDriveEmail() || 'google-drive@nmsa.com').trim().toLowerCase();
+  const email = (meta.email || targetEmailHint || '').trim().toLowerCase();
+  if (!email || !isStrictlyAuthorizedDriveEmail(email)) {
+    throw new Error(
+      `Akses Ditolak: Akun Google '${email || '(tidak diketahui)'}' belum terdaftar di aplikasi.\n` +
+      `Silakan daftarkan/input alamat email tersebut di daftar Akun Terdaftar terlebih dahulu sebelum menghubungkan Google Drive-nya.`
+    );
+  }
+
   const now = Date.now();
   const newDrive: ConnectedDrive = {
     email: email,
@@ -1716,15 +1742,6 @@ export const connectDriveWithManualToken = async (
     issuedAt: now,
     expiresAt: now + TOKEN_LIFESPAN_MS
   };
-
-  // 2. Auto-whitelist email so it is accepted
-  try {
-    const list = getAuthorizedDriveEmails();
-    if (!list.includes(email)) {
-      list.push(email);
-      await saveAuthorizedDriveEmails(list);
-    }
-  } catch (e) {}
 
   // 3. Update connected drives list
   const currentDrives = getConnectedDrives();
@@ -2462,35 +2479,17 @@ export const googleDriveLogin = async (
     }
 
     const userEmail = (driveDetails.email || result.user.email || '').trim().toLowerCase();
-    if (userEmail) {
-      // Auto-whitelist email so it is NEVER blocked
-      try {
-        const authList = getAuthorizedDriveEmails();
-        if (!authList.includes(userEmail)) {
-          authList.push(userEmail);
-          await saveAuthorizedDriveEmails(authList);
-        }
-      } catch (e) {}
-
-      // If no master exists, make this master
-      const activeMaster = getMasterDriveEmail();
-      if (!activeMaster) {
-        await setMasterDriveEmail(userEmail);
-      }
+    if (!userEmail || !isStrictlyAuthorizedDriveEmail(userEmail)) {
+      throw new Error(
+        `Akun Google '${userEmail || '(tidak diketahui)'}' belum terdaftar di aplikasi.\n\n` +
+        `Demi keamanan, hanya akun yang sudah Anda daftarkan/input ke dalam daftar akun Google Drive aplikasi yang dapat dihubungkan dan dibaca.`
+      );
     }
 
-    // Check if storage is full
-    const limit = driveDetails.quotaLimit || 15 * 1024 * 1024 * 1024;
-    const used = driveDetails.quotaUsed || 0;
-    const remains = limit - used;
-    const isFull = remains <= 15 * 1024 * 1024; // Less than 15MB free
-
-    if (isFull) {
-      const usedGB = Math.round(used / (1024 * 1024 * 1024) * 100) / 100;
-      const limitGB = Math.round(limit / (1024 * 1024 * 1024));
-      window.alert(
-        `Penyimpanan Google Drive "${driveDetails.email}" telah penuh (Terisi: ${usedGB} GB dari ${limitGB} GB).\n\nSilakan pilih akun Google Drive cadangan atau akun Google ke-2 Anda untuk melanjutkan penyimpanan secara otomatis tanpa hambatan.`
-      );
+    // If no master exists, make this master
+    const activeMaster = getMasterDriveEmail();
+    if (!activeMaster) {
+      await setMasterDriveEmail(userEmail);
     }
 
     // Store as last active email

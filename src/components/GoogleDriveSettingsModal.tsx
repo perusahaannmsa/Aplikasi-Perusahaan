@@ -58,13 +58,15 @@ interface GoogleDriveSettingsModalProps {
   onClose: () => void;
   initialTab?: 'whitelist' | 'manual-token' | 'overview';
   targetEmailForToken?: string;
+  onOpenDriveBrowser?: () => void;
 }
 
 export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> = ({ 
   isOpen, 
   onClose,
   initialTab = 'whitelist',
-  targetEmailForToken
+  targetEmailForToken,
+  onOpenDriveBrowser
 }) => {
   const [activeTab, setActiveTab] = useState<'whitelist' | 'manual-token' | 'overview'>(initialTab);
   const [drives, setDrives] = useState<ConnectedDrive[]>([]);
@@ -382,6 +384,17 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
           </div>
 
           <div className="pb-2 flex items-center gap-2">
+            {onOpenDriveBrowser && (
+              <button
+                type="button"
+                onClick={onOpenDriveBrowser}
+                className="inline-flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-stone-950 font-black px-3 py-1.5 rounded-xl text-[11px] transition cursor-pointer shadow-3xs"
+                title="Lihat & buka 3 folder utama (Absen, Voucher, Internal Memo) dari akun terdaftar"
+              >
+                <HardDrive size={12} />
+                <span>Lihat Isi Drive (3 Folder)</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={handleManualRefreshToken}

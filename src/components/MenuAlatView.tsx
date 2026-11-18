@@ -11,6 +11,7 @@ import {
   ExternalLink,
   FileText,
   HandCoins,
+  HardDrive,
   Layers,
   MessageSquare,
   Receipt,
@@ -36,7 +37,8 @@ export type AppViewMode =
   | 'pinjaman'
   | 'bulanan'
   | 'menu_alat'
-  | 'pengaturan';
+  | 'pengaturan'
+  | 'drive_storage';
 
 interface MenuAlatViewProps {
   currentView: AppViewMode;
@@ -187,6 +189,16 @@ export const MenuAlatView: React.FC<MenuAlatViewProps> = ({
 
       // Group 3: Integrasi AI & Google Drive
       {
+        id: 'drive_storage',
+        group: 'integrasi',
+        title: 'Penyimpanan Google Drive',
+        description: 'Lihat & buka isi 3 folder utama (Absen, Voucher, Internal Memo) dari akun terdaftar.',
+        tag: '3 Folder Utama',
+        icon: <HardDrive size={18} />,
+        accentBg: 'bg-amber-100 text-amber-800',
+        onClick: () => onNavigateView('drive_storage'),
+      },
+      {
         id: 'whatsapp',
         group: 'integrasi',
         title: 'WhatsApp AI Assistant',
@@ -199,11 +211,11 @@ export const MenuAlatView: React.FC<MenuAlatViewProps> = ({
       {
         id: 'drive',
         group: 'integrasi',
-        title: 'Master Google Drive',
+        title: 'Master Google Drive (Akun & Token)',
         description: `Akun aktif: ${masterDriveEmail}`,
-        tag: 'Drive',
+        tag: 'Pengaturan',
         icon: <Cloud size={18} />,
-        accentBg: 'bg-amber-100 text-amber-800',
+        accentBg: 'bg-stone-100 text-stone-800',
         onClick: onOpenGoogleDrive,
       },
       {

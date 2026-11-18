@@ -45,6 +45,7 @@ import { EmployeeLoanManager } from './components/EmployeeLoanManager';
 import { MonthlyTransactionsManager } from './components/MonthlyTransactionsManager';
 import { MenuAlatView, AppViewMode } from './components/MenuAlatView';
 import { PengaturanView } from './components/PengaturanView';
+import { GoogleDriveBrowser } from './components/GoogleDriveBrowser';
 import {
   STORAGE_KEY_MONTHLY_TRANSACTIONS,
   getJakartaTodayParts,
@@ -1074,6 +1075,9 @@ export default function App() {
       if (sp.get('view') === 'pengaturan') {
         return 'pengaturan';
       }
+      if (sp.get('view') === 'drive_storage') {
+        return 'drive_storage';
+      }
       const saved = sessionStorage.getItem('NUSANTARA_ACTIVE_VIEW');
       if (saved === 'agenda') return 'bulanan';
       if (saved) return saved as AppViewMode;
@@ -1402,6 +1406,8 @@ export default function App() {
   const [isCloudModalOpen, setIsCloudModalOpen] = useState(false);
   const [isFirebaseMigrationOpen, setIsFirebaseMigrationOpen] = useState(false);
   const [isGoogleDriveSettingsOpen, setIsGoogleDriveSettingsOpen] = useState(false);
+  const [driveSettingsInitialTab, setDriveSettingsInitialTab] = useState<'whitelist' | 'manual-token' | 'overview'>('whitelist');
+  const [driveSettingsTargetEmail, setDriveSettingsTargetEmail] = useState<string>('');
   const [isFirebaseQuotaModalOpen, setIsFirebaseQuotaModalOpen] = useState(false);
   const [uploadBuktiModalSub, setUploadBuktiModalSub] = useState<Submission | null>(null);
   const [isUploadBuktiModalOpen, setIsUploadBuktiModalOpen] = useState(false);
@@ -3789,7 +3795,12 @@ export default function App() {
             onOpenProfile={() => setIsProfileOpen(true)}
             onOpenCompanyModal={() => setIsCompanyModalOpen(true)}
             onOpenThemeGallery={() => setIsThemeModalOpen(true)}
-            onOpenGoogleDrive={() => setIsGoogleDriveSettingsOpen(true)}
+            onOpenGoogleDrive={() => {
+              setDriveSettingsInitialTab('whitelist');
+              setDriveSettingsTargetEmail('');
+              setIsGoogleDriveSettingsOpen(true);
+            }}
+            onOpenDriveStorage={() => setView('drive_storage')}
             onOpenDriveDeduplicate={() => setIsDriveDeduplicateModalOpen(true)}
             onOpenDriveCleaner={() => setIsDriveOrphanCleanerOpen(true)}
             onOpenFirebaseQuota={() => setIsFirebaseQuotaModalOpen(true)}
@@ -3798,6 +3809,18 @@ export default function App() {
             onOpenExportImport={() => setIsExportImportModalOpen(true)}
             onOpenCleanFirestore={() => setIsCleanFirestoreModalOpen(true)}
             onLogout={handleLogout}
+          />
+        )}
+
+        {/* VIEW 17: Penyimpanan Google Drive (Eksklusif Akun Terdaftar & 3 Folder Utama) */}
+        {view === 'drive_storage' && (
+          <GoogleDriveBrowser
+            onBackToDashboard={() => setView('list')}
+            onOpenDriveSettings={(tab = 'whitelist', targetEmail = '') => {
+              setDriveSettingsInitialTab(tab);
+              setDriveSettingsTargetEmail(targetEmail);
+              setIsGoogleDriveSettingsOpen(true);
+            }}
           />
         )}
 
@@ -3895,6 +3918,12 @@ export default function App() {
       <GoogleDriveSettingsModal
         isOpen={isGoogleDriveSettingsOpen}
         onClose={() => setIsGoogleDriveSettingsOpen(false)}
+        initialTab={driveSettingsInitialTab}
+        targetEmailForToken={driveSettingsTargetEmail}
+        onOpenDriveBrowser={() => {
+          setIsGoogleDriveSettingsOpen(false);
+          setView('drive_storage');
+        }}
       />
 
       {/* Pembersih Folder Google Drive Transaksi Terhapus */}

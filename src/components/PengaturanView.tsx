@@ -9,6 +9,7 @@ import {
   Database,
   FileSpreadsheet,
   FolderSync,
+  HardDrive,
   LogOut,
   Palette,
   Settings,
@@ -27,6 +28,7 @@ interface PengaturanViewProps {
   onOpenCompanyModal: () => void;
   onOpenThemeGallery: () => void;
   onOpenGoogleDrive: () => void;
+  onOpenDriveStorage: () => void;
   onOpenDriveDeduplicate: () => void;
   onOpenDriveCleaner: () => void;
   onOpenFirebaseQuota: () => void;
@@ -64,6 +66,7 @@ export const PengaturanView: React.FC<PengaturanViewProps> = ({
   onOpenCompanyModal,
   onOpenThemeGallery,
   onOpenGoogleDrive,
+  onOpenDriveStorage,
   onOpenDriveDeduplicate,
   onOpenDriveCleaner,
   onOpenFirebaseQuota,
@@ -217,10 +220,29 @@ export const PengaturanView: React.FC<PengaturanViewProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
           <button
             type="button"
-            onClick={onOpenGoogleDrive}
+            onClick={onOpenDriveStorage}
             className="bg-white hover:bg-stone-50 rounded-2xl border border-stone-200 hover:border-amber-400 p-4 text-left shadow-3xs transition cursor-pointer flex items-start gap-3.5"
           >
             <div className="p-2.5 rounded-xl bg-amber-100 text-amber-800 shrink-0">
+              <HardDrive size={18} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-2">
+                <h4 className="text-sm font-black text-stone-900">Buka Penyimpanan Google Drive</h4>
+                <span className="text-[10px] font-mono text-emerald-700 font-bold">3 Folder</span>
+              </div>
+              <p className="text-xs text-stone-500 mt-0.5">
+                Lihat folder Absen, Voucher &amp; Internal Memo dari akun Google Drive terdaftar.
+              </p>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={onOpenGoogleDrive}
+            className="bg-white hover:bg-stone-50 rounded-2xl border border-stone-200 hover:border-amber-400 p-4 text-left shadow-3xs transition cursor-pointer flex items-start gap-3.5"
+          >
+            <div className="p-2.5 rounded-xl bg-stone-100 text-stone-800 shrink-0">
               <Cloud size={18} />
             </div>
             <div className="min-w-0 flex-1">
