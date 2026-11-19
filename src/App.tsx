@@ -1984,6 +1984,8 @@ export default function App() {
   const activeCompForSync = (userProfile?.companyId || localStorage.getItem('NUSANTARA_ACTIVE_COMPANY_ID') || 'nmsa').toLowerCase().trim();
   const activeCompNameForSync = userProfile?.companyName || 'PT Nusantara Mineral Sukses Abadi';
 
+  const [syncListenerEpoch, setSyncListenerEpoch] = useState(0);
+
   const handleForceCloudSync = async (silent: boolean = false) => {
     if (!authUser) return;
     setIsCloudSyncing(true);
@@ -1997,14 +1999,17 @@ export default function App() {
       setSubmissions(res.merged);
       persistSubmissionsToLocalCaches(res.merged, activeCompForSync);
       setShowQuotaBanner(isFirestoreQuotaExceeded());
+      if (!silent) {
+        setSyncListenerEpoch((n) => n + 1);
+      }
       if (!silent || res.uploadedCount > 0) {
         const msg = res.usedOfflineFallback
           ? `Mode lokal aktif (${res.merged.length} voucher). Periksa koneksi atau tunggu kuota Cloud reset.`
           : res.uploadedCount > 0
-          ? `Sinkronisasi selesai! ${res.uploadedCount} voucher lokal diunggah ke Cloud • Total ${res.merged.length} voucher sama di semua perangkat.`
-          : `Tersinkron dengan Cloud Firestore (${res.merged.length} voucher).`;
+          ? `Sinkronisasi selesai! ${res.uploadedCount} voucher lokal diunggah ke Cloud • Total ${res.merged.length} voucher sekarang sama di Cloud & perangkat.`
+          : `Tersinkron dengan Cloud Firestore (Cloud: ${res.cloudCount} voucher • Total di perangkat: ${res.merged.length} voucher).`;
         setCloudSyncNotice(msg);
-        setTimeout(() => setCloudSyncNotice(null), 5000);
+        setTimeout(() => setCloudSyncNotice(null), 6000);
       }
     } catch (err: any) {
       if (!silent) {
@@ -2015,6 +2020,12 @@ export default function App() {
       setIsCloudSyncing(false);
     }
   };
+
+  useEffect(() => {
+    const onQuotaReset = () => setSyncListenerEpoch((n) => n + 1);
+    window.addEventListener('firestore-quota-reset', onQuotaReset);
+    return () => window.removeEventListener('firestore-quota-reset', onQuotaReset);
+  }, []);
 
   useEffect(() => {
     if (!authUser) return;
@@ -2100,7 +2111,7 @@ export default function App() {
       window.removeEventListener('online', onOnline);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [authUser?.uid, activeCompForSync]);
+  }, [authUser?.uid, activeCompForSync, syncListenerEpoch]);
 
   // Sync state changes with localStorage across both global & company-scoped caches
   const saveSubmissionsToStorage = (updatedList: Submission[]) => {

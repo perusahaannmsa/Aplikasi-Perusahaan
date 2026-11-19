@@ -304,13 +304,22 @@ export const mapFirestoreToSubmission = (docId: string, data: any): Submission =
   };
 };
 
-// Deeply sanitize objects to replace undefined keys or values with null/empty types to prevent Firestore write crashes
+// Deeply sanitize objects to replace undefined/NaN/oversized Base64 values to prevent Firestore write crashes & 1MB limit errors
 export const cleanUndefined = (obj: any): any => {
   if (obj === null || obj === undefined) {
     return null;
   }
-  if (obj instanceof Date) {
+  if (typeof obj === 'number') {
+    return Number.isFinite(obj) ? obj : 0;
+  }
+  if (typeof obj === 'string') {
+    if (obj.startsWith('data:') && obj.length > 150000) {
+      return `[LOCAL_BASE64_ATTACHMENT:${Math.round(obj.length / 1024)}KB]`;
+    }
     return obj;
+  }
+  if (obj instanceof Date) {
+    return isNaN(obj.getTime()) ? new Date() : obj;
   }
   if (Array.isArray(obj)) {
     return obj.map(item => cleanUndefined(item));
@@ -319,13 +328,18 @@ export const cleanUndefined = (obj: any): any => {
     const cleaned: any = {};
     for (const key of Object.keys(obj)) {
       const val = obj[key];
-      if (val !== undefined) {
+      if (val !== undefined && typeof val !== 'function') {
         cleaned[key] = cleanUndefined(val);
       }
     }
     return cleaned;
   }
   return obj;
+};
+
+export const sanitizeFirestoreDocId = (rawId: string): string => {
+  const cleaned = String(rawId || `sub-${Date.now()}`).replace(/\//g, '-').trim();
+  return (cleaned || `sub-${Date.now()}`).slice(0, 128);
 };
 
 // Safe helper to strip huge Base64 data URLs (> 300 KB) from Firestore documents to prevent 1MB limit crash
@@ -3208,23 +3222,26 @@ export const saveSubmissionToFirestore = async (
   );
   const cleanedPayload = cleanUndefined(fPayload);
 
+  const safeDocId = sanitizeFirestoreDocId(stampedSubmission.id);
+
   // 3. Attempt direct immediate Firestore write when online & not quota-exceeded, falling back to persistent queue
   if (isFirebaseConfigured() && firestoreDb && !isFirestoreQuotaExceeded()) {
     try {
       await enableNetwork(firestoreDb).catch(() => {});
-      await setDoc(doc(firestoreDb, path, stampedSubmission.id), cleanedPayload, { merge: true });
+      await setDoc(doc(firestoreDb, path, safeDocId), cleanedPayload, { merge: true });
       removeFromFirestoreQueue(path, stampedSubmission.id);
+      removeFromFirestoreQueue(path, safeDocId);
       recordFirestoreWrites(1);
       console.log(`☁️ [Cloud Sync] Submission ${stampedSubmission.kode || stampedSubmission.id} langsung tersinkron ke Firestore.`);
       return;
     } catch (error: any) {
       markFirestoreQuotaExceeded(error);
-      console.warn(`⚠️ [Cloud Sync] Gagal kirim langsung (${stampedSubmission.id}), masuk antrian persisten:`, error?.message || error);
+      console.warn(`⚠️ [Cloud Sync] Gagal kirim langsung (${safeDocId}), masuk antrian persisten:`, error?.message || error);
     }
   }
 
   // Fallback: safely persist in retry queue so it syncs automatically when online/recovered
-  enqueueFirestoreWrite(path, stampedSubmission.id, cleanedPayload, `Voucher ${stampedSubmission.kode || stampedSubmission.id}`);
+  enqueueFirestoreWrite(path, safeDocId, cleanedPayload, `Voucher ${stampedSubmission.kode || stampedSubmission.id}`);
 };
 
 // Batch save/update multiple submissions in Firestore (e.g. after name consolidation or auto-reconciliation)
@@ -3276,7 +3293,8 @@ export const saveSubmissionsBatchToFirestore = async (
         sub.companyName || userCompanyName
       );
       const cleaned = cleanUndefined(fPayload);
-      const subRef = doc(firestoreDb, 'submissions', sub.id);
+      const docId = sanitizeFirestoreDocId(sub.id);
+      const subRef = doc(firestoreDb, 'submissions', docId);
       batch.set(subRef, cleaned, { merge: true });
     }
 
@@ -3287,8 +3305,8 @@ export const saveSubmissionsBatchToFirestore = async (
       chunk.forEach((s) => removeFromFirestoreQueue('submissions', s.id));
       console.log(`☁️ Batch saved ${chunk.length} submissions to Firestore.`);
     } catch (err) {
-      markFirestoreQuotaExceeded(err);
-      console.warn('Batch write error in Firestore, queueing chunk:', err);
+      console.warn('Batch write fallback -> trying per-document writes for chunk:', err);
+      // Fallback: write individually so 1 bad/oversized document NEVER blocks the other valid vouchers!
       for (const sub of chunk) {
         const payload = cleanUndefined(
           mapSubmissionToFirestore(
@@ -3299,7 +3317,21 @@ export const saveSubmissionsBatchToFirestore = async (
             sub.companyName || userCompanyName
           )
         );
-        enqueueFirestoreWrite('submissions', sub.id, payload, `Voucher ${sub.kode || sub.id}`);
+        const docId = sanitizeFirestoreDocId(sub.id);
+        try {
+          if (!isFirestoreQuotaExceeded()) {
+            await setDoc(doc(firestoreDb, 'submissions', docId), payload, { merge: true });
+            totalSaved += 1;
+            recordFirestoreWrites(1);
+            removeFromFirestoreQueue('submissions', sub.id);
+          } else {
+            enqueueFirestoreWrite('submissions', docId, payload, `Voucher ${sub.kode || sub.id}`);
+          }
+        } catch (docErr) {
+          markFirestoreQuotaExceeded(docErr);
+          console.warn(`⚠️ Gagal simpan individu voucher ${sub.kode || docId}:`, docErr);
+          enqueueFirestoreWrite('submissions', docId, payload, `Voucher ${sub.kode || sub.id}`);
+        }
       }
     }
   }
