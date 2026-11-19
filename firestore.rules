@@ -1,124 +1,115 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
+
     // --- Helper Functions ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
     function isValidId(id) {
       return id is string && id.size() > 0 && id.size() <= 128;
     }
 
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
     // =========================================================================
-    // HANYA 3 KATEGORI UTAMA YANG DIBOLEHKAN UNTUK MENGHEMAT KUOTA SPARK GRATIS:
-    // 1. Absensi Harian (absen_records & attendance)
-    // 2. Database NPWP Rekanan / Vendor (npwp_records)
-    // 3. Transaksi Voucher & Pengajuan Dana (submissions)
+    // KOLEKSI AKTIF APLIKASI (WAJIB LOGIN FIREBASE AUTH)
+    // Mengizinkan baca & tulis bagi pengguna yang sudah login di aplikasi,
+    // termasuk saat upload data dari penyimpanan sementara/lokal ke Firestore.
     // =========================================================================
 
     // 1. Transaksi Voucher & Pengajuan Dana HO / Kas / Bank
     match /submissions/{submissionId} {
-      allow read, write: if isValidId(submissionId);
+      allow list: if isSignedIn();
+      allow get, delete: if isSignedIn() && isValidId(submissionId);
+      allow create, update: if isSignedIn() && isValidId(submissionId) && request.resource.data is map;
     }
 
     // 2. Master Data NPWP Rekanan & Perusahaan
     match /npwp_records/{recordId} {
-      allow read, write: if isValidId(recordId);
+      allow list: if isSignedIn();
+      allow get, delete: if isSignedIn() && isValidId(recordId);
+      allow create, update: if isSignedIn() && isValidId(recordId) && request.resource.data is map;
     }
 
-    // 3. Master List Data Karyawan (hanya simpan & hapus dokumen per-karyawan agar hemat kuota)
+    // 3. Master List Data Karyawan
     match /workers/{workerId} {
-      allow read, write: if isValidId(workerId);
+      allow list: if isSignedIn();
+      allow get, delete: if isSignedIn() && isValidId(workerId);
+      allow create, update: if isSignedIn() && isValidId(workerId) && request.resource.data is map;
     }
 
-    // 4. Data Absensi Harian Terpusat (attendance/current_records)
+    // 4. Data Absensi Harian Terpusat & Dokumen Master Sinkronisasi
+    // (current_records, workers_master, internal_memos_master,
+    //  employee_loans_master, monthly_transactions_master, & rep_*)
     match /attendance/{attendanceId} {
-      allow read, write: if isValidId(attendanceId);
+      allow list: if isSignedIn();
+      allow get, delete: if isSignedIn() && isValidId(attendanceId);
+      allow create, update: if isSignedIn() && isValidId(attendanceId) && request.resource.data is map;
     }
 
-    // =========================================================================
-    // KOLEKSI OBSOLETE YANG AKAN DIBERSIHKAN:
-    // Izinkan baca & hapus agar pengguna bisa membersihkan koleksi dari console/aplikasi.
-    // Penulisan baru diblokir total (write: if false).
-    // =========================================================================
-
-    // Data absen per-dokumen lama (digantikan oleh attendance/current_records)
-    match /absen_records/{recordId} {
-      allow read, delete: if true;
-      allow write: if false;
-    }
-
-    // Riwayat aktivitas & audit log lama (disimpan di server backend & local)
-    match /activity_logs/{logId} {
-      allow read, delete: if true;
-      allow write: if false;
-    }
-
-    // SPPD records (disimpan di server backend & localStorage)
-    match /sppd_records/{recordId} {
-      allow read, delete: if true;
-      allow write: if false;
-    }
-
-    // Accurate mappings (disimpan di server backend & localStorage)
-    match /accurate_mappings/{recordId} {
-      allow read, delete: if true;
-      allow write: if false;
-    }
-
-    // Konfigurasi GPS kantor
-    match /office_config/{configId} {
-      allow read, delete: if true;
-      allow write: if false;
-    }
-
-    // Dokumen Internal Memo Direksi lama (disimpan di server backend & localStorage)
+    // 5. Internal Memo Direksi (sinkron antar PC & HP)
     match /internal_memos/{memoId} {
-      allow read, delete: if true;
-      allow write: if false;
+      allow list: if isSignedIn();
+      allow get, delete: if isSignedIn() && isValidId(memoId);
+      allow create, update: if isSignedIn() && isValidId(memoId) && request.resource.data is map;
     }
 
-    // Dokumen pengujian koneksi lama
-    match /test/{docId} {
-      allow read, delete: if true;
-      allow write: if false;
+    // 6. Pinjaman Karyawan & Riwayat Cicilan (sinkron antar PC & HP)
+    match /employee_loans/{loanId} {
+      allow list: if isSignedIn();
+      allow get, delete: if isSignedIn() && isValidId(loanId);
+      allow create, update: if isSignedIn() && isValidId(loanId) && request.resource.data is map;
     }
 
-    // Profil Perusahaan (Hanya baca jika ada data lama, blokir penulisan token berulang)
+    // 7. Profil Perusahaan & Pengaturan Multi-PT
     match /companies/{companyId} {
-      allow read: if true;
-      allow write: if false;
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidId(companyId) && request.resource.data is map;
+      allow delete: if false;
     }
 
-    // Akun Google Drive (disimpan aman di server backend)
-    match /connected_drives/{driveId} {
-      allow read, write: if false;
-    }
-
-    // Profil Users
+    // 8. Profil Pengguna (hanya dapat diakses oleh pemilik UID masing-masing)
     match /users/{uid} {
-      allow read: if true;
+      allow get, create, update: if isSignedIn() && request.auth.uid == uid;
+      allow list, delete: if false;
+    }
+
+    // =========================================================================
+    // KOLEKSI OBSOLETE / PEMBERSIHAN (Hanya Baca & Hapus oleh User Login)
+    // =========================================================================
+    match /absen_records/{recordId} {
+      allow read, delete: if isSignedIn();
       allow write: if false;
     }
 
-    // Laporan mingguan dan rekap pembantu absensi
-    match /weekly_attendance_reports/{reportId} {
-      allow read, write: if false;
+    match /activity_logs/{logId} {
+      allow read, delete: if isSignedIn();
+      allow write: if false;
     }
 
-    match /weekly_reports/{reportId} {
-      allow read, write: if false;
+    match /sppd_records/{recordId} {
+      allow read, delete: if isSignedIn();
+      allow write: if false;
     }
 
-    match /attendance_history/{historyId} {
-      allow read, write: if false;
+    match /accurate_mappings/{recordId} {
+      allow read, delete: if isSignedIn();
+      allow write: if false;
     }
 
-    match /sync/{docId} {
-      allow read, write: if false;
+    match /office_config/{configId} {
+      allow read, delete: if isSignedIn();
+      allow write: if false;
     }
 
-    // Default deny catch-all untuk koleksi atau path lainnya
-    match /{document=**} {
-      allow read, write: if false;
+    match /test/{docId} {
+      allow read, delete: if isSignedIn();
+      allow write: if false;
     }
   }
 }

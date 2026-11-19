@@ -48,6 +48,10 @@ function loadState(): any {
     deletedMonthlyIds: [],
     projects: [],
     internalMemos: [],
+    deletedMemoIds: [],
+    employeeLoans: [],
+    deletedLoanIds: [],
+    deletedNpwpIds: [],
     adminUsername: "admin",
     adminPassword: "nmsa",
     adminToken: "nmsa_admin_token_default",
@@ -426,7 +430,23 @@ export default async function handler(req: any, res: any) {
           if (Array.isArray(body.projects)) state.projects = body.projects;
           if (Array.isArray(body.projectRab)) state.projectRab = body.projectRab;
           if (Array.isArray(body.projectExpenses)) state.projectExpenses = body.projectExpenses;
-          if (Array.isArray(body.internalMemos)) state.internalMemos = body.internalMemos;
+          if (Array.isArray(body.internalMemos)) {
+            const delMemoSet = new Set((state.deletedMemoIds || []).map(String));
+            state.internalMemos = body.internalMemos.filter((m: any) => m && m.id && !delMemoSet.has(String(m.id)));
+          }
+          if (Array.isArray(body.deletedMemoIds)) {
+            state.deletedMemoIds = Array.from(new Set([...(state.deletedMemoIds || []), ...body.deletedMemoIds.map(String)])).slice(-500);
+          }
+          if (Array.isArray(body.deletedLoanIds)) {
+            state.deletedLoanIds = Array.from(new Set([...(state.deletedLoanIds || []), ...body.deletedLoanIds.map(String)])).slice(-500);
+          }
+          if (Array.isArray(body.employeeLoans)) {
+            const delLoanSet = new Set((state.deletedLoanIds || []).map(String));
+            state.employeeLoans = body.employeeLoans.filter((l: any) => l && l.id && !delLoanSet.has(String(l.id)));
+          }
+          if (Array.isArray(body.deletedNpwpIds)) {
+            state.deletedNpwpIds = Array.from(new Set([...(state.deletedNpwpIds || []), ...body.deletedNpwpIds.map(String)])).slice(-500);
+          }
           if (Array.isArray(body.deletedMonthlyIds)) {
             state.deletedMonthlyIds = Array.from(new Set([...(state.deletedMonthlyIds || []), ...body.deletedMonthlyIds.map(String)]));
           }
@@ -440,6 +460,7 @@ export default async function handler(req: any, res: any) {
           JSON.stringify({
             success: true,
             count: (state.submissions || []).length,
+            employeeLoans: (state.employeeLoans || []).length,
             timestamp: new Date().toISOString(),
           })
         );
@@ -450,6 +471,12 @@ export default async function handler(req: any, res: any) {
           count: (state.submissions || []).length,
           submissions: state.submissions || [],
           deletedSubmissionIds: state.deletedSubmissionIds || [],
+          employeeLoans: state.employeeLoans || [],
+          deletedLoanIds: state.deletedLoanIds || [],
+          internalMemos: state.internalMemos || [],
+          deletedMemoIds: state.deletedMemoIds || [],
+          npwpRecords: state.npwpRecords || [],
+          deletedNpwpIds: state.deletedNpwpIds || [],
           menu1_vouchers: {
             submissions: state.submissions || [],
             deletedSubmissionIds: state.deletedSubmissionIds || [],
@@ -462,12 +489,16 @@ export default async function handler(req: any, res: any) {
             pettyCashHolders: state.pettyCashHolders || [],
             pettyCashReports: state.pettyCashReports || [],
             npwpRecords: state.npwpRecords || [],
+            deletedNpwpIds: state.deletedNpwpIds || [],
             sppdRecords: state.sppdRecords || [],
             agendaItems: state.agendaItems || [],
             projects: state.projects || [],
             projectRab: state.projectRab || [],
             projectExpenses: state.projectExpenses || [],
             internalMemos: state.internalMemos || [],
+            deletedMemoIds: state.deletedMemoIds || [],
+            employeeLoans: state.employeeLoans || [],
+            deletedLoanIds: state.deletedLoanIds || [],
             workers: state.workers || [],
             deletedWorkerIds: state.deletedWorkerIds || [],
             monthlyTransactions: state.monthlyTransactions || [],
@@ -613,19 +644,133 @@ export default async function handler(req: any, res: any) {
       return res.end(JSON.stringify(state.sppdRecords || []));
     }
 
-    // 10. Internal Memos
-    if (cleanPath.startsWith("internal-memos")) {
+    // 10. Internal Memos (GET, POST single/batch, DELETE /:id)
+    if (cleanPath === "internal-memos" || cleanPath.startsWith("internal-memos/")) {
       const state = loadState();
+      if (!Array.isArray(state.internalMemos)) state.internalMemos = [];
+      if (!Array.isArray(state.deletedMemoIds)) state.deletedMemoIds = [];
+
+      if (cleanPath.startsWith("internal-memos/") && req.method === "DELETE") {
+        const memoId = decodeURIComponent(cleanPath.slice("internal-memos/".length)).trim();
+        state.internalMemos = state.internalMemos.filter((m: any) => m && m.id !== memoId);
+        const delSet = new Set<string>(state.deletedMemoIds.map(String));
+        if (memoId) delSet.add(memoId);
+        state.deletedMemoIds = Array.from(delSet).slice(-500);
+        saveState(state);
+        return res.end(
+          JSON.stringify({
+            success: true,
+            id: memoId,
+            memos: state.internalMemos,
+            deletedMemoIds: state.deletedMemoIds,
+          })
+        );
+      }
+
       if (req.method === "POST") {
         const body = await parseRequestBody(req);
-        if (body) {
-          state.internalMemos = state.internalMemos || [];
-          state.internalMemos.push(body);
-          saveState(state);
+        const delSet = new Set<string>(state.deletedMemoIds.map(String));
+        if (Array.isArray(body?.deletedMemoIds)) {
+          body.deletedMemoIds.forEach((id: any) => { if (id) delSet.add(String(id)); });
         }
-        return res.end(JSON.stringify({ success: true }));
+        if (body?.memo && body.memo.id) {
+          delSet.delete(String(body.memo.id));
+          const idx = state.internalMemos.findIndex((m: any) => m && m.id === body.memo.id);
+          if (idx >= 0) {
+            state.internalMemos[idx] = { ...state.internalMemos[idx], ...body.memo };
+          } else {
+            state.internalMemos.unshift(body.memo);
+          }
+        } else if (Array.isArray(body?.memos)) {
+          const map = new Map<string, any>();
+          state.internalMemos.forEach((m: any) => {
+            if (m && m.id && !delSet.has(String(m.id))) map.set(String(m.id), m);
+          });
+          body.memos.forEach((m: any) => {
+            if (m && m.id && !delSet.has(String(m.id))) map.set(String(m.id), m);
+          });
+          state.internalMemos = Array.from(map.values());
+        } else if (body && body.id) {
+          delSet.delete(String(body.id));
+          const idx = state.internalMemos.findIndex((m: any) => m && m.id === body.id);
+          if (idx >= 0) state.internalMemos[idx] = body;
+          else state.internalMemos.unshift(body);
+        }
+        state.deletedMemoIds = Array.from(delSet).slice(-500);
+        saveState(state);
+        return res.end(
+          JSON.stringify({
+            success: true,
+            memos: state.internalMemos,
+            deletedMemoIds: state.deletedMemoIds,
+          })
+        );
       }
-      return res.end(JSON.stringify(state.internalMemos || []));
+
+      return res.end(
+        JSON.stringify({
+          success: true,
+          memos: state.internalMemos || [],
+          deletedMemoIds: state.deletedMemoIds || [],
+        })
+      );
+    }
+
+    // 10B. Employee Loans (GET, POST single/batch, DELETE /:id)
+    if (cleanPath === "employee-loans" || cleanPath.startsWith("employee-loans/")) {
+      const state = loadState();
+      if (!Array.isArray(state.employeeLoans)) state.employeeLoans = [];
+      if (!Array.isArray(state.deletedLoanIds)) state.deletedLoanIds = [];
+
+      if (cleanPath.startsWith("employee-loans/") && req.method === "DELETE") {
+        const loanId = decodeURIComponent(cleanPath.slice("employee-loans/".length)).trim();
+        state.employeeLoans = state.employeeLoans.filter((l: any) => l && l.id !== loanId);
+        const delSet = new Set<string>(state.deletedLoanIds.map(String));
+        if (loanId) delSet.add(loanId);
+        state.deletedLoanIds = Array.from(delSet).slice(-500);
+        saveState(state);
+        return res.end(
+          JSON.stringify({
+            success: true,
+            id: loanId,
+            employeeLoans: state.employeeLoans,
+            deletedLoanIds: state.deletedLoanIds,
+          })
+        );
+      }
+
+      if (req.method === "POST") {
+        const body = await parseRequestBody(req);
+        const delSet = new Set<string>(state.deletedLoanIds.map(String));
+        if (Array.isArray(body?.deletedLoanIds)) {
+          body.deletedLoanIds.forEach((id: any) => { if (id) delSet.add(String(id)); });
+        }
+        if (body?.loan && body.loan.id) {
+          delSet.delete(String(body.loan.id));
+          const idx = state.employeeLoans.findIndex((l: any) => l && l.id === body.loan.id);
+          if (idx >= 0) state.employeeLoans[idx] = { ...state.employeeLoans[idx], ...body.loan };
+          else state.employeeLoans.unshift(body.loan);
+        } else if (Array.isArray(body?.employeeLoans)) {
+          state.employeeLoans = body.employeeLoans.filter((l: any) => l && l.id && !delSet.has(String(l.id)));
+        }
+        state.deletedLoanIds = Array.from(delSet).slice(-500);
+        saveState(state);
+        return res.end(
+          JSON.stringify({
+            success: true,
+            employeeLoans: state.employeeLoans,
+            deletedLoanIds: state.deletedLoanIds,
+          })
+        );
+      }
+
+      return res.end(
+        JSON.stringify({
+          success: true,
+          employeeLoans: state.employeeLoans || [],
+          deletedLoanIds: state.deletedLoanIds || [],
+        })
+      );
     }
 
     // 11. Admin Login

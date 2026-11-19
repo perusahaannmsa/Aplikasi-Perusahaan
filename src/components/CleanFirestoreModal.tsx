@@ -20,13 +20,15 @@ export const CleanFirestoreModal: React.FC<Props> = ({ isOpen, onClose, onSucces
     { name: 'accurate_mappings', desc: 'Cache pemetaan Accurate lama (sudah disimpan di lokal & server)' },
     { name: 'activity_logs', desc: 'Catatan log audit lama (sudah dinonaktifkan dari cloud)' },
     { name: 'office_config', desc: 'Data konfigurasi kantor lama yang tidak terpakai' },
-    { name: 'test', desc: 'Dokumen uji coba koneksi Firestore awal' },
-    { name: 'internal_memos', desc: 'Cache draft memo internal lama (sudah tersimpan di server)' }
+    { name: 'test', desc: 'Dokumen uji coba koneksi Firestore awal' }
   ];
 
   const preservedCollections = [
     { name: 'submissions', desc: 'Semua voucher transaksi HO & kas/bank (UTAMA)' },
     { name: 'attendance', desc: 'Master kehadiran & absensi harian karyawan' },
+    { name: 'workers', desc: 'Master daftar pekerja & karyawan harian NMSA' },
+    { name: 'internal_memos', desc: 'Arsip Internal Memo Direksi & lampiran resmi' },
+    { name: 'employee_loans', desc: 'Data Pinjaman Karyawan & jadwal cicilan' },
     { name: 'npwp_records', desc: 'Master data NPWP rekanan / vendor' },
     { name: 'companies', desc: 'Profil perusahaan & pengaturan PT' },
     { name: 'users', desc: 'Akun autentikasi login pengguna' }
@@ -103,7 +105,7 @@ export const CleanFirestoreModal: React.FC<Props> = ({ isOpen, onClose, onSucces
           <div>
             <h4 className="font-mono text-[11px] uppercase tracking-wider font-bold text-rose-700 mb-2 flex items-center gap-1.5">
               <Trash2 size={13} />
-              <span>Koleksi yang Akan Dihapus / Dikosongkan (6 Koleksi):</span>
+              <span>Koleksi yang Akan Dihapus / Dikosongkan ({targetCollections.length} Koleksi):</span>
             </h4>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {targetCollections.map((c) => (

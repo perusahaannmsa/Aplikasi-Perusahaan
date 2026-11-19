@@ -75,6 +75,8 @@ export interface Submission {
   bupotStatus?: 'Belum Bupot' | 'Sudah Bupot' | 'Siap Lapor Coretax';
   bupotDate?: string; // Tanggal penerbitan Bukti Potong
   vendorNpwp?: string; // NPWP Vendor/Rekanan terkait (jika disimpan langsung)
+  bupotDriveUrl?: string; // Tautan berkas Bukti Potong PPh 23 di Google Drive
+  bupotFileName?: string; // Nama berkas Bukti Potong PPh 23
   
   // Salary Slip details
   salaryDetails?: SalaryDetails;
@@ -672,6 +674,13 @@ export interface EmployeeLoan {
   // Tautan ke Voucher Kas/Bank HO
   linkedSubmissionId?: string;
   linkedSubmissionKode?: string;
+
+  // Arsip Google Drive (PINJAMAN-KARYAWAN-NMSA)
+  driveFileId?: string;
+  driveUrl?: string;
+  driveFolderId?: string;
+  driveFolderPath?: string;
+  driveSyncedAt?: string;
 
   createdAt: string;
   updatedAt?: string;

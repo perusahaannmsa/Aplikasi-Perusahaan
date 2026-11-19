@@ -31,7 +31,7 @@ import {
   signInWithPopup,
   sendPasswordResetEmail
 } from 'firebase/auth';
-import { Submission, SubmissionItem, ActivityLog, NpwpRecord, CompanyProfile, InternalMemo, Worker, MonthlyRecurringTransaction } from './types';
+import { Submission, SubmissionItem, ActivityLog, NpwpRecord, CompanyProfile, InternalMemo, Worker, MonthlyRecurringTransaction, EmployeeLoan } from './types';
 import { INITIAL_WORKERS } from './constantsAbsen';
 import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission } from './utils';
 import { apiFetch } from './utils/backendApi';
@@ -251,6 +251,8 @@ export const mapFirestoreToSubmission = (docId: string, data: any): Submission =
     bupotStatus: data.bupotStatus || undefined,
     bupotDate: data.bupotDate || undefined,
     vendorNpwp: data.vendorNpwp || undefined,
+    bupotDriveUrl: data.bupotDriveUrl || undefined,
+    bupotFileName: data.bupotFileName || undefined,
 
     // Petty Cash properties mapping (unified across all menus)
     isPettyCash: isPettyCashSubmission(data),
@@ -469,6 +471,8 @@ export const mapSubmissionToFirestore = (
     bupotStatus: sub.bupotStatus || null,
     bupotDate: sub.bupotDate || null,
     vendorNpwp: sub.vendorNpwp || null,
+    bupotDriveUrl: sanitizeUrlForFirestore(sub.bupotDriveUrl, sub.bupotFileName || 'Bukti Potong PPh 23') || null,
+    bupotFileName: sub.bupotFileName || null,
 
     buktiPembayaran: sub.buktiPembayaran ? {
       ...sub.buktiPembayaran,
@@ -2800,10 +2804,89 @@ export const persistSubmissionsToLocalCaches = (list: Submission[], companyId: s
   } catch (_) {}
 };
 
+const getSubmissionTimestamp = (sub: Partial<Submission> | null | undefined): number => {
+  if (!sub) return 0;
+  const raw = (sub as any).updatedAt || sub.createdAt || '';
+  if (!raw) return 0;
+  const parsed = Date.parse(String(raw));
+  return isNaN(parsed) ? 0 : parsed;
+};
+
+const pickRicherSubmission = (existing: Submission, incoming: Submission): Submission => {
+  const existingTs = getSubmissionTimestamp(existing);
+  const incomingTs = getSubmissionTimestamp(incoming);
+
+  // Choose the newer record; if timestamps match or are absent, prefer incoming
+  const winner = incomingTs >= existingTs ? incoming : existing;
+  const loser = winner === incoming ? existing : incoming;
+
+  // Preserve file/Drive attachments if the winner happens to come from a lightweight cache without them
+  const winnerFiles = Array.isArray(winner.files) ? winner.files : [];
+  const loserFiles = Array.isArray(loser.files) ? loser.files : [];
+  const mergedFiles =
+    winnerFiles.length > 0
+      ? winnerFiles
+      : loserFiles.length > 0
+      ? loserFiles
+      : winner.files;
+
+  const mergedDriveFiles =
+    Array.isArray(winner.googleDriveFiles) && winner.googleDriveFiles.length > 0
+      ? winner.googleDriveFiles
+      : loser.googleDriveFiles;
+
+  return {
+    ...winner,
+    ...(mergedFiles !== undefined ? { files: mergedFiles } : {}),
+    ...(mergedDriveFiles !== undefined ? { googleDriveFiles: mergedDriveFiles } : {}),
+    googleDriveFileUrl: winner.googleDriveFileUrl || loser.googleDriveFileUrl,
+    googleDriveFolderId: winner.googleDriveFolderId || loser.googleDriveFolderId,
+    buktiPembayaran: winner.buktiPembayaran || loser.buktiPembayaran,
+    bupotDriveUrl: winner.bupotDriveUrl || loser.bupotDriveUrl,
+    bupotFileName: winner.bupotFileName || loser.bupotFileName,
+    bupotNumber: winner.bupotNumber || loser.bupotNumber,
+  };
+};
+
+export const mergeSubmissionsSafely = (
+  lists: Submission[][],
+  deletedIds?: string[]
+): Submission[] => {
+  const delSet = new Set(
+    (deletedIds ?? getLocalDeletedSubmissionIds()).map((x) => String(x || '').toLowerCase().trim()).filter(Boolean)
+  );
+  const map = new Map<string, Submission>();
+
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue;
+    for (const item of list) {
+      if (!item || !item.id) continue;
+      const idLower = String(item.id).toLowerCase().trim();
+      if (delSet.has(idLower)) continue;
+      const existing = map.get(idLower);
+      if (!existing) {
+        map.set(idLower, item);
+      } else {
+        map.set(idLower, pickRicherSubmission(existing, item));
+      }
+    }
+  }
+
+  return sortSubmissionsList(Array.from(map.values()));
+};
+
 // Safe loader from Cloud Firestore that returns explicit diagnostics instead of throwing
 export const loadSubmissionsFromFirestoreSafe = async (
   companyId?: string
-): Promise<{ list: Submission[]; ok: boolean; error?: string; errorCode?: string }> => {
+): Promise<{
+  list: Submission[];
+  ok: boolean;
+  error?: string;
+  errorCode?: string;
+  totalCloudDocs?: number;
+  skippedByCompany?: number;
+  skippedDeleted?: number;
+}> => {
   if (!isFirebaseConfigured() || !firestoreDb) {
     return {
       list: [],
@@ -2821,23 +2904,33 @@ export const loadSubmissionsFromFirestoreSafe = async (
     const delLower = new Set(getLocalDeletedSubmissionIds().map((x) => x.toLowerCase()));
     const list: Submission[] = [];
     const targetComp = companyId ? normalizeCompanyKey(companyId) : '';
+    let skippedDeleted = 0;
+    let skippedByCompany = 0;
 
     snapshot.forEach(docSnap => {
       const data = docSnap.data();
       const mapped = mapFirestoreToSubmission(docSnap.id, data);
-      if (delLower.has(String(mapped.id || '').toLowerCase())) return;
+      if (delLower.has(String(mapped.id || '').toLowerCase())) {
+        skippedDeleted++;
+        return;
+      }
       const docComp = normalizeCompanyKey(data.companyId || data.company_id);
 
       if (!targetComp || docComp === targetComp) {
         list.push(mapped);
+      } else {
+        skippedByCompany++;
       }
     });
 
     const sorted = sortSubmissionsList(list);
-    if (sorted.length > 0 && targetComp) {
-      persistSubmissionsToLocalCaches(sorted, targetComp);
-    }
-    return { list: sorted, ok: true };
+    return {
+      list: sorted,
+      ok: true,
+      totalCloudDocs: snapshot.size,
+      skippedByCompany,
+      skippedDeleted,
+    };
   } catch (error: any) {
     markFirestoreQuotaExceeded(error);
     const errorCode = error?.code || '';
@@ -2855,10 +2948,10 @@ export const loadSubmissionsFromFirestoreSafe = async (
 // Fetch submissions from Cloud Firestore with safe local cache fallback on error/empty
 export const loadSubmissionsFromFirestore = async (companyId?: string): Promise<Submission[]> => {
   const res = await loadSubmissionsFromFirestoreSafe(companyId);
-  if (res.ok && res.list.length > 0) {
-    return res.list;
-  }
   const localBackup = loadAllLocalSubmissionsForCompany(companyId || 'nmsa');
+  if (res.ok && res.list.length > 0) {
+    return mergeSubmissionsSafely([localBackup, res.list]);
+  }
   if (localBackup.length > 0) {
     return localBackup;
   }
@@ -2903,9 +2996,6 @@ export const subscribeToSubmissionsFromFirestore = (
         });
 
         const sorted = sortSubmissionsList(list);
-        if (sorted.length > 0) {
-          persistSubmissionsToLocalCaches(sorted, targetComp);
-        }
         onUpdate(sorted);
       },
       (err: any) => {
@@ -3433,28 +3523,65 @@ export const saveActivityLogToFirestore = async (
   }
 };
 
-// Fetch NPWP Records from Firestore (or fallback to local / server)
-export const loadNpwpRecordsFromFirestore = async (): Promise<NpwpRecord[]> => {
-  if (!isFirebaseConfigured() || !firestoreDb) {
-    try {
-      const stored = localStorage.getItem('npwp_records_v1');
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
+export const mergeNpwpListsSafely = (
+  primary: NpwpRecord[],
+  secondary: NpwpRecord[],
+  deletedIds: string[]
+): NpwpRecord[] => {
+  const delSet = new Set(deletedIds.map((x) => String(x || '').trim()).filter(Boolean));
+  const map = new Map<string, NpwpRecord>();
+  (secondary || []).forEach((r) => {
+    if (r && r.id && !delSet.has(r.id)) map.set(r.id, r);
+  });
+  (primary || []).forEach((r) => {
+    if (r && r.id && !delSet.has(r.id)) {
+      const existing = map.get(r.id);
+      if (!existing) {
+        map.set(r.id, r);
+      } else {
+        const existingTs = Date.parse((existing as any).updatedAt || existing.createdAt || '') || 0;
+        const primaryTs = Date.parse((r as any).updatedAt || r.createdAt || '') || 0;
+        map.set(r.id, primaryTs >= existingTs ? r : existing);
+      }
     }
+  });
+  return Array.from(map.values());
+};
+
+const readLocalNpwpBackup = (delSet: Set<string>): NpwpRecord[] => {
+  try {
+    const stored = localStorage.getItem('npwp_records_v1');
+    const parsed: NpwpRecord[] = stored ? JSON.parse(stored) : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((r) => r && r.id && !delSet.has(r.id))
+      : [];
+  } catch {
+    return [];
+  }
+};
+
+// Fetch NPWP Records from Firestore (merging safely with local & server backup)
+export const loadNpwpRecordsFromFirestore = async (): Promise<NpwpRecord[]> => {
+  const deletedList = getDeletedNpwpIds();
+  const delSet = new Set(deletedList);
+  const localRecords = readLocalNpwpBackup(delSet);
+
+  if (!isFirebaseConfigured() || !firestoreDb) {
+    return localRecords;
   }
 
   const path = 'npwp_records';
   try {
     const snapshot = await getDocs(collection(firestoreDb, path));
     recordFirestoreReads(snapshot.size || 1);
-    const list: NpwpRecord[] = [];
+    const cloudList: NpwpRecord[] = [];
     
     snapshot.forEach(docSnap => {
       const data = docSnap.data();
-      if (data && data.companyName) {
-        list.push({
-          id: docSnap.id || data.id,
+      const docId = docSnap.id || data?.id;
+      if (data && data.companyName && docId && !delSet.has(docId)) {
+        cloudList.push({
+          id: docId,
           companyName: data.companyName,
           npwpNumber: data.npwpNumber || '',
           address: data.address || '',
@@ -3468,14 +3595,14 @@ export const loadNpwpRecordsFromFirestore = async (): Promise<NpwpRecord[]> => {
     });
     
     // If collection was empty, check company doc snapshot
-    if (list.length === 0) {
+    if (cloudList.length === 0) {
       try {
         const compSnap = await getDoc(doc(firestoreDb, 'companies', 'nmsa'));
         if (compSnap.exists()) {
           const compData = compSnap.data();
           if (compData && Array.isArray(compData.npwpRecords) && compData.npwpRecords.length > 0) {
             compData.npwpRecords.forEach((r: any) => {
-              if (r && r.companyName) list.push(r);
+              if (r && r.companyName && r.id && !delSet.has(r.id)) cloudList.push(r);
             });
           }
         }
@@ -3484,39 +3611,28 @@ export const loadNpwpRecordsFromFirestore = async (): Promise<NpwpRecord[]> => {
       }
     }
 
-    if (list.length > 0) {
-      localStorage.setItem('npwp_records_v1', JSON.stringify(list));
-      return list;
+    let merged = mergeNpwpListsSafely(cloudList, localRecords, deletedList);
+
+    // Tertiary fallback: check server endpoint if still empty
+    if (merged.length === 0) {
+      try {
+        const srvRes = await fetch('/api/npwp/firebase-restore');
+        if (srvRes.ok) {
+          const srvData = await srvRes.json();
+          if (srvData && Array.isArray(srvData.npwpRecords) && srvData.npwpRecords.length > 0) {
+            merged = mergeNpwpListsSafely(srvData.npwpRecords, localRecords, deletedList);
+          }
+        }
+      } catch {}
     }
 
-    // Secondary fallback: check local storage or server restore
-    try {
-      const stored = localStorage.getItem('npwp_records_v1');
-      const parsed = stored ? JSON.parse(stored) : [];
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-    } catch {}
-
-    // Tertiary fallback: check server endpoint
-    try {
-      const srvRes = await fetch('/api/npwp/firebase-restore');
-      if (srvRes.ok) {
-        const srvData = await srvRes.json();
-        if (srvData && Array.isArray(srvData.npwpRecords) && srvData.npwpRecords.length > 0) {
-          localStorage.setItem('npwp_records_v1', JSON.stringify(srvData.npwpRecords));
-          return srvData.npwpRecords;
-        }
-      }
-    } catch {}
-
-    return [];
+    if (merged.length > 0) {
+      localStorage.setItem('npwp_records_v1', JSON.stringify(merged));
+    }
+    return merged;
   } catch (error) {
     console.warn('Gagal memuat data NPWP dari Firestore:', error);
-    try {
-      const stored = localStorage.getItem('npwp_records_v1');
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
+    return localRecords;
   }
 };
 
@@ -3527,13 +3643,28 @@ export const subscribeToNpwpRecordsFromFirestore = (
   if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return () => {};
   try {
     const unsub = onSnapshot(collection(firestoreDb, 'npwp_records'), (snapshot) => {
-      if (snapshot.empty) return;
+      if (snapshot.empty && snapshot.metadata?.fromCache) {
+        return;
+      }
+      const deletedList = getDeletedNpwpIds();
+      const delSet = new Set(deletedList);
+      const localRecords = readLocalNpwpBackup(delSet);
+
+      if (snapshot.empty) {
+        if (delSet.size > 0) {
+          localStorage.setItem('npwp_records_v1', JSON.stringify(localRecords));
+          onUpdate(localRecords);
+        }
+        return;
+      }
+
       const list: NpwpRecord[] = [];
       snapshot.forEach(docSnap => {
         const data = docSnap.data();
-        if (data && data.companyName) {
+        const docId = docSnap.id || data?.id;
+        if (data && data.companyName && docId && !delSet.has(docId)) {
           list.push({
-            id: docSnap.id || data.id,
+            id: docId,
             companyName: data.companyName,
             npwpNumber: data.npwpNumber || '',
             address: data.address || '',
@@ -3545,10 +3676,10 @@ export const subscribeToNpwpRecordsFromFirestore = (
           });
         }
       });
-      if (list.length > 0) {
-        localStorage.setItem('npwp_records_v1', JSON.stringify(list));
-        onUpdate(list);
-      }
+
+      const merged = mergeNpwpListsSafely(list, localRecords, deletedList);
+      localStorage.setItem('npwp_records_v1', JSON.stringify(merged));
+      onUpdate(merged);
     }, (error) => {
       markFirestoreQuotaExceeded(error);
       console.warn('Real-time listener notice for npwp_records:', error);
@@ -3563,6 +3694,12 @@ export const subscribeToNpwpRecordsFromFirestore = (
 // Save single NPWP record to Firestore (hemat kuota Spark Plan - hanya 1 penulisan dokumen spesifik)
 export const saveSingleNpwpRecordToFirestore = async (record: NpwpRecord): Promise<void> => {
   if (!record || !record.id) return;
+
+  // Hapus dari daftar tombstone jika record disimpan ulang
+  try {
+    const nextDeleted = getDeletedNpwpIds().filter((x) => x !== record.id);
+    localStorage.setItem(DELETED_NPWP_KEY, JSON.stringify(nextDeleted));
+  } catch (_) {}
 
   // 1. Update localStorage segera
   try {
@@ -3727,14 +3864,13 @@ export const cleanUnusedFirestoreCollections = async (
     };
   }
 
-  // Koleksi yang tidak diperlukan & aman untuk dibersihkan
+  // Koleksi yang tidak diperlukan & aman untuk dibersihkan (JANGAN hapus internal_memos!)
   const TARGET_COLLECTIONS = [
     'absen_records',
     'accurate_mappings',
     'activity_logs',
     'office_config',
-    'test',
-    'internal_memos'
+    'test'
   ];
 
   const details: { collection: string; count: number; error?: string }[] = [];
@@ -3819,8 +3955,32 @@ export const loadAbsenDataFromFirestore = async (): Promise<any[]> => {
   }
 };
 
+const DELETED_NPWP_KEY = 'nmsa_deleted_npwp_ids';
+
+export const getDeletedNpwpIds = (): string[] => {
+  try {
+    const raw = localStorage.getItem(DELETED_NPWP_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
+    }
+  } catch (_) {}
+  return [];
+};
+
+export const addDeletedNpwpId = (id: string): string[] => {
+  const current = getDeletedNpwpIds();
+  if (id && !current.includes(id)) current.push(id);
+  const unique = Array.from(new Set(current)).slice(-300);
+  try {
+    localStorage.setItem(DELETED_NPWP_KEY, JSON.stringify(unique));
+  } catch (_) {}
+  return unique;
+};
+
 // Delete single NPWP record from Firestore
 export const deleteNpwpRecordFromFirestore = async (id: string): Promise<void> => {
+  const deletedIds = addDeletedNpwpId(id);
   try {
     const stored = localStorage.getItem('npwp_records_v1');
     if (stored) {
@@ -3829,13 +3989,11 @@ export const deleteNpwpRecordFromFirestore = async (id: string): Promise<void> =
       localStorage.setItem('npwp_records_v1', JSON.stringify(remaining));
       
       // Sync to server
-      fetch('/api/unified-storage', {
+      apiFetch('/api/unified-storage', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ npwpRecords: remaining })
+        body: JSON.stringify({ npwpRecords: remaining, deletedNpwpIds: deletedIds })
       }).catch(() => {});
-
-      // No mirroring to companies to conserve daily free quota
     }
   } catch (e) {
     console.warn('Gagal menghapus NPWP dari localStorage:', e);
@@ -4361,72 +4519,704 @@ export const clearFirebaseConfig = () => {
   firebaseAuth = null;
 };
 
-// --- Internal Memo Local + Server Sync Methods ---
-export const saveInternalMemoToFirestore = async (memo: InternalMemo): Promise<void> => {
+// --- Internal Memo Cloud Firestore + Local + Server Sync Methods ---
+const STORAGE_KEY_INTERNAL_MEMOS = 'nmsa_internal_memos_v1';
+const DELETED_MEMO_IDS_KEY = 'nmsa_deleted_internal_memo_ids';
+const MEMO_MASTER_DOC_ID = 'internal_memos_master';
+
+export const getDeletedInternalMemoIds = (): string[] => {
   try {
-    const stored = localStorage.getItem('nmsa_internal_memos_v1');
+    const raw = localStorage.getItem(DELETED_MEMO_IDS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
+    }
+  } catch (_) {}
+  return [];
+};
+
+export const saveDeletedInternalMemoIds = (ids: string[]): string[] => {
+  const unique = Array.from(new Set((ids || []).map(String).filter(Boolean))).slice(-300);
+  try {
+    localStorage.setItem(DELETED_MEMO_IDS_KEY, JSON.stringify(unique));
+  } catch (_) {}
+  return unique;
+};
+
+const addDeletedInternalMemoId = (id: string): string[] => {
+  const list = getDeletedInternalMemoIds();
+  if (id && !list.includes(id)) list.push(id);
+  return saveDeletedInternalMemoIds(list);
+};
+
+const removeDeletedInternalMemoId = (id: string): string[] => {
+  return saveDeletedInternalMemoIds(getDeletedInternalMemoIds().filter((x) => x !== id));
+};
+
+const sanitizeMemoForMasterDoc = (memo: InternalMemo): any => {
+  return cleanUndefined({
+    ...memo,
+    // Hindari blob data URL besar agar master doc tidak melebihi batas 1MB Firestore
+    signedDocumentUrl:
+      memo.signedDocumentUrl && memo.signedDocumentUrl.startsWith('data:') && memo.signedDocumentUrl.length > 50000
+        ? undefined
+        : memo.signedDocumentUrl,
+  });
+};
+
+const mergeMemoListsSafely = (
+  lists: InternalMemo[][],
+  deletedIds: string[] = []
+): InternalMemo[] => {
+  const delSet = new Set(deletedIds.map(String));
+  const map = new Map<string, InternalMemo>();
+  lists.forEach((arr) => {
+    (arr || []).forEach((m) => {
+      if (!m || !m.id || delSet.has(String(m.id))) return;
+      const existing = map.get(m.id);
+      if (!existing) {
+        map.set(m.id, m);
+      } else {
+        const existingTs = new Date(existing.updatedAt || existing.createdAt || existing.tanggal || 0).getTime();
+        const incomingTs = new Date(m.updatedAt || m.createdAt || m.tanggal || 0).getTime();
+        if (incomingTs >= existingTs) {
+          map.set(m.id, {
+            ...existing,
+            ...m,
+            driveUrl: m.driveUrl || existing.driveUrl,
+            driveFileId: m.driveFileId || existing.driveFileId,
+            driveFolderPath: m.driveFolderPath || existing.driveFolderPath,
+            signedDriveUrl: m.signedDriveUrl || existing.signedDriveUrl,
+          });
+        } else {
+          map.set(m.id, {
+            ...m,
+            ...existing,
+            driveUrl: existing.driveUrl || m.driveUrl,
+            driveFileId: existing.driveFileId || m.driveFileId,
+            driveFolderPath: existing.driveFolderPath || m.driveFolderPath,
+            signedDriveUrl: existing.signedDriveUrl || m.signedDriveUrl,
+          });
+        }
+      }
+    });
+  });
+  return Array.from(map.values()).sort(
+    (a, b) => new Date(b.createdAt || b.tanggal || 0).getTime() - new Date(a.createdAt || a.tanggal || 0).getTime()
+  );
+};
+
+const writeMemoMasterFallbackDoc = async (memosList: InternalMemo[], deletedIds: string[]): Promise<boolean> => {
+  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return false;
+  try {
+    const compactMemos = memosList.slice(0, 150).map(sanitizeMemoForMasterDoc);
+    await setDoc(
+      doc(firestoreDb, 'attendance', MEMO_MASTER_DOC_ID),
+      cleanUndefined({
+        memos: compactMemos,
+        deletedMemoIds: deletedIds.slice(-200),
+        totalMemos: compactMemos.length,
+        updatedAt: new Date().toISOString(),
+      }),
+      { merge: true }
+    );
+    recordFirestoreWrites(1);
+    return true;
+  } catch (err: any) {
+    markFirestoreQuotaExceeded(err);
+    console.warn('⚠️ Notice menulis attendance/internal_memos_master:', err?.message || err);
+    return false;
+  }
+};
+
+export const saveInternalMemoToFirestore = async (memo: InternalMemo): Promise<void> => {
+  if (!memo || !memo.id) return;
+  const deletedIds = removeDeletedInternalMemoId(memo.id);
+
+  let updatedLocal: InternalMemo[] = [];
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY_INTERNAL_MEMOS);
     const list: InternalMemo[] = stored ? JSON.parse(stored) : [];
-    const updated = [memo, ...list.filter((m) => m.id !== memo.id)];
-    localStorage.setItem('nmsa_internal_memos_v1', JSON.stringify(updated));
+    updatedLocal = [memo, ...list.filter((m) => m && m.id !== memo.id)];
+    localStorage.setItem(STORAGE_KEY_INTERNAL_MEMOS, JSON.stringify(updatedLocal));
   } catch (err) {
     console.warn('Failed to save internal memo locally:', err);
   }
+
   try {
-    await fetch('/api/internal-memos', {
+    apiFetch('/api/internal-memos', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ memo }),
     }).catch(() => {});
   } catch (_) {}
+
+  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return;
+
+  let savedCollection = false;
+  try {
+    const docId = sanitizeFirestoreDocId(memo.id);
+    await setDoc(doc(firestoreDb, 'internal_memos', docId), cleanUndefined(memo), { merge: true });
+    recordFirestoreWrites(1);
+    savedCollection = true;
+    console.log(`☁️ [Internal Memo Firestore] Memo ${memo.nomorMemo} (${docId}) tersimpan ke Cloud Firestore.`);
+  } catch (err: any) {
+    const msg = String(err?.code || err?.message || '');
+    if (msg.includes('permission-denied') || msg.includes('insufficient permissions')) {
+      console.warn('⚠️ Koleksi internal_memos masih diblokir rules lama, otomatis sinkron ke attendance/internal_memos_master...');
+    } else {
+      markFirestoreQuotaExceeded(err);
+      console.warn('⚠️ Gagal menyimpan memo ke koleksi internal_memos:', msg);
+    }
+  }
+
+  // Fallback langsung ke dokumen master di koleksi attendance (selalu diizinkan rules & sinkron lintas PC/HP)
+  if (!savedCollection) {
+    await writeMemoMasterFallbackDoc(updatedLocal.length > 0 ? updatedLocal : [memo], deletedIds);
+  }
 };
 
 export const getInternalMemosFromFirestore = async (): Promise<InternalMemo[]> => {
   let localList: InternalMemo[] = [];
+  let deletedIds = getDeletedInternalMemoIds();
   try {
-    const stored = localStorage.getItem('nmsa_internal_memos_v1');
+    const stored = localStorage.getItem(STORAGE_KEY_INTERNAL_MEMOS);
     localList = stored ? JSON.parse(stored) : [];
   } catch (err) {
     console.warn('Failed to read internal memos locally:', err);
   }
 
+  const sources: InternalMemo[][] = [];
+
+  // 1. Baca dari Cloud Firestore (koleksi internal_memos & attendance/internal_memos_master)
+  if (isFirebaseConfigured() && firestoreDb && !isFirestoreQuotaExceeded()) {
+    try {
+      const masterSnap = await getDoc(doc(firestoreDb, 'attendance', MEMO_MASTER_DOC_ID));
+      recordFirestoreReads(1);
+      if (masterSnap.exists()) {
+        const mData = masterSnap.data() || {};
+        if (Array.isArray(mData.deletedMemoIds)) {
+          deletedIds = saveDeletedInternalMemoIds([...deletedIds, ...mData.deletedMemoIds]);
+        }
+        if (Array.isArray(mData.memos) && mData.memos.length > 0) {
+          sources.push(mData.memos);
+        }
+      }
+    } catch (err: any) {
+      markFirestoreQuotaExceeded(err);
+    }
+
+    try {
+      const snap = await getDocs(collection(firestoreDb, 'internal_memos'));
+      if (!snap.empty) {
+        recordFirestoreReads(snap.size);
+        const fsList: InternalMemo[] = [];
+        snap.forEach((d) => {
+          const data = d.data() as InternalMemo;
+          if (data && (data.id || d.id)) {
+            fsList.push({ ...data, id: data.id || d.id });
+          }
+        });
+        if (fsList.length > 0) sources.push(fsList);
+      }
+    } catch (err: any) {
+      const msg = String(err?.code || err?.message || '');
+      if (!msg.includes('permission-denied') && !msg.includes('insufficient permissions')) {
+        markFirestoreQuotaExceeded(err);
+      }
+    }
+  }
+
+  // 2. Baca juga dari server endpoint (/api/internal-memos)
   try {
-    const res = await fetch('/api/internal-memos');
+    const res = await apiFetch('/api/internal-memos');
     if (res.ok) {
       const data = await res.json();
-      const serverList: InternalMemo[] = Array.isArray(data?.memos) ? data.memos : [];
-      if (serverList.length > 0 || localList.length > 0) {
-        const mergedMap = new Map<string, InternalMemo>();
-        localList.forEach((m) => { if (m?.id) mergedMap.set(m.id, m); });
-        serverList.forEach((m) => { if (m?.id) mergedMap.set(m.id, m); });
-        const merged = Array.from(mergedMap.values()).sort(
-          (a, b) => new Date(b.createdAt || b.tanggal).getTime() - new Date(a.createdAt || a.tanggal).getTime()
-        );
-        try {
-          localStorage.setItem('nmsa_internal_memos_v1', JSON.stringify(merged));
-        } catch (_) {}
-        return merged;
+      if (Array.isArray(data?.deletedMemoIds)) {
+        deletedIds = saveDeletedInternalMemoIds([...deletedIds, ...data.deletedMemoIds]);
       }
+      const serverList: InternalMemo[] = Array.isArray(data?.memos)
+        ? data.memos
+        : Array.isArray(data)
+        ? data
+        : [];
+      if (serverList.length > 0) sources.push(serverList);
     }
   } catch (_) {}
 
-  localList.sort((a, b) => new Date(b.createdAt || b.tanggal).getTime() - new Date(a.createdAt || a.tanggal).getTime());
-  return localList;
+  sources.push(localList);
+  const merged = mergeMemoListsSafely(sources, deletedIds);
+
+  try {
+    localStorage.setItem(STORAGE_KEY_INTERNAL_MEMOS, JSON.stringify(merged));
+  } catch (_) {}
+
+  return merged;
+};
+
+export const subscribeToInternalMemosFromFirestore = (
+  onUpdate: (memos: InternalMemo[]) => void
+): (() => void) => {
+  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) {
+    return () => {};
+  }
+
+  const unsubs: Array<() => void> = [];
+  let latestCollectionMemos: InternalMemo[] = [];
+  let latestMasterMemos: InternalMemo[] = [];
+
+  const emitMerged = () => {
+    let localList: InternalMemo[] = [];
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY_INTERNAL_MEMOS);
+      localList = raw ? JSON.parse(raw) : [];
+    } catch (_) {}
+    const deletedIds = getDeletedInternalMemoIds();
+    const merged = mergeMemoListsSafely([latestCollectionMemos, latestMasterMemos, localList], deletedIds);
+    try {
+      localStorage.setItem(STORAGE_KEY_INTERNAL_MEMOS, JSON.stringify(merged));
+    } catch (_) {}
+    onUpdate(merged);
+  };
+
+  try {
+    const unsubMaster = onSnapshot(
+      doc(firestoreDb, 'attendance', MEMO_MASTER_DOC_ID),
+      (snap) => {
+        recordFirestoreReads(1);
+        if (!snap.exists()) return;
+        const data = snap.data() || {};
+        if (Array.isArray(data.deletedMemoIds)) {
+          saveDeletedInternalMemoIds([...getDeletedInternalMemoIds(), ...data.deletedMemoIds]);
+        }
+        latestMasterMemos = Array.isArray(data.memos) ? data.memos : [];
+        emitMerged();
+      },
+      (err: any) => {
+        markFirestoreQuotaExceeded(err);
+      }
+    );
+    unsubs.push(unsubMaster);
+  } catch (_) {}
+
+  try {
+    const unsubColl = onSnapshot(
+      collection(firestoreDb, 'internal_memos'),
+      (snap) => {
+        recordFirestoreReads(Math.max(1, snap.size));
+        const list: InternalMemo[] = [];
+        snap.forEach((d) => {
+          const data = d.data() as InternalMemo;
+          if (data && (data.id || d.id)) {
+            list.push({ ...data, id: data.id || d.id });
+          }
+        });
+        latestCollectionMemos = list;
+        emitMerged();
+      },
+      (err: any) => {
+        const msg = String(err?.code || err?.message || '');
+        if (!msg.includes('permission-denied') && !msg.includes('insufficient permissions')) {
+          markFirestoreQuotaExceeded(err);
+        }
+      }
+    );
+    unsubs.push(unsubColl);
+  } catch (_) {}
+
+  return () => {
+    unsubs.forEach((u) => {
+      try { u(); } catch (_) {}
+    });
+  };
 };
 
 export const deleteInternalMemoFromFirestore = async (id: string): Promise<void> => {
+  if (!id) return;
+  const deletedIds = addDeletedInternalMemoId(id);
+
+  let remaining: InternalMemo[] = [];
   try {
-    const stored = localStorage.getItem('nmsa_internal_memos_v1');
+    const stored = localStorage.getItem(STORAGE_KEY_INTERNAL_MEMOS);
     if (stored) {
       const list: InternalMemo[] = JSON.parse(stored);
-      const filtered = list.filter((m) => m.id !== id);
-      localStorage.setItem('nmsa_internal_memos_v1', JSON.stringify(filtered));
+      remaining = list.filter((m) => m && m.id !== id);
+      localStorage.setItem(STORAGE_KEY_INTERNAL_MEMOS, JSON.stringify(remaining));
     }
   } catch (err) {
     console.warn('Failed to delete internal memo locally:', err);
   }
+
   try {
-    await fetch(`/api/internal-memos/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {});
+    apiFetch(`/api/internal-memos/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {});
   } catch (_) {}
+
+  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return;
+
+  try {
+    await deleteDoc(doc(firestoreDb, 'internal_memos', sanitizeFirestoreDocId(id)));
+    recordFirestoreDeletes(1);
+  } catch (err: any) {
+    const msg = String(err?.code || err?.message || '');
+    if (!msg.includes('permission-denied') && !msg.includes('insufficient permissions')) {
+      markFirestoreQuotaExceeded(err);
+    }
+  }
+
+  // Perbarui master doc agar penghapusan langsung tersinkron ke perangkat lain
+  await writeMemoMasterFallbackDoc(remaining, deletedIds).catch(() => {});
+};
+
+// --- Employee Loans Cloud Firestore + Local + Server Sync Methods ---
+const STORAGE_KEY_EMPLOYEE_LOANS_SYNC = 'nmsa_employee_loans_v1';
+const DELETED_LOAN_IDS_KEY = 'nmsa_deleted_employee_loan_ids';
+const LOANS_MASTER_DOC_ID = 'employee_loans_master';
+
+export const getDeletedLoanIds = (): string[] => {
+  try {
+    const raw = localStorage.getItem(DELETED_LOAN_IDS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
+    }
+  } catch (_) {}
+  return [];
+};
+
+export const saveDeletedLoanIds = (ids: string[]): string[] => {
+  const unique = Array.from(new Set((ids || []).map(String).filter(Boolean))).slice(-300);
+  try {
+    localStorage.setItem(DELETED_LOAN_IDS_KEY, JSON.stringify(unique));
+  } catch (_) {}
+  return unique;
+};
+
+export const addDeletedLoanId = (loanId: string): string[] => {
+  const current = getDeletedLoanIds();
+  if (loanId && !current.includes(loanId)) current.push(loanId);
+  return saveDeletedLoanIds(current);
+};
+
+export const mergeEmployeeLoansSafely = (
+  lists: EmployeeLoan[][],
+  deletedIds: string[] = []
+): EmployeeLoan[] => {
+  const delSet = new Set(deletedIds.map(String));
+  const map = new Map<string, EmployeeLoan>();
+  lists.forEach((arr) => {
+    (arr || []).forEach((loan) => {
+      if (!loan || !loan.id || delSet.has(String(loan.id))) return;
+      const existing = map.get(loan.id);
+      if (!existing) {
+        map.set(loan.id, loan);
+      } else {
+        const existingTs = new Date(existing.updatedAt || existing.createdAt || existing.tanggalPermohonan || 0).getTime();
+        const incomingTs = new Date(loan.updatedAt || loan.createdAt || loan.tanggalPermohonan || 0).getTime();
+        if (incomingTs >= existingTs) {
+          map.set(loan.id, {
+            ...existing,
+            ...loan,
+            driveUrl: loan.driveUrl || existing.driveUrl,
+            driveFileId: loan.driveFileId || existing.driveFileId,
+            driveFolderPath: loan.driveFolderPath || existing.driveFolderPath,
+          });
+        } else {
+          map.set(loan.id, {
+            ...loan,
+            ...existing,
+            driveUrl: existing.driveUrl || loan.driveUrl,
+            driveFileId: existing.driveFileId || loan.driveFileId,
+            driveFolderPath: existing.driveFolderPath || loan.driveFolderPath,
+          });
+        }
+      }
+    });
+  });
+  return Array.from(map.values()).sort(
+    (a, b) => new Date(b.createdAt || b.tanggalPermohonan || 0).getTime() - new Date(a.createdAt || a.tanggalPermohonan || 0).getTime()
+  );
+};
+
+const writeLoansMasterDoc = async (loansList: EmployeeLoan[], deletedIds: string[]): Promise<boolean> => {
+  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return false;
+  try {
+    const cleanLoans = cleanUndefined(loansList.slice(0, 200));
+    await setDoc(
+      doc(firestoreDb, 'attendance', LOANS_MASTER_DOC_ID),
+      {
+        employeeLoans: cleanLoans,
+        deletedLoanIds: deletedIds.slice(-200),
+        totalLoans: cleanLoans.length,
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+    recordFirestoreWrites(1);
+    return true;
+  } catch (err: any) {
+    markFirestoreQuotaExceeded(err);
+    console.warn('⚠️ Notice menyimpan attendance/employee_loans_master:', err?.message || err);
+    return false;
+  }
+};
+
+export const loadEmployeeLoansFromFirestore = async (): Promise<EmployeeLoan[] | null> => {
+  let localList: EmployeeLoan[] = [];
+  let deletedIds = getDeletedLoanIds();
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_EMPLOYEE_LOANS_SYNC);
+    if (raw) localList = JSON.parse(raw);
+  } catch (_) {}
+
+  const sources: EmployeeLoan[][] = [];
+
+  if (isFirebaseConfigured() && firestoreDb && !isFirestoreQuotaExceeded()) {
+    try {
+      const masterSnap = await getDoc(doc(firestoreDb, 'attendance', LOANS_MASTER_DOC_ID));
+      recordFirestoreReads(1);
+      if (masterSnap.exists()) {
+        const mData = masterSnap.data() || {};
+        if (Array.isArray(mData.deletedLoanIds)) {
+          deletedIds = saveDeletedLoanIds([...deletedIds, ...mData.deletedLoanIds]);
+        }
+        if (Array.isArray(mData.employeeLoans) && mData.employeeLoans.length > 0) {
+          sources.push(mData.employeeLoans);
+        }
+      }
+    } catch (err: any) {
+      markFirestoreQuotaExceeded(err);
+    }
+
+    try {
+      const snap = await getDocs(collection(firestoreDb, 'employee_loans'));
+      if (!snap.empty) {
+        recordFirestoreReads(snap.size);
+        const fsLoans: EmployeeLoan[] = [];
+        snap.forEach((d) => {
+          const data = d.data() as EmployeeLoan;
+          if (data && (data.id || d.id)) {
+            fsLoans.push({ ...data, id: data.id || d.id });
+          }
+        });
+        if (fsLoans.length > 0) sources.push(fsLoans);
+      }
+    } catch (err: any) {
+      const msg = String(err?.code || err?.message || '');
+      if (!msg.includes('permission-denied') && !msg.includes('insufficient permissions')) {
+        markFirestoreQuotaExceeded(err);
+      }
+    }
+  }
+
+  try {
+    const res = await apiFetch('/api/unified-storage');
+    if (res.ok) {
+      const srv = await res.json();
+      if (Array.isArray(srv?.deletedLoanIds)) {
+        deletedIds = saveDeletedLoanIds([...deletedIds, ...srv.deletedLoanIds]);
+      }
+      const srvLoans = srv?.employeeLoans || srv?.raw?.employeeLoans;
+      if (Array.isArray(srvLoans) && srvLoans.length > 0) {
+        sources.push(srvLoans);
+      }
+    }
+  } catch (_) {}
+
+  if (sources.length === 0 && localList.length === 0) return null;
+  sources.push(localList);
+  const merged = mergeEmployeeLoansSafely(sources, deletedIds);
+  try {
+    localStorage.setItem(STORAGE_KEY_EMPLOYEE_LOANS_SYNC, JSON.stringify(merged));
+  } catch (_) {}
+  return merged;
+};
+
+export const saveSingleEmployeeLoanToFirestore = async (loan: EmployeeLoan): Promise<boolean> => {
+  if (!loan || !loan.id) return false;
+  const deletedIds = saveDeletedLoanIds(getDeletedLoanIds().filter((x) => x !== loan.id));
+
+  let updatedLocal: EmployeeLoan[] = [];
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_EMPLOYEE_LOANS_SYNC);
+    const list: EmployeeLoan[] = raw ? JSON.parse(raw) : [];
+    updatedLocal = [loan, ...list.filter((l) => l && l.id !== loan.id)];
+    localStorage.setItem(STORAGE_KEY_EMPLOYEE_LOANS_SYNC, JSON.stringify(updatedLocal));
+  } catch (_) {}
+
+  apiFetch('/api/employee-loans', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ loan, deletedLoanIds: deletedIds }),
+  }).catch(() => {});
+
+  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return false;
+
+  let savedDoc = false;
+  try {
+    await setDoc(doc(firestoreDb, 'employee_loans', sanitizeFirestoreDocId(loan.id)), cleanUndefined(loan), { merge: true });
+    recordFirestoreWrites(1);
+    savedDoc = true;
+  } catch (err: any) {
+    const msg = String(err?.code || err?.message || '');
+    if (!msg.includes('permission-denied') && !msg.includes('insufficient permissions')) {
+      markFirestoreQuotaExceeded(err);
+    }
+  }
+
+  // Simpan juga master list agar perangkat lain yang memakai master doc selalu langsung sinkron
+  const savedMaster = await writeLoansMasterDoc(updatedLocal.length > 0 ? updatedLocal : [loan], deletedIds);
+  return savedDoc || savedMaster;
+};
+
+export const saveEmployeeLoansToFirestore = async (
+  loansList: EmployeeLoan[],
+  deletedIdsOverride?: string[]
+): Promise<boolean> => {
+  const deletedIds = deletedIdsOverride !== undefined
+    ? saveDeletedLoanIds(deletedIdsOverride)
+    : getDeletedLoanIds();
+
+  const delSet = new Set(deletedIds.map(String));
+  const cleanList = (loansList || []).filter((l) => l && l.id && !delSet.has(String(l.id)));
+
+  try {
+    localStorage.setItem(STORAGE_KEY_EMPLOYEE_LOANS_SYNC, JSON.stringify(cleanList));
+  } catch (_) {}
+
+  apiFetch('/api/unified-storage', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ employeeLoans: cleanList, deletedLoanIds: deletedIds }),
+  }).catch(() => {});
+
+  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return false;
+
+  const savedMaster = await writeLoansMasterDoc(cleanList, deletedIds);
+
+  // Sync per-document juga jika rules mengizinkan (batch max 1 write per doc, hanya untuk efisiensi gunakan batch)
+  try {
+    const batch = writeBatch(firestoreDb);
+    cleanList.slice(0, 100).forEach((l) => {
+      batch.set(doc(firestoreDb!, 'employee_loans', sanitizeFirestoreDocId(l.id)), cleanUndefined(l), { merge: true });
+    });
+    await batch.commit();
+    recordFirestoreWrites(cleanList.slice(0, 100).length);
+  } catch (err: any) {
+    const msg = String(err?.code || err?.message || '');
+    if (!msg.includes('permission-denied') && !msg.includes('insufficient permissions')) {
+      markFirestoreQuotaExceeded(err);
+    }
+  }
+
+  return savedMaster;
+};
+
+export const deleteEmployeeLoanFromFirestore = async (loanId: string): Promise<boolean> => {
+  if (!loanId) return false;
+  const deletedIds = addDeletedLoanId(loanId);
+
+  let remaining: EmployeeLoan[] = [];
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_EMPLOYEE_LOANS_SYNC);
+    if (raw) {
+      const list: EmployeeLoan[] = JSON.parse(raw);
+      remaining = list.filter((l) => l && l.id !== loanId);
+      localStorage.setItem(STORAGE_KEY_EMPLOYEE_LOANS_SYNC, JSON.stringify(remaining));
+    }
+  } catch (_) {}
+
+  apiFetch(`/api/employee-loans/${encodeURIComponent(loanId)}`, { method: 'DELETE' }).catch(() => {});
+
+  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return false;
+
+  try {
+    await deleteDoc(doc(firestoreDb, 'employee_loans', sanitizeFirestoreDocId(loanId)));
+    recordFirestoreDeletes(1);
+  } catch (err: any) {
+    const msg = String(err?.code || err?.message || '');
+    if (!msg.includes('permission-denied') && !msg.includes('insufficient permissions')) {
+      markFirestoreQuotaExceeded(err);
+    }
+  }
+
+  return await writeLoansMasterDoc(remaining, deletedIds);
+};
+
+export const subscribeToEmployeeLoansFromFirestore = (
+  onUpdate: (loans: EmployeeLoan[], deletedIds: string[]) => void
+): (() => void) => {
+  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) {
+    return () => {};
+  }
+
+  const unsubs: Array<() => void> = [];
+  let masterLoans: EmployeeLoan[] = [];
+  let collLoans: EmployeeLoan[] = [];
+
+  const emitMerged = () => {
+    let localList: EmployeeLoan[] = [];
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY_EMPLOYEE_LOANS_SYNC);
+      if (raw) localList = JSON.parse(raw);
+    } catch (_) {}
+    const deletedIds = getDeletedLoanIds();
+    const merged = mergeEmployeeLoansSafely([collLoans, masterLoans, localList], deletedIds);
+    try {
+      localStorage.setItem(STORAGE_KEY_EMPLOYEE_LOANS_SYNC, JSON.stringify(merged));
+    } catch (_) {}
+    onUpdate(merged, deletedIds);
+  };
+
+  try {
+    const unsubMaster = onSnapshot(
+      doc(firestoreDb, 'attendance', LOANS_MASTER_DOC_ID),
+      (snap) => {
+        recordFirestoreReads(1);
+        if (!snap.exists()) return;
+        const data = snap.data() || {};
+        if (Array.isArray(data.deletedLoanIds)) {
+          saveDeletedLoanIds([...getDeletedLoanIds(), ...data.deletedLoanIds]);
+        }
+        masterLoans = Array.isArray(data.employeeLoans) ? data.employeeLoans : [];
+        emitMerged();
+      },
+      (err: any) => {
+        markFirestoreQuotaExceeded(err);
+      }
+    );
+    unsubs.push(unsubMaster);
+  } catch (_) {}
+
+  try {
+    const unsubColl = onSnapshot(
+      collection(firestoreDb, 'employee_loans'),
+      (snap) => {
+        recordFirestoreReads(Math.max(1, snap.size));
+        const list: EmployeeLoan[] = [];
+        snap.forEach((d) => {
+          const data = d.data() as EmployeeLoan;
+          if (data && (data.id || d.id)) {
+            list.push({ ...data, id: data.id || d.id });
+          }
+        });
+        collLoans = list;
+        emitMerged();
+      },
+      (err: any) => {
+        const msg = String(err?.code || err?.message || '');
+        if (!msg.includes('permission-denied') && !msg.includes('insufficient permissions')) {
+          markFirestoreQuotaExceeded(err);
+        }
+      }
+    );
+    unsubs.push(unsubColl);
+  } catch (_) {}
+
+  return () => {
+    unsubs.forEach((u) => {
+      try { u(); } catch (_) {}
+    });
+  };
 };
 
 // --- Monthly Recurring Transactions Cloud Sync (Single master doc on existing attendance collection) ---

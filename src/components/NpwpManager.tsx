@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { NpwpRecord, Submission } from '../types';
 import { isVendorOrCompanyMatch, normalizeEntityString } from '../utils';
-import { loadNpwpRecordsFromFirestore, saveNpwpRecordsToFirestore, saveSingleNpwpRecordToFirestore, deleteNpwpRecordFromFirestore } from '../firebase';
+import { loadNpwpRecordsFromFirestore, saveNpwpRecordsToFirestore } from '../firebase';
 import { 
   Building2, 
   Search, 
@@ -31,6 +31,7 @@ import {
 interface NpwpManagerProps {
   npwpRecords: NpwpRecord[];
   onSaveNpwpRecords: (records: NpwpRecord[]) => void;
+  onSyncFromCloud?: (records: NpwpRecord[]) => void;
   submissions: Submission[];
   onSelectSubmissionForPrint?: (sub: Submission) => void;
   onBack?: () => void;
@@ -39,6 +40,7 @@ interface NpwpManagerProps {
 export const NpwpManager: React.FC<NpwpManagerProps> = ({
   npwpRecords,
   onSaveNpwpRecords,
+  onSyncFromCloud,
   submissions,
   onSelectSubmissionForPrint,
   onBack
@@ -50,14 +52,21 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
   const [isSyncingFirebase, setIsSyncingFirebase] = useState(false);
   const [syncStatusMessage, setSyncStatusMessage] = useState<string | null>(null);
 
-  // Auto-read Firebase database directly whenever this menu is opened
+  // Auto-read Firebase database directly whenever this menu is opened (non-destructive merge)
   useEffect(() => {
     let isMounted = true;
     setIsSyncingFirebase(true);
     loadNpwpRecordsFromFirestore()
       .then((cloudRecords) => {
         if (isMounted && cloudRecords && cloudRecords.length > 0) {
-          onSaveNpwpRecords(cloudRecords);
+          if (onSyncFromCloud) {
+            onSyncFromCloud(cloudRecords);
+          } else {
+            const map = new Map<string, NpwpRecord>();
+            npwpRecords.forEach((r) => { if (r?.id) map.set(r.id, r); });
+            cloudRecords.forEach((r) => { if (r?.id) map.set(r.id, r); });
+            onSaveNpwpRecords(Array.from(map.values()));
+          }
         }
       })
       .catch((err) => console.warn('Auto-read NPWP from Firestore notice:', err))
@@ -151,7 +160,6 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
       };
       const updated = npwpRecords.map(r => r.id === editingRecord.id ? updatedItem : r);
       onSaveNpwpRecords(updated);
-      saveSingleNpwpRecordToFirestore(updatedItem).catch(() => {});
     } else {
       const newRec: NpwpRecord = {
         id: 'npwp_' + Date.now(),
@@ -165,7 +173,6 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
         createdAt: new Date().toISOString()
       };
       onSaveNpwpRecords([newRec, ...npwpRecords]);
-      saveSingleNpwpRecordToFirestore(newRec).catch(() => {});
     }
 
     setIsFormModalOpen(false);
@@ -175,7 +182,6 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
     if (confirm(`Apakah Anda yakin ingin menghapus data NPWP untuk "${name}"?`)) {
       const remaining = npwpRecords.filter(r => r.id !== id);
       onSaveNpwpRecords(remaining);
-      deleteNpwpRecordFromFirestore(id).catch(() => {});
     }
   };
 
@@ -239,7 +245,14 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
     try {
       const cloudData = await loadNpwpRecordsFromFirestore();
       if (cloudData && cloudData.length > 0) {
-        onSaveNpwpRecords(cloudData);
+        if (onSyncFromCloud) {
+          onSyncFromCloud(cloudData);
+        } else {
+          const map = new Map<string, NpwpRecord>();
+          npwpRecords.forEach((r) => { if (r?.id) map.set(r.id, r); });
+          cloudData.forEach((r) => { if (r?.id) map.set(r.id, r); });
+          onSaveNpwpRecords(Array.from(map.values()));
+        }
         setSyncStatusMessage(`✓ Berhasil membaca ${cloudData.length} data NPWP dari Cloud Firebase!`);
       } else {
         setSyncStatusMessage('ℹ Database Firebase saat ini belum memiliki rekaman NPWP.');

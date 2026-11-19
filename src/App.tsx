@@ -81,6 +81,7 @@ import {
   getSubmissionFromFirestore,
   loadNpwpRecordsFromFirestore,
   subscribeToNpwpRecordsFromFirestore,
+  saveSingleNpwpRecordToFirestore,
   saveNpwpRecordsToFirestore,
   deleteNpwpRecordFromFirestore,
   loadSppdRecordsFromFirestore,
@@ -106,6 +107,9 @@ import {
   subscribeToMonthlyTransactionsFromFirestore,
   subscribeToSubmissionsFromFirestore,
   sortSubmissionsList,
+  mergeSubmissionsSafely,
+  mergeNpwpListsSafely,
+  getDeletedNpwpIds,
   getActiveFirebaseProjectId
 } from './firebase';
 import { loadAttendanceFromFirestore, loadWorkersFromFirestore, mergeWorkerListsSafely, getDeletedWorkerIds } from './lib/firebaseAbsen';
@@ -211,14 +215,19 @@ export default function App() {
       return serverBackupFetchPromiseRef.current;
     }
     serverBackupFetchPromiseRef.current = (async () => {
-      try {
-        const res = await fetch('/api/unified-storage');
-        if (res.ok) {
-          const data = await res.json();
-          const hydrated = hydrateServerBackupFromPayload(data);
-          if (hydrated.length > 0) return hydrated;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const res = await fetch('/api/unified-storage');
+          if (res.ok) {
+            const data = await res.json();
+            const hydrated = hydrateServerBackupFromPayload(data);
+            if (hydrated.length > 0) return hydrated;
+          }
+        } catch (_) {}
+        if (attempt === 0) {
+          await new Promise((r) => setTimeout(r, 400));
         }
-      } catch (_) {}
+      }
       try {
         const fbRes = await fetch('/api/shared-state');
         if (fbRes.ok) {
@@ -581,17 +590,21 @@ export default function App() {
               const hydratedFbSubs = hydrateServerBackupFromPayload(fbData);
               if (hydratedFbSubs.length > 0) {
                 const currentComp = normalizeCompanyKey(localStorage.getItem('NUSANTARA_ACTIVE_COMPANY_ID') || 'nmsa');
-                const delLower = new Set(getLocalDeletedSubmissionIds().map((x) => x.toLowerCase().trim()));
                 const companyFbSubs = hydratedFbSubs.filter((s) => normalizeCompanyKey(s.companyId) === currentComp);
                 if (companyFbSubs.length > 0) {
-                  persistSubmissionsToLocalCaches(companyFbSubs, currentComp);
                   setSubmissions((prev) => {
-                    const filteredPrev = prev.filter((p) => p?.id && !delLower.has(String(p.id).toLowerCase().trim()));
-                    if (filteredPrev.length === 0) return companyFbSubs;
-                    const map = new Map<string, Submission>();
-                    companyFbSubs.forEach((s) => map.set(String(s.id).toLowerCase(), s));
-                    filteredPrev.forEach((s) => map.set(String(s.id).toLowerCase(), s));
-                    return sortSubmissionsList(Array.from(map.values()));
+                    const merged = mergeSubmissionsSafely([companyFbSubs, prev]);
+                    persistSubmissionsToLocalCaches(merged, currentComp);
+                    return merged;
+                  });
+                  setCloudSyncNotice((prevNotice) => {
+                    if (prevNotice && prevNotice.includes('Menampilkan 0 transaksi')) {
+                      return prevNotice.replace(
+                        'Menampilkan 0 transaksi',
+                        `Menampilkan ${companyFbSubs.length} transaksi`
+                      );
+                    }
+                    return prevNotice;
                   });
                 }
               }
@@ -1018,9 +1031,10 @@ export default function App() {
       setPettyCashReports(consolidatedReports);
     }
 
-    // 2. Persist non-voucher master settings locally to browser
+    // 2. Persist consolidated submissions & master settings locally to browser
     try {
       purgeAllLocalSubmissionCaches();
+      persistSubmissionsToLocalCaches(consolidatedSubmissions, activeCompForSync);
       localStorage.setItem('petty_cash_holders_v2', JSON.stringify(consolidatedHolders));
       if (Array.isArray(consolidatedReports)) {
         localStorage.setItem('petty_cash_reports', JSON.stringify(consolidatedReports));
@@ -1081,6 +1095,15 @@ export default function App() {
   };
 
   const handleSaveNpwpRecords = async (newRecords: NpwpRecord[]) => {
+    const prevMap = new Map(npwpRecords.map((r) => [r.id, r]));
+    const nextMap = new Map(newRecords.map((r) => [r.id, r]));
+    const removedIds = npwpRecords.filter((r) => !nextMap.has(r.id)).map((r) => r.id);
+    const changedOrAdded = newRecords.filter((r) => {
+      const prev = prevMap.get(r.id);
+      if (!prev) return true;
+      return JSON.stringify(prev) !== JSON.stringify(r);
+    });
+
     setNpwpRecords(newRecords);
     try {
       localStorage.setItem('npwp_records_v1', JSON.stringify(newRecords));
@@ -1089,7 +1112,7 @@ export default function App() {
     }
 
     try {
-      await fetch('/api/shared-state', {
+      await fetch('/api/unified-storage', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ npwpRecords: newRecords })
@@ -1099,10 +1122,30 @@ export default function App() {
     }
 
     try {
-      await saveNpwpRecordsToFirestore(newRecords);
+      for (const delId of removedIds) {
+        await deleteNpwpRecordFromFirestore(delId);
+      }
+      if (changedOrAdded.length === 1) {
+        await saveSingleNpwpRecordToFirestore(changedOrAdded[0]);
+      } else if (changedOrAdded.length > 1) {
+        await saveNpwpRecordsToFirestore(changedOrAdded);
+      }
     } catch (err) {
       console.warn('Gagal sinkronisasi data NPWP ke Firestore:', err);
     }
+  };
+
+  // Non-destructive NPWP cloud merge (never treats unsynced local items as deleted)
+  const handleSyncNpwpFromCloud = (cloudRecords: NpwpRecord[]) => {
+    if (!Array.isArray(cloudRecords) || cloudRecords.length === 0) return;
+    const delIds = getDeletedNpwpIds();
+    setNpwpRecords((prev) => {
+      const merged = mergeNpwpListsSafely(cloudRecords, prev, delIds);
+      try {
+        localStorage.setItem('npwp_records_v1', JSON.stringify(merged));
+      } catch (_) {}
+      return merged;
+    });
   };
 
   const handleSaveAgendaItems = async (newItems: AgendaItem[]) => {
@@ -1596,21 +1639,19 @@ export default function App() {
         }
       }
 
-      // 4. Fetch submissions from Cloud Firestore with safe local & server backup fallback
-      let companySubmissions: Submission[] = [];
+      // 4. Fetch submissions from Cloud Firestore with timestamp-aware local & server backup merge
       const cloudRes = await loadSubmissionsFromFirestoreSafe(cleanId);
-      const delLower = new Set(getLocalDeletedSubmissionIds().map((x) => x.toLowerCase().trim()));
-      if (cloudRes.ok && cloudRes.list.length > 0) {
-        companySubmissions = cloudRes.list.filter((s) => !delLower.has(String(s.id).toLowerCase().trim()));
-      } else {
-        const localSubs = loadAllLocalSubmissionsForCompany(cleanId);
-        const serverSubs = serverBackupSubmissionsRef.current.filter(
-          (s) => normalizeCompanyKey(s.companyId) === normalizeCompanyKey(cleanId) && !delLower.has(String(s.id).toLowerCase().trim())
-        );
-        const mergeMap = new Map<string, Submission>();
-        serverSubs.forEach((s) => mergeMap.set(String(s.id).toLowerCase(), s));
-        localSubs.forEach((s) => mergeMap.set(String(s.id).toLowerCase(), s));
-        companySubmissions = sortSubmissionsList(Array.from(mergeMap.values()));
+      const delIds = getLocalDeletedSubmissionIds();
+      const localSubs = loadAllLocalSubmissionsForCompany(cleanId);
+      const serverSubs = serverBackupSubmissionsRef.current.filter(
+        (s) => normalizeCompanyKey(s.companyId) === normalizeCompanyKey(cleanId)
+      );
+      const companySubmissions = mergeSubmissionsSafely(
+        [serverSubs, localSubs, cloudRes.ok ? cloudRes.list : []],
+        delIds
+      );
+      if (companySubmissions.length > 0) {
+        persistSubmissionsToLocalCaches(companySubmissions, cleanId);
       }
       setSubmissions(companySubmissions);
 
@@ -2063,29 +2104,21 @@ export default function App() {
             ensureServerBackupLoaded(),
             loadSubmissionsFromFirestoreSafe(companyId),
           ]);
-          const delLower = new Set(getLocalDeletedSubmissionIds().map((x) => x.toLowerCase().trim()));
-
+          const delIds = getLocalDeletedSubmissionIds();
           const localBackup = loadAllLocalSubmissionsForCompany(companyId);
           const serverBackup = serverBackupSubmissionsRef.current.filter(
             (s) => normalizeCompanyKey(s.companyId) === normalizeCompanyKey(companyId)
           );
-          const backupMap = new Map<string, Submission>();
-          serverBackup.forEach((s) => backupMap.set(String(s.id).toLowerCase(), s));
-          localBackup.forEach((s) => backupMap.set(String(s.id).toLowerCase(), s));
-          submissionsRef.current.forEach((s) => {
-            if (s?.id && normalizeCompanyKey(s.companyId) === normalizeCompanyKey(companyId)) {
-              backupMap.set(String(s.id).toLowerCase(), s);
-            }
-          });
-          const bestBackup = sortSubmissionsList(
-            Array.from(backupMap.values()).filter((s) => !delLower.has(String(s.id).toLowerCase().trim()))
+          const currentCompSubs = submissionsRef.current.filter(
+            (s) => s?.id && normalizeCompanyKey(s.companyId) === normalizeCompanyKey(companyId)
+          );
+          const bestBackup = mergeSubmissionsSafely(
+            [serverBackup, localBackup, currentCompSubs],
+            delIds
           );
 
           if (cloudRes.ok && cloudRes.list.length > 0) {
-            const mergedMap = new Map<string, Submission>();
-            bestBackup.forEach((s) => mergedMap.set(String(s.id).toLowerCase(), s));
-            cloudRes.list.forEach((s) => mergedMap.set(String(s.id).toLowerCase(), s));
-            const combined = sortSubmissionsList(Array.from(mergedMap.values()));
+            const combined = mergeSubmissionsSafely([bestBackup, cloudRes.list], delIds);
             persistSubmissionsToLocalCaches(combined, companyId);
             setSubmissions(combined);
           } else {
@@ -2178,10 +2211,7 @@ export default function App() {
       const pid = getActiveFirebaseProjectId();
 
       if (cloudRes.ok && cloudRes.list.length > 0) {
-        const mergedMap = new Map<string, Submission>();
-        bestBackup.forEach((s) => mergedMap.set(String(s.id).toLowerCase(), s));
-        cloudRes.list.forEach((s) => mergedMap.set(String(s.id).toLowerCase(), s));
-        const finalMerged = sortSubmissionsList(Array.from(mergedMap.values()));
+        const finalMerged = mergeSubmissionsSafely([bestBackup, cloudRes.list]);
         persistSubmissionsToLocalCaches(finalMerged, activeCompForSync);
         setSubmissions(finalMerged);
         setShowQuotaBanner(isFirestoreQuotaExceeded());
@@ -2197,9 +2227,17 @@ export default function App() {
         }
         setShowQuotaBanner(isFirestoreQuotaExceeded());
         if (!silent) {
+          const skipHints: string[] = [];
+          if ((cloudRes.skippedByCompany || 0) > 0) {
+            skipHints.push(`${cloudRes.skippedByCompany} dokumen berada di kode perusahaan lain`);
+          }
+          if ((cloudRes.skippedDeleted || 0) > 0) {
+            skipHints.push(`${cloudRes.skippedDeleted} tersembunyi di daftar hapus lokal`);
+          }
+          const hintText = skipHints.length > 0 ? ` (${skipHints.join(', ')})` : '';
           const reason = cloudRes.errorCode === 'permission-denied'
             ? `Akses Firestore (${pid}) dibatasi Security Rules Firebase Console`
-            : (cloudRes.ok ? `Firestore (${pid}) masih kosong (0 dokumen)` : `Gagal membaca Firestore (${cloudRes.error || 'periksa jaringan'})`);
+            : (cloudRes.ok ? `Firestore (${pid}) mengembalikan 0 transaksi untuk PT "${activeCompForSync.toUpperCase()}"${hintText}` : `Gagal membaca Firestore (${cloudRes.error || 'periksa jaringan'})`);
           setCloudSyncNotice(`⚠️ ${reason}. Menampilkan ${bestBackup.length} transaksi dari cadangan aman.`);
         }
       }
@@ -2227,15 +2265,10 @@ export default function App() {
       if (cloudSubs.length === 0 && submissionsRef.current.length > 0) {
         return;
       }
-      const delLower = new Set(getLocalDeletedSubmissionIds().map((x) => x.toLowerCase().trim()));
-      const mergedMap = new Map<string, Submission>();
-      getBestBackupForCompany(activeCompForSync).forEach((s) => {
-        if (!delLower.has(String(s.id).toLowerCase().trim())) mergedMap.set(String(s.id).toLowerCase(), s);
-      });
-      cloudSubs.forEach((s) => {
-        if (!delLower.has(String(s.id).toLowerCase().trim())) mergedMap.set(String(s.id).toLowerCase(), s);
-      });
-      setSubmissions(sortSubmissionsList(Array.from(mergedMap.values())));
+      const bestBackup = getBestBackupForCompany(activeCompForSync);
+      const merged = mergeSubmissionsSafely([bestBackup, cloudSubs]);
+      persistSubmissionsToLocalCaches(merged, activeCompForSync);
+      setSubmissions(merged);
     });
 
     const handleWakeSync = (forceFullCheck: boolean = false) => {
@@ -3883,6 +3916,7 @@ export default function App() {
           <NpwpManager
             npwpRecords={npwpRecords}
             onSaveNpwpRecords={handleSaveNpwpRecords}
+            onSyncFromCloud={handleSyncNpwpFromCloud}
             submissions={submissions}
             onSelectSubmissionForPrint={(sub) => {
               setPreviousView('npwp');
@@ -3946,6 +3980,7 @@ export default function App() {
             submissions={submissions}
             npwpRecords={npwpRecords}
             onSaveNpwpRecords={handleSaveNpwpRecords}
+            onSyncNpwpFromCloud={handleSyncNpwpFromCloud}
             onUpdateSubmission={handleSaveSubmission}
             onSelectSubmission={(sub) => {
               setActiveSubmission(sub);
@@ -4360,10 +4395,7 @@ export default function App() {
         onClose={() => setIsDriveDeduplicateModalOpen(false)}
         submissions={submissions}
         onUpdateSubmissions={(updated) => {
-          setSubmissions(updated);
-          try {
-            localStorage.setItem('submissions', JSON.stringify(updated));
-          } catch (e) {}
+          saveSubmissionsToStorage(updated);
         }}
       />
 

@@ -244,7 +244,7 @@ export function getSavedEmployeeLoans(): EmployeeLoan[] {
   return INITIAL_SAMPLE_LOANS;
 }
 
-export function saveEmployeeLoans(loans: EmployeeLoan[]): void {
+export function saveEmployeeLoans(loans: EmployeeLoan[], options?: { skipCloud?: boolean }): void {
   try {
     localStorage.setItem(STORAGE_KEY_EMPLOYEE_LOANS, JSON.stringify(loans));
     // Trigger window event for reactive sync
@@ -252,6 +252,8 @@ export function saveEmployeeLoans(loans: EmployeeLoan[]): void {
   } catch (e) {
     console.error('Failed to save employee loans to localStorage:', e);
   }
+
+  if (options?.skipCloud) return;
 
   // Silent sync to backend server unified-storage
   try {

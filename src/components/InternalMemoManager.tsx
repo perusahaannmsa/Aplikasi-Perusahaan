@@ -33,6 +33,7 @@ import { getInternalMemoLink } from '../utils/appLinks';
 import {
   saveInternalMemoToFirestore,
   getInternalMemosFromFirestore,
+  subscribeToInternalMemosFromFirestore,
   deleteInternalMemoFromFirestore,
 } from '../firebase';
 import { InternalMemoDocument } from './InternalMemoDocument';
@@ -191,54 +192,16 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
     return createInitialMemo(null, memos);
   });
 
-  // Initial cloud sync on mount from server and Firestore
+  // Initial cloud sync + real-time Cloud Firestore subscription across PC & HP
   useEffect(() => {
     let isMounted = true;
     const syncMemosFromCloud = async () => {
       try {
-        const local = getSavedInternalMemos();
-        const mergedMap = new Map<string, InternalMemo>();
-        local.forEach((m) => { if (m.id) mergedMap.set(m.id, m); });
-
-        // 1. Fetch from server backend
-        try {
-          const res = await fetch('/api/internal-memos');
-          if (res.ok) {
-            const data = await res.json();
-            if (data.success && Array.isArray(data.memos)) {
-              data.memos.forEach((m: InternalMemo) => {
-                if (m.id && !mergedMap.has(m.id)) {
-                  mergedMap.set(m.id, m);
-                } else if (m.id && m.updatedAt) {
-                  const existing = mergedMap.get(m.id);
-                  if (!existing?.updatedAt || new Date(m.updatedAt) > new Date(existing.updatedAt)) {
-                    mergedMap.set(m.id, m);
-                  }
-                }
-              });
-            }
-          }
-        } catch (_) {}
-
-        // 2. Fetch from Firestore
-        try {
-          const fsMemos = await getInternalMemosFromFirestore();
-          if (Array.isArray(fsMemos)) {
-            fsMemos.forEach((m) => {
-              if (m.id && !mergedMap.has(m.id)) {
-                mergedMap.set(m.id, m);
-              }
-            });
-          }
-        } catch (_) {}
-
-        if (isMounted) {
-          const mergedList = Array.from(mergedMap.values());
-          const sortedList = sortInternalMemos(mergedList, 'desc');
-          if (sortedList.length > 0) {
-            setMemos(sortedList);
-            saveInternalMemos(sortedList);
-          }
+        const fsMemos = await getInternalMemosFromFirestore();
+        if (isMounted && Array.isArray(fsMemos)) {
+          const sortedList = sortInternalMemos(fsMemos, 'desc');
+          setMemos(sortedList);
+          saveInternalMemos(sortedList);
         }
       } catch (err) {
         console.warn('Error syncing internal memos on mount:', err);
@@ -246,7 +209,18 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
     };
 
     syncMemosFromCloud();
-    return () => { isMounted = false; };
+
+    const unsubscribe = subscribeToInternalMemosFromFirestore((cloudMemos) => {
+      if (!isMounted) return;
+      const sortedList = sortInternalMemos(cloudMemos, 'desc');
+      setMemos(sortedList);
+      saveInternalMemos(sortedList);
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
   }, []);
 
   // When memos list updates, if user is on a fresh new draft, keep nomorMemo aligned with latest sequence

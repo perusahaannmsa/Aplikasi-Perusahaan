@@ -28,13 +28,17 @@ import {
   Cloud,
   FileCheck,
   ChevronDown,
-  CheckCircle2
+  CheckCircle2,
+  Loader2,
+  Upload
 } from 'lucide-react';
+import { pphGoogleDriveService } from '../utils/pphDriveService';
 
 interface Pph23BupotRecapProps {
   submissions: Submission[];
   npwpRecords: NpwpRecord[];
   onSaveNpwpRecords: (records: NpwpRecord[]) => void;
+  onSyncNpwpFromCloud?: (records: NpwpRecord[]) => void;
   onUpdateSubmission: (submission: Submission) => void;
   onSelectSubmission?: (sub: Submission) => void;
   onBackToVoucher?: () => void;
@@ -106,6 +110,7 @@ export const Pph23BupotRecap: React.FC<Pph23BupotRecapProps> = ({
   submissions,
   npwpRecords,
   onSaveNpwpRecords,
+  onSyncNpwpFromCloud,
   onUpdateSubmission,
   onSelectSubmission,
   onBackToVoucher
@@ -136,6 +141,17 @@ export const Pph23BupotRecap: React.FC<Pph23BupotRecapProps> = ({
   const [editPphAmount, setEditPphAmount] = useState<number>(0);
   const [editBupotNumber, setEditBupotNumber] = useState<string>('');
   const [editBupotDate, setEditBupotDate] = useState<string>('');
+  const [editBupotDriveUrl, setEditBupotDriveUrl] = useState<string>('');
+  const [editBupotFileName, setEditBupotFileName] = useState<string>('');
+  const [isUploadingBupot, setIsUploadingBupot] = useState(false);
+
+  // Google Drive archive state
+  const [isArchivingDrive, setIsArchivingDrive] = useState(false);
+  const [driveArchiveFeedback, setDriveArchiveFeedback] = useState<{
+    type: 'success' | 'error';
+    text: string;
+    folderUrl?: string;
+  } | null>(null);
 
   // Quick NPWP modal
   const [npwpModalVendor, setNpwpModalVendor] = useState<string | null>(null);
@@ -285,6 +301,73 @@ export const Pph23BupotRecap: React.FC<Pph23BupotRecapProps> = ({
     setEditPphAmount(pphAmount);
     setEditBupotNumber(sub.bupotNumber || '');
     setEditBupotDate(sub.bupotDate || sub.tanggal || new Date().toISOString().substring(0, 10));
+    setEditBupotDriveUrl(sub.bupotDriveUrl || '');
+    setEditBupotFileName(sub.bupotFileName || '');
+  };
+
+  const handleUploadBupotToDrive = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !editingSub) return;
+    setIsUploadingBupot(true);
+    setDriveArchiveFeedback(null);
+    try {
+      const res = await pphGoogleDriveService.uploadBupotFile(editingSub, file);
+      if (res.success && res.url) {
+        setEditBupotDriveUrl(res.url);
+        setEditBupotFileName(res.fileName || file.name);
+        setDriveArchiveFeedback({
+          type: 'success',
+          text: `Bukti Potong "${res.fileName || file.name}" berhasil disimpan ke Google Drive (${res.folderPath}).`,
+          folderUrl: res.folderUrl || res.url,
+        });
+      } else {
+        setDriveArchiveFeedback({
+          type: 'error',
+          text: res.error || 'Gagal mengunggah Bukti Potong ke Google Drive.',
+        });
+      }
+    } catch (err: any) {
+      setDriveArchiveFeedback({
+        type: 'error',
+        text: err?.message || 'Gagal mengunggah Bukti Potong ke Google Drive.',
+      });
+    } finally {
+      setIsUploadingBupot(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleArchiveRecapToDrive = async () => {
+    setIsArchivingDrive(true);
+    setDriveArchiveFeedback(null);
+    try {
+      const res = await pphGoogleDriveService.archivePph23Recap({
+        periodKey: selectedMonthFilter,
+        periodLabel: currentMonthLabel,
+        invoices: filteredInvoices,
+        npwpRecords,
+        getPphDetails,
+      });
+      if (res.success) {
+        setDriveArchiveFeedback({
+          type: 'success',
+          text: `Rekap PPh 23 (${filteredInvoices.length} transaksi) & ${npwpRecords.length} data NPWP berhasil diarsipkan ke Google Drive (${res.folderPath}).`,
+          folderUrl: res.folderUrl || res.url,
+        });
+      } else {
+        setDriveArchiveFeedback({
+          type: 'error',
+          text: res.error || 'Gagal mengarsipkan Rekap PPh 23 ke Google Drive.',
+        });
+      }
+    } catch (err: any) {
+      setDriveArchiveFeedback({
+        type: 'error',
+        text: err?.message || 'Gagal mengarsipkan Rekap PPh 23 ke Google Drive.',
+      });
+    } finally {
+      setIsArchivingDrive(false);
+    }
   };
 
   const handleSaveEdit = () => {
@@ -295,7 +378,9 @@ export const Pph23BupotRecap: React.FC<Pph23BupotRecapProps> = ({
       pph23Rate: editRate,
       pph23Amount: editPphAmount,
       bupotNumber: editBupotNumber.trim(),
-      bupotDate: editBupotDate
+      bupotDate: editBupotDate,
+      bupotDriveUrl: editBupotDriveUrl.trim() || undefined,
+      bupotFileName: editBupotFileName.trim() || undefined,
     };
     onUpdateSubmission(updated);
     setEditingSub(null);
@@ -494,6 +579,20 @@ export const Pph23BupotRecap: React.FC<Pph23BupotRecapProps> = ({
           </button>
 
           <button
+            onClick={handleArchiveRecapToDrive}
+            disabled={isArchivingDrive}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold rounded-xl transition text-xs shadow-xs cursor-pointer"
+            title="Arsipkan Rekap PPh 23 & Master NPWP ke folder PPH23-CORETAX-NMSA di Google Drive"
+          >
+            {isArchivingDrive ? (
+              <Loader2 size={13} className="animate-spin" />
+            ) : (
+              <Cloud size={13} />
+            )}
+            <span>{isArchivingDrive ? 'Menyimpan...' : 'Simpan ke Drive'}</span>
+          </button>
+
+          <button
             onClick={handleExportCsv}
             className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-stone-900 hover:bg-stone-800 text-white font-bold rounded-xl transition text-xs shadow-xs cursor-pointer"
             title="Unduh file CSV format pelaporan pajak"
@@ -512,6 +611,45 @@ export const Pph23BupotRecap: React.FC<Pph23BupotRecapProps> = ({
           </button>
         </div>
       </div>
+
+      {driveArchiveFeedback && (
+        <div
+          className={`p-3.5 rounded-2xl border text-xs font-semibold flex items-center justify-between gap-3 print:hidden ${
+            driveArchiveFeedback.type === 'success'
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+              : 'bg-rose-50 border-rose-200 text-rose-900'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {driveArchiveFeedback.type === 'success' ? (
+              <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+            ) : (
+              <AlertCircle size={16} className="text-rose-600 shrink-0" />
+            )}
+            <span>{driveArchiveFeedback.text}</span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {driveArchiveFeedback.folderUrl && (
+              <a
+                href={driveArchiveFeedback.folderUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px]"
+              >
+                <span>Buka Folder Drive</span>
+                <ExternalLink size={11} />
+              </a>
+            )}
+            <button
+              type="button"
+              onClick={() => setDriveArchiveFeedback(null)}
+              className="p-1 rounded-lg hover:bg-black/5 cursor-pointer"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Sub-Menu Tabs Navigation */}
       <div className="flex items-center gap-2 border-b border-stone-200 pb-2 print:hidden">
@@ -547,6 +685,7 @@ export const Pph23BupotRecap: React.FC<Pph23BupotRecapProps> = ({
         <NpwpManager
           npwpRecords={npwpRecords}
           onSaveNpwpRecords={onSaveNpwpRecords}
+          onSyncFromCloud={onSyncNpwpFromCloud}
           submissions={submissions}
           onSelectSubmissionForPrint={onSelectSubmission}
           onBack={() => setActiveTab('recap')}
@@ -805,7 +944,7 @@ export const Pph23BupotRecap: React.FC<Pph23BupotRecapProps> = ({
                   const displayNpwp = npwpRecord?.npwpNumber || sub.vendorNpwp;
                   const docNumber = sub.invoiceNumber || sub.kode || 'Tanpa No Dokumen';
                   const driveFileCount = (sub.googleDriveFiles || []).length;
-                  const hasDriveFiles = driveFileCount > 0 || !!sub.googleDriveFileUrl;
+                  const hasDriveFiles = driveFileCount > 0 || !!sub.googleDriveFileUrl || !!sub.bupotDriveUrl;
 
                   return (
                     <tr
@@ -1125,8 +1264,9 @@ export const Pph23BupotRecap: React.FC<Pph23BupotRecapProps> = ({
                   const driveFiles = previewSub.googleDriveFiles || [];
                   const rawFiles = (previewSub.files || []).filter(f => !driveFiles.some(df => df.name === f.name));
                   const hasDriveUrl = !!previewSub.googleDriveFileUrl && driveFiles.length === 0;
+                  const hasBupotDrive = !!previewSub.bupotDriveUrl;
                   const hasPaymentProof = !!previewSub.buktiPembayaran?.url;
-                  const totalFiles = driveFiles.length + rawFiles.length + (hasDriveUrl ? 1 : 0) + (hasPaymentProof ? 1 : 0);
+                  const totalFiles = driveFiles.length + rawFiles.length + (hasDriveUrl ? 1 : 0) + (hasBupotDrive ? 1 : 0) + (hasPaymentProof ? 1 : 0);
 
                   if (totalFiles === 0) {
                     return (
@@ -1212,6 +1352,31 @@ export const Pph23BupotRecap: React.FC<Pph23BupotRecapProps> = ({
                           )}
                         </div>
                       ))}
+
+                      {hasBupotDrive && (
+                        <div className="flex items-center justify-between p-2.5 rounded-xl bg-amber-50/70 border border-amber-200">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Receipt size={16} className="text-amber-700 shrink-0" />
+                            <div className="min-w-0">
+                              <p className="font-bold text-stone-900 text-xs truncate">
+                                {previewSub.bupotFileName || 'Bukti Potong PPh 23 (Drive)'}
+                              </p>
+                              <span className="text-[10px] font-mono text-amber-800 uppercase">
+                                Google Drive • Bukti Potong PPh 23 {previewSub.bupotNumber ? `(${previewSub.bupotNumber})` : ''}
+                              </span>
+                            </div>
+                          </div>
+                          <a
+                            href={previewSub.bupotDriveUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-stone-950 font-bold rounded-lg text-xs transition shrink-0 shadow-3xs"
+                          >
+                            <span>Buka Bupot</span>
+                            <ExternalLink size={12} />
+                          </a>
+                        </div>
+                      )}
 
                       {hasPaymentProof && (
                         <div className="flex items-center justify-between p-2.5 rounded-xl bg-emerald-50/60 border border-emerald-200">
@@ -1362,6 +1527,55 @@ export const Pph23BupotRecap: React.FC<Pph23BupotRecapProps> = ({
                   placeholder="mis. BP23-2026-001..."
                   className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl font-mono text-xs focus:ring-2 focus:ring-amber-500 focus:outline-hidden"
                 />
+              </div>
+
+              {/* Upload Berkas Bukti Potong ke Google Drive */}
+              <div className="p-3 rounded-xl bg-stone-50 border border-stone-200 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-bold text-stone-800 flex items-center gap-1.5">
+                    <Cloud size={13} className="text-emerald-600" />
+                    <span>Berkas Bukti Potong (Google Drive)</span>
+                  </span>
+                  {editBupotDriveUrl && (
+                    <a
+                      href={editBupotDriveUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] font-bold text-emerald-700 hover:underline inline-flex items-center gap-1"
+                    >
+                      <span>Buka File</span>
+                      <ExternalLink size={10} />
+                    </a>
+                  )}
+                </div>
+
+                {editBupotFileName && (
+                  <div className="text-[10px] font-mono text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg truncate">
+                    ✓ {editBupotFileName}
+                  </div>
+                )}
+
+                <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold transition cursor-pointer">
+                  {isUploadingBupot ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    <Upload size={12} />
+                  )}
+                  <span>
+                    {isUploadingBupot
+                      ? 'Mengunggah ke Drive...'
+                      : editBupotDriveUrl
+                      ? 'Ganti File Bukti Potong'
+                      : 'Upload Bukti Potong ke Drive'}
+                  </span>
+                  <input
+                    type="file"
+                    accept=".pdf,image/*"
+                    onChange={handleUploadBupotToDrive}
+                    disabled={isUploadingBupot}
+                    className="hidden"
+                  />
+                </label>
               </div>
             </div>
 

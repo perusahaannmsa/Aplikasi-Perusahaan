@@ -23,6 +23,16 @@ import { EmployeeLoanDocument } from './EmployeeLoanDocument';
 import { ManualSyncLoanModal } from './ManualSyncLoanModal';
 import { LinkVoucherToLoanModal } from './LinkVoucherToLoanModal';
 import {
+  loadEmployeeLoansFromFirestore,
+  saveEmployeeLoansToFirestore,
+  saveSingleEmployeeLoanToFirestore,
+  deleteEmployeeLoanFromFirestore,
+  subscribeToEmployeeLoansFromFirestore,
+  mergeEmployeeLoansSafely,
+  getDeletedLoanIds,
+} from '../firebase';
+import { loanGoogleDriveService } from '../utils/loanDriveService';
+import {
   FileText,
   Plus,
   Search,
@@ -58,7 +68,10 @@ import {
   Link,
   RotateCcw,
   MoreVertical,
-  Eye
+  Eye,
+  Cloud,
+  FolderCheck,
+  Loader2
 } from 'lucide-react';
 
 interface EmployeeLoanManagerProps {
@@ -84,6 +97,8 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
   const [categoryFilter, setCategoryFilter] = useState<'all' | 'karyawan' | 'perusahaan'>('all');
   const [expandedDisbursements, setExpandedDisbursements] = useState<Record<string, boolean>>({});
   const [syncMessage, setSyncMessage] = useState<string>('');
+  const [isBulkUploadingDrive, setIsBulkUploadingDrive] = useState(false);
+  const [uploadingLoanId, setUploadingLoanId] = useState<string | null>(null);
 
   // Modals state
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
@@ -218,36 +233,34 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
     };
   }, [openLoanMenuId]);
 
-  // Sinkronkan pengajuan dari portal karyawan (cross-tab / server unified-storage)
+  // Sinkronkan data Pinjaman secara real-time dengan Cloud Firestore + portal karyawan
   useEffect(() => {
     let isMounted = true;
-    fetch('/api/unified-storage')
-      .then(res => (res.ok ? res.json() : null))
-      .then(data => {
-        if (!isMounted || !data || !Array.isArray(data.employeeLoans) || data.employeeLoans.length === 0) return;
-        const hasLocalKey = !!localStorage.getItem(STORAGE_KEY_EMPLOYEE_LOANS);
-        if (!hasLocalKey) {
-          setLoans(data.employeeLoans);
-          localStorage.setItem(STORAGE_KEY_EMPLOYEE_LOANS, JSON.stringify(data.employeeLoans));
-          return;
-        }
-        // Gabungkan pengajuan dari portal karyawan publik yang belum ada di localStorage
-        setLoans(prev => {
-          const existingIds = new Set(prev.map(l => l.id));
-          const missingPublicLoans = (data.employeeLoans as EmployeeLoan[]).filter(
-            srvLoan => srvLoan && srvLoan.id && srvLoan.id.startsWith('loan-emp-') && !existingIds.has(srvLoan.id)
-          );
-          if (missingPublicLoans.length === 0) return prev;
-          const merged = [...missingPublicLoans, ...prev];
-          try {
-            localStorage.setItem(STORAGE_KEY_EMPLOYEE_LOANS, JSON.stringify(merged));
-          } catch (_) {}
+
+    loadEmployeeLoansFromFirestore()
+      .then((cloudLoans) => {
+        if (!isMounted || !Array.isArray(cloudLoans)) return;
+        const deletedIds = getDeletedLoanIds();
+        setLoans((prev) => {
+          const merged = mergeEmployeeLoansSafely([cloudLoans, prev], deletedIds);
+          saveEmployeeLoans(merged, { skipCloud: true });
           return merged;
         });
       })
-      .catch(() => {});
+      .catch((err) => console.warn('Initial load employee loans notice:', err));
+
+    const unsubscribe = subscribeToEmployeeLoansFromFirestore((cloudLoans, deletedIds) => {
+      if (!isMounted) return;
+      setLoans((prev) => {
+        const merged = mergeEmployeeLoansSafely([cloudLoans, prev], deletedIds);
+        saveEmployeeLoans(merged, { skipCloud: true });
+        return merged;
+      });
+    });
+
     return () => {
       isMounted = false;
+      unsubscribe();
     };
   }, []);
 
@@ -329,6 +342,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
     const { syncedLoans, newLoansCount, accumulatedCount } = syncLoansWithSubmissions(loans, submissions, workers);
     setLoans(syncedLoans);
     saveEmployeeLoans(syncedLoans);
+    saveEmployeeLoansToFirestore(syncedLoans).catch(() => {});
     setSyncMessage(`✅ Sinkronisasi Selesai: ${newLoansCount} pinjaman baru ditambahkan, ${accumulatedCount} voucher terakumulasi.`);
     setTimeout(() => setSyncMessage(''), 6000);
   };
@@ -345,6 +359,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
     const updated = loans.map(l => l.id === updatedLoan.id ? updatedLoan : l);
     setLoans(updated);
     saveEmployeeLoans(updated);
+    saveSingleEmployeeLoanToFirestore(updatedLoan).catch(() => {});
     setSettlementConfirmLoan(null);
     setSyncMessage(`🎉 Hutang ${updatedLoan.namaKaryawan} (${updatedLoan.nomorPinjaman}) berhasil ditandai LUNAS dan dipindahkan ke Tab Lunas.`);
     setTimeout(() => setSyncMessage(''), 6000);
@@ -356,6 +371,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
     const updated = loans.map(l => l.id === updatedLoan.id ? updatedLoan : l);
     setLoans(updated);
     saveEmployeeLoans(updated);
+    saveSingleEmployeeLoanToFirestore(updatedLoan).catch(() => {});
     setSyncMessage(`↩️ Status pinjaman ${loan.namaKaryawan} dikembalikan menjadi Belum Lunas (Masuk kembali ke Daftar Hutang).`);
     setTimeout(() => setSyncMessage(''), 6000);
   };
@@ -373,6 +389,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
     const updated = loans.map(l => l.id === updatedLoan.id ? updatedLoan : l);
     setLoans(updated);
     saveEmployeeLoans(updated);
+    saveSingleEmployeeLoanToFirestore(updatedLoan).catch(() => {});
     setSyncMessage(`🔄 Kategori ${targetLoan.namaKaryawan} diubah menjadi Pinjaman ${newCat === 'karyawan' ? 'Karyawan' : 'Perusahaan / Pihak Ketiga'}.`);
     setTimeout(() => setSyncMessage(''), 5000);
   };
@@ -406,10 +423,84 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
   const [payNomorBukti, setPayNomorBukti] = useState('');
   const [payDiterimaOleh, setPayDiterimaOleh] = useState('Sri Ekowati (Finance)');
 
-  // Save changes to storage
-  const handleUpdateLoans = (updated: EmployeeLoan[]) => {
+  // Save changes to local cache + Cloud Firestore
+  const handleUpdateLoans = (updated: EmployeeLoan[], singleLoan?: EmployeeLoan) => {
     setLoans(updated);
     saveEmployeeLoans(updated);
+    if (singleLoan) {
+      saveSingleEmployeeLoanToFirestore(singleLoan).catch(() => {});
+    } else {
+      saveEmployeeLoansToFirestore(updated).catch(() => {});
+    }
+  };
+
+  const handleUploadLoanToDrive = async (loan: EmployeeLoan) => {
+    setUploadingLoanId(loan.id);
+    try {
+      const res = await loanGoogleDriveService.uploadLoan(loan);
+      if (res.success && res.url) {
+        const updatedLoan: EmployeeLoan = {
+          ...loan,
+          driveFileId: res.fileId,
+          driveUrl: res.url,
+          driveFolderId: res.folderId,
+          driveFolderPath: res.folderPath,
+          driveSyncedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        const updated = loans.map((l) => (l.id === loan.id ? updatedLoan : l));
+        handleUpdateLoans(updated, updatedLoan);
+        setSyncMessage(
+          `☁️ Formulir ${loan.nomorPinjaman} (${loan.namaKaryawan}) berhasil diarsipkan ke Google Drive (${res.folderPath}).`
+        );
+        setTimeout(() => setSyncMessage(''), 7000);
+      } else {
+        setSyncMessage(`❌ Gagal upload ${loan.nomorPinjaman} ke Drive: ${res.error || 'Terjadi kesalahan'}`);
+      }
+    } catch (err: any) {
+      setSyncMessage(`❌ Gagal upload ke Drive: ${err?.message || err}`);
+    } finally {
+      setUploadingLoanId(null);
+    }
+  };
+
+  const handleBulkUploadLoansToDrive = async () => {
+    if (loans.length === 0) {
+      alert('Belum ada data pinjaman untuk diarsipkan.');
+      return;
+    }
+    setIsBulkUploadingDrive(true);
+    try {
+      const targetList = loans;
+      const summary = await loanGoogleDriveService.uploadAllLoans(targetList, (cur, total, item) => {
+        setSyncMessage(`⏳ Mengarsipkan ${cur}/${total}: ${item.nomorPinjaman} (${item.namaKaryawan}) ke Google Drive...`);
+      });
+
+      const resultMap = new Map(summary.results.map((r) => [r.loanId, r.result]));
+      const updated = loans.map((l) => {
+        const r = resultMap.get(l.id);
+        if (r && r.success && r.url) {
+          return {
+            ...l,
+            driveFileId: r.fileId,
+            driveUrl: r.url,
+            driveFolderId: r.folderId,
+            driveFolderPath: r.folderPath,
+            driveSyncedAt: new Date().toISOString(),
+          };
+        }
+        return l;
+      });
+      handleUpdateLoans(updated);
+      setSyncMessage(
+        `☁️ Arsip Pinjaman ke Google Drive selesai: ${summary.totalUploaded} berhasil${summary.failed > 0 ? `, ${summary.failed} gagal` : ''} (Folder: PINJAMAN-KARYAWAN-NMSA).`
+      );
+      setTimeout(() => setSyncMessage(''), 7000);
+    } catch (err: any) {
+      setSyncMessage(`❌ Gagal mengarsipkan pinjaman ke Drive: ${err?.message || err}`);
+    } finally {
+      setIsBulkUploadingDrive(false);
+    }
   };
 
   // Sync initial calculation for caraPembayaran when amount or tenor changes
@@ -495,9 +586,10 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
     }
 
     if (editingLoan) {
+      let editedItem: EmployeeLoan | undefined;
       const updated = loans.map(l => {
         if (l.id === editingLoan.id) {
-          return {
+          editedItem = {
             ...l,
             nomorPinjaman: nomorPinjaman.trim() || l.nomorPinjaman,
             tanggalPermohonan,
@@ -527,10 +619,11 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
             status: loanStatus,
             updatedAt: new Date().toISOString()
           };
+          return editedItem;
         }
         return l;
       });
-      handleUpdateLoans(updated);
+      handleUpdateLoans(updated, editedItem);
     } else {
       const newLoan: EmployeeLoan = {
         id: 'loan-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
@@ -564,7 +657,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
-      handleUpdateLoans([newLoan, ...loans]);
+      handleUpdateLoans([newLoan, ...loans], newLoan);
     }
 
     setIsFormModalOpen(false);
@@ -610,7 +703,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
     };
 
     const updatedList = loans.map(l => (l.id === updatedLoan.id ? updatedLoan : l));
-    handleUpdateLoans(updatedList);
+    handleUpdateLoans(updatedList, updatedLoan);
 
     if (targetLoanForPrint && targetLoanForPrint.id === updatedLoan.id) {
       setTargetLoanForPrint(updatedLoan);
@@ -645,7 +738,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
     }
     const updatedLoan = manuallyUnlinkVoucherFromLoan(loan, submissionId || '');
     const updated = loans.map(l => l.id === loan.id ? updatedLoan : l);
-    handleUpdateLoans(updated);
+    handleUpdateLoans(updated, updatedLoan);
     setSyncMessage(`🔗 Tautan voucher ${ident} berhasil dilepas dari pinjaman. Data voucher transaksi tetap aman.`);
     setTimeout(() => setSyncMessage(''), 6000);
   };
@@ -655,7 +748,9 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
       return;
     }
     const updated = loans.filter(l => l.id !== loan.id);
-    handleUpdateLoans(updated);
+    setLoans(updated);
+    saveEmployeeLoans(updated, { skipCloud: true });
+    deleteEmployeeLoanFromFirestore(loan.id).catch(() => {});
   };
 
   // Payment Recording
@@ -693,41 +788,45 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
       createdAt: new Date().toISOString()
     };
 
+    let modifiedLoan: EmployeeLoan | undefined;
     const updated = loans.map(l => {
       if (l.id === targetLoanForPayment.id) {
         const existingPayments = Array.isArray(l.payments) ? l.payments : [];
         const nextPayments = [newPayment, ...existingPayments];
         const nextSummary = calculateLoanSummary({ ...l, payments: nextPayments });
-        return {
+        modifiedLoan = {
           ...l,
           payments: nextPayments,
           status: nextSummary.sisaPinjaman <= 0 ? 'Lunas' : l.status,
           updatedAt: new Date().toISOString()
         };
+        return modifiedLoan;
       }
       return l;
     });
 
-    handleUpdateLoans(updated);
+    handleUpdateLoans(updated, modifiedLoan);
     setIsPaymentModalOpen(false);
   };
 
   const handleDeletePayment = (loanId: string, paymentId: string) => {
     if (!window.confirm('Hapus catatan pembayaran/angsuran ini? Sisa pinjaman akan dikalkulasi ulang otomatis.\n\nAMAN: Transaksi voucher pengeluaran kas asli di aplikasi TIDAK AKAN terhapus.')) return;
+    let modifiedLoan: EmployeeLoan | undefined;
     const updated = loans.map(l => {
       if (l.id === loanId) {
         const nextPayments = (l.payments || []).filter(p => p.id !== paymentId);
         const nextSummary = calculateLoanSummary({ ...l, payments: nextPayments });
-        return {
+        modifiedLoan = {
           ...l,
           payments: nextPayments,
           status: (nextSummary.sisaPinjaman <= 0 ? 'Lunas' : 'Belum Lunas') as EmployeeLoan['status'],
           updatedAt: new Date().toISOString()
         };
+        return modifiedLoan;
       }
       return l;
     });
-    handleUpdateLoans(updated);
+    handleUpdateLoans(updated, modifiedLoan);
 
     if (targetLoanForHistory && targetLoanForHistory.id === loanId) {
       const found = updated.find(l => l.id === loanId);
@@ -972,6 +1071,21 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
               <ExternalLink size={14} className="text-stone-500" />
               <span className="hidden sm:inline">Portal Karyawan</span>
             </a>
+
+            <button
+              type="button"
+              onClick={handleBulkUploadLoansToDrive}
+              disabled={isBulkUploadingDrive}
+              className="px-3.5 py-2 text-xs font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white transition cursor-pointer flex items-center gap-1.5 shadow-3xs"
+              title="Arsipkan seluruh formulir pinjaman (PDF + JSON) ke folder PINJAMAN-KARYAWAN-NMSA di Google Drive"
+            >
+              {isBulkUploadingDrive ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <Cloud size={14} />
+              )}
+              <span>{isBulkUploadingDrive ? 'Menyimpan...' : 'Arsipkan ke Drive'}</span>
+            </button>
 
             <button
               type="button"
@@ -1333,6 +1447,22 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
                             <span className="text-emerald-800 font-bold">
                               {summary.paymentCount}x Pembayaran Tercatat
                             </span>
+                          </>
+                        )}
+                        {loan.driveUrl && (
+                          <>
+                            <span>•</span>
+                            <a
+                              href={loan.driveUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-emerald-700 hover:text-emerald-900 font-bold hover:underline"
+                              title={`Tersimpan di Google Drive (${loan.driveFolderPath || 'PINJAMAN-KARYAWAN-NMSA'})`}
+                            >
+                              <FolderCheck size={12} />
+                              <span>Tersimpan di Drive</span>
+                              <ExternalLink size={10} />
+                            </a>
                           </>
                         )}
                       </div>
@@ -3022,6 +3152,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
           onLoansUpdated={(updated) => {
             setLoans(updated);
             saveEmployeeLoans(updated);
+            saveEmployeeLoansToFirestore(updated).catch(() => {});
           }}
           onViewSubmission={onViewSubmission}
         />
@@ -3038,6 +3169,7 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
             const updated = loans.map(l => l.id === updatedLoan.id ? updatedLoan : l);
             setLoans(updated);
             saveEmployeeLoans(updated);
+            saveSingleEmployeeLoanToFirestore(updatedLoan).catch(() => {});
             setTargetLoanForLinkVoucher(null);
             setSyncMessage(`✅ Transaksi voucher untuk ${updatedLoan.namaKaryawan} berhasil diperbarui.`);
             setTimeout(() => setSyncMessage(''), 5000);
@@ -3216,6 +3348,21 @@ export const EmployeeLoanManager: React.FC<EmployeeLoanManagerProps> = ({
                 >
                   <Printer size={15} className="text-amber-600 shrink-0" />
                   <span>Cetak Form</span>
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={uploadingLoanId === activeMenuLoan.id}
+                  onClick={() => {
+                    const target = activeMenuLoan;
+                    closeMenu();
+                    handleUploadLoanToDrive(target);
+                  }}
+                  className="w-full px-3.5 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-50 flex items-center gap-2.5 transition text-left cursor-pointer disabled:opacity-50"
+                >
+                  <Cloud size={15} className="text-emerald-600 shrink-0" />
+                  <span>{activeMenuLoan.driveUrl ? 'Perbarui di Google Drive' : 'Simpan ke Google Drive'}</span>
                 </button>
 
                 <button

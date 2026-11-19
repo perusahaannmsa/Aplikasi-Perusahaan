@@ -90,6 +90,47 @@
         "updatedAt": { "type": "string" }
       },
       "required": ["id", "title", "category", "recipient", "dueDay", "isActive"]
+    },
+    "internalMemo": {
+      "title": "InternalMemo",
+      "description": "Official PT NMSA internal memo document metadata and Google Drive archive link.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "nomorMemo": { "type": "string" },
+        "tanggal": { "type": "string" },
+        "dari": { "type": "string" },
+        "kepada": { "type": "string" },
+        "perihal": { "type": "string" },
+        "isiSurat": { "type": "string" },
+        "driveUrl": { "type": "string" },
+        "driveFileId": { "type": "string" },
+        "driveFolderPath": { "type": "string" },
+        "signedDriveUrl": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "nomorMemo", "tanggal", "perihal"]
+    },
+    "employeeLoan": {
+      "title": "EmployeeLoan",
+      "description": "Employee loan application, installment ledger, and Google Drive archive link.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "nomorPinjaman": { "type": "string" },
+        "tanggalPermohonan": { "type": "string" },
+        "namaKaryawan": { "type": "string" },
+        "jumlahPinjaman": { "type": "number" },
+        "status": { "type": "string" },
+        "payments": { "type": "array" },
+        "driveUrl": { "type": "string" },
+        "driveFileId": { "type": "string" },
+        "driveFolderPath": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "nomorPinjaman", "namaKaryawan", "jumlahPinjaman", "status"]
     }
   },
   "firestore": {
@@ -107,7 +148,15 @@
     },
     "attendance": {
       "schema": "attendanceRecord",
-      "description": "Daily employee attendance, weekly meal allowance reports, workers_master, and monthly_transactions_master schedule."
+      "description": "Daily employee attendance, weekly meal allowance reports, workers_master, internal_memos_master, employee_loans_master, and monthly_transactions_master."
+    },
+    "internal_memos": {
+      "schema": "internalMemo",
+      "description": "Official Internal Memo Direksi synced across PC and mobile devices."
+    },
+    "employee_loans": {
+      "schema": "employeeLoan",
+      "description": "Employee loans and installment payment records synced across devices."
     }
   }
 }

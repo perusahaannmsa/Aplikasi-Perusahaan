@@ -6,12 +6,15 @@ import {
   saveConnectedDrives,
 } from '../firebase';
 
-export type DriveModuleKey = 'absen' | 'voucher' | 'memo';
+import { getOrCreateNestedFolder } from '../lib/googleWorkspaceAbsen';
+
+export type DriveModuleKey = 'absen' | 'voucher' | 'memo' | 'pinjaman' | 'pph23';
 
 export interface ScopedDriveCategory {
   key: DriveModuleKey;
   label: string;
   folderName: string;
+  legacyFolderNames?: string[];
   description: string;
 }
 
@@ -34,10 +37,23 @@ export const SCOPED_DRIVE_CATEGORIES: ScopedDriveCategory[] = [
     folderName: 'ARSIP-INTERNAL-MEMO-NMSA',
     description: 'Arsip resmi Internal Memo Direksi & dokumen hasil scan tanda tangan.',
   },
+  {
+    key: 'pinjaman',
+    label: 'Pinjaman Karyawan & Cicilan',
+    folderName: 'PINJAMAN-KARYAWAN-NMSA',
+    description: 'Formulir permohonan pinjaman PDF, catatan cicilan, & cadangan data pinjaman.',
+  },
+  {
+    key: 'pph23',
+    label: 'PPh 23 & Master NPWP',
+    folderName: 'PPH23-CORETAX-NMSA',
+    legacyFolderNames: ['NPWP-VENDOR-NMSA-APP'],
+    description: 'Rekap Coretax PPh 23, berkas Bukti Potong pajak, & cadangan Master NPWP vendor.',
+  },
 ];
 
 export const ALLOWED_ROOT_FOLDER_NAMES = new Set(
-  SCOPED_DRIVE_CATEGORIES.map((c) => c.folderName)
+  SCOPED_DRIVE_CATEGORIES.flatMap((c) => [c.folderName, ...(c.legacyFolderNames || [])])
 );
 
 export interface ScopedDriveFile {
@@ -112,7 +128,7 @@ const assertRegisteredAccountAndGetToken = (accountEmail: string): string => {
 };
 
 /**
- * Reads storage metadata and ONLY the 3 allowed root folders (Absen, Voucher, Internal Memo)
+ * Reads storage metadata and ONLY the 5 allowed root folders (Absen, Voucher, Internal Memo, Pinjaman, PPh 23)
  * for a registered account. No other Drive folders or files are queried or returned.
  */
 export const loadRegisteredAccountScopedDrive = async (
@@ -178,14 +194,17 @@ export const loadRegisteredAccountScopedDrive = async (
     } catch (_) {}
   }
 
-  // 2. Query ONLY the 3 permitted main folders by exact folder name
+  // 2. Query ONLY the 5 permitted main folders by exact folder name (plus legacy NPWP folder if present)
+  const nameClauses = Array.from(ALLOWED_ROOT_FOLDER_NAMES)
+    .map((n) => `name = '${n.replace(/'/g, "\\'")}'`)
+    .join(' or ');
+
   const scopedQuery =
-    `mimeType = '${FOLDER_MIME}' and trashed = false and ` +
-    `(name = 'ABSENSI-NMSA-APP' or name = 'Voucher-APP' or name = 'ARSIP-INTERNAL-MEMO-NMSA')`;
+    `mimeType = '${FOLDER_MIME}' and trashed = false and (${nameClauses})`;
 
   const listUrl =
     `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(scopedQuery)}` +
-    `&spaces=drive&pageSize=30&orderBy=modifiedTime desc` +
+    `&spaces=drive&pageSize=50&orderBy=modifiedTime desc` +
     `&fields=files(id,name,mimeType,modifiedTime,webViewLink,parents)`;
 
   const listRes = await fetch(listUrl, {
@@ -201,20 +220,27 @@ export const loadRegisteredAccountScopedDrive = async (
 
   if (!listRes.ok) {
     const errText = await listRes.text().catch(() => listRes.statusText);
-    throw new Error(`Gagal membaca 3 folder utama Google Drive: ${errText}`);
+    throw new Error(`Gagal membaca 5 folder utama Google Drive: ${errText}`);
   }
 
   const listData = await listRes.json();
   const rawFiles: any[] = Array.isArray(listData?.files) ? listData.files : [];
 
-  // Double-filter client-side to guarantee only the 3 exact names are kept
+  // Double-filter client-side to guarantee only the permitted exact names are kept
   const allowedFolders = rawFiles.filter(
     (f) => f && f.mimeType === FOLDER_MIME && ALLOWED_ROOT_FOLDER_NAMES.has(f.name)
   );
 
   const allowedFolderIds = new Set<string>();
   const roots: ScopedRootFolderStatus[] = SCOPED_DRIVE_CATEGORIES.map((category) => {
-    const matches = allowedFolders.filter((f) => f.name === category.folderName);
+    const acceptedNames = new Set([category.folderName, ...(category.legacyFolderNames || [])]);
+    const matches = allowedFolders.filter((f) => acceptedNames.has(f.name));
+    // Prefer canonical primary folderName over legacy if both exist
+    matches.sort((a, b) => {
+      if (a.name === category.folderName && b.name !== category.folderName) return -1;
+      if (b.name === category.folderName && a.name !== category.folderName) return 1;
+      return 0;
+    });
     // Register all matching root folder IDs (so nested browsing works reliably), and pick primary
     matches.forEach((m) => {
       if (m.id) allowedFolderIds.add(m.id);
@@ -250,7 +276,7 @@ export const loadRegisteredAccountScopedDrive = async (
 };
 
 /**
- * Lists files & subfolders inside a verified descendant folder belonging to one of the 3 allowed main folders.
+ * Lists files & subfolders inside a verified descendant folder belonging to one of the 5 allowed main folders.
  * Refuses to query if folderId is outside the verified hierarchy or if accountEmail is unregistered.
  */
 export const fetchScopedFolderChildren = async (
@@ -264,7 +290,7 @@ export const fetchScopedFolderChildren = async (
 
   if (!folderId || !allowedFolderIds.has(folderId)) {
     throw new Error(
-      'AKSES_FOLDER_DITOLAK: Folder ini berada di luar 3 folder data utama yang diizinkan (Absen, Voucher, Internal Memo).'
+      'AKSES_FOLDER_DITOLAK: Folder ini berada di luar 5 folder data utama yang diizinkan (Absen, Voucher, Internal Memo, Pinjaman, PPh 23).'
     );
   }
 
@@ -321,4 +347,28 @@ export const fetchScopedFolderChildren = async (
       parents: f.parents,
     };
   });
+};
+
+/**
+ * Initializes (creates if missing) one of the 5 permitted main folders on a registered Drive account.
+ */
+export const initializeScopedRootFolder = async (
+  accountEmail: string,
+  moduleKey: DriveModuleKey
+): Promise<ScopedDriveFile> => {
+  const cleanEmail = (accountEmail || '').trim().toLowerCase();
+  const token = assertRegisteredAccountAndGetToken(cleanEmail);
+  const category = SCOPED_DRIVE_CATEGORIES.find((c) => c.key === moduleKey);
+  if (!category) {
+    throw new Error(`Kategori folder '${moduleKey}' tidak dikenali.`);
+  }
+  const folderId = await getOrCreateNestedFolder(token, [category.folderName]);
+  return {
+    id: folderId,
+    name: category.folderName,
+    mimeType: FOLDER_MIME,
+    isFolder: true,
+    modifiedTime: new Date().toISOString(),
+    webViewLink: `https://drive.google.com/drive/folders/${folderId}`,
+  };
 };

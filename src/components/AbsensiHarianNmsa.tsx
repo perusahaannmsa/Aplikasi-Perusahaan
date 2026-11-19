@@ -102,6 +102,62 @@ function formatLocalYYYYMMDD(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+// Non-destructive merge for attendance records across local & cloud devices
+function mergeAttendanceListsSafely(
+  localList: AttendanceRecord[],
+  incomingList: AttendanceRecord[]
+): AttendanceRecord[] {
+  const map = new Map<string, AttendanceRecord>();
+  (localList || []).forEach((r) => {
+    if (!r?.workerId) return;
+    map.set(r.workerId, {
+      ...r,
+      attendance: { ...(r.attendance || {}) },
+      customStatus: { ...(r.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">,
+      reasons: { ...(r.reasons || {}) },
+      signatures: { ...(r.signatures || {}) },
+    });
+  });
+
+  (incomingList || []).forEach((r) => {
+    if (!r?.workerId) return;
+    const existing = map.get(r.workerId);
+    if (!existing) {
+      map.set(r.workerId, {
+        ...r,
+        attendance: { ...(r.attendance || {}) },
+        customStatus: { ...(r.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">,
+        reasons: { ...(r.reasons || {}) },
+        signatures: { ...(r.signatures || {}) },
+      });
+      return;
+    }
+
+    const mergedAtt: Record<string, boolean> = { ...(existing.attendance || {}) };
+    if (r.attendance) {
+      Object.entries(r.attendance).forEach(([d, val]) => {
+        if (val === true) mergedAtt[d] = true;
+      });
+    }
+    existing.attendance = mergedAtt;
+    existing.customStatus = {
+      ...(existing.customStatus || {}),
+      ...(r.customStatus || {}),
+    } as Record<string, "Sakit" | "Izin" | "Meeting">;
+    existing.reasons = {
+      ...(existing.reasons || {}),
+      ...(r.reasons || {}),
+    };
+    if (r.signatures) {
+      existing.signatures = { ...(existing.signatures || {}), ...r.signatures };
+    }
+    if (r.dailyAllowance) existing.dailyAllowance = r.dailyAllowance;
+    if (r.allowanceRate) existing.allowanceRate = r.allowanceRate;
+  });
+
+  return Array.from(map.values());
+}
+
 // Extract Year and Month Name in Indonesian with 01-12 prefix from a period or date string
 function parseYearAndMonthFromPeriod(periodText: string): { targetYear: string; targetMonth: string } {
   const cleanPeriod = periodText || "";
@@ -2267,10 +2323,10 @@ export function AbsensiHarianNmsa({
           if (data.workers && data.workers.length > 0) {
             const nonDeletedDefaults = INITIAL_WORKERS.filter(dw => !deletedIds.includes(dw.id));
             const serverWithDefaults = mergeWorkerListsSafely(data.workers, nonDeletedDefaults, deletedIds);
+            resolvedWorkers = mergeWorkerListsSafely(workers, serverWithDefaults, deletedIds);
             setWorkers((prevWorkers) => {
               // Merge safely so stale server/Vercel state NEVER erases newly added Firestore/local workers
               const safelyMerged = mergeWorkerListsSafely(prevWorkers, serverWithDefaults, deletedIds);
-              resolvedWorkers = safelyMerged;
               if (JSON.stringify(prevWorkers) !== JSON.stringify(safelyMerged)) {
                 try {
                   localStorage.setItem("karyawan_uang_makan", JSON.stringify(safelyMerged));
@@ -2284,7 +2340,10 @@ export function AbsensiHarianNmsa({
 
           if (data.attendanceRecords && Array.isArray(data.attendanceRecords)) {
             const now = Date.now();
-            const allWorkerIds = new Set(resolvedWorkers.map((w: any) => w.id));
+            const allWorkerIds = new Set([
+              ...resolvedWorkers.map((w: any) => w.id),
+              ...data.attendanceRecords.map((r: any) => r?.workerId).filter(Boolean),
+            ].filter((id) => !deletedIds.includes(id)));
 
             setAttendanceRecords((prevLocal) => {
               const map = new Map<string, AttendanceRecord>();
@@ -2575,7 +2634,7 @@ export function AbsensiHarianNmsa({
       }
       if (cloudData.attendanceRecords && cloudData.attendanceRecords.length > 0) {
         setAttendanceRecords((prevLocal) => {
-          // Pembersihan komparasi: hanya bandingkan tanggal hadir aktif (true) dan status custom
+          const merged = mergeAttendanceListsSafely(prevLocal || [], cloudData.attendanceRecords);
           const serializeClean = (recs: any[]) => {
             return (recs || []).map(r => {
               const cleanAtt: Record<string, boolean> = {};
@@ -2593,11 +2652,14 @@ export function AbsensiHarianNmsa({
             }).sort((a, b) => (a.workerId || '').localeCompare(b.workerId || ''));
           };
 
-          if (JSON.stringify(serializeClean(prevLocal)) === JSON.stringify(serializeClean(cloudData.attendanceRecords))) {
+          if (JSON.stringify(serializeClean(prevLocal)) === JSON.stringify(serializeClean(merged))) {
             return prevLocal;
           }
-          console.log(`⚡ [Realtime Sync] Menerima pembaruan absensi instan dari perangkat lain (${cloudData.attendanceRecords.length} records)`);
-          return cloudData.attendanceRecords;
+          try {
+            localStorage.setItem("absensi_uang_makan_records", JSON.stringify(merged));
+          } catch (_) {}
+          console.log(`⚡ [Realtime Sync] Menggabungkan pembaruan absensi instan dari perangkat lain (${merged.length} records)`);
+          return merged;
         });
       }
       if (cloudData.workers && cloudData.workers.length > 0) {
@@ -2614,8 +2676,14 @@ export function AbsensiHarianNmsa({
       }
       if (cloudData.weeklyReports && cloudData.weeklyReports.length > 0) {
         setWeeklyReports((prevR) => {
-          if (JSON.stringify(prevR) === JSON.stringify(cloudData.weeklyReports)) return prevR;
-          return cloudData.weeklyReports;
+          const mergedReports = deduplicateWeeklyReports([...(prevR || []), ...cloudData.weeklyReports]);
+          if (JSON.stringify(prevR) === JSON.stringify(mergedReports)) return prevR;
+          try {
+            localStorage.setItem("laporan_uang_makan_log", JSON.stringify(mergedReports));
+            localStorage.setItem("weekly_reports_nmsa", JSON.stringify(mergedReports));
+            localStorage.setItem("weekly_reports", JSON.stringify(mergedReports));
+          } catch (_) {}
+          return mergedReports;
         });
       }
     });
@@ -2625,7 +2693,7 @@ export function AbsensiHarianNmsa({
         return;
       }
       setWorkers((prevW) => {
-        const cleaned = mergeWorkerListsSafely(masterWorkers, [], deletedIds);
+        const cleaned = mergeWorkerListsSafely(masterWorkers, prevW, deletedIds);
         if (JSON.stringify(prevW) === JSON.stringify(cleaned)) return prevW;
         try {
           localStorage.setItem("karyawan_uang_makan", JSON.stringify(cleaned));
@@ -4926,23 +4994,34 @@ export function AbsensiHarianNmsa({
       // 1. Ambil data gabungan langsung via Firestore SDK
       const fbData = await loadAttendanceFromFirestore();
       if (fbData && fbData.attendanceRecords && fbData.attendanceRecords.length > 0) {
-        setAttendanceRecords(fbData.attendanceRecords);
+        const deletedIds = getDeletedWorkerIds();
+        const mergedAtt = mergeAttendanceListsSafely(attendanceRecords, fbData.attendanceRecords);
+        const mergedW = fbData.workers && fbData.workers.length > 0
+          ? mergeWorkerListsSafely(fbData.workers, workers, deletedIds)
+          : workers;
+        const mergedReports = fbData.weeklyReports && fbData.weeklyReports.length > 0
+          ? deduplicateWeeklyReports([...(weeklyReports || []), ...fbData.weeklyReports])
+          : weeklyReports;
+
+        setAttendanceRecords(mergedAtt);
         if (fbData.workers && fbData.workers.length > 0) {
-          setWorkers(fbData.workers);
+          setWorkers(mergedW);
         }
         if (fbData.weeklyReports && fbData.weeklyReports.length > 0) {
-          setWeeklyReports(fbData.weeklyReports);
+          setWeeklyReports(mergedReports);
         }
         try {
-          localStorage.setItem("absensi_uang_makan_records", JSON.stringify(fbData.attendanceRecords));
-          localStorage.setItem("weekly_reports_nmsa", JSON.stringify(fbData.weeklyReports || []));
-          localStorage.setItem("weekly_reports", JSON.stringify(fbData.weeklyReports || []));
-          localStorage.setItem("laporan_uang_makan_log", JSON.stringify(fbData.weeklyReports || []));
+          localStorage.setItem("absensi_uang_makan_records", JSON.stringify(mergedAtt));
+          localStorage.setItem("karyawan_uang_makan", JSON.stringify(mergedW));
+          localStorage.setItem("workers_v1", JSON.stringify(mergedW));
+          localStorage.setItem("weekly_reports_nmsa", JSON.stringify(mergedReports || []));
+          localStorage.setItem("weekly_reports", JSON.stringify(mergedReports || []));
+          localStorage.setItem("laporan_uang_makan_log", JSON.stringify(mergedReports || []));
         } catch (_) {}
 
-        // Otomatis navigasikan kalender ke minggu dengan data aktif jika minggu saat ini kosong
+        // Otomatis navigasikan kalender ke minggu yang memiliki data aktif jika minggu saat ini kosong
         if (fbData.latestActiveDate) {
-          const curWeekHasAny = fbData.attendanceRecords.some(r => {
+          const curWeekHasAny = mergedAtt.some(r => {
             if (!r.attendance) return false;
             return weekDates.some(d => r.attendance[d] === true);
           });
@@ -4955,11 +5034,11 @@ export function AbsensiHarianNmsa({
         }
 
         // Sinkronisasi pemulihan ke server background
-        syncStateToServer(fbData.workers || workers, fbData.attendanceRecords, fbData.weeklyReports || weeklyReports).catch(() => {});
+        syncStateToServer(mergedW, mergedAtt, mergedReports).catch(() => {});
 
         setRestoreBanner({
           type: "success",
-          message: `Berhasil memulihkan ${fbData.attendanceRecords.length} catatan absensi & ${(fbData.weeklyReports || []).length} laporan mingguan dari Firebase Firestore!`,
+          message: `Berhasil memulihkan & menggabungkan ${mergedAtt.length} catatan absensi & ${(mergedReports || []).length} laporan mingguan dari Firebase Firestore!`,
           latestDate: fbData.latestActiveDate || undefined
         });
         return;
@@ -4969,11 +5048,17 @@ export function AbsensiHarianNmsa({
       const res = await fetch("/api/admin/restore-from-firestore", { method: "POST" });
       const resData = await res.json();
       if (res.ok && resData.data?.attendanceRecords?.length > 0) {
-        setAttendanceRecords(resData.data.attendanceRecords);
-        if (resData.data.workers?.length > 0) setWorkers(resData.data.workers);
-        if (resData.data.weeklyReports?.length > 0) setWeeklyReports(resData.data.weeklyReports);
+        const deletedIds = getDeletedWorkerIds();
+        const mergedAtt = mergeAttendanceListsSafely(attendanceRecords, resData.data.attendanceRecords);
+        setAttendanceRecords(mergedAtt);
+        if (resData.data.workers?.length > 0) {
+          setWorkers((prevW) => mergeWorkerListsSafely(resData.data.workers, prevW, deletedIds));
+        }
+        if (resData.data.weeklyReports?.length > 0) {
+          setWeeklyReports((prevR) => deduplicateWeeklyReports([...(prevR || []), ...resData.data.weeklyReports]));
+        }
         try {
-          localStorage.setItem("absensi_uang_makan_records", JSON.stringify(resData.data.attendanceRecords));
+          localStorage.setItem("absensi_uang_makan_records", JSON.stringify(mergedAtt));
         } catch (_) {}
         setRestoreBanner({
           type: "success",

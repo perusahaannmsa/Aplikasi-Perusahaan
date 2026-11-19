@@ -19,6 +19,7 @@ import {
   fetchScopedFolderChildren,
   formatDriveBytes,
   getDriveMimeBadge,
+  initializeScopedRootFolder,
   loadRegisteredAccountScopedDrive,
 } from '../utils/googleDriveScopedBrowser';
 import {
@@ -34,6 +35,8 @@ import {
   FileText,
   Folder,
   FolderLock,
+  FolderPlus,
+  HandCoins,
   HardDrive,
   Image as ImageIcon,
   Key,
@@ -110,6 +113,7 @@ export const GoogleDriveBrowser: React.FC<GoogleDriveBrowserProps> = ({
   const [isLoadingRoot, setIsLoadingRoot] = useState(false);
   const [rootError, setRootError] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [initializingModule, setInitializingModule] = useState<DriveModuleKey | null>(null);
 
   // Drill-down folder navigation
   const [breadcrumbs, setBreadcrumbs] = useState<BreadcrumbNode[]>([]);
@@ -284,7 +288,7 @@ export const GoogleDriveBrowser: React.FC<GoogleDriveBrowserProps> = ({
         await loadAccountRoot(selectedEmail);
         setAccountFeedback({
           type: 'success',
-          text: `Akun '${selectedEmail}' berhasil terhubung dan siap dibaca (khusus 3 folder utama).`,
+          text: `Akun '${selectedEmail}' berhasil terhubung dan siap dibaca (khusus 5 folder utama).`,
         });
       }
     } catch (err: any) {
@@ -294,6 +298,27 @@ export const GoogleDriveBrowser: React.FC<GoogleDriveBrowserProps> = ({
       });
     } finally {
       setIsConnecting(false);
+    }
+  };
+
+  const handleInitializeRootFolder = async (moduleKey: DriveModuleKey, label: string) => {
+    if (!selectedEmail) return;
+    setInitializingModule(moduleKey);
+    setAccountFeedback(null);
+    try {
+      await initializeScopedRootFolder(selectedEmail, moduleKey);
+      await loadAccountRoot(selectedEmail);
+      setAccountFeedback({
+        type: 'success',
+        text: `Folder '${label}' berhasil disiapkan di Google Drive (${selectedEmail}).`,
+      });
+    } catch (err: any) {
+      setAccountFeedback({
+        type: 'error',
+        text: err?.message || `Gagal membuat folder ${label} di Google Drive.`,
+      });
+    } finally {
+      setInitializingModule(null);
     }
   };
 
@@ -355,6 +380,8 @@ export const GoogleDriveBrowser: React.FC<GoogleDriveBrowserProps> = ({
   const getCategoryIcon = (key: DriveModuleKey) => {
     if (key === 'absen') return <Users size={22} />;
     if (key === 'voucher') return <Receipt size={22} />;
+    if (key === 'pinjaman') return <HandCoins size={22} />;
+    if (key === 'pph23') return <ShieldCheck size={22} />;
     return <FileText size={22} />;
   };
 
@@ -371,6 +398,20 @@ export const GoogleDriveBrowser: React.FC<GoogleDriveBrowserProps> = ({
         badge: 'bg-amber-100 text-amber-900 border-amber-200',
         iconBox: 'bg-amber-100 text-amber-700',
         border: 'hover:border-amber-400',
+      };
+    }
+    if (key === 'pinjaman') {
+      return {
+        badge: 'bg-sky-100 text-sky-900 border-sky-200',
+        iconBox: 'bg-sky-100 text-sky-700',
+        border: 'hover:border-sky-400',
+      };
+    }
+    if (key === 'pph23') {
+      return {
+        badge: 'bg-rose-100 text-rose-900 border-rose-200',
+        iconBox: 'bg-rose-100 text-rose-700',
+        border: 'hover:border-rose-400',
       };
     }
     return {
@@ -421,7 +462,7 @@ export const GoogleDriveBrowser: React.FC<GoogleDriveBrowserProps> = ({
             </button>
             <span className="inline-flex items-center gap-1 text-[11px] font-mono font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-xl">
               <Lock size={12} />
-              Khusus 3 Folder Utama &amp; Akun Terdaftar
+              Khusus 5 Folder Utama &amp; Akun Terdaftar
             </span>
           </div>
           <h2 className="text-xl sm:text-2xl font-black text-stone-900 tracking-tight font-display flex items-center gap-2">
@@ -429,10 +470,12 @@ export const GoogleDriveBrowser: React.FC<GoogleDriveBrowserProps> = ({
             <span>Penyimpanan Google Drive</span>
           </h2>
           <p className="text-xs sm:text-sm text-stone-500 max-w-2xl">
-            Lihat dan buka arsip Google Drive dari akun yang terdaftar di aplikasi. Akses dibatasi eksklusif hanya membaca 3 folder utama:{' '}
+            Lihat dan buka arsip Google Drive dari akun yang terdaftar di aplikasi. Akses dibatasi eksklusif hanya membaca 5 folder utama:{' '}
             <strong className="text-stone-800">Absen</strong>,{' '}
-            <strong className="text-stone-800">Voucher</strong>, dan{' '}
-            <strong className="text-stone-800">Internal Memo</strong>.
+            <strong className="text-stone-800">Voucher</strong>,{' '}
+            <strong className="text-stone-800">Internal Memo</strong>,{' '}
+            <strong className="text-stone-800">Pinjaman</strong>, dan{' '}
+            <strong className="text-stone-800">PPh 23 &amp; NPWP</strong>.
           </p>
         </div>
 
@@ -658,10 +701,10 @@ export const GoogleDriveBrowser: React.FC<GoogleDriveBrowserProps> = ({
         <div className="bg-white rounded-2xl border border-stone-200 p-12 text-center space-y-3 shadow-3xs">
           <Loader2 size={28} className="animate-spin text-amber-600 mx-auto" />
           <div className="text-sm font-bold text-stone-800">
-            Membaca 3 folder utama dari Google Drive ({selectedEmail})...
+            Membaca 5 folder utama dari Google Drive ({selectedEmail})...
           </div>
           <p className="text-xs text-stone-500">
-            Hanya folder Absen, Voucher, dan Internal Memo yang diakses oleh aplikasi.
+            Hanya folder Absen, Voucher, Internal Memo, Pinjaman, dan PPh 23 yang diakses oleh aplikasi.
           </p>
         </div>
       ) : rootError ? (
@@ -698,11 +741,12 @@ export const GoogleDriveBrowser: React.FC<GoogleDriveBrowserProps> = ({
           </div>
         </div>
       ) : snapshot && breadcrumbs.length === 0 ? (
-        /* ROOT VIEW: Strictly 3 Main Data Folders Only */
+        /* ROOT VIEW: Strictly 5 Main Data Folders Only */
         <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {snapshot.roots.map((root) => {
               const accent = getCategoryAccent(root.category.key);
+              const isInitializing = initializingModule === root.category.key;
               return (
                 <div
                   key={root.category.key}
@@ -768,9 +812,23 @@ export const GoogleDriveBrowser: React.FC<GoogleDriveBrowserProps> = ({
                         )}
                       </>
                     ) : (
-                      <div className="w-full text-center py-2 px-3 rounded-xl bg-stone-50 border border-stone-200 text-[11px] text-stone-500">
-                        Folder akan muncul otomatis setelah Anda mengarsipkan data {root.category.label}.
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleInitializeRootFolder(root.category.key, root.category.folderName)
+                        }
+                        disabled={isInitializing}
+                        className="w-full inline-flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-stone-900 hover:bg-stone-800 text-white text-xs font-bold transition cursor-pointer disabled:opacity-50"
+                      >
+                        {isInitializing ? (
+                          <Loader2 size={14} className="animate-spin text-amber-400" />
+                        ) : (
+                          <FolderPlus size={14} className="text-amber-400" />
+                        )}
+                        <span>
+                          {isInitializing ? 'Menyiapkan Folder...' : 'Siapkan Folder di Drive'}
+                        </span>
+                      </button>
                     )}
                   </div>
                 </div>
@@ -781,10 +839,12 @@ export const GoogleDriveBrowser: React.FC<GoogleDriveBrowserProps> = ({
           <div className="bg-stone-100/80 rounded-2xl border border-stone-200 p-4 flex items-center gap-3 text-xs text-stone-600">
             <ShieldCheck size={18} className="text-emerald-700 shrink-0" />
             <span>
-              <strong>Pembatasan Privasi Aktif:</strong> Aplikasi hanya membaca 3 folder utama di atas (
+              <strong>Pembatasan Privasi Aktif:</strong> Aplikasi hanya membaca 5 folder utama di atas (
               <code className="font-mono text-stone-800">ABSENSI-NMSA-APP</code>,{' '}
-              <code className="font-mono text-stone-800">Voucher-APP</code>, dan{' '}
-              <code className="font-mono text-stone-800">ARSIP-INTERNAL-MEMO-NMSA</code>) milik akun terdaftar{' '}
+              <code className="font-mono text-stone-800">Voucher-APP</code>,{' '}
+              <code className="font-mono text-stone-800">ARSIP-INTERNAL-MEMO-NMSA</code>,{' '}
+              <code className="font-mono text-stone-800">PINJAMAN-KARYAWAN-NMSA</code>, dan{' '}
+              <code className="font-mono text-stone-800">PPH23-CORETAX-NMSA</code>) milik akun terdaftar{' '}
               <strong className="text-stone-900">{snapshot.email}</strong>. Folder pribadi dan file lainnya tidak dibaca.
             </span>
           </div>
@@ -800,7 +860,7 @@ export const GoogleDriveBrowser: React.FC<GoogleDriveBrowserProps> = ({
                 onClick={() => handleBreadcrumbClick(-1)}
                 className="px-2.5 py-1 rounded-lg bg-white hover:bg-amber-50 border border-stone-200 font-bold text-stone-800 transition cursor-pointer"
               >
-                3 Folder Utama
+                5 Folder Utama
               </button>
               {breadcrumbs.map((crumb, idx) => (
                 <React.Fragment key={crumb.id}>

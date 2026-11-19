@@ -33,6 +33,10 @@ import {
 } from '../utils/loanUtils';
 import { downloadEmployeeLoanPdf } from '../utils/loanPdfGenerator';
 import { EmployeeLoanDocument } from './EmployeeLoanDocument';
+import {
+  loadEmployeeLoansFromFirestore,
+  saveSingleEmployeeLoanToFirestore,
+} from '../firebase';
 
 interface PublicEmployeeLoanInputProps {
   onBackToHome?: () => void;
@@ -71,6 +75,23 @@ export const PublicEmployeeLoanInput: React.FC<PublicEmployeeLoanInputProps> = (
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [isCopiedRef, setIsCopiedRef] = useState(false);
+  const [cloudExistingLoans, setCloudExistingLoans] = useState<EmployeeLoan[]>(() =>
+    getSavedEmployeeLoans()
+  );
+
+  useEffect(() => {
+    let active = true;
+    loadEmployeeLoansFromFirestore()
+      .then((cloud) => {
+        if (active && Array.isArray(cloud) && cloud.length > 0) {
+          setCloudExistingLoans(cloud);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Auto calculate cicilan per bulan
   const cicilanPerBulan = useMemo(() => {
@@ -102,7 +123,7 @@ export const PublicEmployeeLoanInput: React.FC<PublicEmployeeLoanInputProps> = (
 
   // Build draft preview loan object
   const draftLoan: EmployeeLoan = useMemo(() => {
-    const existingLoans = getSavedEmployeeLoans();
+    const existingLoans = cloudExistingLoans.length > 0 ? cloudExistingLoans : getSavedEmployeeLoans();
     const nextNo = generateNextLoanNumber(existingLoans);
 
     return {
@@ -150,7 +171,8 @@ export const PublicEmployeeLoanInput: React.FC<PublicEmployeeLoanInputProps> = (
     financeJabatan,
     direkturNama,
     direkturJabatan,
-    todayStr
+    todayStr,
+    cloudExistingLoans
   ]);
 
   // Submit & Download PDF Handler
@@ -174,8 +196,14 @@ export const PublicEmployeeLoanInput: React.FC<PublicEmployeeLoanInputProps> = (
     setIsSubmitting(true);
 
     try {
-      // 1. Dapatkan daftar pinjaman tersimpan dan tentukan nomor referensi resmi
-      const existingLoans = getSavedEmployeeLoans();
+      // 1. Dapatkan daftar pinjaman tersimpan (termasuk dari Firestore) dan tentukan nomor referensi resmi
+      const cloudLoans = await loadEmployeeLoansFromFirestore().catch(() => null);
+      const existingLoans =
+        Array.isArray(cloudLoans) && cloudLoans.length > 0
+          ? cloudLoans
+          : cloudExistingLoans.length > 0
+          ? cloudExistingLoans
+          : getSavedEmployeeLoans();
       const officialLoanNumber = generateNextLoanNumber(existingLoans);
 
       const newLoanRecord: EmployeeLoan = {
@@ -187,9 +215,11 @@ export const PublicEmployeeLoanInput: React.FC<PublicEmployeeLoanInputProps> = (
         updatedAt: new Date().toISOString()
       };
 
-      // 2. Simpan ke sistem (LocalStorage + server backend storage)
-      const updatedLoans = [newLoanRecord, ...existingLoans];
+      // 2. Simpan ke sistem (LocalStorage + Server + Cloud Firestore real-time)
+      const updatedLoans = [newLoanRecord, ...existingLoans.filter((l) => l.id !== newLoanRecord.id)];
       saveEmployeeLoans(updatedLoans);
+      await saveSingleEmployeeLoanToFirestore(newLoanRecord).catch(() => {});
+      setCloudExistingLoans(updatedLoans);
 
       setSubmittedLoan(newLoanRecord);
 
