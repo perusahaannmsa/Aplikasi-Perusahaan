@@ -247,6 +247,68 @@ export default function App() {
   const [cloudSyncNotice, setCloudSyncNotice] = useState<string | null>(null);
   const [isInitialReconcileDone, setIsInitialReconcileDone] = useState<boolean>(false);
 
+  const PENDING_FIRESTORE_IDS_KEY = 'NUSANTARA_PENDING_FIRESTORE_SUBMISSION_IDS';
+  const normalizeSubId = (id?: string) => String(id || '').toLowerCase().trim();
+
+  const [cloudSyncedIds, setCloudSyncedIds] = useState<Set<string>>(() => new Set());
+  const [hasCloudInventory, setHasCloudInventory] = useState<boolean>(false);
+  const [uploadingSubIds, setUploadingSubIds] = useState<Set<string>>(() => new Set());
+  const [pendingFirestoreIds, setPendingFirestoreIds] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(PENDING_FIRESTORE_IDS_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed)
+        ? Array.from(new Set(parsed.map((x: any) => String(x || '').toLowerCase().trim()).filter(Boolean)))
+        : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const persistPendingFirestoreIds = (nextIds: string[]) => {
+    const clean = Array.from(new Set(nextIds.map(normalizeSubId).filter(Boolean)));
+    try {
+      if (clean.length === 0) {
+        localStorage.removeItem(PENDING_FIRESTORE_IDS_KEY);
+      } else {
+        localStorage.setItem(PENDING_FIRESTORE_IDS_KEY, JSON.stringify(clean));
+      }
+    } catch (_) {}
+    return clean;
+  };
+
+  const markPendingFirestoreIds = (ids: string[]) => {
+    const additions = ids.map(normalizeSubId).filter(Boolean);
+    if (additions.length === 0) return;
+    setPendingFirestoreIds((prev) => persistPendingFirestoreIds([...prev, ...additions]));
+  };
+
+  const clearPendingFirestoreIds = (ids: string[]) => {
+    const toRemove = new Set(ids.map(normalizeSubId).filter(Boolean));
+    if (toRemove.size === 0) return;
+    setPendingFirestoreIds((prev) => persistPendingFirestoreIds(prev.filter((id) => !toRemove.has(id))));
+  };
+
+  const addCloudSyncedIds = (ids: string[]) => {
+    const additions = ids.map(normalizeSubId).filter(Boolean);
+    if (additions.length === 0) return;
+    setCloudSyncedIds((prev) => {
+      const next = new Set(prev);
+      additions.forEach((id) => next.add(id));
+      return next;
+    });
+  };
+
+  const updateCloudInventoryFromList = (cloudList: Submission[]) => {
+    setCloudSyncedIds(new Set((cloudList || []).map((s) => normalizeSubId(s.id)).filter(Boolean)));
+    setHasCloudInventory(true);
+  };
+
+  const resetCloudInventory = () => {
+    setCloudSyncedIds(new Set());
+    setHasCloudInventory(false);
+  };
+
   // Petty Cash master state organized by category (Lapangan & Kantor Pusat)
   const [pettyCashCustodiansConfig, setPettyCashCustodiansConfig] = useState<PettyCashCustodiansConfig>(() => {
     return loadPettyCashCustodians();
@@ -1045,8 +1107,16 @@ export default function App() {
 
     // 3. Batch update all modified submissions into Firestore
     try {
-      await saveSubmissionsBatchToFirestore(consolidatedSubmissions);
+      const batchRes = await saveSubmissionsBatchToFirestore(consolidatedSubmissions);
+      const ids = consolidatedSubmissions.map((s) => s.id);
+      if (batchRes.success) {
+        addCloudSyncedIds(ids);
+        clearPendingFirestoreIds(ids);
+      } else {
+        markPendingFirestoreIds(ids);
+      }
     } catch (err) {
+      markPendingFirestoreIds(consolidatedSubmissions.map((s) => s.id));
       console.warn('Gagal batch update submissions ke Firestore:', err);
     }
 
@@ -1641,6 +1711,11 @@ export default function App() {
 
       // 4. Fetch submissions from Cloud Firestore with timestamp-aware local & server backup merge
       const cloudRes = await loadSubmissionsFromFirestoreSafe(cleanId);
+      if (cloudRes.ok) {
+        updateCloudInventoryFromList(cloudRes.list);
+      } else {
+        resetCloudInventory();
+      }
       const delIds = getLocalDeletedSubmissionIds();
       const localSubs = loadAllLocalSubmissionsForCompany(cleanId);
       const serverSubs = serverBackupSubmissionsRef.current.filter(
@@ -2117,6 +2192,12 @@ export default function App() {
             delIds
           );
 
+          if (cloudRes.ok) {
+            updateCloudInventoryFromList(cloudRes.list);
+          } else {
+            resetCloudInventory();
+          }
+
           if (cloudRes.ok && cloudRes.list.length > 0) {
             const combined = mergeSubmissionsSafely([bestBackup, cloudRes.list], delIds);
             persistSubmissionsToLocalCaches(combined, companyId);
@@ -2171,6 +2252,97 @@ export default function App() {
     );
   };
 
+  const unsyncedSubmissionIds = useMemo(() => {
+    const pendingSet = new Set(pendingFirestoreIds.map(normalizeSubId));
+    const result = new Set<string>();
+    submissions.forEach((sub) => {
+      if (!sub?.id) return;
+      const idLow = normalizeSubId(sub.id);
+      if (pendingSet.has(idLow) || (hasCloudInventory && !cloudSyncedIds.has(idLow))) {
+        result.add(idLow);
+      }
+    });
+    return result;
+  }, [submissions, pendingFirestoreIds, hasCloudInventory, cloudSyncedIds]);
+
+  const handleUploadSingleToFirestore = async (sub: Submission) => {
+    if (!sub?.id) return;
+    const idLow = normalizeSubId(sub.id);
+    setUploadingSubIds((prev) => {
+      const next = new Set(prev);
+      next.add(idLow);
+      return next;
+    });
+
+    try {
+      await resetFirestoreQuotaCooldown().catch(() => {});
+      const targetComp = normalizeCompanyKey(sub.companyId || activeCompForSync || 'nmsa');
+      const targetCompName = sub.companyName || activeCompNameForSync;
+      const res = await saveSubmissionToFirestore(sub, targetComp, targetCompName);
+      if (res.syncedToCloud) {
+        addCloudSyncedIds([sub.id]);
+        clearPendingFirestoreIds([sub.id]);
+        setCloudSyncNotice(`☁️ Transaksi ${sub.kode || sub.dibayarkanKepada} berhasil diupload ke Firebase Firestore (${getActiveFirebaseProjectId()}).`);
+        setTimeout(() => setCloudSyncNotice(null), 5000);
+      } else {
+        markPendingFirestoreIds([sub.id]);
+        setCloudSyncNotice(`❌ Gagal upload ${sub.kode || sub.dibayarkanKepada} ke Firestore: ${res.error || 'Periksa Rules / koneksi Firebase'}`);
+      }
+    } catch (err: any) {
+      markPendingFirestoreIds([sub.id]);
+      setCloudSyncNotice(`❌ Gagal upload ke Firestore: ${err?.message || err}`);
+    } finally {
+      setUploadingSubIds((prev) => {
+        const next = new Set(prev);
+        next.delete(idLow);
+        return next;
+      });
+    }
+  };
+
+  const handleUploadUnsyncedToFirestore = async () => {
+    const unsyncedList = submissions.filter((s) => s?.id && unsyncedSubmissionIds.has(normalizeSubId(s.id)));
+    const targetList = unsyncedList.length > 0 ? unsyncedList : getBestBackupForCompany(activeCompForSync);
+    if (targetList.length === 0) {
+      setCloudSyncNotice('✅ Semua transaksi sudah tersimpan di Firebase Firestore.');
+      setTimeout(() => setCloudSyncNotice(null), 4000);
+      return;
+    }
+
+    const idLows = targetList.map((s) => normalizeSubId(s.id));
+    setIsCloudSyncing(true);
+    setUploadingSubIds((prev) => {
+      const next = new Set(prev);
+      idLows.forEach((id) => next.add(id));
+      return next;
+    });
+    setCloudSyncNotice(`☁️ Mengupload ${targetList.length} transaksi yang belum tersimpan ke Firebase Firestore (${getActiveFirebaseProjectId()})...`);
+
+    try {
+      await resetFirestoreQuotaCooldown().catch(() => {});
+      const res = await restoreSubmissionsToFirestore(targetList, activeCompForSync, activeCompNameForSync);
+      if (res.successCount > 0) {
+        const uploadedIds = targetList.slice(0, res.successCount).map((s) => s.id);
+        addCloudSyncedIds(uploadedIds);
+        clearPendingFirestoreIds(uploadedIds);
+        setSyncListenerEpoch((n) => n + 1);
+        setCloudSyncNotice(`✅ Berhasil mengupload ${res.successCount}/${res.total} transaksi ke Firebase Firestore (${getActiveFirebaseProjectId()}).`);
+        setTimeout(() => setCloudSyncNotice(null), 5000);
+      } else {
+        setCloudSyncNotice(`❌ Gagal upload ke Firestore: ${res.error || 'Periksa Security Rules atau login akun Firebase Console Anda.'}`);
+      }
+    } catch (err: any) {
+      setCloudSyncNotice(`❌ Gagal upload ke Firestore: ${err?.message || err}`);
+    } finally {
+      setIsCloudSyncing(false);
+      setUploadingSubIds((prev) => {
+        const next = new Set(prev);
+        idLows.forEach((id) => next.delete(id));
+        return next;
+      });
+    }
+  };
+
   const handleRestoreBackupToFirestore = async () => {
     await ensureServerBackupLoaded();
     const backupList = getBestBackupForCompany(activeCompForSync);
@@ -2183,6 +2355,9 @@ export default function App() {
     try {
       const res = await restoreSubmissionsToFirestore(backupList, activeCompForSync, activeCompNameForSync);
       if (res.successCount > 0) {
+        const uploadedIds = backupList.slice(0, res.successCount).map((s) => s.id);
+        addCloudSyncedIds(uploadedIds);
+        clearPendingFirestoreIds(uploadedIds);
         setCloudSyncNotice(`✅ Berhasil memulihkan ${res.successCount}/${res.total} transaksi ke Firebase Firestore (${getActiveFirebaseProjectId()}).`);
         setSyncListenerEpoch((n) => n + 1);
       } else {
@@ -2207,6 +2382,9 @@ export default function App() {
         ensureServerBackupLoaded(),
         loadSubmissionsFromFirestoreSafe(activeCompForSync),
       ]);
+      if (cloudRes.ok) {
+        updateCloudInventoryFromList(cloudRes.list);
+      }
       const bestBackup = getBestBackupForCompany(activeCompForSync);
       const pid = getActiveFirebaseProjectId();
 
@@ -2262,6 +2440,7 @@ export default function App() {
     let lastFocusSyncAt = 0;
 
     const unsubSubs = subscribeToSubmissionsFromFirestore(activeCompForSync, (cloudSubs) => {
+      updateCloudInventoryFromList(cloudSubs);
       if (cloudSubs.length === 0 && submissionsRef.current.length > 0) {
         return;
       }
@@ -2316,6 +2495,12 @@ export default function App() {
     const shouldDeleteDrive = options?.deleteDriveFolder !== false;
 
     addLocalDeletedSubmissionId(id);
+    clearPendingFirestoreIds([id]);
+    setCloudSyncedIds((prev) => {
+      const next = new Set(prev);
+      next.delete(normalizeSubId(id));
+      return next;
+    });
     const updated = submissions.filter((sub) => sub.id !== id);
     saveSubmissionsToStorage(updated);
 
@@ -2438,10 +2623,19 @@ export default function App() {
 
     if (isFirebaseConfigured()) {
       try {
-        await saveSubmissionToFirestore(dupe, userProfile?.companyId, userProfile?.companyName);
+        const res = await saveSubmissionToFirestore(dupe, userProfile?.companyId, userProfile?.companyName);
+        if (res.syncedToCloud) {
+          addCloudSyncedIds([dupe.id]);
+          clearPendingFirestoreIds([dupe.id]);
+        } else {
+          markPendingFirestoreIds([dupe.id]);
+        }
       } catch (err) {
+        markPendingFirestoreIds([dupe.id]);
         console.warn('Silent fallback: cloud replicate rejected', err);
       }
+    } else {
+      markPendingFirestoreIds([dupe.id]);
     }
 
     try {
@@ -2483,17 +2677,23 @@ export default function App() {
       try {
         const res = await saveSubmissionToFirestore(stampedSub, stampedSub.companyId, stampedSub.companyName);
         if (res.syncedToCloud) {
+          addCloudSyncedIds([stampedSub.id]);
+          clearPendingFirestoreIds([stampedSub.id]);
           setCloudSyncNotice(`☁️ Voucher ${stampedSub.kode || stampedSub.dibayarkanKepada} tersimpan langsung di Firebase Firestore.`);
           setTimeout(() => setCloudSyncNotice(null), 4000);
         } else {
+          markPendingFirestoreIds([stampedSub.id]);
           setCloudSyncNotice(`❌ Gagal menyimpan voucher ke Firebase Firestore: ${res.error || 'Periksa koneksi internet'}`);
           setTimeout(() => setCloudSyncNotice(null), 6000);
         }
       } catch (err: any) {
+        markPendingFirestoreIds([stampedSub.id]);
         console.error('❌ Cloud Firestore write error:', err);
         setCloudSyncNotice(`❌ Gagal menyimpan voucher ke Firebase Firestore: ${err?.message || 'Periksa jaringan'}`);
         setTimeout(() => setCloudSyncNotice(null), 6000);
       }
+    } else {
+      markPendingFirestoreIds([stampedSub.id]);
     }
 
     // If this submission is a Petty Cash transaction, automatically create/update report for Absen Harian NMSA
@@ -2758,10 +2958,19 @@ export default function App() {
 
       if (isFirebaseConfigured()) {
         try {
-          await saveSubmissionToFirestore(updatedSub, userProfile?.companyId, userProfile?.companyName);
+          const res = await saveSubmissionToFirestore(updatedSub, userProfile?.companyId, userProfile?.companyName);
+          if (res.syncedToCloud) {
+            addCloudSyncedIds([updatedSub.id]);
+            clearPendingFirestoreIds([updatedSub.id]);
+          } else {
+            markPendingFirestoreIds([updatedSub.id]);
+          }
         } catch (err) {
+          markPendingFirestoreIds([updatedSub.id]);
           console.warn('Silent fallback: cloud status update rejected', err);
         }
+      } else {
+        markPendingFirestoreIds([updatedSub.id]);
       }
 
       try {
@@ -2814,7 +3023,21 @@ export default function App() {
     const updated = sortSubmissionsList(Array.from(mergedMap.values()));
     saveSubmissionsToStorage(updated);
     if (isFirebaseConfigured() && importedList.length > 0) {
-      saveSubmissionsBatchToFirestore(importedList, activeCompForSync, activeCompNameForSync).catch(() => {});
+      saveSubmissionsBatchToFirestore(importedList, activeCompForSync, activeCompNameForSync)
+        .then((res) => {
+          const ids = importedList.map((s) => s.id);
+          if (res.success) {
+            addCloudSyncedIds(ids);
+            clearPendingFirestoreIds(ids);
+          } else {
+            markPendingFirestoreIds(ids);
+          }
+        })
+        .catch(() => {
+          markPendingFirestoreIds(importedList.map((s) => s.id));
+        });
+    } else if (importedList.length > 0) {
+      markPendingFirestoreIds(importedList.map((s) => s.id));
     }
   };
 
@@ -3742,6 +3965,11 @@ export default function App() {
             pettyCashHolders={pettyCashHolders}
             onForceCloudSync={() => handleForceCloudSync(false)}
             onRestoreBackupToFirestore={handleRestoreBackupToFirestore}
+            onUploadSingleToFirestore={handleUploadSingleToFirestore}
+            onUploadUnsyncedToFirestore={handleUploadUnsyncedToFirestore}
+            unsyncedSubmissionIds={unsyncedSubmissionIds}
+            uploadingSubmissionIds={uploadingSubIds}
+            hasCloudInventory={hasCloudInventory}
             onOpenDriveCleaner={() => setIsDriveOrphanCleanerOpen(true)}
             isCloudSyncing={isCloudSyncing}
             cloudSyncNotice={cloudSyncNotice}

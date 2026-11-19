@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Submission, ActivityLog } from '../types';
 import { formatRupiah, formatDateIndonesian, isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, sortSubmissionsDescending } from '../utils';
 import { getVoucherShareLink } from '../utils/appLinks';
-import { Search, Eye, Edit2, Trash2, Calendar, MapPin, DollarSign, Plus, Copy, RefreshCw, Cloud, FileText, Database, History, FileSpreadsheet, CheckCircle, AlertCircle, Printer, Check, ExternalLink, Coins, User, Bell, ChevronDown, Sparkles, Share2, Send, MoreVertical, Receipt, Building2, X, AlertTriangle, Info, Layers, Filter, CreditCard } from 'lucide-react';
+import { Search, Eye, Edit2, Trash2, Calendar, MapPin, DollarSign, Plus, Copy, RefreshCw, Cloud, CloudUpload, FileText, Database, History, FileSpreadsheet, CheckCircle, AlertCircle, Printer, Check, ExternalLink, Coins, User, Bell, ChevronDown, Sparkles, Share2, Send, MoreVertical, Receipt, Building2, X, AlertTriangle, Info, Layers, Filter, CreditCard } from 'lucide-react';
 import { loadActivityLogsFromFirestore, isFirebaseConfigured, triggerGoogleDriveAutoRefresh } from '../firebase';
 import { LiveClock } from './LiveClock';
 import { normalizeText } from '../utils/duplicateDetector';
@@ -30,6 +30,11 @@ interface SubmissionsListProps {
   onCreateMemo?: (submission: Submission) => void;
   onForceCloudSync?: () => void;
   onRestoreBackupToFirestore?: () => void;
+  onUploadSingleToFirestore?: (submission: Submission) => void;
+  onUploadUnsyncedToFirestore?: () => void;
+  unsyncedSubmissionIds?: Set<string>;
+  uploadingSubmissionIds?: Set<string>;
+  hasCloudInventory?: boolean;
   onOpenDriveCleaner?: () => void;
   isCloudSyncing?: boolean;
   cloudSyncNotice?: string | null;
@@ -57,6 +62,11 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   onCreateMemo,
   onForceCloudSync,
   onRestoreBackupToFirestore,
+  onUploadSingleToFirestore,
+  onUploadUnsyncedToFirestore,
+  unsyncedSubmissionIds,
+  uploadingSubmissionIds,
+  hasCloudInventory = false,
   onOpenDriveCleaner,
   isCloudSyncing = false,
   cloudSyncNotice = null,
@@ -112,6 +122,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
 
   // Filter khusus untuk hanya menampilkan potensi voucher dobel input
   const [showOnlyDuplicates, setShowOnlyDuplicates] = useState(false);
+  const [showOnlyUnsynced, setShowOnlyUnsynced] = useState(false);
   const [isDuplicateModalOpen, setIsDuplicateModalOpen] = useState(false);
   const [duplicateModalSearch, setDuplicateModalSearch] = useState('');
   const [selectedClusterKey, setSelectedClusterKey] = useState<string | null>(null);
@@ -657,8 +668,10 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
       }
 
       const matchDuplicates = !showOnlyDuplicates || (activeDuplicateSubmissionIds.size > 0 ? activeDuplicateSubmissionIds.has(sub.id) : duplicateSubmissionIds.has(sub.id));
+      const idLow = String(sub.id || '').toLowerCase().trim();
+      const matchUnsynced = !showOnlyUnsynced || Boolean(unsyncedSubmissionIds?.has(idLow));
 
-      return matchSearch && matchMethod && matchStatus && matchDate && matchDuplicates;
+      return matchSearch && matchMethod && matchStatus && matchDate && matchDuplicates && matchUnsynced;
     });
 
     // Sort descending by tanggal (latest date first), with logical tie-breakers
@@ -687,7 +700,18 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
       // 4. Fallback to ID
       return b.id.localeCompare(a.id);
     });
-  }, [submissions, searchTerm, searchCategory, methodFilter, statusFilter, yearFilter, monthFilter, dateFilter, showOnlyDuplicates, activeDuplicateSubmissionIds, duplicateSubmissionIds]);
+  }, [submissions, searchTerm, searchCategory, methodFilter, statusFilter, yearFilter, monthFilter, dateFilter, showOnlyDuplicates, showOnlyUnsynced, unsyncedSubmissionIds, activeDuplicateSubmissionIds, duplicateSubmissionIds]);
+
+  const unsyncedCount = useMemo(() => {
+    if (!unsyncedSubmissionIds || unsyncedSubmissionIds.size === 0) return 0;
+    return submissions.filter((s) => s?.id && unsyncedSubmissionIds.has(String(s.id).toLowerCase().trim())).length;
+  }, [submissions, unsyncedSubmissionIds]);
+
+  useEffect(() => {
+    if (showOnlyUnsynced && unsyncedCount === 0) {
+      setShowOnlyUnsynced(false);
+    }
+  }, [showOnlyUnsynced, unsyncedCount]);
 
   // Smart fallback: jika bulan/tahun default kosong tetapi ada data di periode lain, otomatis tampilkan Semua Bulan/Tahun
   useEffect(() => {
@@ -1236,6 +1260,50 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
           </div>
         </div>
       )}
+
+      {unsyncedCount > 0 && (
+        <div className="bg-orange-50 border border-orange-300 text-orange-950 rounded-2xl px-4 py-3 text-xs font-semibold flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-3xs print:hidden">
+          <div className="flex items-start sm:items-center gap-2.5">
+            <div className="p-2 bg-orange-500/15 text-orange-700 rounded-xl shrink-0">
+              <CloudUpload size={18} className="text-orange-600" />
+            </div>
+            <div>
+              <p className="font-black text-orange-950">
+                {unsyncedCount} Transaksi Belum Tersimpan di Firestore
+              </p>
+              <p className="text-[11px] text-orange-800 mt-0.5">
+                {hasCloudInventory
+                  ? 'Transaksi bertanda "Belum di Firestore" masih tersimpan di perangkat/server lokal dan belum masuk Cloud Firestore.'
+                  : 'Perubahan transaksi lokal ini belum berhasil diunggah ke Cloud Firestore.'}
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowOnlyUnsynced((v) => !v)}
+              className={`px-3 py-1.5 rounded-xl border text-[11px] font-bold transition cursor-pointer ${
+                showOnlyUnsynced
+                  ? 'bg-orange-900 text-white border-orange-950'
+                  : 'bg-white hover:bg-orange-100 text-orange-900 border-orange-300'
+              }`}
+            >
+              {showOnlyUnsynced ? 'Tampilkan Semua' : `Lihat Belum di Firestore (${unsyncedCount})`}
+            </button>
+            {onUploadUnsyncedToFirestore && (
+              <button
+                type="button"
+                onClick={onUploadUnsyncedToFirestore}
+                disabled={isCloudSyncing}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-[11px] font-black transition shadow-3xs cursor-pointer disabled:opacity-50"
+              >
+                <CloudUpload size={13} className={isCloudSyncing ? 'animate-pulse' : ''} />
+                <span>{isCloudSyncing ? 'Mengupload...' : `Upload ${unsyncedCount} ke Firestore`}</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       {/* Persistent Missing Drive Archive Banner */}
       {(() => {
         const missingCount = submissions.filter(sub => {
@@ -1722,6 +1790,39 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                         )}
 
                         {(() => {
+                          const idLow = String(sub.id || '').toLowerCase().trim();
+                          const isUnsynced = Boolean(unsyncedSubmissionIds?.has(idLow));
+                          const isUploading = Boolean(uploadingSubmissionIds?.has(idLow));
+                          if (!isUnsynced) return null;
+                          return (
+                            <>
+                              <span
+                                className="inline-flex items-center gap-1 text-[9px] font-mono bg-orange-100 text-orange-900 border border-orange-300 font-black px-2 py-0.5 rounded-md shadow-3xs"
+                                title="Transaksi ini belum tersimpan di Firebase Firestore"
+                              >
+                                <AlertCircle size={10} className="text-orange-600" />
+                                <span>Belum di Firestore</span>
+                              </span>
+                              {onUploadSingleToFirestore && (
+                                <button
+                                  type="button"
+                                  disabled={isUploading || isCloudSyncing}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onUploadSingleToFirestore(sub);
+                                  }}
+                                  className="inline-flex items-center gap-1 text-[9px] font-mono bg-orange-600 hover:bg-orange-700 text-white font-black px-2 py-0.5 rounded-md shadow-3xs cursor-pointer disabled:opacity-60"
+                                  title="Upload transaksi ini langsung ke Firebase Firestore"
+                                >
+                                  <CloudUpload size={10} />
+                                  <span>{isUploading ? 'Upload...' : 'Upload'}</span>
+                                </button>
+                              )}
+                            </>
+                          );
+                        })()}
+
+                        {(() => {
                           const displayFileObj = (sub.googleDriveFiles || []).find(f => !f.isF1 && !f.isF2 && !f.isBuktiPembayaran) || 
                                                  (sub.googleDriveFileUrl && !sub.googleDriveFileName?.startsWith('F1 -') && !sub.googleDriveFileName?.startsWith('F2 -') ? { url: sub.googleDriveFileUrl, name: sub.googleDriveFileName } : null) || 
                                                  sub.pettyCashFile || 
@@ -1947,6 +2048,39 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                               </button>
                             )}
 
+
+                            {(() => {
+                              const idLow = String(sub.id || '').toLowerCase().trim();
+                              const isUnsynced = Boolean(unsyncedSubmissionIds?.has(idLow));
+                              const isUploading = Boolean(uploadingSubmissionIds?.has(idLow));
+                              if (!isUnsynced) return null;
+                              return (
+                                <>
+                                  <span
+                                    className="inline-flex items-center gap-1 text-[10px] font-mono bg-orange-100 text-orange-900 border border-orange-300 px-2.5 py-0.5 rounded-full font-extrabold"
+                                    title="Transaksi ini belum tersimpan di Firebase Firestore"
+                                  >
+                                    <AlertCircle size={10} className="text-orange-600" />
+                                    <span>Belum di Firestore</span>
+                                  </span>
+                                  {onUploadSingleToFirestore && (
+                                    <button
+                                      type="button"
+                                      disabled={isUploading || isCloudSyncing}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        onUploadSingleToFirestore(sub);
+                                      }}
+                                      className="inline-flex items-center gap-1 text-[10px] font-mono bg-orange-600 hover:bg-orange-700 text-white px-2.5 py-0.5 rounded-full font-bold transition shadow-3xs cursor-pointer disabled:opacity-60"
+                                      title="Upload transaksi ini ke Firebase Firestore"
+                                    >
+                                      <CloudUpload size={10} />
+                                      <span>{isUploading ? 'Mengupload...' : 'Upload'}</span>
+                                    </button>
+                                  )}
+                                </>
+                              );
+                            })()}
 
                             {(() => {
                               const displayFileObj = (sub.googleDriveFiles || []).find(f => !f.isF1 && !f.isF2 && !f.isBuktiPembayaran) || 
@@ -4798,6 +4932,40 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
           </div>
 
           <div className="py-1">
+            {/* 0. Upload ke Firebase Firestore */}
+            {onUploadSingleToFirestore && (() => {
+              const idLow = String(activeActionSub.id || '').toLowerCase().trim();
+              const isUnsynced = Boolean(unsyncedSubmissionIds?.has(idLow));
+              const isUploading = Boolean(uploadingSubmissionIds?.has(idLow));
+              return (
+                <button
+                  id={`btn-upload-firestore-${activeActionSub.id}`}
+                  disabled={isUploading || isCloudSyncing}
+                  onClick={() => {
+                    const target = activeActionSub;
+                    setOpenActionMenuId(null);
+                    setActionMenuPosition(null);
+                    onUploadSingleToFirestore(target);
+                  }}
+                  className={`w-full px-3.5 py-2 text-xs font-bold flex items-center gap-2.5 transition text-left cursor-pointer disabled:opacity-60 ${
+                    isUnsynced
+                      ? 'bg-orange-50/90 text-orange-900 hover:bg-orange-100 border-b border-orange-150'
+                      : 'text-sky-700 hover:bg-sky-50'
+                  }`}
+                  title={isUnsynced ? 'Upload transaksi ini agar tersimpan permanen di Firebase Firestore' : 'Sinkronkan ulang transaksi ini ke Firebase Firestore'}
+                >
+                  <CloudUpload size={15} className={isUnsynced ? 'text-orange-600 shrink-0' : 'text-sky-600 shrink-0'} />
+                  <span>
+                    {isUploading
+                      ? 'Mengupload ke Firestore...'
+                      : isUnsynced
+                      ? 'Upload ke Firestore'
+                      : 'Sync Ulang ke Firestore'}
+                  </span>
+                </button>
+              );
+            })()}
+
             {/* 1. Bagikan Link */}
             <button
               id={`btn-share-${activeActionSub.id}`}
