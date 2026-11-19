@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Submission, SubmissionItem, PettyCashReport, TransactionType, NpwpRecord, AgendaItem, Project, ProjectRabItem, ProjectExpense, InternalMemo, EmployeeLoan, MonthlyRecurringTransaction } from './types';
 import { INITIAL_SUBMISSIONS } from './data/initialData';
 import { INITIAL_AGENDA_ITEMS } from './data/initialAgenda';
@@ -95,7 +95,16 @@ import {
   flushFirestoreQueue,
   loadMonthlyTransactionsFromFirestore,
   saveMonthlyTransactionsToFirestore,
-  subscribeToMonthlyTransactionsFromFirestore
+  subscribeToMonthlyTransactionsFromFirestore,
+  subscribeToSubmissionsFromFirestore,
+  subscribeToDeletedSubmissionIdsFromFirestore,
+  reconcileSubmissionsWithCloud,
+  persistSubmissionsToLocalCaches,
+  loadAllLocalSubmissionsForCompany,
+  getLocalDeletedSubmissionIds,
+  saveLocalDeletedSubmissionIds,
+  removeLocalDeletedSubmissionId,
+  sortSubmissionsList
 } from './firebase';
 import { loadAttendanceFromFirestore, loadWorkersFromFirestore, mergeWorkerListsSafely, getDeletedWorkerIds } from './lib/firebaseAbsen';
 
@@ -140,28 +149,28 @@ export default function App() {
 
   const [submissions, setSubmissions] = useState<Submission[]>(() => {
     try {
+      const initCompId = (localStorage.getItem('NUSANTARA_ACTIVE_COMPANY_ID') || 'nmsa').toLowerCase().trim();
+      const delSet = new Set(getLocalDeletedSubmissionIds());
+      const combined = loadAllLocalSubmissionsForCompany(initCompId).filter(s => s && s.id && !delSet.has(s.id));
+      if (combined.length > 0) return combined;
       const stored = localStorage.getItem('NUSANTARA_HO_SUBMISSIONS');
       if (!stored) return [];
       const parsed = JSON.parse(stored);
-      if (Array.isArray(parsed)) return parsed.filter(Boolean);
-      // Auto-recovery jika sebelumnya tersimpan objek dari bug konsolidasi
-      if (parsed && typeof parsed === 'object') {
-        if (Array.isArray(parsed.updatedSubmissions)) {
-          console.warn('Memperbaiki data submissions dari objek konsolidasi di localStorage...');
-          localStorage.setItem('NUSANTARA_HO_SUBMISSIONS', JSON.stringify(parsed.updatedSubmissions));
-          return parsed.updatedSubmissions.filter(Boolean);
-        }
-        if (Array.isArray(parsed.submissions)) {
-          localStorage.setItem('NUSANTARA_HO_SUBMISSIONS', JSON.stringify(parsed.submissions));
-          return parsed.submissions.filter(Boolean);
-        }
-      }
+      if (Array.isArray(parsed)) return sortSubmissionsList(parsed.filter(s => s && s.id && !delSet.has(s.id)));
       return [];
     } catch (e) {
       console.error('Error loading cached submissions on init:', e);
       return [];
     }
   });
+
+  const submissionsRef = useRef<Submission[]>(submissions);
+  useEffect(() => {
+    submissionsRef.current = submissions;
+  }, [submissions]);
+
+  const [isCloudSyncing, setIsCloudSyncing] = useState<boolean>(false);
+  const [cloudSyncNotice, setCloudSyncNotice] = useState<string | null>(null);
 
   // Petty Cash master state organized by category (Lapangan & Kantor Pusat)
   const [pettyCashCustodiansConfig, setPettyCashCustodiansConfig] = useState<PettyCashCustodiansConfig>(() => {
@@ -575,14 +584,7 @@ export default function App() {
               setProjectExpenses(raw.projectExpenses);
               localStorage.setItem('nmsa_project_expenses_v1', JSON.stringify(raw.projectExpenses));
             }
-            if (raw.submissions && Array.isArray(raw.submissions) && raw.submissions.length > 0) {
-              setSubmissions(prev => {
-                const map = new Map<string, Submission>();
-                prev.forEach(s => map.set(s.id, s));
-                raw.submissions.forEach((s: Submission) => map.set(s.id, s));
-                return Array.from(map.values());
-              });
-            }
+            // Note: submissions are synchronized exclusively from Cloud Firestore so all devices (PC, HP, Vercel, AI Studio) share one authoritative dataset without local data-store.json drift.
           }
 
           // Also attempt explicit /api/projects synchronization
@@ -1134,14 +1136,7 @@ export default function App() {
         })
         .catch(err => console.warn('Auto-read SPPD from Firestore failed:', err));
     } else if (view === 'list') {
-      loadSubmissionsFromFirestore()
-        .then(subs => {
-          if (subs && subs.length > 0) {
-            setSubmissions(subs);
-            localStorage.setItem('voucher_submissions', JSON.stringify(subs));
-          }
-        })
-        .catch(err => console.warn('Auto-read Submissions from Firestore failed:', err));
+      // Realtime Firestore listener + reconciliation keep 'submissions' automatically synchronized across all devices
     } else if (view === 'absen' || view === 'pinjaman') {
       Promise.all([
         loadAttendanceFromFirestore().catch(() => null),
@@ -1955,78 +1950,27 @@ export default function App() {
         };
         setUserProfile(combinedProfile);
 
-        // Fetch submissions automatically from Firestore strictly scoped to active company
+        // Bidirectional Cloud Reconciliation: merges Firestore + local caches, deletes removed items,
+        // and automatically pushes any unsynced local vouchers (e.g. trapped on one device) to Firestore!
         try {
-          const cloudData = await loadSubmissionsFromFirestore(companyId);
-          if (cloudData && cloudData.length > 0) {
-            // MERGE behavior scoped to company
-            const storedLocal = localStorage.getItem(`NUSANTARA_HO_SUBMISSIONS_${companyId}`) || localStorage.getItem('NUSANTARA_HO_SUBMISSIONS');
-            let localList: Submission[] = [];
-            try {
-              localList = storedLocal ? JSON.parse(storedLocal) : [];
-            } catch (jsonErr) {
-              console.error('Error parsing stored local submissions:', jsonErr);
-            }
-
-            const mergedMap = new Map<string, Submission>();
-            localList.forEach(sub => {
-              if (sub && sub.id) {
-                // Only merge if matching companyId
-                const subComp = (sub.companyId || 'nmsa').toLowerCase().trim();
-                if (subComp === companyId) {
-                  mergedMap.set(sub.id, sub);
-                }
-              }
-            });
-            cloudData.forEach(sub => {
-              if (sub && sub.id) {
-                mergedMap.set(sub.id, sub);
-              }
-            });
-
-            const mergedList = Array.from(mergedMap.values());
-            mergedList.sort((a, b) => new Date(b.tanggal).getTime() - new Date(a.tanggal).getTime());
-
-            saveSubmissionsToStorage(mergedList);
-            try {
-              localStorage.setItem(`NUSANTARA_HO_SUBMISSIONS_${companyId}`, JSON.stringify(mergedList));
-            } catch (e) {}
-          } else {
-            // For companies with 0 cloud items, if it's NOT nmsa, clear list so data from NMSA is not leaked
-            if (companyId !== 'nmsa') {
-              setSubmissions([]);
-              try {
-                localStorage.setItem('NUSANTARA_HO_SUBMISSIONS', JSON.stringify([]));
-                localStorage.setItem(`NUSANTARA_HO_SUBMISSIONS_${companyId}`, JSON.stringify([]));
-              } catch (e) {}
-            } else {
-              const stored = localStorage.getItem('NUSANTARA_HO_SUBMISSIONS');
-              if (stored) {
-                try {
-                  const parsed = JSON.parse(stored);
-                  setSubmissions(Array.isArray(parsed) ? parsed : (parsed?.updatedSubmissions || []));
-                } catch {
-                  setSubmissions([]);
-                }
-              } else {
-                setSubmissions([]);
-              }
-            }
+          setIsCloudSyncing(true);
+          const syncRes = await reconcileSubmissionsWithCloud(
+            companyId,
+            combinedProfile.companyName,
+            { localSnapshot: submissionsRef.current }
+          );
+          setSubmissions(syncRes.merged);
+          persistSubmissionsToLocalCaches(syncRes.merged, companyId);
+          if (syncRes.uploadedCount > 0) {
+            setCloudSyncNotice(`☁️ ${syncRes.uploadedCount} voucher lokal berhasil disinkronkan ke Cloud.`);
+            setTimeout(() => setCloudSyncNotice(null), 6000);
           }
         } catch (e) {
-          console.warn('Notice: Firestore data fetch fallback to local storage:', e);
-          try {
-            const stored = localStorage.getItem('NUSANTARA_HO_SUBMISSIONS');
-            if (stored) {
-              const parsed = JSON.parse(stored);
-              setSubmissions(Array.isArray(parsed) ? parsed : (parsed?.updatedSubmissions || []));
-            } else {
-              setSubmissions([]);
-            }
-          } catch (localStorageErr) {
-            console.warn('Notice: Error loading data from localStorage:', localStorageErr);
-            setSubmissions([]);
-          }
+          console.warn('Notice: Firestore data reconciliation fallback to local cache:', e);
+          const fallbackList = loadAllLocalSubmissionsForCompany(companyId);
+          setSubmissions(fallbackList);
+        } finally {
+          setIsCloudSyncing(false);
         }
       }
     });
@@ -2036,18 +1980,137 @@ export default function App() {
     };
   }, []);
 
-  // Sync state changes with localStorage
+  // Real-time Firestore listener for submissions & deleted markers across ALL open devices (HP & Komputer)
+  const activeCompForSync = (userProfile?.companyId || localStorage.getItem('NUSANTARA_ACTIVE_COMPANY_ID') || 'nmsa').toLowerCase().trim();
+  const activeCompNameForSync = userProfile?.companyName || 'PT Nusantara Mineral Sukses Abadi';
+
+  const handleForceCloudSync = async (silent: boolean = false) => {
+    if (!authUser) return;
+    setIsCloudSyncing(true);
+    if (!silent) setCloudSyncNotice('Menyinkronkan seluruh voucher dengan Cloud Firestore...');
+    try {
+      const res = await reconcileSubmissionsWithCloud(
+        activeCompForSync,
+        activeCompNameForSync,
+        { forceResetQuota: !silent, localSnapshot: submissionsRef.current }
+      );
+      setSubmissions(res.merged);
+      persistSubmissionsToLocalCaches(res.merged, activeCompForSync);
+      setShowQuotaBanner(isFirestoreQuotaExceeded());
+      if (!silent || res.uploadedCount > 0) {
+        const msg = res.usedOfflineFallback
+          ? `Mode lokal aktif (${res.merged.length} voucher). Periksa koneksi atau tunggu kuota Cloud reset.`
+          : res.uploadedCount > 0
+          ? `Sinkronisasi selesai! ${res.uploadedCount} voucher lokal diunggah ke Cloud • Total ${res.merged.length} voucher sama di semua perangkat.`
+          : `Tersinkron dengan Cloud Firestore (${res.merged.length} voucher).`;
+        setCloudSyncNotice(msg);
+        setTimeout(() => setCloudSyncNotice(null), 5000);
+      }
+    } catch (err: any) {
+      if (!silent) {
+        setCloudSyncNotice('Gagal menyinkronkan ke Cloud: ' + (err?.message || 'Periksa jaringan'));
+        setTimeout(() => setCloudSyncNotice(null), 5000);
+      }
+    } finally {
+      setIsCloudSyncing(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!authUser) return;
+
+    let lastFocusSyncAt = 0;
+
+    const applyRealtimeSnapshot = (cloudSubs: Submission[], deletedIds: string[]) => {
+      const delSet = new Set(deletedIds);
+      let pendingIds = new Set<string>();
+      try {
+        const rawQ = localStorage.getItem('NUSANTARA_FIRESTORE_WRITE_QUEUE');
+        if (rawQ) {
+          const arr = JSON.parse(rawQ);
+          if (Array.isArray(arr)) {
+            arr.forEach((q: any) => {
+              if (q?.path === 'submissions' && q?.docId) pendingIds.add(String(q.docId));
+            });
+          }
+        }
+      } catch (_) {}
+
+      const mergedMap = new Map<string, Submission>();
+      cloudSubs.forEach((cSub) => {
+        if (cSub && cSub.id && (!delSet.has(cSub.id) || pendingIds.has(cSub.id))) {
+          mergedMap.set(cSub.id, cSub);
+        }
+      });
+
+      // Keep any currently queued local unsynced mutations until they finish uploading
+      (submissionsRef.current || []).forEach((lSub) => {
+        if (lSub && lSub.id && pendingIds.has(lSub.id)) {
+          mergedMap.set(lSub.id, lSub);
+        }
+      });
+
+      const finalMerged = sortSubmissionsList(Array.from(mergedMap.values()));
+      setSubmissions(finalMerged);
+      persistSubmissionsToLocalCaches(finalMerged, activeCompForSync);
+    };
+
+    const unsubSubs = subscribeToSubmissionsFromFirestore(activeCompForSync, (cloudSubs) => {
+      applyRealtimeSnapshot(cloudSubs, getLocalDeletedSubmissionIds());
+    });
+
+    const unsubDel = subscribeToDeletedSubmissionIdsFromFirestore((delIds) => {
+      const delSet = new Set(delIds);
+      setSubmissions((prev) => {
+        const filtered = prev.filter((s) => !delSet.has(s.id));
+        if (filtered.length !== prev.length) {
+          persistSubmissionsToLocalCaches(filtered, activeCompForSync);
+          return filtered;
+        }
+        return prev;
+      });
+    });
+
+    const handleWakeSync = (forceFullCheck: boolean = false) => {
+      const now = Date.now();
+      // Jika hanya ada antrean lokal yang tertunda, langsung unggah tanpa memakan kuota READ seluruh koleksi
+      if (getPendingFirestoreSyncCount() > 0 && !isFirestoreQuotaExceeded()) {
+        flushFirestoreQueue().catch(() => {});
+      }
+      // Rekonsiliasi penuh cukup dijalankan saat koneksi pulih atau maksimal 10 menit sekali (karena onSnapshot sudah real-time)
+      if (!forceFullCheck && now - lastFocusSyncAt < 10 * 60 * 1000) return;
+      lastFocusSyncAt = now;
+      handleForceCloudSync(true).catch(() => {});
+    };
+
+    const onFocus = () => handleWakeSync(false);
+    const onOnline = () => handleWakeSync(true);
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') handleWakeSync(false);
+    };
+
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('online', onOnline);
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      unsubSubs();
+      unsubDel();
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('online', onOnline);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [authUser?.uid, activeCompForSync]);
+
+  // Sync state changes with localStorage across both global & company-scoped caches
   const saveSubmissionsToStorage = (updatedList: Submission[]) => {
     if (!Array.isArray(updatedList)) {
       console.error('saveSubmissionsToStorage dipanggil dengan data non-array:', updatedList);
       return;
     }
-    setSubmissions(updatedList);
-    try {
-      localStorage.setItem('NUSANTARA_HO_SUBMISSIONS', JSON.stringify(updatedList));
-    } catch (e) {
-      console.error('Error saving data to localStorage:', e);
-    }
+    const sorted = sortSubmissionsList(updatedList);
+    setSubmissions(sorted);
+    persistSubmissionsToLocalCaches(sorted, userProfile?.companyId || activeCompForSync);
   };
 
   // Delete handler
@@ -2488,35 +2551,43 @@ export default function App() {
 
   // Import handler for JSON backup
   const handleImportJson = (importedList: Submission[]) => {
-    // Overwrite database with imported values, or merge them.
-    // Overwriting is safer for full restores, let's offer overwrite + deduplicate based on IDs
     const mergedMap = new Map<string, Submission>();
-    
-    // Add existing ones first
     submissions.forEach(sub => mergedMap.set(sub.id, sub));
-    // Add imported ones (which might overwrite if match ID, otherwise brand new)
-    importedList.forEach(sub => mergedMap.set(sub.id, sub));
-    
-    const updated = Array.from(mergedMap.values());
-    // Sort by latest date
-    updated.sort((a,b) => new Date(b.tanggal).getTime() - new Date(a.tanggal).getTime());
-    
+    importedList.forEach(sub => {
+      if (sub && sub.id) {
+        removeLocalDeletedSubmissionId(sub.id);
+        mergedMap.set(sub.id, { ...sub, companyId: sub.companyId || activeCompForSync, updatedAt: new Date().toISOString() });
+      }
+    });
+
+    const updated = sortSubmissionsList(Array.from(mergedMap.values()));
     saveSubmissionsToStorage(updated);
+    if (isFirebaseConfigured() && importedList.length > 0) {
+      saveSubmissionsBatchToFirestore(importedList, activeCompForSync, activeCompNameForSync).catch(() => {});
+    }
   };
 
   // Sync / Import handler for Google Sheets legacy vouchers
   const handleSheetsImport = (importedList: Submission[], mergeMode: 'merge' | 'overwrite' = 'merge') => {
+    const stampedImported = importedList.map(sub => {
+      if (sub?.id) removeLocalDeletedSubmissionId(sub.id);
+      return { ...sub, companyId: sub.companyId || activeCompForSync, updatedAt: new Date().toISOString() };
+    });
     if (mergeMode === 'overwrite') {
-      saveSubmissionsToStorage(importedList);
+      saveSubmissionsToStorage(stampedImported);
+      if (isFirebaseConfigured() && stampedImported.length > 0) {
+        saveSubmissionsBatchToFirestore(stampedImported, activeCompForSync, activeCompNameForSync).catch(() => {});
+      }
     } else {
-      // Merge mode based on deduplicating ids or invoice notes
       const mergedMap = new Map<string, Submission>();
       submissions.forEach(sub => mergedMap.set(sub.id, sub));
-      importedList.forEach(sub => mergedMap.set(sub.id, sub));
-      
-      const updated = Array.from(mergedMap.values());
-      updated.sort((a,b) => new Date(b.tanggal).getTime() - new Date(a.tanggal).getTime());
+      stampedImported.forEach(sub => mergedMap.set(sub.id, sub));
+
+      const updated = sortSubmissionsList(Array.from(mergedMap.values()));
       saveSubmissionsToStorage(updated);
+      if (isFirebaseConfigured() && stampedImported.length > 0) {
+        saveSubmissionsBatchToFirestore(stampedImported, activeCompForSync, activeCompNameForSync).catch(() => {});
+      }
     }
   };
 
@@ -2525,9 +2596,8 @@ export default function App() {
     const mergedMap = new Map<string, Submission>();
     submissions.forEach(sub => mergedMap.set(sub.id, sub));
     cloudList.forEach(sub => mergedMap.set(sub.id, sub));
-    
-    const updated = Array.from(mergedMap.values());
-    updated.sort((a,b) => new Date(b.tanggal).getTime() - new Date(a.tanggal).getTime());
+
+    const updated = sortSubmissionsList(Array.from(mergedMap.values()));
     saveSubmissionsToStorage(updated);
   };
 
@@ -3022,20 +3092,36 @@ export default function App() {
             sessionStorage.setItem('NUSANTARA_ACTIVE_VIEW', 'list');
             localStorage.setItem('NUSANTARA_ACTIVE_VIEW', 'list');
           } catch (e) {}
-          if (initialData && initialData.length > 0) {
-            saveSubmissionsToStorage(initialData);
-          } else {
-            // Check localstorage content as fallback
-            try {
-              const stored = localStorage.getItem('NUSANTARA_HO_SUBMISSIONS');
-              if (stored) {
-                const parsed = JSON.parse(stored);
-                setSubmissions(Array.isArray(parsed) ? parsed : (parsed?.updatedSubmissions || []));
-              }
-            } catch (e) {
-              console.error('Error loading data from localStorage:', e);
+          const compId = (user?.companyId || localStorage.getItem('NUSANTARA_ACTIVE_COMPANY_ID') || 'nmsa').toLowerCase().trim();
+          const compName = user?.companyName || 'PT Nusantara Mineral Sukses Abadi';
+          const localCached = loadAllLocalSubmissionsForCompany(compId);
+          const delSet = new Set(getLocalDeletedSubmissionIds());
+          const immediateMap = new Map<string, Submission>();
+          (initialData || []).forEach((s) => {
+            if (s && s.id && !delSet.has(s.id)) immediateMap.set(s.id, s);
+          });
+          localCached.forEach((s) => {
+            if (s && s.id && !delSet.has(s.id) && !immediateMap.has(s.id)) {
+              immediateMap.set(s.id, s);
             }
-          }
+          });
+          const mergedImmediate = sortSubmissionsList(Array.from(immediateMap.values()));
+          setSubmissions(mergedImmediate);
+          persistSubmissionsToLocalCaches(mergedImmediate, compId);
+
+          // Automatically push any local-only vouchers to Cloud Firestore and reconcile
+          setIsCloudSyncing(true);
+          reconcileSubmissionsWithCloud(compId, compName, { localSnapshot: mergedImmediate })
+            .then((syncRes) => {
+              setSubmissions(syncRes.merged);
+              persistSubmissionsToLocalCaches(syncRes.merged, compId);
+              if (syncRes.uploadedCount > 0) {
+                setCloudSyncNotice(`☁️ ${syncRes.uploadedCount} voucher lokal berhasil disinkronkan ke Cloud.`);
+                setTimeout(() => setCloudSyncNotice(null), 6000);
+              }
+            })
+            .catch(() => {})
+            .finally(() => setIsCloudSyncing(false));
         }}
       />
     );
@@ -3152,7 +3238,7 @@ export default function App() {
           <InputBuktiTransfer 
             submissions={submissions} 
             userProfile={userProfile}
-            onUpdateSubmissions={setSubmissions} 
+            onUpdateSubmissions={saveSubmissionsToStorage} 
             onBack={() => navigateTo('/')} 
           />
         </main>
@@ -3408,6 +3494,9 @@ export default function App() {
             onLayoutModeChange={setLayoutMode}
             userProfile={userProfile}
             pettyCashHolders={pettyCashHolders}
+            onForceCloudSync={() => handleForceCloudSync(false)}
+            isCloudSyncing={isCloudSyncing}
+            cloudSyncNotice={cloudSyncNotice}
             onOpenConsolidateModal={() => setIsConsolidateNamesModalOpen(true)}
             onOpenPph23View={() => setView('pph23')}
             onOpenRabView={() => setView('rab')}
@@ -3809,6 +3898,9 @@ export default function App() {
             onOpenExportImport={() => setIsExportImportModalOpen(true)}
             onOpenCleanFirestore={() => setIsCleanFirestoreModalOpen(true)}
             onLogout={handleLogout}
+            onForceCloudSync={() => handleForceCloudSync(false)}
+            isCloudSyncing={isCloudSyncing}
+            submissionCount={submissions.length}
           />
         )}
 

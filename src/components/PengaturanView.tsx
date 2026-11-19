@@ -12,6 +12,7 @@ import {
   HardDrive,
   LogOut,
   Palette,
+  RefreshCw,
   Settings,
   Sparkles,
   Trash2,
@@ -37,6 +38,9 @@ interface PengaturanViewProps {
   onOpenExportImport: () => void;
   onOpenCleanFirestore: () => void;
   onLogout: () => void;
+  onForceCloudSync?: () => void;
+  isCloudSyncing?: boolean;
+  submissionCount?: number;
 }
 
 const THEMES: Array<{
@@ -75,6 +79,9 @@ export const PengaturanView: React.FC<PengaturanViewProps> = ({
   onOpenExportImport,
   onOpenCleanFirestore,
   onLogout,
+  onForceCloudSync,
+  isCloudSyncing = false,
+  submissionCount,
 }) => {
   const fullName = userProfile?.fullName || 'Nur Wahyudi';
   const roleLabel = userProfile?.role || 'Divisi Keuangan HO';
@@ -321,6 +328,32 @@ export const PengaturanView: React.FC<PengaturanViewProps> = ({
           Database Firebase &amp; Layanan Awan
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+          {onForceCloudSync && (
+            <button
+              type="button"
+              onClick={onForceCloudSync}
+              disabled={isCloudSyncing}
+              className="bg-white hover:bg-sky-50/70 rounded-2xl border border-sky-200 hover:border-sky-400 p-4 text-left shadow-3xs transition cursor-pointer flex items-start gap-3.5 disabled:opacity-60"
+            >
+              <div className="p-2.5 rounded-xl bg-sky-100 text-sky-800 shrink-0">
+                <RefreshCw size={18} className={isCloudSyncing ? 'animate-spin' : ''} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-2">
+                  <h4 className="text-sm font-black text-stone-900">
+                    {isCloudSyncing ? 'Menyinkronkan Voucher...' : 'Sinkronkan Voucher Semua Perangkat'}
+                  </h4>
+                  <span className="text-[10px] font-mono text-sky-700 font-bold">
+                    {typeof submissionCount === 'number' ? `${submissionCount} Voucher` : 'Real-Time'}
+                  </span>
+                </div>
+                <p className="text-xs text-stone-500 mt-0.5">
+                  Unggah voucher lokal yang tertahan dan samakan data HP &amp; Komputer lewat Cloud Firestore.
+                </p>
+              </div>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={onOpenFirebaseQuota}

@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Submission, CicilanPaymentRecord } from '../types';
 import { 
-  loadSubmissionsFromFirestore, 
+  reconcileSubmissionsWithCloud,
+  loadAllLocalSubmissionsForCompany,
+  persistSubmissionsToLocalCaches,
   saveSubmissionToFirestore, 
   isFirebaseConfigured,
   googleDriveLogin,
@@ -152,16 +154,20 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
     };
   }, []);
 
-  // Fetch newest submissions on startup
+  // Reconcile submissions bidirectionally on startup without overwriting unsynced local data
   useEffect(() => {
     const fetchLatest = async () => {
       setIsLoading(true);
+      const compId = (userProfile?.companyId || 'nmsa').toLowerCase().trim();
+      const compName = userProfile?.companyName || 'PT Nusantara Mineral Sukses Abadi';
       try {
         if (isFirebaseConfigured()) {
-          const freshData = await loadSubmissionsFromFirestore(userProfile?.companyId);
-          if (freshData && freshData.length > 0) {
-            setLocalSubmissions(freshData);
-            onUpdateSubmissions(freshData);
+          const syncRes = await reconcileSubmissionsWithCloud(compId, compName, {
+            localSnapshot: parentSubmissions,
+          });
+          if (syncRes.merged.length > 0) {
+            setLocalSubmissions(syncRes.merged);
+            onUpdateSubmissions(syncRes.merged);
             setIsLoading(false);
             return;
           }
@@ -169,9 +175,9 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
       } catch (err) {
         console.warn('Fallback silent read to local state', err);
       }
-      
-      // Fallback
-      setLocalSubmissions(parentSubmissions.length > 0 ? parentSubmissions : loadFromLocalStorage());
+
+      const localMerged = loadAllLocalSubmissionsForCompany(compId);
+      setLocalSubmissions(localMerged.length > 0 ? localMerged : (parentSubmissions.length > 0 ? parentSubmissions : loadFromLocalStorage()));
       setIsLoading(false);
     };
 
@@ -1046,16 +1052,11 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
       setLocalSubmissions(nextList);
       onUpdateSubmissions(nextList);
 
-      // Save directly to localStorage as backup
-      try {
-        localStorage.setItem('NUSANTARA_HO_SUBMISSIONS', JSON.stringify(nextList));
-        const compId = selectedSubmission.companyId || userProfile?.companyId;
-        if (compId) {
-          localStorage.setItem(`NUSANTARA_HO_SUBMISSIONS_${compId}`, JSON.stringify(nextList));
-        }
-      } catch (localSaveErr) {
-        console.warn('LocalStorage save failure:', localSaveErr);
-      }
+      // Save directly to all unified localStorage caches as backup
+      persistSubmissionsToLocalCaches(
+        nextList,
+        selectedSubmission.companyId || userProfile?.companyId || 'nmsa'
+      );
 
       // Audit Log
       try {

@@ -28,6 +28,9 @@ interface SubmissionsListProps {
   onOpenPph23View?: () => void;
   onOpenRabView?: () => void;
   onCreateMemo?: (submission: Submission) => void;
+  onForceCloudSync?: () => void;
+  isCloudSyncing?: boolean;
+  cloudSyncNotice?: string | null;
 }
 
 export const SubmissionsList: React.FC<SubmissionsListProps> = ({
@@ -50,6 +53,9 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   onOpenPph23View,
   onOpenRabView,
   onCreateMemo,
+  onForceCloudSync,
+  isCloudSyncing = false,
+  cloudSyncNotice = null,
 }) => {
   const [searchTerm, setSearchTerm] = useState(() => {
     try { return sessionStorage.getItem('sublist_searchTerm') || ''; } catch (e) { return ''; }
@@ -673,7 +679,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
       // 4. Fallback to ID
       return b.id.localeCompare(a.id);
     });
-  }, [submissions, searchTerm, searchCategory, methodFilter, statusFilter, yearFilter, monthFilter, dateFilter]);
+  }, [submissions, searchTerm, searchCategory, methodFilter, statusFilter, yearFilter, monthFilter, dateFilter, showOnlyDuplicates, activeDuplicateSubmissionIds, duplicateSubmissionIds]);
 
   const spreadsheetFilteredSubmissions = useMemo(() => {
     if (activeSheetTab === 'Data Sinkron') {
@@ -1170,6 +1176,12 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
 
   return (
     <div className="space-y-6">
+      {cloudSyncNotice && (
+        <div className="bg-sky-50 border border-sky-200 text-sky-900 rounded-2xl px-4 py-3 text-xs font-semibold flex items-center gap-2.5 shadow-3xs print:hidden">
+          <RefreshCw size={15} className={`text-sky-600 shrink-0 ${isCloudSyncing ? 'animate-spin' : ''}`} />
+          <span>{cloudSyncNotice}</span>
+        </div>
+      )}
       {/* Persistent Missing Drive Archive Banner */}
       {(() => {
         const missingCount = submissions.filter(sub => {
@@ -1462,8 +1474,21 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
 
             </div>
 
-            {/* Print and Export Buttons */}
+            {/* Print, Sync, and Export Buttons */}
             <div className="flex flex-wrap items-center gap-2 self-stretch lg:self-end">
+              {onForceCloudSync && (
+                <button
+                  type="button"
+                  onClick={onForceCloudSync}
+                  disabled={isCloudSyncing}
+                  className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 bg-white hover:bg-sky-50 border border-sky-300 text-sky-900 font-bold rounded-xl transition duration-150 text-xs shadow-3xs cursor-pointer select-none disabled:opacity-60"
+                  title="Sinkronkan & samakan semua voucher di HP, Komputer, dan Cloud Firebase"
+                >
+                  <RefreshCw size={13} className={`text-sky-600 ${isCloudSyncing ? 'animate-spin' : ''}`} />
+                  <span>{isCloudSyncing ? 'Menyinkronkan...' : 'Sinkron Cloud'}</span>
+                </button>
+              )}
+
               {onOpenConsolidateModal && (
                 <button
                   onClick={onOpenConsolidateModal}
