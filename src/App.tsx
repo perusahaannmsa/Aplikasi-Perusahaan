@@ -104,7 +104,8 @@ import {
   getLocalDeletedSubmissionIds,
   saveLocalDeletedSubmissionIds,
   removeLocalDeletedSubmissionId,
-  sortSubmissionsList
+  sortSubmissionsList,
+  getActiveFirebaseProjectId
 } from './firebase';
 import { loadAttendanceFromFirestore, loadWorkersFromFirestore, mergeWorkerListsSafely, getDeletedWorkerIds } from './lib/firebaseAbsen';
 
@@ -171,6 +172,7 @@ export default function App() {
 
   const [isCloudSyncing, setIsCloudSyncing] = useState<boolean>(false);
   const [cloudSyncNotice, setCloudSyncNotice] = useState<string | null>(null);
+  const [isInitialReconcileDone, setIsInitialReconcileDone] = useState<boolean>(false);
 
   // Petty Cash master state organized by category (Lapangan & Kantor Pusat)
   const [pettyCashCustodiansConfig, setPettyCashCustodiansConfig] = useState<PettyCashCustodiansConfig>(() => {
@@ -1474,22 +1476,17 @@ export default function App() {
         }
       }
 
-      // 4. Strictly load submissions belonging to this company from Firestore
+      // 4. Reconcile submissions bidirectionally with Cloud Firestore for this company
       let companySubmissions: Submission[] = [];
       try {
-        companySubmissions = await loadSubmissionsFromFirestore(cleanId);
+        const rec = await reconcileSubmissionsWithCloud(cleanId, newCompanyName);
+        companySubmissions = rec.merged;
       } catch (e) {
-        console.warn('loadSubmissionsFromFirestore fallback to cache:', e);
-        const cached = localStorage.getItem(`NUSANTARA_HO_SUBMISSIONS_${cleanId}`) || localStorage.getItem('NUSANTARA_HO_SUBMISSIONS');
-        if (cached) {
-          try { companySubmissions = JSON.parse(cached); } catch (_) {}
-        }
+        console.warn('reconcileSubmissionsWithCloud fallback to cache:', e);
+        companySubmissions = loadAllLocalSubmissionsForCompany(cleanId);
       }
       setSubmissions(companySubmissions);
-      try {
-        localStorage.setItem('NUSANTARA_HO_SUBMISSIONS', JSON.stringify(companySubmissions));
-        localStorage.setItem(`NUSANTARA_HO_SUBMISSIONS_${cleanId}`, JSON.stringify(companySubmissions));
-      } catch (e) {}
+      persistSubmissionsToLocalCaches(companySubmissions, cleanId);
 
       // 5. Activity log
       try {
@@ -1889,9 +1886,11 @@ export default function App() {
       setAuthUser(user);
       if (!user) {
         setUserProfile(null);
+        setIsInitialReconcileDone(false);
         // DO NOT implicitly delete localStorage or empty submissions here.
         // This avoids race conditions and data-loss during initial app loading stages or tab reopenings!
       } else {
+        setIsInitialReconcileDone(false);
         // Mark session as active to prevent force-logout during same-tab refreshes and sibling tabs
         if (!isPublicPortalUrl) {
           sessionStorage.setItem('NUSANTARA_SESSION_ACTIVE', 'true');
@@ -1951,7 +1950,7 @@ export default function App() {
         setUserProfile(combinedProfile);
 
         // Bidirectional Cloud Reconciliation: merges Firestore + local caches, deletes removed items,
-        // and automatically pushes any unsynced local vouchers (e.g. trapped on one device) to Firestore!
+        // and automatically pushes any unsynced local vouchers BEFORE attaching real-time onSnapshot!
         try {
           setIsCloudSyncing(true);
           const syncRes = await reconcileSubmissionsWithCloud(
@@ -1971,6 +1970,7 @@ export default function App() {
           setSubmissions(fallbackList);
         } finally {
           setIsCloudSyncing(false);
+          setIsInitialReconcileDone(true);
         }
       }
     });
@@ -2003,11 +2003,12 @@ export default function App() {
         setSyncListenerEpoch((n) => n + 1);
       }
       if (!silent || res.uploadedCount > 0) {
+        const pid = getActiveFirebaseProjectId();
         const msg = res.usedOfflineFallback
-          ? `Mode lokal aktif (${res.merged.length} voucher). Periksa koneksi atau tunggu kuota Cloud reset.`
+          ? `Mode lokal aktif (${res.merged.length} voucher • ${pid}). Periksa koneksi atau tunggu kuota Cloud reset.`
           : res.uploadedCount > 0
-          ? `Sinkronisasi selesai! ${res.uploadedCount} voucher lokal diunggah ke Cloud • Total ${res.merged.length} voucher sekarang sama di Cloud & perangkat.`
-          : `Tersinkron dengan Cloud Firestore (Cloud: ${res.cloudCount} voucher • Total di perangkat: ${res.merged.length} voucher).`;
+          ? `Sinkronisasi selesai (${pid})! ${res.uploadedCount} voucher lokal diunggah ke Cloud • Total ${res.merged.length} voucher sama di semua perangkat.`
+          : `Tersinkron dengan Cloud (${pid}): ${res.cloudCount} voucher di Cloud • ${res.merged.length} voucher di perangkat.`;
         setCloudSyncNotice(msg);
         setTimeout(() => setCloudSyncNotice(null), 6000);
       }
@@ -2028,7 +2029,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!authUser) return;
+    if (!authUser || !isInitialReconcileDone) return;
 
     let lastFocusSyncAt = 0;
 
@@ -2054,9 +2055,13 @@ export default function App() {
         }
       });
 
-      // Keep any currently queued local unsynced mutations until they finish uploading
+      // Keep queued local mutations OR very recent local mutations whose write ack is still settling
+      const nowMs = Date.now();
       (submissionsRef.current || []).forEach((lSub) => {
-        if (lSub && lSub.id && pendingIds.has(lSub.id)) {
+        if (!lSub || !lSub.id || delSet.has(lSub.id)) return;
+        const lTime = new Date(lSub.updatedAt || lSub.createdAt || 0).getTime();
+        const isVeryRecentLocal = !isNaN(lTime) && nowMs - lTime < 30000;
+        if (pendingIds.has(lSub.id) || (isVeryRecentLocal && !mergedMap.has(lSub.id))) {
           mergedMap.set(lSub.id, lSub);
         }
       });
@@ -2111,7 +2116,7 @@ export default function App() {
       window.removeEventListener('online', onOnline);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [authUser?.uid, activeCompForSync, syncListenerEpoch]);
+  }, [authUser?.uid, activeCompForSync, syncListenerEpoch, isInitialReconcileDone]);
 
   // Sync state changes with localStorage across both global & company-scoped caches
   const saveSubmissionsToStorage = (updatedList: Submission[]) => {
@@ -2245,24 +2250,36 @@ export default function App() {
 
   // Save/Update from form submission
   const handleSaveSubmission = async (savedSub: Submission) => {
+    const stampedSub: Submission = {
+      ...savedSub,
+      companyId: (savedSub.companyId || userProfile?.companyId || activeCompForSync || 'nmsa').toLowerCase().trim(),
+      companyName: savedSub.companyName || userProfile?.companyName || activeCompNameForSync,
+      updatedAt: new Date().toISOString(),
+    };
+
     let updatedList: Submission[] = [];
-    const exists = submissions.some((sub) => sub.id === savedSub.id);
+    const exists = submissions.some((sub) => sub.id === stampedSub.id);
 
     if (exists) {
-      updatedList = submissions.map((sub) => (sub.id === savedSub.id ? savedSub : sub));
+      updatedList = submissions.map((sub) => (sub.id === stampedSub.id ? stampedSub : sub));
     } else {
-      updatedList = [savedSub, ...submissions];
+      updatedList = [stampedSub, ...submissions];
     }
 
     saveSubmissionsToStorage(updatedList);
 
     if (isFirebaseConfigured()) {
       try {
-        await saveSubmissionToFirestore(savedSub, userProfile?.companyId, userProfile?.companyName);
+        const res = await saveSubmissionToFirestore(stampedSub, stampedSub.companyId, stampedSub.companyName);
+        if (res.syncedToCloud) {
+          setCloudSyncNotice(`☁️ Voucher ${stampedSub.kode || stampedSub.dibayarkanKepada} langsung tersimpan ke Cloud Firestore.`);
+          setTimeout(() => setCloudSyncNotice(null), 4000);
+        } else {
+          setCloudSyncNotice(`⚠️ Voucher tersimpan lokal & masuk antrean Cloud (${res.error || 'menunggu jaringan'}).`);
+          setTimeout(() => setCloudSyncNotice(null), 6000);
+        }
       } catch (err: any) {
         console.warn('⚠️ Cloud Firestore write warning (saved locally & in Drive):', err);
-        // Do not throw and block local save, Google Drive upload, or UI navigation.
-        // Queue or notify gracefully so the user never loses progress.
       }
     }
 
@@ -2545,12 +2562,18 @@ export default function App() {
   // Central Logout Handler
   const handleLogout = async () => {
     try {
+      if (getPendingFirestoreSyncCount() > 0 && !isFirestoreQuotaExceeded()) {
+        await flushFirestoreQueue().catch(() => {});
+      }
       sessionStorage.removeItem('NUSANTARA_SESSION_ACTIVE');
       sessionStorage.removeItem('NUSANTARA_ACTIVE_VIEW');
       localStorage.removeItem('NUSANTARA_ACTIVE_TAB_HEARTBEAT');
-      localStorage.removeItem('NUSANTARA_HO_SUBMISSIONS');
+      if (getPendingFirestoreSyncCount() === 0) {
+        localStorage.removeItem('NUSANTARA_HO_SUBMISSIONS');
+      }
       localStorage.removeItem('NUSANTARA_ACTIVE_VIEW');
       setViewInternal('list');
+      setIsInitialReconcileDone(false);
       setSubmissions([]);
       setUserProfile(null);
       setAuthUser(null);
@@ -3120,7 +3143,7 @@ export default function App() {
           setSubmissions(mergedImmediate);
           persistSubmissionsToLocalCaches(mergedImmediate, compId);
 
-          // Automatically push any local-only vouchers to Cloud Firestore and reconcile
+          // Automatically push any local-only vouchers to Cloud Firestore BEFORE attaching live listener
           setIsCloudSyncing(true);
           reconcileSubmissionsWithCloud(compId, compName, { localSnapshot: mergedImmediate })
             .then((syncRes) => {
@@ -3132,7 +3155,10 @@ export default function App() {
               }
             })
             .catch(() => {})
-            .finally(() => setIsCloudSyncing(false));
+            .finally(() => {
+              setIsCloudSyncing(false);
+              setIsInitialReconcileDone(true);
+            });
         }}
       />
     );

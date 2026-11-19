@@ -871,7 +871,7 @@ export const isFirebaseConfigured = (): boolean => {
 
 // Circuit breaker when Firestore daily free quota (Spark Plan) is exhausted
 let lastQuotaExceededTime = 0;
-const QUOTA_COOLDOWN_MS = 15 * 60 * 1000; // 15 minutes cooldown so transient/old quota errors recover automatically
+const QUOTA_COOLDOWN_MS = 60 * 1000; // 60 seconds cooldown so transient quota errors recover automatically without locking out writes
 
 export const isFirestoreQuotaExceeded = (): boolean => {
   if (lastQuotaExceededTime === 0) {
@@ -2783,9 +2783,17 @@ const pickRicherSubmission = (a: Submission, b: Submission): Submission => {
   return score(a) >= score(b) ? a : b;
 };
 
+const normalizeCompanyKey = (raw?: string | null): string => {
+  const val = String(raw || '').toLowerCase().trim();
+  if (!val || val === 'nmsa' || val.includes('nusantara mineral sukses abadi')) {
+    return 'nmsa';
+  }
+  return val;
+};
+
 export const loadAllLocalSubmissionsForCompany = (companyId: string = 'nmsa'): Submission[] => {
   if (typeof localStorage === 'undefined') return [];
-  const targetComp = (companyId || 'nmsa').toLowerCase().trim();
+  const targetComp = normalizeCompanyKey(companyId);
   const keysToInspect = [
     `NUSANTARA_HO_SUBMISSIONS_${targetComp}`,
     'NUSANTARA_HO_SUBMISSIONS',
@@ -2808,7 +2816,7 @@ export const loadAllLocalSubmissionsForCompany = (companyId: string = 'nmsa'): S
     const items = parseArrayFromKey(localStorage.getItem(key));
     for (const sub of items) {
       if (!sub || !sub.id) continue;
-      const subComp = (sub.companyId || 'nmsa').toLowerCase().trim();
+      const subComp = normalizeCompanyKey(sub.companyId);
       if (subComp !== targetComp) continue;
       const existing = map.get(sub.id);
       if (!existing) {
@@ -2824,7 +2832,7 @@ export const loadAllLocalSubmissionsForCompany = (companyId: string = 'nmsa'): S
 
 export const persistSubmissionsToLocalCaches = (list: Submission[], companyId: string = 'nmsa') => {
   if (typeof localStorage === 'undefined' || !Array.isArray(list)) return;
-  const cleanComp = (companyId || activeCompanyId || 'nmsa').toLowerCase().trim();
+  const cleanComp = normalizeCompanyKey(companyId || activeCompanyId);
   const json = JSON.stringify(list);
   try {
     localStorage.setItem('NUSANTARA_HO_SUBMISSIONS', json);
@@ -2846,7 +2854,7 @@ export const loadSubmissionsFromFirestore = async (companyId?: string): Promise<
     const snapshot = await getDocs(collection(firestoreDb, path));
     recordFirestoreReads(Math.max(1, snapshot.size));
     const list: Submission[] = [];
-    const targetComp = (companyId || '').toLowerCase().trim();
+    const targetComp = companyId ? normalizeCompanyKey(companyId) : '';
     
     snapshot.forEach(docSnap => {
       const data = docSnap.data();
@@ -2854,7 +2862,7 @@ export const loadSubmissionsFromFirestore = async (companyId?: string): Promise<
       
       // Strict data segregation per company
       // Legacy submissions without explicit companyId belong to default 'nmsa'
-      const docComp = (data.companyId || data.company_id || 'nmsa').toLowerCase().trim();
+      const docComp = normalizeCompanyKey(data.companyId || data.company_id);
       
       if (!targetComp || docComp === targetComp) {
         list.push(mapped);
@@ -2913,10 +2921,11 @@ export const subscribeToSubmissionsFromFirestore = (
         recordFirestoreReads(readUnits);
 
         const list: Submission[] = [];
+        const normalizedTarget = targetComp ? normalizeCompanyKey(targetComp) : '';
         snapshot.forEach(docSnap => {
           const data = docSnap.data();
-          const docComp = (data.companyId || data.company_id || 'nmsa').toLowerCase().trim();
-          if (!targetComp || docComp === targetComp) {
+          const docComp = normalizeCompanyKey(data.companyId || data.company_id);
+          if (!normalizedTarget || docComp === normalizedTarget) {
             list.push(mapFirestoreToSubmission(docSnap.id, data));
           }
         });
@@ -3185,8 +3194,8 @@ export const saveSubmissionToFirestore = async (
   userCompanyId: string = 'nmsa',
   userCompanyName: string = 'PT Nusantara Mineral Sukses Abadi',
   _options?: { waitForCloudAck?: boolean }
-): Promise<void> => {
-  const cleanComp = (submission.companyId || userCompanyId || activeCompanyId || 'nmsa').toLowerCase().trim();
+): Promise<{ syncedToCloud: boolean; error?: string }> => {
+  const cleanComp = normalizeCompanyKey(submission.companyId || userCompanyId || activeCompanyId);
   const stampedSubmission: Submission = {
     ...submission,
     companyId: cleanComp,
@@ -3233,15 +3242,22 @@ export const saveSubmissionToFirestore = async (
       removeFromFirestoreQueue(path, safeDocId);
       recordFirestoreWrites(1);
       console.log(`☁️ [Cloud Sync] Submission ${stampedSubmission.kode || stampedSubmission.id} langsung tersinkron ke Firestore.`);
-      return;
+      return { syncedToCloud: true };
     } catch (error: any) {
       markFirestoreQuotaExceeded(error);
-      console.warn(`⚠️ [Cloud Sync] Gagal kirim langsung (${safeDocId}), masuk antrian persisten:`, error?.message || error);
+      const msg = error?.message || String(error);
+      console.warn(`⚠️ [Cloud Sync] Gagal kirim langsung (${safeDocId}), masuk antrian persisten:`, msg);
+      enqueueFirestoreWrite(path, safeDocId, cleanedPayload, `Voucher ${stampedSubmission.kode || stampedSubmission.id}`);
+      return { syncedToCloud: false, error: msg };
     }
   }
 
   // Fallback: safely persist in retry queue so it syncs automatically when online/recovered
   enqueueFirestoreWrite(path, safeDocId, cleanedPayload, `Voucher ${stampedSubmission.kode || stampedSubmission.id}`);
+  return {
+    syncedToCloud: false,
+    error: isFirestoreQuotaExceeded() ? 'Cooldown kuota Firestore aktif (antrean otomatis berjalan)' : 'Firestore belum aktif'
+  };
 };
 
 // Batch save/update multiple submissions in Firestore (e.g. after name consolidation or auto-reconciliation)
