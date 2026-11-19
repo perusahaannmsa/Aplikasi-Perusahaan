@@ -15,7 +15,7 @@ interface SubmissionsListProps {
   onOpenSppdEditor?: (submission: Submission) => void;
   onOpenSppdManager?: () => void;
   onOpenLoanManager?: () => void;
-  onDelete: (id: string) => void;
+  onDelete: (id: string, options?: { deleteDriveFolder?: boolean }) => void;
   onDuplicate: (submission: Submission) => void;
   onAddNew: () => void;
   onOpenBuktiTransfer?: (submission?: Submission) => void;
@@ -29,6 +29,8 @@ interface SubmissionsListProps {
   onOpenRabView?: () => void;
   onCreateMemo?: (submission: Submission) => void;
   onForceCloudSync?: () => void;
+  onRestoreBackupToFirestore?: () => void;
+  onOpenDriveCleaner?: () => void;
   isCloudSyncing?: boolean;
   cloudSyncNotice?: string | null;
 }
@@ -54,6 +56,8 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   onOpenRabView,
   onCreateMemo,
   onForceCloudSync,
+  onRestoreBackupToFirestore,
+  onOpenDriveCleaner,
   isCloudSyncing = false,
   cloudSyncNotice = null,
 }) => {
@@ -101,6 +105,10 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   const [dateFilter, setDateFilter] = useState<string>(() => {
     try { return sessionStorage.getItem('sublist_dateFilter') || ''; } catch (e) { return ''; }
   });
+
+  const [deleteConfirmSub, setDeleteConfirmSub] = useState<Submission | null>(null);
+  const [deleteIncludeDrive, setDeleteIncludeDrive] = useState<boolean>(true);
+  const didAutoExpandPeriodRef = useRef<boolean>(false);
 
   // Filter khusus untuk hanya menampilkan potensi voucher dobel input
   const [showOnlyDuplicates, setShowOnlyDuplicates] = useState(false);
@@ -681,6 +689,29 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
     });
   }, [submissions, searchTerm, searchCategory, methodFilter, statusFilter, yearFilter, monthFilter, dateFilter, showOnlyDuplicates, activeDuplicateSubmissionIds, duplicateSubmissionIds]);
 
+  // Smart fallback: jika bulan/tahun default kosong tetapi ada data di periode lain, otomatis tampilkan Semua Bulan/Tahun
+  useEffect(() => {
+    if (didAutoExpandPeriodRef.current) return;
+    if (submissions.length === 0) return;
+    const hasCustom = (() => {
+      try { return sessionStorage.getItem('sublist_hasCustomPeriodFilter') === 'true'; } catch { return false; }
+    })();
+    if (hasCustom) {
+      didAutoExpandPeriodRef.current = true;
+      return;
+    }
+    const hasOtherFilters = Boolean(searchTerm.trim() || methodFilter !== 'All' || statusFilter !== 'All' || dateFilter);
+    if (hasOtherFilters) return;
+    if (filteredSubmissions.length === 0 && (monthFilter !== 'All' || yearFilter !== 'All')) {
+      didAutoExpandPeriodRef.current = true;
+      const hasCurrentYear = submissions.some((s) => s.tanggal && s.tanggal.startsWith(yearFilter));
+      setMonthFilter('All');
+      if (!hasCurrentYear && yearFilter !== 'All') {
+        setYearFilter('All');
+      }
+    }
+  }, [submissions, filteredSubmissions.length, monthFilter, yearFilter, searchTerm, methodFilter, statusFilter, dateFilter]);
+
   const spreadsheetFilteredSubmissions = useMemo(() => {
     if (activeSheetTab === 'Data Sinkron') {
       return filteredSubmissions;
@@ -1177,9 +1208,32 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   return (
     <div className="space-y-6">
       {cloudSyncNotice && (
-        <div className="bg-sky-50 border border-sky-200 text-sky-900 rounded-2xl px-4 py-3 text-xs font-semibold flex items-center gap-2.5 shadow-3xs print:hidden">
-          <RefreshCw size={15} className={`text-sky-600 shrink-0 ${isCloudSyncing ? 'animate-spin' : ''}`} />
-          <span>{cloudSyncNotice}</span>
+        <div className="bg-sky-50 border border-sky-200 text-sky-900 rounded-2xl px-4 py-3 text-xs font-semibold flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-3xs print:hidden">
+          <div className="flex items-center gap-2.5">
+            <RefreshCw size={15} className={`text-sky-600 shrink-0 ${isCloudSyncing ? 'animate-spin' : ''}`} />
+            <span>{cloudSyncNotice}</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {onRestoreBackupToFirestore && submissions.length > 0 && (
+              <button
+                type="button"
+                onClick={onRestoreBackupToFirestore}
+                disabled={isCloudSyncing}
+                className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold transition cursor-pointer disabled:opacity-50"
+              >
+                ☁️ Upload Backup ke Firestore
+              </button>
+            )}
+            {onOpenDriveCleaner && (
+              <button
+                type="button"
+                onClick={onOpenDriveCleaner}
+                className="px-3 py-1.5 rounded-xl bg-white hover:bg-stone-100 text-stone-700 border border-stone-300 text-[11px] font-bold transition cursor-pointer"
+              >
+                🧹 Buka Pembersih Drive
+              </button>
+            )}
+          </div>
         </div>
       )}
       {/* Persistent Missing Drive Archive Banner */}
@@ -1753,10 +1807,47 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 );
               })
             ) : (
-              <div className="text-center py-12 px-4">
-                <FileText size={36} className="mx-auto text-stone-300 mb-2" />
-                <p className="text-sm font-bold text-stone-700">Tidak ada data transaksi</p>
-                <p className="text-xs text-stone-500 mt-1">Coba sesuaikan kata kunci pencarian atau filter periode.</p>
+              <div className="text-center py-12 px-4 space-y-3">
+                <FileText size={36} className="mx-auto text-stone-300" />
+                <div>
+                  <p className="text-sm font-bold text-stone-700">
+                    {submissions.length > 0 ? 'Tidak ada data pada filter bulan/kriteria ini' : 'Tidak ada data transaksi'}
+                  </p>
+                  <p className="text-xs text-stone-500 mt-1">
+                    {submissions.length > 0
+                      ? `Tersedia ${submissions.length} total transaksi di sistem. Reset filter untuk menampilkan semua.`
+                      : 'Coba muat ulang sinkronisasi cloud & server cadangan.'}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  {submissions.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchTerm('');
+                        setMethodFilter('All');
+                        setStatusFilter('All');
+                        setDateFilter('');
+                        setMonthFilter('All');
+                        setYearFilter('All');
+                        try { sessionStorage.setItem('sublist_hasCustomPeriodFilter', 'true'); } catch (_) {}
+                      }}
+                      className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-stone-950 font-bold text-xs transition cursor-pointer"
+                    >
+                      Tampilkan Semua ({submissions.length} Transaksi)
+                    </button>
+                  )}
+                  {onForceCloudSync && (
+                    <button
+                      type="button"
+                      onClick={onForceCloudSync}
+                      disabled={isCloudSyncing}
+                      className="px-4 py-2 rounded-xl bg-stone-900 hover:bg-stone-800 text-white font-bold text-xs transition cursor-pointer disabled:opacity-50"
+                    >
+                      🔄 Pulihkan &amp; Sinkron Data
+                    </button>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -1916,8 +2007,43 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                   })
                 ) : (
                   <tr>
-                    <td colSpan={6} className="py-12 text-center text-stone-400">
-                      Tidak ditemukan data pengajuan yang cocok dengan pencarian Anda.
+                    <td colSpan={6} className="py-12 px-4 text-center">
+                      <div className="space-y-3">
+                        <p className="text-sm font-bold text-stone-600">
+                          {submissions.length > 0
+                            ? `Tidak ada transaksi pada periode ${monthFilter === 'All' ? 'Semua Bulan' : MONTHS_LIST.find(m => m.value === monthFilter)?.label || monthFilter} ${yearFilter === 'All' ? 'Semua Tahun' : yearFilter}.`
+                            : 'Tidak ditemukan data transaksi yang dimuat.'}
+                        </p>
+                        <div className="flex flex-wrap items-center justify-center gap-2">
+                          {submissions.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSearchTerm('');
+                                setMethodFilter('All');
+                                setStatusFilter('All');
+                                setDateFilter('');
+                                setMonthFilter('All');
+                                setYearFilter('All');
+                                try { sessionStorage.setItem('sublist_hasCustomPeriodFilter', 'true'); } catch (_) {}
+                              }}
+                              className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-stone-950 font-bold text-xs transition cursor-pointer"
+                            >
+                              Tampilkan Semua ({submissions.length} Transaksi)
+                            </button>
+                          )}
+                          {onForceCloudSync && (
+                            <button
+                              type="button"
+                              onClick={onForceCloudSync}
+                              disabled={isCloudSyncing}
+                              className="px-4 py-2 rounded-xl bg-stone-900 hover:bg-stone-800 text-white font-bold text-xs transition cursor-pointer disabled:opacity-50"
+                            >
+                              🔄 Pulihkan &amp; Sinkron Data
+                            </button>
+                          )}
+                        </div>
+                      </div>
                     </td>
                   </tr>
                 )}
@@ -1985,11 +2111,8 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                       </button>
                       <button
                         onClick={() => {
-                          const kodeInfo = selectedSub.kode ? ` (${selectedSub.kode})` : '';
-                          if (window.confirm(`Yakin ingin menghapus voucher "${selectedSub.dibayarkanKepada}"${kodeInfo} senilai Rp ${formatRupiah(subTotal)}?\n\nFolder transaksi & seluruh lampiran di Google Drive akan otomatis ikut dihapus.`)) {
-                            onDelete(selectedSub.id);
-                            setSelectedRowId(null);
-                          }
+                          setDeleteIncludeDrive(true);
+                          setDeleteConfirmSub(selectedSub);
                         }}
                         className="p-1 hover:bg-emerald-850 text-rose-400 hover:text-rose-300 rounded cursor-pointer transition"
                         title="Hapus Voucher"
@@ -2267,10 +2390,8 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                               title="Hapus Data"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                const kodeInfo = sub.kode ? ` (${sub.kode})` : '';
-                                if (window.confirm(`Yakin ingin menghapus data pengajuan untuk "${sub.dibayarkanKepada}"${kodeInfo} senilai Rp ${formatRupiah(subTotal)}?\n\nFolder transaksi & seluruh lampiran di Google Drive akan otomatis ikut dihapus.`)) {
-                                  onDelete(sub.id);
-                                }
+                                setDeleteIncludeDrive(true);
+                                setDeleteConfirmSub(sub);
                               }}
                               className="p-1 hover:bg-stone-255 hover:bg-stone-200/80 text-rose-500 rounded transition"
                             >
@@ -4597,9 +4718,8 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                                     <button
                                       type="button"
                                       onClick={() => {
-                                        if (window.confirm(`Hapus voucher ${sub.kode || 'ini'} milik ${sub.dibayarkanKepada} senilai Rp ${formatRupiah(cluster.nominal)}?`)) {
-                                          onDelete(sub.id);
-                                        }
+                                        setDeleteIncludeDrive(true);
+                                        setDeleteConfirmSub(sub);
                                       }}
                                       className="px-2 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold rounded-lg text-xs transition cursor-pointer flex items-center gap-1 shadow-3xs"
                                       title="Hapus jika voucher ini tidak sengaja terinput dua kali"
@@ -4812,13 +4932,11 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
             <button
               id={`btn-delete-${activeActionSub.id}`}
               onClick={() => {
+                const subToDelete = activeActionSub;
                 setOpenActionMenuId(null);
                 setActionMenuPosition(null);
-                const subTotal = (activeActionSub.items || []).reduce((sum, i) => sum + i.total, 0);
-                const kodeInfo = activeActionSub.kode ? ` (${activeActionSub.kode})` : '';
-                if (window.confirm(`Yakin ingin menghapus data pengajuan untuk "${activeActionSub.dibayarkanKepada}"${kodeInfo} senilai Rp ${formatRupiah(subTotal)}?\n\nFolder transaksi & seluruh lampiran di Google Drive akan otomatis ikut dihapus.`)) {
-                  onDelete(activeActionSub.id);
-                }
+                setDeleteIncludeDrive(true);
+                setDeleteConfirmSub(subToDelete);
               }}
               className="w-full px-3.5 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 flex items-center gap-2.5 transition text-left cursor-pointer"
               title="Hapus Data Transaksi"
@@ -4826,6 +4944,111 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
               <Trash2 size={15} className="text-rose-500 shrink-0" />
               <span>Hapus Data</span>
             </button>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* IN-APP DELETE CONFIRMATION MODAL (replaces window.confirm & adds Google Drive folder deletion toggle) */}
+      {deleteConfirmSub && createPortal(
+        <div
+          className="fixed inset-0 z-[10050] bg-stone-950/60 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => setDeleteConfirmSub(null)}
+        >
+          <div
+            className="w-full max-w-md bg-white rounded-2xl border border-stone-200 shadow-2xl overflow-hidden animate-fade-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="bg-rose-50 border-b border-rose-200 px-5 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-rose-100 text-rose-600 rounded-xl">
+                  <Trash2 size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-stone-900 font-display">
+                    Konfirmasi Hapus Transaksi Voucher
+                  </h3>
+                  <p className="text-[11px] font-mono text-rose-700 font-semibold">
+                    {deleteConfirmSub.kode || deleteConfirmSub.id}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmSub(null)}
+                className="p-1.5 rounded-lg text-stone-500 hover:bg-rose-100 hover:text-stone-800 transition cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 text-xs text-stone-700">
+              <div className="p-3.5 bg-stone-50 border border-stone-200 rounded-xl space-y-1.5">
+                <div className="flex justify-between gap-2">
+                  <span className="text-stone-500">Penerima Kas:</span>
+                  <strong className="text-stone-900 text-right">{deleteConfirmSub.dibayarkanKepada || '-'}</strong>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <span className="text-stone-500">Jenis Pengajuan:</span>
+                  <strong className="text-stone-800 text-right">{deleteConfirmSub.jenisPengajuan || '-'}</strong>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <span className="text-stone-500">Tanggal:</span>
+                  <strong className="font-mono text-stone-800">{deleteConfirmSub.tanggal || '-'}</strong>
+                </div>
+                <div className="flex justify-between gap-2 pt-1 border-t border-stone-200">
+                  <span className="text-stone-500">Total Nominal:</span>
+                  <strong className="font-mono text-rose-700 text-sm">
+                    Rp {formatRupiah((deleteConfirmSub.items || []).reduce((sum, i) => sum + (i.total || 0), 0))}
+                  </strong>
+                </div>
+              </div>
+
+              <label className="flex items-start gap-2.5 p-3 bg-sky-50 border border-sky-200 rounded-xl cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={deleteIncludeDrive}
+                  onChange={(e) => setDeleteIncludeDrive(e.target.checked)}
+                  className="mt-0.5 rounded border-sky-400 text-sky-600 focus:ring-sky-500 cursor-pointer"
+                />
+                <div className="space-y-0.5">
+                  <span className="font-bold text-sky-950 block">
+                    Hapus otomatis folder &amp; seluruh file lampiran di Google Drive
+                  </span>
+                  <span className="text-[11px] text-sky-800 leading-relaxed block">
+                    Sistem akan mencari folder berdasarkan ID, lampiran, dan kode voucher ({deleteConfirmSub.kode || 'transaksi ini'}) lalu menghapusnya dari Google Drive.
+                  </span>
+                </div>
+              </label>
+
+              <p className="text-[11px] text-stone-500 leading-relaxed">
+                Transaksi akan dihapus dari daftar aplikasi, backup server, dan Cloud Firestore.
+              </p>
+            </div>
+
+            <div className="px-5 py-3.5 bg-stone-50 border-t border-stone-200 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmSub(null)}
+                className="px-4 py-2 rounded-xl border border-stone-300 bg-white hover:bg-stone-100 text-stone-700 font-bold text-xs transition cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const targetId = deleteConfirmSub.id;
+                  const includeDrive = deleteIncludeDrive;
+                  setDeleteConfirmSub(null);
+                  setSelectedRowId((prev) => (prev === targetId ? null : prev));
+                  onDelete(targetId, { deleteDriveFolder: includeDrive });
+                }}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition cursor-pointer"
+              >
+                <Trash2 size={14} />
+                <span>Ya, Hapus Transaksi</span>
+              </button>
+            </div>
           </div>
         </div>,
         document.body

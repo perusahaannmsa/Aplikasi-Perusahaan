@@ -66,7 +66,14 @@ import {
   deleteGoogleDriveFile,
   registerAuthChangeListener,
   getUserProfileFromFirestore,
-  loadSubmissionsFromFirestore,
+  loadSubmissionsFromFirestoreSafe,
+  restoreSubmissionsToFirestore,
+  loadAllLocalSubmissionsForCompany,
+  persistSubmissionsToLocalCaches,
+  addLocalDeletedSubmissionId,
+  getLocalDeletedSubmissionIds,
+  saveLocalDeletedSubmissionIds,
+  normalizeCompanyKey,
   getCompanyProfileFromFirestore,
   logoutFromFirebase,
   saveActivityLogToFirestore,
@@ -97,7 +104,6 @@ import {
   saveMonthlyTransactionsToFirestore,
   subscribeToMonthlyTransactionsFromFirestore,
   subscribeToSubmissionsFromFirestore,
-  purgeAllLocalSubmissionCaches,
   sortSubmissionsList,
   getActiveFirebaseProjectId
 } from './firebase';
@@ -143,11 +149,16 @@ export default function App() {
   }, []);
 
   const [submissions, setSubmissions] = useState<Submission[]>(() => {
-    purgeAllLocalSubmissionCaches();
-    return [];
+    try {
+      const activeComp = localStorage.getItem('NUSANTARA_ACTIVE_COMPANY_ID') || 'nmsa';
+      return loadAllLocalSubmissionsForCompany(activeComp);
+    } catch (_) {
+      return [];
+    }
   });
 
   const submissionsRef = useRef<Submission[]>(submissions);
+  const serverBackupSubmissionsRef = useRef<Submission[]>([]);
   useEffect(() => {
     submissionsRef.current = submissions;
   }, [submissions]);
@@ -568,7 +579,54 @@ export default function App() {
               setProjectExpenses(raw.projectExpenses);
               localStorage.setItem('nmsa_project_expenses_v1', JSON.stringify(raw.projectExpenses));
             }
-            // Note: submissions are synchronized exclusively from Cloud Firestore so all devices (PC, HP, Vercel, AI Studio) share one authoritative dataset without local data-store.json drift.
+            if (raw.internalMemos && Array.isArray(raw.internalMemos) && raw.internalMemos.length > 0) {
+              try {
+                const localMemosRaw = localStorage.getItem('nmsa_internal_memos_v1');
+                const localMemos = localMemosRaw ? JSON.parse(localMemosRaw) : [];
+                const memoMap = new Map<string, any>();
+                if (Array.isArray(localMemos)) localMemos.forEach((m: any) => { if (m?.id) memoMap.set(m.id, m); });
+                raw.internalMemos.forEach((m: any) => { if (m?.id) memoMap.set(m.id, m); });
+                localStorage.setItem('nmsa_internal_memos_v1', JSON.stringify(Array.from(memoMap.values())));
+              } catch (_) {}
+            }
+
+            // Hydrate submission tombstones & server backup submissions (data-store.json)
+            const serverDelIds: string[] = Array.isArray(data.menu1_vouchers?.deletedSubmissionIds)
+              ? data.menu1_vouchers.deletedSubmissionIds
+              : (Array.isArray(raw.deletedSubmissionIds) ? raw.deletedSubmissionIds : []);
+            const mergedDelIds = Array.from(new Set([...getLocalDeletedSubmissionIds(), ...serverDelIds.map(String)]));
+            saveLocalDeletedSubmissionIds(mergedDelIds);
+            const delLower = new Set(mergedDelIds.map((x) => x.toLowerCase().trim()));
+
+            const rawSubs: any[] = Array.isArray(raw.submissions)
+              ? raw.submissions
+              : (Array.isArray(data.menu1_vouchers?.submissions) ? data.menu1_vouchers.submissions : []);
+            if (rawSubs.length > 0) {
+              const normalizedServerSubs: Submission[] = rawSubs
+                .filter((s: any) => s && s.id && !delLower.has(String(s.id).toLowerCase().trim()))
+                .map((s: any) => ({
+                  ...s,
+                  companyId: normalizeCompanyKey(s.companyId || 'nmsa'),
+                }));
+              const sortedServerSubs = sortSubmissionsList(normalizedServerSubs);
+              serverBackupSubmissionsRef.current = sortedServerSubs;
+
+              const currentComp = normalizeCompanyKey(localStorage.getItem('NUSANTARA_ACTIVE_COMPANY_ID') || 'nmsa');
+              const companyServerSubs = sortedServerSubs.filter((s) => normalizeCompanyKey(s.companyId) === currentComp);
+              if (companyServerSubs.length > 0) {
+                persistSubmissionsToLocalCaches(companyServerSubs, currentComp);
+                setSubmissions((prev) => {
+                  const filteredPrev = prev.filter((p) => p?.id && !delLower.has(String(p.id).toLowerCase().trim()));
+                  if (filteredPrev.length === 0) {
+                    return companyServerSubs;
+                  }
+                  const map = new Map<string, Submission>();
+                  companyServerSubs.forEach((s) => map.set(String(s.id).toLowerCase(), s));
+                  filteredPrev.forEach((s) => map.set(String(s.id).toLowerCase(), s));
+                  return sortSubmissionsList(Array.from(map.values()));
+                });
+              }
+            }
           }
 
           // Also attempt explicit /api/projects synchronization
@@ -1458,14 +1516,21 @@ export default function App() {
         }
       }
 
-      // 4. Fetch submissions directly from Cloud Firestore for this company
-      purgeAllLocalSubmissionCaches();
+      // 4. Fetch submissions from Cloud Firestore with safe local & server backup fallback
       let companySubmissions: Submission[] = [];
-      try {
-        companySubmissions = await loadSubmissionsFromFirestore(cleanId);
-      } catch (e) {
-        console.warn('loadSubmissionsFromFirestore error on switch:', e);
-        companySubmissions = [];
+      const cloudRes = await loadSubmissionsFromFirestoreSafe(cleanId);
+      const delLower = new Set(getLocalDeletedSubmissionIds().map((x) => x.toLowerCase().trim()));
+      if (cloudRes.ok && cloudRes.list.length > 0) {
+        companySubmissions = cloudRes.list.filter((s) => !delLower.has(String(s.id).toLowerCase().trim()));
+      } else {
+        const localSubs = loadAllLocalSubmissionsForCompany(cleanId);
+        const serverSubs = serverBackupSubmissionsRef.current.filter(
+          (s) => normalizeCompanyKey(s.companyId) === normalizeCompanyKey(cleanId) && !delLower.has(String(s.id).toLowerCase().trim())
+        );
+        const mergeMap = new Map<string, Submission>();
+        serverSubs.forEach((s) => mergeMap.set(String(s.id).toLowerCase(), s));
+        localSubs.forEach((s) => mergeMap.set(String(s.id).toLowerCase(), s));
+        companySubmissions = sortSubmissionsList(Array.from(mergeMap.values()));
       }
       setSubmissions(companySubmissions);
 
@@ -1911,15 +1976,49 @@ export default function App() {
         };
         setUserProfile(combinedProfile);
 
-        // Load submissions 100% directly from Cloud Firestore (no local cache)
+        // Load submissions safely from Cloud Firestore with server & local backup preservation
         try {
           setIsCloudSyncing(true);
-          purgeAllLocalSubmissionCaches();
-          const cloudSubs = await loadSubmissionsFromFirestore(companyId);
-          setSubmissions(cloudSubs);
+          const delLower = new Set(getLocalDeletedSubmissionIds().map((x) => x.toLowerCase().trim()));
+          const cloudRes = await loadSubmissionsFromFirestoreSafe(companyId);
+
+          const localBackup = loadAllLocalSubmissionsForCompany(companyId);
+          const serverBackup = serverBackupSubmissionsRef.current.filter(
+            (s) => normalizeCompanyKey(s.companyId) === normalizeCompanyKey(companyId)
+          );
+          const backupMap = new Map<string, Submission>();
+          serverBackup.forEach((s) => backupMap.set(String(s.id).toLowerCase(), s));
+          localBackup.forEach((s) => backupMap.set(String(s.id).toLowerCase(), s));
+          submissionsRef.current.forEach((s) => {
+            if (s?.id && normalizeCompanyKey(s.companyId) === normalizeCompanyKey(companyId)) {
+              backupMap.set(String(s.id).toLowerCase(), s);
+            }
+          });
+          const bestBackup = sortSubmissionsList(
+            Array.from(backupMap.values()).filter((s) => !delLower.has(String(s.id).toLowerCase().trim()))
+          );
+
+          if (cloudRes.ok && cloudRes.list.length > 0) {
+            const mergedMap = new Map<string, Submission>();
+            bestBackup.forEach((s) => mergedMap.set(String(s.id).toLowerCase(), s));
+            cloudRes.list.forEach((s) => mergedMap.set(String(s.id).toLowerCase(), s));
+            const combined = sortSubmissionsList(Array.from(mergedMap.values()));
+            persistSubmissionsToLocalCaches(combined, companyId);
+            setSubmissions(combined);
+          } else {
+            if (bestBackup.length > 0) {
+              persistSubmissionsToLocalCaches(bestBackup, companyId);
+              setSubmissions(bestBackup);
+              const reason = cloudRes.errorCode === 'permission-denied'
+                ? 'Akses baca Firestore dibatasi Rules'
+                : (cloudRes.ok ? 'Firestore masih kosong (0 dokumen)' : `Koneksi Firestore terkendala (${cloudRes.error || 'offline'})`);
+              setCloudSyncNotice(`⚠️ ${reason}. Menampilkan ${bestBackup.length} transaksi dari cadangan server/lokal — klik "Upload Backup ke Firestore" untuk memulihkan ke Cloud.`);
+            } else {
+              setSubmissions([]);
+            }
+          }
         } catch (e) {
-          console.warn('Gagal memuat voucher langsung dari Firestore:', e);
-          setSubmissions([]);
+          console.warn('Gagal memuat voucher dari Firestore:', e);
         } finally {
           setIsCloudSyncing(false);
           setIsInitialReconcileDone(true);
@@ -1938,28 +2037,87 @@ export default function App() {
 
   const [syncListenerEpoch, setSyncListenerEpoch] = useState(0);
 
+  const getBestBackupForCompany = (compId: string): Submission[] => {
+    const targetComp = normalizeCompanyKey(compId || 'nmsa');
+    const delLower = new Set(getLocalDeletedSubmissionIds().map((x) => x.toLowerCase().trim()));
+    const map = new Map<string, Submission>();
+    serverBackupSubmissionsRef.current.forEach((s) => {
+      if (s?.id && normalizeCompanyKey(s.companyId) === targetComp) map.set(String(s.id).toLowerCase(), s);
+    });
+    loadAllLocalSubmissionsForCompany(targetComp).forEach((s) => {
+      if (s?.id) map.set(String(s.id).toLowerCase(), s);
+    });
+    submissionsRef.current.forEach((s) => {
+      if (s?.id && normalizeCompanyKey(s.companyId) === targetComp) map.set(String(s.id).toLowerCase(), s);
+    });
+    return sortSubmissionsList(
+      Array.from(map.values()).filter((s) => !delLower.has(String(s.id).toLowerCase().trim()))
+    );
+  };
+
+  const handleRestoreBackupToFirestore = async () => {
+    const backupList = getBestBackupForCompany(activeCompForSync);
+    if (backupList.length === 0) {
+      setCloudSyncNotice('⚠️ Tidak ada data cadangan yang ditemukan untuk diunggah ke Firestore.');
+      return;
+    }
+    setIsCloudSyncing(true);
+    setCloudSyncNotice(`☁️ Mengunggah ${backupList.length} data transaksi cadangan ke Firebase Firestore (${getActiveFirebaseProjectId()})...`);
+    try {
+      const res = await restoreSubmissionsToFirestore(backupList, activeCompForSync, activeCompNameForSync);
+      if (res.successCount > 0) {
+        setCloudSyncNotice(`✅ Berhasil memulihkan ${res.successCount}/${res.total} transaksi ke Firebase Firestore (${getActiveFirebaseProjectId()}).`);
+        setSyncListenerEpoch((n) => n + 1);
+      } else {
+        setCloudSyncNotice(`❌ Gagal mengunggah ke Firestore: ${res.error || 'Periksa Rules / izin akun di Firebase Console'}. Data tetap aman tampil dari server cadangan.`);
+      }
+    } catch (err: any) {
+      setCloudSyncNotice(`❌ Gagal upload backup ke Firestore: ${err?.message || err}`);
+    } finally {
+      setIsCloudSyncing(false);
+    }
+  };
+
   const handleForceCloudSync = async (silent: boolean = false) => {
     if (!authUser) return;
     setIsCloudSyncing(true);
-    if (!silent) setCloudSyncNotice('Memuat ulang seluruh voucher langsung dari Firebase Firestore...');
+    if (!silent) setCloudSyncNotice('Memuat ulang seluruh voucher dari Firebase Firestore & cadangan server...');
     try {
-      purgeAllLocalSubmissionCaches();
       if (!silent) {
         await resetFirestoreQuotaCooldown();
       }
-      const cloudSubs = await loadSubmissionsFromFirestore(activeCompForSync);
-      setSubmissions(cloudSubs);
-      setShowQuotaBanner(isFirestoreQuotaExceeded());
-      if (!silent) {
-        setSyncListenerEpoch((n) => n + 1);
-        const pid = getActiveFirebaseProjectId();
-        setCloudSyncNotice(`☁️ Tersinkron langsung dari Firebase Firestore (${pid}): ${cloudSubs.length} voucher.`);
-        setTimeout(() => setCloudSyncNotice(null), 5000);
+      const cloudRes = await loadSubmissionsFromFirestoreSafe(activeCompForSync);
+      const bestBackup = getBestBackupForCompany(activeCompForSync);
+      const pid = getActiveFirebaseProjectId();
+
+      if (cloudRes.ok && cloudRes.list.length > 0) {
+        const mergedMap = new Map<string, Submission>();
+        bestBackup.forEach((s) => mergedMap.set(String(s.id).toLowerCase(), s));
+        cloudRes.list.forEach((s) => mergedMap.set(String(s.id).toLowerCase(), s));
+        const finalMerged = sortSubmissionsList(Array.from(mergedMap.values()));
+        persistSubmissionsToLocalCaches(finalMerged, activeCompForSync);
+        setSubmissions(finalMerged);
+        setShowQuotaBanner(isFirestoreQuotaExceeded());
+        if (!silent) {
+          setSyncListenerEpoch((n) => n + 1);
+          setCloudSyncNotice(`☁️ Tersinkron dari Firebase Firestore (${pid}): ${cloudRes.list.length} cloud, total ${finalMerged.length} voucher aktif.`);
+          setTimeout(() => setCloudSyncNotice(null), 5000);
+        }
+      } else {
+        if (bestBackup.length > 0) {
+          setSubmissions(bestBackup);
+        }
+        setShowQuotaBanner(isFirestoreQuotaExceeded());
+        if (!silent) {
+          const reason = cloudRes.errorCode === 'permission-denied'
+            ? `Akses Firestore (${pid}) dibatasi Security Rules`
+            : (cloudRes.ok ? `Firestore (${pid}) masih kosong (0 dokumen)` : `Gagal membaca Firestore (${cloudRes.error || 'periksa jaringan'})`);
+          setCloudSyncNotice(`⚠️ ${reason}. Menampilkan ${bestBackup.length} transaksi dari cadangan aman.`);
+        }
       }
     } catch (err: any) {
       if (!silent) {
         setCloudSyncNotice('Gagal memuat data dari Firebase Firestore: ' + (err?.message || 'Periksa jaringan'));
-        setTimeout(() => setCloudSyncNotice(null), 5000);
       }
     } finally {
       setIsCloudSyncing(false);
@@ -1978,7 +2136,18 @@ export default function App() {
     let lastFocusSyncAt = 0;
 
     const unsubSubs = subscribeToSubmissionsFromFirestore(activeCompForSync, (cloudSubs) => {
-      setSubmissions(sortSubmissionsList(cloudSubs));
+      if (cloudSubs.length === 0 && submissionsRef.current.length > 0) {
+        return;
+      }
+      const delLower = new Set(getLocalDeletedSubmissionIds().map((x) => x.toLowerCase().trim()));
+      const mergedMap = new Map<string, Submission>();
+      getBestBackupForCompany(activeCompForSync).forEach((s) => {
+        if (!delLower.has(String(s.id).toLowerCase().trim())) mergedMap.set(String(s.id).toLowerCase(), s);
+      });
+      cloudSubs.forEach((s) => {
+        if (!delLower.has(String(s.id).toLowerCase().trim())) mergedMap.set(String(s.id).toLowerCase(), s);
+      });
+      setSubmissions(sortSubmissionsList(Array.from(mergedMap.values())));
     });
 
     const handleWakeSync = (forceFullCheck: boolean = false) => {
@@ -2009,32 +2178,56 @@ export default function App() {
     };
   }, [authUser?.uid, activeCompForSync, syncListenerEpoch, isInitialReconcileDone]);
 
-  // Update in-memory React state only (Firebase Firestore is the single source of truth)
+  // Update in-memory React state + lightweight local cache persistence
   const saveSubmissionsToStorage = (updatedList: Submission[]) => {
     if (!Array.isArray(updatedList)) {
       console.error('saveSubmissionsToStorage dipanggil dengan data non-array:', updatedList);
       return;
     }
-    setSubmissions(sortSubmissionsList(updatedList));
+    const sorted = sortSubmissionsList(updatedList);
+    setSubmissions(sorted);
+    persistSubmissionsToLocalCaches(sorted, activeCompForSync);
   };
 
-  // Delete handler
-  const handleDelete = async (id: string) => {
+  // Delete handler (removes from UI state, server data-store.json, Firestore, and Google Drive folder)
+  const handleDelete = async (id: string, options?: { deleteDriveFolder?: boolean }) => {
     const targetSub = submissions.find(s => s.id === id);
+    const shouldDeleteDrive = options?.deleteDriveFolder !== false;
+
+    addLocalDeletedSubmissionId(id);
     const updated = submissions.filter((sub) => sub.id !== id);
     saveSubmissionsToStorage(updated);
-    
-    // Auto-delete Google Drive folder if exists (searches by folderId, attachments, standard name, or voucher code)
-    if (targetSub) {
+
+    // Hapus juga dari data-store.json backend & catat tombstone
+    fetch(`/api/sync-submissions/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }).catch((err) => console.warn('Gagal hapus voucher dari backup server:', err));
+
+    // Auto-delete Google Drive folder if enabled (searches by folderId, attachments, standard name, kode, or voucher number)
+    if (targetSub && shouldDeleteDrive) {
+      const targetLabel = targetSub.kode || targetSub.dibayarkanKepada || targetSub.id;
+      setCloudSyncNotice(`🗑️ Voucher "${targetLabel}" dihapus. Sedang mencari & menghapus folder di Google Drive...`);
       deleteSubmissionDriveFolder(targetSub).then((res) => {
         if (res.success) {
           console.log(`[Auto-Sync] ${res.message}`);
+          setCloudSyncNotice(`✅ Voucher "${targetLabel}" & folder Google Drive "${res.folderName || ''}" berhasil dihapus.`);
+          setTimeout(() => setCloudSyncNotice(null), 6000);
         } else {
           console.log(`[Auto-Sync] Info folder Drive: ${res.message}`);
+          if (res.needsAuth) {
+            setCloudSyncNotice(`⚠️ Voucher "${targetLabel}" terhapus dari sistem, namun Google Drive belum terhubung/berizin penuh untuk menghapus foldernya (${res.message}).`);
+          } else {
+            setCloudSyncNotice(`ℹ️ Voucher "${targetLabel}" terhapus. ${res.message}`);
+            setTimeout(() => setCloudSyncNotice(null), 6000);
+          }
         }
       }).catch((err) => {
         console.warn('Gagal menghapus folder Google Drive saat menghapus transaksi:', err);
+        setCloudSyncNotice(`⚠️ Voucher "${targetLabel}" terhapus, namun gagal menghapus folder Google Drive: ${err?.message || err}`);
       });
+    } else if (targetSub) {
+      setCloudSyncNotice(`✅ Voucher "${targetSub.kode || targetSub.dibayarkanKepada}" dihapus dari aplikasi (folder Drive dipertahankan).`);
+      setTimeout(() => setCloudSyncNotice(null), 4000);
     }
 
     // Re-sync pinjaman jika transaksi yang dihapus merupakan pinjaman
@@ -2061,8 +2254,6 @@ export default function App() {
         await deleteSubmissionFromFirestore(id);
       } catch (err: any) {
         console.warn('Gagal menghapus voucher di Firebase Firestore:', err);
-        setCloudSyncNotice(`⚠️ Gagal menghapus voucher di Firestore (${err?.message || 'Periksa jaringan'}).`);
-        setTimeout(() => setCloudSyncNotice(null), 5000);
       }
     }
 
@@ -2115,6 +2306,14 @@ export default function App() {
 
     const updated = [dupe, ...submissions];
     saveSubmissionsToStorage(updated);
+
+    try {
+      fetch('/api/sync-submissions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ submission: dupe })
+      }).catch(() => {});
+    } catch (_) {}
 
     if (isFirebaseConfigured()) {
       try {
@@ -2428,6 +2627,14 @@ export default function App() {
         status: 'Lunas' as const,
       };
 
+      try {
+        fetch('/api/sync-submissions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ submission: updatedSub })
+        }).catch(() => {});
+      } catch (_) {}
+
       if (isFirebaseConfigured()) {
         try {
           await saveSubmissionToFirestore(updatedSub, userProfile?.companyId, userProfile?.companyName);
@@ -2461,7 +2668,6 @@ export default function App() {
       sessionStorage.removeItem('NUSANTARA_SESSION_ACTIVE');
       sessionStorage.removeItem('NUSANTARA_ACTIVE_VIEW');
       localStorage.removeItem('NUSANTARA_ACTIVE_TAB_HEARTBEAT');
-      purgeAllLocalSubmissionCaches();
       localStorage.removeItem('NUSANTARA_ACTIVE_VIEW');
       setViewInternal('list');
       setIsInitialReconcileDone(false);
@@ -3015,15 +3221,26 @@ export default function App() {
             sessionStorage.setItem('NUSANTARA_ACTIVE_VIEW', 'list');
             localStorage.setItem('NUSANTARA_ACTIVE_VIEW', 'list');
           } catch (e) {}
-          purgeAllLocalSubmissionCaches();
           const compId = (user?.companyId || localStorage.getItem('NUSANTARA_ACTIVE_COMPANY_ID') || 'nmsa').toLowerCase().trim();
-          setSubmissions(sortSubmissionsList(Array.isArray(initialData) ? initialData : []));
+          const backupSeed = getBestBackupForCompany(compId);
+          const initialValid = Array.isArray(initialData) && initialData.length > 0 ? initialData : backupSeed;
+          setSubmissions(sortSubmissionsList(initialValid));
 
-          // Ensure fresh direct read from Cloud Firestore before attaching realtime listener
+          // Fetch fresh from Cloud Firestore with backup preservation
           setIsCloudSyncing(true);
-          loadSubmissionsFromFirestore(compId)
-            .then((cloudSubs) => {
-              setSubmissions(cloudSubs);
+          loadSubmissionsFromFirestoreSafe(compId)
+            .then((cloudRes) => {
+              const latestBackup = getBestBackupForCompany(compId);
+              if (cloudRes.ok && cloudRes.list.length > 0) {
+                const map = new Map<string, Submission>();
+                latestBackup.forEach((s) => map.set(String(s.id).toLowerCase(), s));
+                cloudRes.list.forEach((s) => map.set(String(s.id).toLowerCase(), s));
+                const combined = sortSubmissionsList(Array.from(map.values()));
+                persistSubmissionsToLocalCaches(combined, compId);
+                setSubmissions(combined);
+              } else if (latestBackup.length > 0) {
+                setSubmissions(latestBackup);
+              }
             })
             .catch(() => {})
             .finally(() => {
@@ -3403,6 +3620,8 @@ export default function App() {
             userProfile={userProfile}
             pettyCashHolders={pettyCashHolders}
             onForceCloudSync={() => handleForceCloudSync(false)}
+            onRestoreBackupToFirestore={handleRestoreBackupToFirestore}
+            onOpenDriveCleaner={() => setIsDriveOrphanCleanerOpen(true)}
             isCloudSyncing={isCloudSyncing}
             cloudSyncNotice={cloudSyncNotice}
             onOpenConsolidateModal={() => setIsConsolidateNamesModalOpen(true)}

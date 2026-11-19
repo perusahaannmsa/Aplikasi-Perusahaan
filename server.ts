@@ -1865,6 +1865,7 @@ function readState() {
     monthlyTransactions: [],
     deletedMonthlyIds: [],
     submissions: [],
+    deletedSubmissionIds: [],
     internalMemos: [],
     accurateAccounts: [],
     accurateMappedReports: [],
@@ -2367,6 +2368,7 @@ app.get("/api/unified-storage", (req, res) => {
       timestamp: new Date().toISOString(),
       menu1_vouchers: {
         submissions: state.submissions || [],
+        deletedSubmissionIds: state.deletedSubmissionIds || [],
         pettyCashReports: state.pettyCashReports || [],
         pettyCashHolders: state.pettyCashHolders || []
       },
@@ -4189,35 +4191,391 @@ app.get(["/api/data", "/api/vouchers", "/api/summary"], (req, res) => {
   });
 });
 
-// POST /api/sync-submissions (Frontend syncs all submissions or single submission to backend memory)
+// POST /api/sync-submissions (Frontend syncs all submissions, single submission, or tombstones to backend memory)
 app.post("/api/sync-submissions", (req, res) => {
   try {
-    const { submissions, submission } = req.body;
+    const { submissions, submission, deletedId, deletedIds, clearDeletedIds } = req.body || {};
     const state = readState();
-    if (!state.submissions) state.submissions = [];
+    if (!Array.isArray(state.submissions)) state.submissions = [];
+    if (!Array.isArray(state.deletedSubmissionIds)) state.deletedSubmissionIds = [];
+
+    const delSet = new Set<string>(state.deletedSubmissionIds.map((x: any) => String(x).trim()).filter(Boolean));
+    if (deletedId) delSet.add(String(deletedId).trim());
+    if (Array.isArray(deletedIds)) {
+      deletedIds.forEach((x: any) => {
+        if (x) delSet.add(String(x).trim());
+      });
+    }
+    if (Array.isArray(clearDeletedIds)) {
+      clearDeletedIds.forEach((x: any) => {
+        if (x) delSet.delete(String(x).trim());
+      });
+    }
+
+    if (submission && submission.id) {
+      delSet.delete(String(submission.id).trim());
+    }
+
+    state.deletedSubmissionIds = Array.from(delSet).slice(-1000);
+    const delLowerSet = new Set(state.deletedSubmissionIds.map((x: string) => x.toLowerCase()));
 
     if (Array.isArray(submissions)) {
       const map = new Map<string, any>();
-      (state.submissions || []).forEach((s: any) => { if (s && s.id) map.set(String(s.id).toLowerCase(), s); });
-      submissions.forEach((s: any) => { if (s && s.id) map.set(String(s.id).toLowerCase(), s); });
+      (state.submissions || []).forEach((s: any) => {
+        if (s && s.id && !delLowerSet.has(String(s.id).toLowerCase())) {
+          map.set(String(s.id).toLowerCase(), s);
+        }
+      });
+      submissions.forEach((s: any) => {
+        if (s && s.id && !delLowerSet.has(String(s.id).toLowerCase())) {
+          const normalized = enforceSubmissionIdFormat(s);
+          map.set(String(normalized.id).toLowerCase(), normalized);
+        }
+      });
       state.submissions = Array.from(map.values());
       writeState(state);
-      return res.json({ success: true, count: state.submissions.length });
+      return res.json({
+        success: true,
+        count: state.submissions.length,
+        deletedSubmissionIds: state.deletedSubmissionIds
+      });
     } else if (submission && submission.id) {
-      const subId = String(submission.id).toLowerCase();
+      const normalized = enforceSubmissionIdFormat(submission);
+      const subId = String(normalized.id).toLowerCase();
       const idx = state.submissions.findIndex((s: any) => String(s.id).toLowerCase() === subId);
       if (idx >= 0) {
-        state.submissions[idx] = submission;
+        state.submissions[idx] = normalized;
       } else {
-        state.submissions.push(submission);
+        state.submissions.unshift(normalized);
       }
       writeState(state);
-      return res.json({ success: true, id: submission.id });
+      return res.json({
+        success: true,
+        id: normalized.id,
+        count: state.submissions.length,
+        deletedSubmissionIds: state.deletedSubmissionIds
+      });
+    } else if (deletedId || Array.isArray(deletedIds) || Array.isArray(clearDeletedIds)) {
+      state.submissions = state.submissions.filter(
+        (s: any) => s && s.id && !delLowerSet.has(String(s.id).toLowerCase())
+      );
+      writeState(state);
+      return res.json({
+        success: true,
+        count: state.submissions.length,
+        deletedSubmissionIds: state.deletedSubmissionIds
+      });
     } else {
       return res.status(400).json({ error: "Payload submissions harus berupa array atau objek submission valid." });
     }
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/sync-submissions/:id (Remove deleted voucher from data-store.json and record tombstone)
+app.delete("/api/sync-submissions/:id", (req, res) => {
+  try {
+    const rawId = decodeURIComponent(req.params.id || "").trim();
+    const targetLower = rawId.toLowerCase();
+    const state = readState();
+    if (!Array.isArray(state.submissions)) state.submissions = [];
+    if (!Array.isArray(state.deletedSubmissionIds)) state.deletedSubmissionIds = [];
+
+    const beforeCount = state.submissions.length;
+    state.submissions = state.submissions.filter(
+      (s: any) => String(s?.id || "").toLowerCase().trim() !== targetLower
+    );
+
+    const existingDel = new Set<string>(state.deletedSubmissionIds.map((x: any) => String(x).trim()).filter(Boolean));
+    if (rawId) existingDel.add(rawId);
+    state.deletedSubmissionIds = Array.from(existingDel).slice(-1000);
+
+    writeState(state);
+    return res.json({
+      success: true,
+      id: rawId,
+      removed: beforeCount - state.submissions.length,
+      remainingCount: state.submissions.length,
+      deletedSubmissionIds: state.deletedSubmissionIds
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/drive/delete-submission-folder (Delete or trash voucher's Google Drive folder via user OAuth token or Service Account fallback)
+app.post("/api/drive/delete-submission-folder", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization || "";
+    const bearerToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+    const { submission, accessToken: bodyToken } = req.body || {};
+    const sub = submission || {};
+
+    const tokensToTry: { token: string; source: string }[] = [];
+    const clientToken = String(bodyToken || bearerToken || "").trim();
+    if (clientToken) {
+      tokensToTry.push({ token: clientToken, source: "client_oauth" });
+    }
+
+    try {
+      const creds = getServiceAccountCredentials();
+      if (creds && creds.clientEmail && creds.privateKey) {
+        const jwtClient = new google.auth.JWT({
+          email: creds.clientEmail,
+          key: creds.privateKey,
+          scopes: ["https://www.googleapis.com/auth/drive"]
+        });
+        const saTokens = await jwtClient.authorize();
+        if (saTokens?.access_token) {
+          tokensToTry.push({ token: saTokens.access_token, source: "service_account" });
+        }
+      }
+    } catch (saErr: any) {
+      console.warn("[Drive Delete Folder] Service account fallback unavailable:", saErr?.message || saErr);
+    }
+
+    if (tokensToTry.length === 0) {
+      return res.json({
+        success: false,
+        needsAuth: true,
+        message: "Akun Google Drive belum terhubung dan Service Account server belum tersedia."
+      });
+    }
+
+    const extractDriveId = (url?: string): string | null => {
+      if (!url || typeof url !== "string") return null;
+      const dMatch = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+      if (dMatch?.[1]) return dMatch[1];
+      const fMatch = url.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+      if (fMatch?.[1]) return fMatch[1];
+      const idMatch = url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+      if (idMatch?.[1]) return idMatch[1];
+      return null;
+    };
+
+    const isStructuralFolderName = (name?: string): boolean => {
+      const n = String(name || "").trim();
+      if (!n) return true;
+      const lower = n.toLowerCase();
+      if (lower === "voucher-app" || lower === "my drive" || lower === "drive saya") return true;
+      if (/^20\d{2}$/.test(n)) return true;
+      if (/^\d{1,2}$/.test(n)) return true;
+      if (/^\d{1,2}\.\s*(januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember)$/i.test(n)) return true;
+      return false;
+    };
+
+    const rawKode = String(sub.kode || "").trim();
+    const cleanKode = rawKode.replace(/[\/\\?%*:|"<>.]/g, "-");
+    const vNumMatch = rawKode.match(/(\d{3,6})(?:\s*[-+]|\s*$|\s*\))/);
+    const vNum = String(sub.voucherNumber || (vNumMatch ? vNumMatch[1] : "") || "").trim();
+    const cleanJenis = String(sub.jenisPengajuan || (sub.isPettyCash ? "Petty Cash" : "Pengajuan")).trim().replace(/[\/\\?%*:|"<>.]/g, "");
+    const cleanPenerima = String(sub.dibayarkanKepada || (sub.isPettyCash ? sub.pettyCashCustodian : "") || "Penerima").trim().replace(/[\/\\?%*:|"<>.]/g, "");
+
+    let standardName = "";
+    if (sub.isInvoice && sub.invoiceNumber) {
+      const cleanInv = String(sub.invoiceNumber).trim().replace(/[\/\\?%*:|"<>.]/g, "");
+      standardName = cleanKode ? `${cleanKode} - Pembayaran-${cleanInv}` : `Pembayaran-${cleanInv}`;
+    } else if (cleanJenis || cleanPenerima) {
+      const txBase = `Pembayaran-${cleanJenis}+${cleanPenerima}`;
+      standardName = cleanKode ? `${cleanKode} - ${txBase}` : txBase;
+    }
+    const legacyName = cleanJenis && cleanPenerima ? `${cleanJenis} - ${cleanPenerima}` : "";
+
+    const extraCandidates: string[] = Array.isArray(sub.folderNameCandidates) ? sub.folderNameCandidates.filter(Boolean) : [];
+    const fileUrls: string[] = Array.isArray(sub.fileUrls) ? [...sub.fileUrls] : [];
+    if (Array.isArray(sub.googleDriveFiles)) {
+      sub.googleDriveFiles.forEach((f: any) => { if (f?.url) fileUrls.push(f.url); });
+    }
+    if (sub.buktiPembayaran?.url) fileUrls.push(sub.buktiPembayaran.url);
+    if (sub.googleDriveFileUrl) fileUrls.push(sub.googleDriveFileUrl);
+
+    const recipientPrefix = String(sub.dibayarkanKepada || "").trim().toLowerCase().slice(0, 5);
+    const cleanKodeLower = cleanKode.toLowerCase();
+
+    const findMatchingFoldersWithToken = async (token: string): Promise<{ folders: { id: string; name: string }[]; authFailed: boolean }> => {
+      const found = new Map<string, { id: string; name: string }>();
+      let authFailed = false;
+
+      const safeDriveFetch = async (url: string) => {
+        const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+        if (resp.status === 401) authFailed = true;
+        return resp;
+      };
+
+      // 1. Direct folderId
+      if (sub.googleDriveFolderId) {
+        try {
+          const r = await safeDriveFetch(
+            `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(sub.googleDriveFolderId)}?supportsAllDrives=true&fields=id,name,mimeType,trashed`
+          );
+          if (r.ok) {
+            const d: any = await r.json();
+            if (d?.id && d.mimeType === "application/vnd.google-apps.folder" && !d.trashed && !isStructuralFolderName(d.name)) {
+              found.set(d.id, { id: d.id, name: d.name });
+            }
+          }
+        } catch (_) {}
+      }
+
+      // 2. Parent folders of attached files
+      for (const u of fileUrls) {
+        const fid = extractDriveId(u);
+        if (!fid) continue;
+        try {
+          const fr = await safeDriveFetch(
+            `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fid)}?supportsAllDrives=true&fields=id,name,mimeType,parents,trashed`
+          );
+          if (fr.ok) {
+            const fd: any = await fr.json();
+            if (fd?.mimeType === "application/vnd.google-apps.folder" && !fd.trashed && !isStructuralFolderName(fd.name)) {
+              found.set(fd.id, { id: fd.id, name: fd.name });
+            } else if (Array.isArray(fd?.parents)) {
+              for (const pid of fd.parents) {
+                const pr = await safeDriveFetch(
+                  `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(pid)}?supportsAllDrives=true&fields=id,name,mimeType,trashed`
+                );
+                if (pr.ok) {
+                  const pd: any = await pr.json();
+                  if (pd?.id && pd.mimeType === "application/vnd.google-apps.folder" && !pd.trashed && !isStructuralFolderName(pd.name)) {
+                    found.set(pd.id, { id: pd.id, name: pd.name });
+                  }
+                }
+              }
+            }
+          }
+        } catch (_) {}
+      }
+
+      // 3. Search by exact candidate names & cleanKode
+      const exactNames = Array.from(new Set([standardName, legacyName, ...extraCandidates].filter(Boolean)));
+      for (const name of exactNames) {
+        if (isStructuralFolderName(name)) continue;
+        try {
+          const q = `name = '${name.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+          const sr = await safeDriveFetch(
+            `https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&includeItemsFromAllDrives=true&q=${encodeURIComponent(q)}&fields=files(id,name)&pageSize=20`
+          );
+          if (sr.ok) {
+            const sd: any = await sr.json();
+            (sd.files || []).forEach((f: any) => {
+              if (f?.id && !isStructuralFolderName(f.name)) found.set(f.id, { id: f.id, name: f.name });
+            });
+          }
+        } catch (_) {}
+      }
+
+      if (cleanKode && cleanKode.length >= 4 && cleanKode.toUpperCase() !== "HO") {
+        try {
+          const qKode = `name contains '${cleanKode.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+          const sr = await safeDriveFetch(
+            `https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&includeItemsFromAllDrives=true&q=${encodeURIComponent(qKode)}&fields=files(id,name)&pageSize=20`
+          );
+          if (sr.ok) {
+            const sd: any = await sr.json();
+            (sd.files || []).forEach((f: any) => {
+              if (f?.id && !isStructuralFolderName(f.name)) found.set(f.id, { id: f.id, name: f.name });
+            });
+          }
+        } catch (_) {}
+      }
+
+      // 4. Search by numeric voucher number (e.g. 1088) verified with recipient / Pembayaran- / cleanKode
+      if (vNum && vNum.length >= 3) {
+        try {
+          const qNum = `name contains '${vNum}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+          const sr = await safeDriveFetch(
+            `https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&includeItemsFromAllDrives=true&q=${encodeURIComponent(qNum)}&fields=files(id,name)&pageSize=30`
+          );
+          if (sr.ok) {
+            const sd: any = await sr.json();
+            (sd.files || []).forEach((f: any) => {
+              if (!f?.id || isStructuralFolderName(f.name)) return;
+              const fLower = String(f.name || "").toLowerCase();
+              const hasVoucherToken = new RegExp(`(^|[^0-9])${vNum}([^0-9]|$)`).test(fLower);
+              if (!hasVoucherToken) return;
+              const matchesKode = cleanKodeLower && cleanKodeLower.length >= 4 && fLower.includes(cleanKodeLower);
+              const matchesRecipient = recipientPrefix.length >= 3 && fLower.includes(recipientPrefix);
+              const matchesTxPattern = fLower.includes("pembayaran-") && (fLower.includes("bkk-") || fLower.includes("bkm-") || fLower.includes("inv-"));
+              if (matchesKode || matchesRecipient || matchesTxPattern) {
+                found.set(f.id, { id: f.id, name: f.name });
+              }
+            });
+          }
+        } catch (_) {}
+      }
+
+      return { folders: Array.from(found.values()), authFailed };
+    };
+
+    const deleteFolderWithToken = async (folderId: string, token: string): Promise<boolean> => {
+      const delRes = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(folderId)}?supportsAllDrives=true`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (delRes.ok || delRes.status === 404) return true;
+
+      const trashRes = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(folderId)}?supportsAllDrives=true`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ trashed: true })
+      });
+      return trashRes.ok || trashRes.status === 404;
+    };
+
+    const deletedFolders: { id: string; name: string; via: string }[] = [];
+    let anyAuthFailed = false;
+    let foundAnyCandidate = false;
+
+    for (const entry of tokensToTry) {
+      const { folders, authFailed } = await findMatchingFoldersWithToken(entry.token);
+      if (authFailed) anyAuthFailed = true;
+      if (folders.length === 0) continue;
+
+      foundAnyCandidate = true;
+      for (const folder of folders) {
+        if (deletedFolders.some((df) => df.id === folder.id)) continue;
+        let removed = await deleteFolderWithToken(folder.id, entry.token);
+        if (!removed) {
+          // Try deleting with any remaining tokens (e.g., Service Account or user OAuth)
+          for (const alt of tokensToTry) {
+            if (alt.token === entry.token) continue;
+            removed = await deleteFolderWithToken(folder.id, alt.token);
+            if (removed) {
+              deletedFolders.push({ ...folder, via: alt.source });
+              break;
+            }
+          }
+        } else {
+          deletedFolders.push({ ...folder, via: entry.source });
+        }
+      }
+      if (deletedFolders.length > 0) break;
+    }
+
+    if (deletedFolders.length > 0) {
+      return res.json({
+        success: true,
+        deletedCount: deletedFolders.length,
+        folderName: deletedFolders.map((f) => f.name).join(", "),
+        deletedFolders,
+        message: `Folder Google Drive "${deletedFolders[0].name}"${deletedFolders.length > 1 ? ` (+${deletedFolders.length - 1} folder duplikat)` : ""} berhasil dihapus.`
+      });
+    }
+
+    return res.json({
+      success: false,
+      needsAuth: anyAuthFailed && !foundAnyCandidate,
+      message: foundAnyCandidate
+        ? "Folder ditemukan di Google Drive, tetapi izin akun/Service Account saat ini tidak diizinkan menghapus folder tersebut."
+        : "Folder Google Drive tidak ditemukan atau sudah terhapus sebelumnya."
+    });
+  } catch (err: any) {
+    console.error("[Drive Delete Folder Error]:", err);
+    return res.status(500).json({ success: false, error: err?.message || String(err) });
   }
 });
 

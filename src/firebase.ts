@@ -82,44 +82,33 @@ export const PERMANENT_LOCKED_FIREBASE_CONFIG = {
   firestoreDatabaseId: "(default)"
 };
 
-// Helper to check and parse stored config - PERMANENTLY LOCKED to NMSA Production
+export const getOfficialFirebaseConfig = () => PERMANENT_LOCKED_FIREBASE_CONFIG;
+
+// Helper to check and parse stored config - permanently defaults to NMSA Official Project
 export const getStoredFirebaseConfig = (): any => {
-  // Check if custom user config was saved to localStorage (e.g. from Firebase Migration / Multi-project)
+  // 1. Check if a custom user config was explicitly saved via Migration / Settings panel
   try {
+    const isManualCustom = localStorage.getItem('NUSANTARA_CUSTOM_CONFIG_MANUAL') === 'true';
     const custom = localStorage.getItem('NUSANTARA_FIREBASE_CONFIG');
     if (custom) {
       const parsed = JSON.parse(custom);
       if (parsed && parsed.apiKey && parsed.projectId) {
-        return parsed;
+        if (isManualCustom || parsed.projectId === PERMANENT_LOCKED_FIREBASE_CONFIG.projectId) {
+          return {
+            ...parsed,
+            firestoreDatabaseId: parsed.firestoreDatabaseId || '(default)'
+          };
+        } else {
+          // Stale non-manual config from another project -> clear and restore official config
+          try { localStorage.removeItem('NUSANTARA_FIREBASE_CONFIG'); } catch (_) {}
+        }
       }
     }
   } catch (e) {
     console.warn('Error reading stored custom firebase config:', e);
   }
 
-  // Check if firebase-applet-config.json exists and has valid configuration for pencatatan-voucher-perusahaan
-  if (firebaseAppletConfig && (firebaseAppletConfig as any).apiKey && (firebaseAppletConfig as any).projectId === "pencatatan-voucher-perusahaan") {
-    return firebaseAppletConfig;
-  }
-
-  // Environment variables override if specified
-  const envApiKey = import.meta.env.VITE_FIREBASE_API_KEY;
-  const envProjectId = import.meta.env.VITE_FIREBASE_PROJECT_ID;
-  if (envApiKey && envProjectId) {
-    return {
-      apiKey: envApiKey,
-      authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || `${envProjectId}.firebaseapp.com`,
-      databaseURL: import.meta.env.VITE_FIREBASE_DATABASE_URL || `https://${envProjectId}-default-rtdb.asia-southeast1.firebasedatabase.app`,
-      projectId: envProjectId,
-      storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || `${envProjectId}.firebasestorage.app`,
-      messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '',
-      appId: import.meta.env.VITE_FIREBASE_APP_ID || '',
-      measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || '',
-      firestoreDatabaseId: "(default)"
-    };
-  }
-
-  // 🔒 Always return the locked permanent configuration by default
+  // 2. Always return the official locked NMSA configuration
   return PERMANENT_LOCKED_FIREBASE_CONFIG;
 };
 
@@ -739,7 +728,11 @@ export const NMSA_PROD_FIREBASE_CONFIG = {
 
 // Switch active database to NMSA original project
 export const switchToProductionDatabase = (): boolean => {
-  return saveAndInitializeFirebaseConfig(NMSA_PROD_FIREBASE_CONFIG);
+  try {
+    localStorage.removeItem('NUSANTARA_CUSTOM_CONFIG_MANUAL');
+    localStorage.removeItem('NUSANTARA_FIREBASE_CONFIG');
+  } catch (_) {}
+  return initializeFirebaseApp(PERMANENT_LOCKED_FIREBASE_CONFIG);
 };
 
 // Switch active database back to AI Studio Applet project
@@ -2498,7 +2491,8 @@ export const googleDriveLogin = async (
   // Use primary auth instance to guarantee popup postMessage resolution!
   const targetAuth = firebaseAuth || getAuth();
   const provider = new GoogleAuthProvider();
-  // Request Google Drive File write/edit permissions
+  // Request full Google Drive + drive.file permissions so created & legacy folders can be managed and deleted
+  provider.addScope('https://www.googleapis.com/auth/drive');
   provider.addScope('https://www.googleapis.com/auth/drive.file');
 
   const customParams: Record<string, string> = {};
@@ -2642,9 +2636,9 @@ export const googleDriveLogin = async (
 
 const DELETED_SUBMISSIONS_STORAGE_KEY = 'NUSANTARA_DELETED_SUBMISSION_IDS';
 
-// Hapus seluruh penyimpanan sementara / cache lokal transaksi voucher di browser
-export const purgeAllLocalSubmissionCaches = (): void => {
-  if (typeof localStorage === 'undefined') return;
+// Hapus cache lokal hanya bila diminta secara eksplisit (forceWipe = true)
+export const purgeAllLocalSubmissionCaches = (forceWipe: boolean = false): void => {
+  if (!forceWipe || typeof localStorage === 'undefined') return;
   try {
     const keysToRemove: string[] = [
       'NUSANTARA_HO_SUBMISSIONS',
@@ -2660,32 +2654,8 @@ export const purgeAllLocalSubmissionCaches = (): void => {
     keysToRemove.forEach((k) => {
       try { localStorage.removeItem(k); } catch (_) {}
     });
-
-    // Bersihkan entri 'submissions' dari antrian lokal lama bila ada
-    try {
-      const rawQ = localStorage.getItem('NUSANTARA_FIRESTORE_WRITE_QUEUE');
-      if (rawQ) {
-        const parsed = JSON.parse(rawQ);
-        if (Array.isArray(parsed)) {
-          const nonSub = parsed.filter((item: any) => item?.path && item.path !== 'submissions');
-          if (nonSub.length === 0) {
-            localStorage.removeItem('NUSANTARA_FIRESTORE_WRITE_QUEUE');
-          } else {
-            localStorage.setItem('NUSANTARA_FIRESTORE_WRITE_QUEUE', JSON.stringify(nonSub));
-          }
-        } else {
-          localStorage.removeItem('NUSANTARA_FIRESTORE_WRITE_QUEUE');
-        }
-      }
-    } catch (_) {
-      try { localStorage.removeItem('NUSANTARA_FIRESTORE_WRITE_QUEUE'); } catch (__) {}
-    }
   } catch (_) {}
 };
-
-if (typeof window !== 'undefined') {
-  purgeAllLocalSubmissionCaches();
-}
 
 export const sortSubmissionsList = (list: Submission[]): Submission[] => {
   return [...list].sort((a, b) => {
@@ -2705,29 +2675,51 @@ export const sortSubmissionsList = (list: Submission[]): Submission[] => {
 };
 
 export const getLocalDeletedSubmissionIds = (): string[] => {
-  return [];
-};
-
-export const saveLocalDeletedSubmissionIds = (_ids: string[]) => {
-  if (typeof localStorage !== 'undefined') {
-    try { localStorage.removeItem(DELETED_SUBMISSIONS_STORAGE_KEY); } catch (_) {}
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(DELETED_SUBMISSIONS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? Array.from(new Set(parsed.map(String).filter(Boolean))) : [];
+  } catch (_) {
+    return [];
   }
 };
 
-export const addLocalDeletedSubmissionId = (_id: string): string[] => {
-  return [];
+export const saveLocalDeletedSubmissionIds = (ids: string[]) => {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    const unique = Array.from(new Set((ids || []).map((x) => String(x).trim()).filter(Boolean))).slice(-1000);
+    if (unique.length === 0) {
+      localStorage.removeItem(DELETED_SUBMISSIONS_STORAGE_KEY);
+    } else {
+      localStorage.setItem(DELETED_SUBMISSIONS_STORAGE_KEY, JSON.stringify(unique));
+    }
+  } catch (_) {}
 };
 
-export const removeLocalDeletedSubmissionId = (_id: string): string[] => {
-  return [];
+export const addLocalDeletedSubmissionId = (id: string): string[] => {
+  const cleanId = String(id || '').trim();
+  if (!cleanId) return getLocalDeletedSubmissionIds();
+  const next = Array.from(new Set([...getLocalDeletedSubmissionIds(), cleanId]));
+  saveLocalDeletedSubmissionIds(next);
+  return next;
+};
+
+export const removeLocalDeletedSubmissionId = (id: string): string[] => {
+  const cleanId = String(id || '').trim().toLowerCase();
+  if (!cleanId) return getLocalDeletedSubmissionIds();
+  const next = getLocalDeletedSubmissionIds().filter((x) => x.toLowerCase().trim() !== cleanId);
+  saveLocalDeletedSubmissionIds(next);
+  return next;
 };
 
 export const loadDeletedSubmissionIdsFromFirestore = async (): Promise<string[]> => {
-  return [];
+  return getLocalDeletedSubmissionIds();
 };
 
-export const syncDeletedSubmissionIdToCloud = async (_id: string): Promise<void> => {
-  // No-op: deleteDoc removes directly from Firestore 'submissions' collection
+export const syncDeletedSubmissionIdToCloud = async (id: string): Promise<void> => {
+  addLocalDeletedSubmissionId(id);
 };
 
 export const subscribeToDeletedSubmissionIdsFromFirestore = (
@@ -2736,7 +2728,7 @@ export const subscribeToDeletedSubmissionIdsFromFirestore = (
   return () => {};
 };
 
-const normalizeCompanyKey = (raw?: string | null): string => {
+export const normalizeCompanyKey = (raw?: string | null): string => {
   const val = String(raw || '').toLowerCase().trim();
   if (!val || val === 'nmsa' || val.includes('nusantara mineral sukses abadi')) {
     return 'nmsa';
@@ -2744,19 +2736,81 @@ const normalizeCompanyKey = (raw?: string | null): string => {
   return val;
 };
 
-export const loadAllLocalSubmissionsForCompany = (_companyId: string = 'nmsa'): Submission[] => {
-  purgeAllLocalSubmissionCaches();
-  return [];
+const stripHeavyFieldsForLocalCache = (list: Submission[]): Submission[] => {
+  return (list || []).map((sub) => {
+    const cleanFiles = Array.isArray(sub.files)
+      ? sub.files.map((f: any) => ({
+          id: f.id,
+          name: f.name,
+          url: f.url,
+          isDrive: f.isDrive,
+          docType: f.docType,
+        }))
+      : undefined;
+    const { files: _ignoreFiles, ...rest } = sub as any;
+    return cleanFiles ? { ...rest, files: cleanFiles } : rest;
+  });
 };
 
-export const persistSubmissionsToLocalCaches = (_list: Submission[], _companyId: string = 'nmsa') => {
-  purgeAllLocalSubmissionCaches();
+export const loadAllLocalSubmissionsForCompany = (companyId: string = 'nmsa'): Submission[] => {
+  if (typeof localStorage === 'undefined') return [];
+  const targetComp = normalizeCompanyKey(companyId);
+  const delLower = new Set(getLocalDeletedSubmissionIds().map((x) => x.toLowerCase()));
+  const keys = [
+    `NUSANTARA_HO_SUBMISSIONS_${targetComp}`,
+    'NUSANTARA_HO_SUBMISSIONS',
+    'voucher_submissions',
+  ];
+  const map = new Map<string, Submission>();
+
+  for (const key of keys) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) continue;
+      for (const item of parsed) {
+        if (!item || !item.id) continue;
+        const idLower = String(item.id).toLowerCase();
+        if (delLower.has(idLower)) continue;
+        const itemComp = normalizeCompanyKey(item.companyId);
+        if (itemComp !== targetComp) continue;
+        if (!map.has(idLower)) {
+          map.set(idLower, item);
+        }
+      }
+    } catch (_) {}
+  }
+
+  return sortSubmissionsList(Array.from(map.values()));
 };
 
-// Fetch submissions directly from Cloud Firestore (no local cache fallback)
-export const loadSubmissionsFromFirestore = async (companyId?: string): Promise<Submission[]> => {
+export const persistSubmissionsToLocalCaches = (list: Submission[], companyId: string = 'nmsa') => {
+  if (typeof localStorage === 'undefined' || !Array.isArray(list)) return;
+  const targetComp = normalizeCompanyKey(companyId);
+  const lightweight = stripHeavyFieldsForLocalCache(list);
+  const serialized = JSON.stringify(lightweight);
+  try {
+    localStorage.setItem(`NUSANTARA_HO_SUBMISSIONS_${targetComp}`, serialized);
+  } catch (_) {}
+  try {
+    if (targetComp === 'nmsa') {
+      localStorage.setItem('NUSANTARA_HO_SUBMISSIONS', serialized);
+    }
+  } catch (_) {}
+};
+
+// Safe loader from Cloud Firestore that returns explicit diagnostics instead of throwing
+export const loadSubmissionsFromFirestoreSafe = async (
+  companyId?: string
+): Promise<{ list: Submission[]; ok: boolean; error?: string; errorCode?: string }> => {
   if (!isFirebaseConfigured() || !firestoreDb) {
-    throw new Error('Firebase is not initialized. Please provide correct configuration.');
+    return {
+      list: [],
+      ok: false,
+      error: 'Konfigurasi Firebase Firestore belum siap.',
+      errorCode: 'not-configured'
+    };
   }
 
   const path = 'submissions';
@@ -2764,12 +2818,14 @@ export const loadSubmissionsFromFirestore = async (companyId?: string): Promise<
     await enableNetwork(firestoreDb).catch(() => {});
     const snapshot = await getDocs(collection(firestoreDb, path));
     recordFirestoreReads(Math.max(1, snapshot.size));
+    const delLower = new Set(getLocalDeletedSubmissionIds().map((x) => x.toLowerCase()));
     const list: Submission[] = [];
     const targetComp = companyId ? normalizeCompanyKey(companyId) : '';
 
     snapshot.forEach(docSnap => {
       const data = docSnap.data();
       const mapped = mapFirestoreToSubmission(docSnap.id, data);
+      if (delLower.has(String(mapped.id || '').toLowerCase())) return;
       const docComp = normalizeCompanyKey(data.companyId || data.company_id);
 
       if (!targetComp || docComp === targetComp) {
@@ -2777,11 +2833,36 @@ export const loadSubmissionsFromFirestore = async (companyId?: string): Promise<
       }
     });
 
-    return sortSubmissionsList(list);
-  } catch (error) {
-    handleFirestoreError(error, OperationType.LIST, path);
-    return [];
+    const sorted = sortSubmissionsList(list);
+    if (sorted.length > 0 && targetComp) {
+      persistSubmissionsToLocalCaches(sorted, targetComp);
+    }
+    return { list: sorted, ok: true };
+  } catch (error: any) {
+    markFirestoreQuotaExceeded(error);
+    const errorCode = error?.code || '';
+    const errorMsg = error?.message || String(error);
+    console.warn(`⚠️ [Firestore Safe Load] Gagal membaca koleksi "${path}" (${errorCode}):`, errorMsg);
+    return {
+      list: [],
+      ok: false,
+      error: errorMsg,
+      errorCode
+    };
   }
+};
+
+// Fetch submissions from Cloud Firestore with safe local cache fallback on error/empty
+export const loadSubmissionsFromFirestore = async (companyId?: string): Promise<Submission[]> => {
+  const res = await loadSubmissionsFromFirestoreSafe(companyId);
+  if (res.ok && res.list.length > 0) {
+    return res.list;
+  }
+  const localBackup = loadAllLocalSubmissionsForCompany(companyId || 'nmsa');
+  if (localBackup.length > 0) {
+    return localBackup;
+  }
+  return res.list;
 };
 
 // Real-time Firestore snapshot subscription for submissions across all devices
@@ -2793,30 +2874,39 @@ export const subscribeToSubmissionsFromFirestore = (
   if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) {
     return () => {};
   }
-  const targetComp = (companyId || 'nmsa').toLowerCase().trim();
+  const targetComp = normalizeCompanyKey(companyId || 'nmsa');
   let isInitialSnapshot = true;
 
   try {
     const unsub = onSnapshot(
       collection(firestoreDb, 'submissions'),
       (snapshot) => {
+        if (snapshot.empty && snapshot.metadata?.fromCache) {
+          return;
+        }
         const readUnits = isInitialSnapshot
           ? Math.max(1, snapshot.size)
           : Math.max(1, snapshot.docChanges().length);
         isInitialSnapshot = false;
         recordFirestoreReads(readUnits);
 
+        const delLower = new Set(getLocalDeletedSubmissionIds().map((x) => x.toLowerCase()));
         const list: Submission[] = [];
-        const normalizedTarget = targetComp ? normalizeCompanyKey(targetComp) : '';
         snapshot.forEach(docSnap => {
           const data = docSnap.data();
+          const mapped = mapFirestoreToSubmission(docSnap.id, data);
+          if (delLower.has(String(mapped.id || '').toLowerCase())) return;
           const docComp = normalizeCompanyKey(data.companyId || data.company_id);
-          if (!normalizedTarget || docComp === normalizedTarget) {
-            list.push(mapFirestoreToSubmission(docSnap.id, data));
+          if (!targetComp || docComp === targetComp) {
+            list.push(mapped);
           }
         });
 
-        onUpdate(sortSubmissionsList(list));
+        const sorted = sortSubmissionsList(list);
+        if (sorted.length > 0) {
+          persistSubmissionsToLocalCaches(sorted, targetComp);
+        }
+        onUpdate(sorted);
       },
       (err: any) => {
         markFirestoreQuotaExceeded(err);
@@ -3056,14 +3146,14 @@ if (typeof window !== 'undefined') {
   });
 }
 
-// Put/Save single submission DIRECTLY to Cloud Firestore (tanpa penyimpanan sementara/cache lokal)
+// Put/Save single submission DIRECTLY to Cloud Firestore
 export const saveSubmissionToFirestore = async (
   submission: Submission, 
   userCompanyId: string = 'nmsa',
   userCompanyName: string = 'PT Nusantara Mineral Sukses Abadi',
   _options?: { waitForCloudAck?: boolean }
 ): Promise<{ syncedToCloud: boolean; error?: string }> => {
-  purgeAllLocalSubmissionCaches();
+  removeLocalDeletedSubmissionId(submission.id);
   const cleanComp = normalizeCompanyKey(submission.companyId || userCompanyId || activeCompanyId);
   const stampedSubmission: Submission = {
     ...submission,
@@ -3111,29 +3201,32 @@ export const saveSubmissionToFirestore = async (
   }
 };
 
-// Batch save/update multiple submissions DIRECTLY in Firestore (no local queue fallback)
+// Batch save/update multiple submissions DIRECTLY in Firestore
 export const saveSubmissionsBatchToFirestore = async (
   submissions: Submission[],
   userCompanyId: string = 'nmsa',
   userCompanyName: string = 'PT Nusantara Mineral Sukses Abadi'
-): Promise<{ success: boolean; count: number }> => {
-  purgeAllLocalSubmissionCaches();
+): Promise<{ success: boolean; count: number; error?: string }> => {
   if (submissions.length === 0) {
     return { success: true, count: 0 };
   }
 
   const cleanComp = normalizeCompanyKey(userCompanyId || activeCompanyId || 'nmsa');
 
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) {
-    return { success: false, count: 0 };
+  if (!isFirebaseConfigured() || !firestoreDb) {
+    return { success: false, count: 0, error: 'Firebase Firestore belum terhubung.' };
+  }
+  if (isFirestoreQuotaExceeded()) {
+    return { success: false, count: 0, error: 'Kuota Firestore sedang cooldown sementara.' };
   }
 
   try {
     await enableNetwork(firestoreDb).catch(() => {});
   } catch (_) {}
 
-  const BATCH_SIZE = 450;
+  const BATCH_SIZE = 400;
   let totalSaved = 0;
+  let lastError = '';
 
   for (let i = 0; i < submissions.length; i += BATCH_SIZE) {
     const chunk = submissions.slice(i, i + BATCH_SIZE);
@@ -3158,7 +3251,8 @@ export const saveSubmissionsBatchToFirestore = async (
       totalSaved += chunk.length;
       recordFirestoreWrites(chunk.length);
       console.log(`☁️ Batch saved ${chunk.length} submissions directly to Firestore.`);
-    } catch (err) {
+    } catch (err: any) {
+      lastError = err?.message || String(err);
       console.warn('Batch write fallback -> trying per-document direct writes for chunk:', err);
       for (const sub of chunk) {
         const payload = cleanUndefined(
@@ -3177,7 +3271,8 @@ export const saveSubmissionsBatchToFirestore = async (
             totalSaved += 1;
             recordFirestoreWrites(1);
           }
-        } catch (docErr) {
+        } catch (docErr: any) {
+          lastError = docErr?.message || String(docErr);
           markFirestoreQuotaExceeded(docErr);
           console.warn(`⚠️ Gagal simpan individu voucher ${sub.kode || docId}:`, docErr);
         }
@@ -3185,10 +3280,27 @@ export const saveSubmissionsBatchToFirestore = async (
     }
   }
 
-  return { success: totalSaved > 0, count: totalSaved };
+  return { success: totalSaved > 0, count: totalSaved, error: totalSaved === 0 ? lastError : undefined };
 };
 
-// Pure Firebase Firestore loader (no local cache merging or uploading)
+// Restore backup submissions into Cloud Firestore
+export const restoreSubmissionsToFirestore = async (
+  submissions: Submission[],
+  companyId: string = 'nmsa',
+  companyName: string = 'PT Nusantara Mineral Sukses Abadi'
+): Promise<{ successCount: number; total: number; error?: string }> => {
+  await resetFirestoreQuotaCooldown().catch(() => {});
+  const targetComp = normalizeCompanyKey(companyId || 'nmsa');
+  const validSubs = (submissions || []).filter((s) => s && s.id);
+  const res = await saveSubmissionsBatchToFirestore(validSubs, targetComp, companyName);
+  return {
+    successCount: res.count,
+    total: validSubs.length,
+    error: res.error
+  };
+};
+
+// Cloud loader with safe fallback
 export const reconcileSubmissionsWithCloud = async (
   companyId: string = 'nmsa',
   _companyName: string = 'PT Nusantara Mineral Sukses Abadi',
@@ -3200,48 +3312,51 @@ export const reconcileSubmissionsWithCloud = async (
   deletedIds: string[];
   usedOfflineFallback: boolean;
 }> => {
-  purgeAllLocalSubmissionCaches();
   const cleanComp = normalizeCompanyKey(companyId || 'nmsa');
 
   if (options?.forceResetQuota) {
     await resetFirestoreQuotaCooldown();
   }
 
+  const localFallback = options?.localSnapshot && options.localSnapshot.length > 0
+    ? options.localSnapshot
+    : loadAllLocalSubmissionsForCompany(cleanComp);
+
   if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) {
     return {
-      merged: [],
+      merged: localFallback,
       uploadedCount: 0,
       cloudCount: 0,
-      deletedIds: [],
+      deletedIds: getLocalDeletedSubmissionIds(),
       usedOfflineFallback: true
     };
   }
 
   try {
     await enableNetwork(firestoreDb).catch(() => {});
-    const cloudSubs = await loadSubmissionsFromFirestore(cleanComp);
+    const safeRes = await loadSubmissionsFromFirestoreSafe(cleanComp);
     return {
-      merged: cloudSubs,
+      merged: safeRes.ok && safeRes.list.length > 0 ? safeRes.list : localFallback,
       uploadedCount: 0,
-      cloudCount: cloudSubs.length,
-      deletedIds: [],
-      usedOfflineFallback: false
+      cloudCount: safeRes.list.length,
+      deletedIds: getLocalDeletedSubmissionIds(),
+      usedOfflineFallback: !safeRes.ok
     };
   } catch (err) {
     console.warn('⚠️ [Firestore Direct] Gagal memuat data langsung dari Firestore:', err);
     return {
-      merged: [],
+      merged: localFallback,
       uploadedCount: 0,
       cloudCount: 0,
-      deletedIds: [],
+      deletedIds: getLocalDeletedSubmissionIds(),
       usedOfflineFallback: true
     };
   }
 };
 
-// Delete single submission directly from Firestore
+// Delete single submission directly from Firestore and record tombstone
 export const deleteSubmissionFromFirestore = async (id: string): Promise<void> => {
-  purgeAllLocalSubmissionCaches();
+  addLocalDeletedSubmissionId(id);
 
   if (!isFirebaseConfigured() || !firestoreDb) {
     throw new Error('Firebase is not initialized.');
@@ -4221,6 +4336,7 @@ export const deleteSppdRecordFromFirestore = async (id: string): Promise<void> =
 export const saveAndInitializeFirebaseConfig = (config: any): boolean => {
   if (!config || !config.apiKey || !config.projectId) {
     localStorage.removeItem('NUSANTARA_FIREBASE_CONFIG');
+    localStorage.removeItem('NUSANTARA_CUSTOM_CONFIG_MANUAL');
     firebaseApp = null;
     firestoreDb = null;
     firebaseAuth = null;
@@ -4228,18 +4344,24 @@ export const saveAndInitializeFirebaseConfig = (config: any): boolean => {
   }
 
   localStorage.setItem('NUSANTARA_FIREBASE_CONFIG', JSON.stringify(config));
+  if (config.projectId === PERMANENT_LOCKED_FIREBASE_CONFIG.projectId) {
+    localStorage.removeItem('NUSANTARA_CUSTOM_CONFIG_MANUAL');
+  } else {
+    localStorage.setItem('NUSANTARA_CUSTOM_CONFIG_MANUAL', 'true');
+  }
   return initializeFirebaseApp(config);
 };
 
-// Clear config to disconnect Firebase
+// Clear config to disconnect custom Firebase and revert to official config
 export const clearFirebaseConfig = () => {
   localStorage.removeItem('NUSANTARA_FIREBASE_CONFIG');
+  localStorage.removeItem('NUSANTARA_CUSTOM_CONFIG_MANUAL');
   firebaseApp = null;
   firestoreDb = null;
   firebaseAuth = null;
 };
 
-// --- Internal Memo Local Storage Methods (Firestore disabled to conserve quota) ---
+// --- Internal Memo Local + Server Sync Methods ---
 export const saveInternalMemoToFirestore = async (memo: InternalMemo): Promise<void> => {
   try {
     const stored = localStorage.getItem('nmsa_internal_memos_v1');
@@ -4249,18 +4371,46 @@ export const saveInternalMemoToFirestore = async (memo: InternalMemo): Promise<v
   } catch (err) {
     console.warn('Failed to save internal memo locally:', err);
   }
+  try {
+    await fetch('/api/internal-memos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memo }),
+    }).catch(() => {});
+  } catch (_) {}
 };
 
 export const getInternalMemosFromFirestore = async (): Promise<InternalMemo[]> => {
+  let localList: InternalMemo[] = [];
   try {
     const stored = localStorage.getItem('nmsa_internal_memos_v1');
-    const list: InternalMemo[] = stored ? JSON.parse(stored) : [];
-    list.sort((a, b) => new Date(b.createdAt || b.tanggal).getTime() - new Date(a.createdAt || a.tanggal).getTime());
-    return list;
+    localList = stored ? JSON.parse(stored) : [];
   } catch (err) {
-    console.warn('Failed to fetch internal memos locally:', err);
-    return [];
+    console.warn('Failed to read internal memos locally:', err);
   }
+
+  try {
+    const res = await fetch('/api/internal-memos');
+    if (res.ok) {
+      const data = await res.json();
+      const serverList: InternalMemo[] = Array.isArray(data?.memos) ? data.memos : [];
+      if (serverList.length > 0 || localList.length > 0) {
+        const mergedMap = new Map<string, InternalMemo>();
+        localList.forEach((m) => { if (m?.id) mergedMap.set(m.id, m); });
+        serverList.forEach((m) => { if (m?.id) mergedMap.set(m.id, m); });
+        const merged = Array.from(mergedMap.values()).sort(
+          (a, b) => new Date(b.createdAt || b.tanggal).getTime() - new Date(a.createdAt || a.tanggal).getTime()
+        );
+        try {
+          localStorage.setItem('nmsa_internal_memos_v1', JSON.stringify(merged));
+        } catch (_) {}
+        return merged;
+      }
+    }
+  } catch (_) {}
+
+  localList.sort((a, b) => new Date(b.createdAt || b.tanggal).getTime() - new Date(a.createdAt || a.tanggal).getTime());
+  return localList;
 };
 
 export const deleteInternalMemoFromFirestore = async (id: string): Promise<void> => {
@@ -4274,6 +4424,9 @@ export const deleteInternalMemoFromFirestore = async (id: string): Promise<void>
   } catch (err) {
     console.warn('Failed to delete internal memo locally:', err);
   }
+  try {
+    await fetch(`/api/internal-memos/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {});
+  } catch (_) {}
 };
 
 // --- Monthly Recurring Transactions Cloud Sync (Single master doc on existing attendance collection) ---

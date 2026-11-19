@@ -1,4 +1,4 @@
-import { executeDriveApiWithAutoRefresh, deleteGoogleDriveFile } from '../firebase';
+import { executeDriveApiWithAutoRefresh, deleteGoogleDriveFile, ensureValidDriveToken, getStoredGoogleDriveToken } from '../firebase';
 import { Submission } from '../types';
 import { getStandardDriveFolderName, getLegacyDriveFolderName } from '../utils';
 
@@ -14,15 +14,31 @@ export interface DriveFolderInfo {
 }
 
 /**
- * Ekstrak ID file Google Drive dari URL (format /file/d/ID atau ?id=ID)
+ * Ekstrak ID file Google Drive dari URL (format /file/d/ID, /folders/ID, atau ?id=ID)
  */
 const extractDriveIdFromUrl = (url?: string): string | null => {
   if (!url || typeof url !== 'string') return null;
   const dMatch = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
   if (dMatch && dMatch[1]) return dMatch[1];
+  const fMatch = url.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  if (fMatch && fMatch[1]) return fMatch[1];
   const idMatch = url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
   if (idMatch && idMatch[1]) return idMatch[1];
   return null;
+};
+
+/**
+ * Hindari menghapus folder struktural seperti Voucher-APP, Tahun (2026), Bulan (7. Juli), atau Tanggal (3)
+ */
+const isStructuralFolderName = (name?: string): boolean => {
+  const n = (name || '').trim();
+  if (!n) return true;
+  const lower = n.toLowerCase();
+  if (lower === 'voucher-app' || lower === 'my drive' || lower === 'drive saya') return true;
+  if (/^20\d{2}$/.test(n)) return true;
+  if (/^\d{1,2}$/.test(n)) return true;
+  if (/^\d{1,2}\.\s*(januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember)$/i.test(n)) return true;
+  return false;
 };
 
 /**
@@ -39,13 +55,27 @@ export const extractVoucherNumber = (str?: string): string | null => {
   return null;
 };
 
+const collectFileUrls = (sub: Partial<Submission>): string[] => {
+  const urls: string[] = [];
+  if (Array.isArray(sub.googleDriveFiles)) {
+    sub.googleDriveFiles.forEach((f) => {
+      if (f?.url) urls.push(f.url);
+    });
+  }
+  if (sub.buktiPembayaran?.url) urls.push(sub.buktiPembayaran.url);
+  if (sub.googleDriveFileUrl) urls.push(sub.googleDriveFileUrl);
+  return Array.from(new Set(urls));
+};
+
 /**
- * Mencari folder Google Drive yang sesuai dengan data pengajuan transaksi (Submission)
+ * Mencari seluruh kandidat folder Google Drive yang sesuai dengan data transaksi pengajuan (Submission)
  */
-export const findDriveFolderForSubmission = async (
+export const findAllDriveFoldersForSubmission = async (
   sub: Partial<Submission>
-): Promise<{ id: string; name: string } | null> => {
+): Promise<{ id: string; name: string }[]> => {
   return executeDriveApiWithAutoRefresh(async (token) => {
+    const matchedMap = new Map<string, { id: string; name: string }>();
+
     // 1. Cek langsung via sub.googleDriveFolderId jika sudah tersimpan
     if (sub.googleDriveFolderId) {
       try {
@@ -53,50 +83,51 @@ export const findDriveFolderForSubmission = async (
           `https://www.googleapis.com/drive/v3/files/${sub.googleDriveFolderId}?supportsAllDrives=true&fields=id,name,mimeType,trashed`,
           { headers: { Authorization: `Bearer ${token}` } }
         );
+        if (res.status === 401) throw new Error('UNAUTHORIZED_401');
         if (res.ok) {
           const data = await res.json();
-          if (data && data.mimeType === 'application/vnd.google-apps.folder' && !data.trashed) {
-            return { id: data.id, name: data.name };
+          if (data && data.mimeType === 'application/vnd.google-apps.folder' && !data.trashed && !isStructuralFolderName(data.name)) {
+            matchedMap.set(data.id, { id: data.id, name: data.name });
           }
         }
-      } catch (_) {}
+      } catch (e: any) {
+        if (String(e?.message).includes('UNAUTHORIZED_401')) throw e;
+      }
     }
 
     // 2. Cek via parent dari file lampiran yang sudah terunggah ke Drive (F1, F2, Bukti Bayar)
-    const fileUrls: string[] = [];
-    if (Array.isArray(sub.googleDriveFiles)) {
-      sub.googleDriveFiles.forEach(f => {
-        if (f.url) fileUrls.push(f.url);
-      });
-    }
-    if (sub.buktiPembayaran?.url) fileUrls.push(sub.buktiPembayaran.url);
-    if (sub.googleDriveFileUrl) fileUrls.push(sub.googleDriveFileUrl);
-
+    const fileUrls = collectFileUrls(sub);
     for (const url of fileUrls) {
       const driveFileId = extractDriveIdFromUrl(url);
       if (driveFileId) {
         try {
           const fileRes = await fetch(
-            `https://www.googleapis.com/drive/v3/files/${driveFileId}?supportsAllDrives=true&fields=parents`,
+            `https://www.googleapis.com/drive/v3/files/${driveFileId}?supportsAllDrives=true&fields=id,name,mimeType,parents,trashed`,
             { headers: { Authorization: `Bearer ${token}` } }
           );
+          if (fileRes.status === 401) throw new Error('UNAUTHORIZED_401');
           if (fileRes.ok) {
             const fileData = await fileRes.json();
-            if (fileData.parents && fileData.parents.length > 0) {
-              const parentId = fileData.parents[0];
-              const parentRes = await fetch(
-                `https://www.googleapis.com/drive/v3/files/${parentId}?supportsAllDrives=true&fields=id,name,mimeType,trashed`,
-                { headers: { Authorization: `Bearer ${token}` } }
-              );
-              if (parentRes.ok) {
-                const parentData = await parentRes.json();
-                if (parentData && parentData.mimeType === 'application/vnd.google-apps.folder' && !parentData.trashed) {
-                  return { id: parentData.id, name: parentData.name };
+            if (fileData?.mimeType === 'application/vnd.google-apps.folder' && !fileData.trashed && !isStructuralFolderName(fileData.name)) {
+              matchedMap.set(fileData.id, { id: fileData.id, name: fileData.name });
+            } else if (Array.isArray(fileData.parents) && fileData.parents.length > 0) {
+              for (const parentId of fileData.parents) {
+                const parentRes = await fetch(
+                  `https://www.googleapis.com/drive/v3/files/${parentId}?supportsAllDrives=true&fields=id,name,mimeType,trashed`,
+                  { headers: { Authorization: `Bearer ${token}` } }
+                );
+                if (parentRes.ok) {
+                  const parentData = await parentRes.json();
+                  if (parentData && parentData.mimeType === 'application/vnd.google-apps.folder' && !parentData.trashed && !isStructuralFolderName(parentData.name)) {
+                    matchedMap.set(parentData.id, { id: parentData.id, name: parentData.name });
+                  }
                 }
               }
             }
           }
-        } catch (_) {}
+        } catch (e: any) {
+          if (String(e?.message).includes('UNAUTHORIZED_401')) throw e;
+        }
       }
     }
 
@@ -105,19 +136,21 @@ export const findDriveFolderForSubmission = async (
     const legacyName = getLegacyDriveFolderName(sub as any);
     const cleanKode = (sub.kode || '').trim().replace(/[\/\\?%*:|"<>.]/g, '-');
     const vNum = extractVoucherNumber(sub.kode);
+    const penerimaPrefix = (sub.dibayarkanKepada || '').trim().toLowerCase().slice(0, 5);
 
     // 3A. Cari exact standard name
-    if (standardName) {
+    if (standardName && !isStructuralFolderName(standardName)) {
       const qStd = `name = '${standardName.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
       const resStd = await fetch(
-        `https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&includeItemsFromAllDrives=true&q=${encodeURIComponent(qStd)}&fields=files(id,name)`,
+        `https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&includeItemsFromAllDrives=true&q=${encodeURIComponent(qStd)}&fields=files(id,name)&pageSize=20`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
+      if (resStd.status === 401) throw new Error('UNAUTHORIZED_401');
       if (resStd.ok) {
         const dStd = await resStd.json();
-        if (dStd.files && dStd.files.length > 0) {
-          return { id: dStd.files[0].id, name: dStd.files[0].name };
-        }
+        (dStd.files || []).forEach((f: any) => {
+          if (f?.id && !isStructuralFolderName(f.name)) matchedMap.set(f.id, { id: f.id, name: f.name });
+        });
       }
     }
 
@@ -125,14 +158,15 @@ export const findDriveFolderForSubmission = async (
     if (cleanKode && cleanKode.length >= 4 && cleanKode.toUpperCase() !== 'HO') {
       const qKode = `name contains '${cleanKode.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
       const resKode = await fetch(
-        `https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&includeItemsFromAllDrives=true&q=${encodeURIComponent(qKode)}&fields=files(id,name)`,
+        `https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&includeItemsFromAllDrives=true&q=${encodeURIComponent(qKode)}&fields=files(id,name)&pageSize=20`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
+      if (resKode.status === 401) throw new Error('UNAUTHORIZED_401');
       if (resKode.ok) {
         const dKode = await resKode.json();
-        if (dKode.files && dKode.files.length > 0) {
-          return { id: dKode.files[0].id, name: dKode.files[0].name };
-        }
+        (dKode.files || []).forEach((f: any) => {
+          if (f?.id && !isStructuralFolderName(f.name)) matchedMap.set(f.id, { id: f.id, name: f.name });
+        });
       }
     }
 
@@ -140,72 +174,148 @@ export const findDriveFolderForSubmission = async (
     if (vNum && vNum.length >= 3) {
       const qNum = `name contains '${vNum}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
       const resNum = await fetch(
-        `https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&includeItemsFromAllDrives=true&q=${encodeURIComponent(qNum)}&fields=files(id,name)`,
+        `https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&includeItemsFromAllDrives=true&q=${encodeURIComponent(qNum)}&fields=files(id,name)&pageSize=30`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
+      if (resNum.status === 401) throw new Error('UNAUTHORIZED_401');
       if (resNum.ok) {
         const dNum = await resNum.json();
-        if (dNum.files && dNum.files.length > 0) {
-          // Cari folder yang juga mengandung nama penerima atau cleanKode jika ada
-          const penerima = (sub.dibayarkanKepada || '').toLowerCase();
-          const matched = dNum.files.find((f: any) => {
-            const fLower = (f.name || '').toLowerCase();
-            return fLower.includes(vNum) && (penerima ? fLower.includes(penerima.substring(0, 4)) : true);
-          }) || dNum.files[0];
-          return { id: matched.id, name: matched.name };
-        }
+        const numBoundary = new RegExp(`(^|[^0-9])${vNum}([^0-9]|$)`);
+        (dNum.files || []).forEach((f: any) => {
+          if (!f?.id || isStructuralFolderName(f.name)) return;
+          const fLower = (f.name || '').toLowerCase();
+          if (!numBoundary.test(fLower)) return;
+          const matchesKode = cleanKode && cleanKode.length >= 4 && fLower.includes(cleanKode.toLowerCase());
+          const matchesRecipient = penerimaPrefix.length >= 3 && fLower.includes(penerimaPrefix);
+          const matchesTxPattern = fLower.includes('pembayaran-') && (fLower.includes('bkk-') || fLower.includes('bkm-') || fLower.includes('inv-'));
+          if (matchesKode || matchesRecipient || matchesTxPattern) {
+            matchedMap.set(f.id, { id: f.id, name: f.name });
+          }
+        });
       }
     }
 
     // 3D. Fallback nama legacy
-    if (legacyName) {
+    if (legacyName && !isStructuralFolderName(legacyName)) {
       const qLeg = `name = '${legacyName.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
       const resLeg = await fetch(
-        `https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&includeItemsFromAllDrives=true&q=${encodeURIComponent(qLeg)}&fields=files(id,name)`,
+        `https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&includeItemsFromAllDrives=true&q=${encodeURIComponent(qLeg)}&fields=files(id,name)&pageSize=20`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
+      if (resLeg.status === 401) throw new Error('UNAUTHORIZED_401');
       if (resLeg.ok) {
         const dLeg = await resLeg.json();
-        if (dLeg.files && dLeg.files.length > 0) {
-          return { id: dLeg.files[0].id, name: dLeg.files[0].name };
-        }
+        (dLeg.files || []).forEach((f: any) => {
+          if (f?.id && !isStructuralFolderName(f.name)) matchedMap.set(f.id, { id: f.id, name: f.name });
+        });
       }
     }
 
-    return null;
-  }, { actionName: `findDriveFolderForSubmission(${sub.kode || sub.id})` });
+    return Array.from(matchedMap.values());
+  }, {
+    actionName: `findAllDriveFoldersForSubmission(${sub.kode || sub.id})`,
+    interactiveIfRequired: false,
+    maxRetries: 1,
+  });
+};
+
+/**
+ * Mencari folder Google Drive utama yang sesuai dengan data pengajuan transaksi (Submission)
+ */
+export const findDriveFolderForSubmission = async (
+  sub: Partial<Submission>
+): Promise<{ id: string; name: string } | null> => {
+  const list = await findAllDriveFoldersForSubmission(sub);
+  return list.length > 0 ? list[0] : null;
 };
 
 /**
  * Menghapus folder Google Drive untuk transaksi pengajuan tertentu (otomatis saat transaksi dihapus)
+ * Menggunakan token browser aktif terlebih dahulu (non-blocking), lalu fallback ke endpoint server (OAuth + Service Account).
  */
 export const deleteSubmissionDriveFolder = async (
   sub: Partial<Submission>
-): Promise<{ success: boolean; folderName?: string; message: string }> => {
+): Promise<{ success: boolean; folderName?: string; needsAuth?: boolean; message: string }> => {
+  const deletedNames: string[] = [];
+  let clientNeedsAuth = false;
+
+  // 1. Coba langsung dari client dengan token yang sudah aktif (tanpa memblokir UI dengan pop-up)
   try {
-    const folder = await findDriveFolderForSubmission(sub);
-    if (!folder) {
-      return {
-        success: false,
-        message: 'Folder Google Drive tidak ditemukan atau belum pernah diarsipkan.'
-      };
+    const folders = await findAllDriveFoldersForSubmission(sub);
+    for (const folder of folders) {
+      try {
+        console.log(`[Google Drive Cleaner] Menghapus folder Drive: "${folder.name}" (${folder.id})`);
+        await deleteGoogleDriveFile(folder.id);
+        deletedNames.push(folder.name);
+      } catch (delErr: any) {
+        console.warn(`[Google Drive Cleaner] Gagal hapus via client untuk "${folder.name}":`, delErr?.message || delErr);
+      }
     }
+  } catch (err: any) {
+    const msg = String(err?.message || err);
+    if (msg.includes('belum terhubung') || msg.includes('UNAUTHORIZED') || msg.includes('401')) {
+      clientNeedsAuth = true;
+    }
+    console.warn('[Google Drive Cleaner] Client lookup fallback ke server:', msg);
+  }
 
-    console.log(`[Google Drive Cleaner] Menghapus folder Drive: "${folder.name}" (${folder.id})`);
-    await deleteGoogleDriveFile(folder.id);
-
+  if (deletedNames.length > 0) {
+    const label = deletedNames.join(', ');
     return {
       success: true,
-      folderName: folder.name,
-      message: `Folder Google Drive "${folder.name}" berhasil dihapus.`
-    };
-  } catch (err: any) {
-    console.warn('[Google Drive Cleaner] Gagal menghapus folder Google Drive:', err);
-    return {
-      success: false,
-      message: `Gagal menghapus folder Google Drive: ${err?.message || err}`
+      folderName: label,
+      message: `Folder Google Drive "${deletedNames[0]}"${deletedNames.length > 1 ? ` (+${deletedNames.length - 1} folder duplikat)` : ''} berhasil dihapus.`
     };
   }
+
+  // 2. Fallback ke server endpoint (mencoba token user + kredensial Service Account server)
+  try {
+    const token = (await ensureValidDriveToken(false).catch(() => null)) || getStoredGoogleDriveToken() || '';
+    const standardName = getStandardDriveFolderName(sub as any);
+    const legacyName = getLegacyDriveFolderName(sub as any);
+    const res = await fetch('/api/drive/delete-submission-folder', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        accessToken: token || undefined,
+        submission: {
+          ...sub,
+          voucherNumber: extractVoucherNumber(sub.kode) || undefined,
+          fileUrls: collectFileUrls(sub),
+          folderNameCandidates: [standardName, legacyName].filter(Boolean),
+        },
+      }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.success) {
+        return {
+          success: true,
+          folderName: data.folderName,
+          message: data.message || `Folder Google Drive "${data.folderName || ''}" berhasil dihapus.`
+        };
+      }
+      return {
+        success: false,
+        needsAuth: Boolean(data?.needsAuth || clientNeedsAuth),
+        message: data?.message || 'Folder Google Drive tidak ditemukan atau belum pernah diarsipkan.'
+      };
+    }
+  } catch (serverErr: any) {
+    console.warn('[Google Drive Cleaner] Server fallback error:', serverErr?.message || serverErr);
+  }
+
+  return {
+    success: false,
+    needsAuth: clientNeedsAuth,
+    message: clientNeedsAuth
+      ? 'Sesi Google Drive belum terhubung atau izin penuh Drive belum aktif. Gunakan Pembersih Folder Drive bila folder masih tertinggal.'
+      : 'Folder Google Drive tidak ditemukan atau belum pernah diarsipkan.'
+  };
 };
 
 /**
