@@ -415,6 +415,18 @@ export default async function handler(req: any, res: any) {
           state.submissions = body;
         } else if (body && typeof body === "object") {
           if (Array.isArray(body.submissions)) state.submissions = body.submissions;
+          if (Array.isArray(body.deletedSubmissionIds)) {
+            state.deletedSubmissionIds = Array.from(new Set([...(state.deletedSubmissionIds || []), ...body.deletedSubmissionIds.map(String)])).slice(-1000);
+          }
+          if (Array.isArray(body.pettyCashHolders)) state.pettyCashHolders = body.pettyCashHolders;
+          if (Array.isArray(body.pettyCashReports)) state.pettyCashReports = body.pettyCashReports;
+          if (Array.isArray(body.npwpRecords)) state.npwpRecords = body.npwpRecords;
+          if (Array.isArray(body.sppdRecords)) state.sppdRecords = body.sppdRecords;
+          if (Array.isArray(body.agendaItems)) state.agendaItems = body.agendaItems;
+          if (Array.isArray(body.projects)) state.projects = body.projects;
+          if (Array.isArray(body.projectRab)) state.projectRab = body.projectRab;
+          if (Array.isArray(body.projectExpenses)) state.projectExpenses = body.projectExpenses;
+          if (Array.isArray(body.internalMemos)) state.internalMemos = body.internalMemos;
           if (Array.isArray(body.deletedMonthlyIds)) {
             state.deletedMonthlyIds = Array.from(new Set([...(state.deletedMonthlyIds || []), ...body.deletedMonthlyIds.map(String)]));
           }
@@ -437,7 +449,25 @@ export default async function handler(req: any, res: any) {
           success: true,
           count: (state.submissions || []).length,
           submissions: state.submissions || [],
+          deletedSubmissionIds: state.deletedSubmissionIds || [],
+          menu1_vouchers: {
+            submissions: state.submissions || [],
+            deletedSubmissionIds: state.deletedSubmissionIds || [],
+            pettyCashReports: state.pettyCashReports || [],
+            pettyCashHolders: state.pettyCashHolders || [],
+          },
           raw: {
+            submissions: state.submissions || [],
+            deletedSubmissionIds: state.deletedSubmissionIds || [],
+            pettyCashHolders: state.pettyCashHolders || [],
+            pettyCashReports: state.pettyCashReports || [],
+            npwpRecords: state.npwpRecords || [],
+            sppdRecords: state.sppdRecords || [],
+            agendaItems: state.agendaItems || [],
+            projects: state.projects || [],
+            projectRab: state.projectRab || [],
+            projectExpenses: state.projectExpenses || [],
+            internalMemos: state.internalMemos || [],
             workers: state.workers || [],
             deletedWorkerIds: state.deletedWorkerIds || [],
             monthlyTransactions: state.monthlyTransactions || [],
@@ -464,16 +494,76 @@ export default async function handler(req: any, res: any) {
       return res.end(JSON.stringify(state));
     }
 
-    // 6. Sync Submissions
-    if (cleanPath === "sync-submissions") {
+    // 6. Sync Submissions (batch, single item, tombstones, and DELETE /:id)
+    if (cleanPath === "sync-submissions" || cleanPath.startsWith("sync-submissions/")) {
       const state = loadState();
+      if (!Array.isArray(state.submissions)) state.submissions = [];
+      if (!Array.isArray(state.deletedSubmissionIds)) state.deletedSubmissionIds = [];
+
+      if (cleanPath.startsWith("sync-submissions/") && req.method === "DELETE") {
+        const rawId = decodeURIComponent(cleanPath.slice("sync-submissions/".length)).trim();
+        const targetLower = rawId.toLowerCase();
+        const beforeCount = state.submissions.length;
+        state.submissions = state.submissions.filter(
+          (s: any) => String(s?.id || "").toLowerCase().trim() !== targetLower
+        );
+        const delSet = new Set<string>(state.deletedSubmissionIds.map((x: any) => String(x).trim()).filter(Boolean));
+        if (rawId) delSet.add(rawId);
+        state.deletedSubmissionIds = Array.from(delSet).slice(-1000);
+        saveState(state);
+        return res.end(
+          JSON.stringify({
+            success: true,
+            id: rawId,
+            removed: beforeCount - state.submissions.length,
+            remainingCount: state.submissions.length,
+            deletedSubmissionIds: state.deletedSubmissionIds,
+          })
+        );
+      }
+
       if (req.method === "POST") {
         const body = await parseRequestBody(req);
+        const delSet = new Set<string>(state.deletedSubmissionIds.map((x: any) => String(x).trim()).filter(Boolean));
+        if (body?.deletedId) delSet.add(String(body.deletedId).trim());
+        if (Array.isArray(body?.deletedIds)) {
+          body.deletedIds.forEach((x: any) => { if (x) delSet.add(String(x).trim()); });
+        }
+        if (Array.isArray(body?.clearDeletedIds)) {
+          body.clearDeletedIds.forEach((x: any) => { if (x) delSet.delete(String(x).trim()); });
+        }
+        if (body?.submission?.id) {
+          delSet.delete(String(body.submission.id).trim());
+        }
+        state.deletedSubmissionIds = Array.from(delSet).slice(-1000);
+        const delLower = new Set(state.deletedSubmissionIds.map((x: string) => x.toLowerCase()));
+
         if (Array.isArray(body)) {
-          state.submissions = body;
+          state.submissions = body.filter((s: any) => s && s.id && !delLower.has(String(s.id).toLowerCase()));
           saveState(state);
         } else if (body && Array.isArray(body.submissions)) {
-          state.submissions = body.submissions;
+          const map = new Map<string, any>();
+          state.submissions.forEach((s: any) => {
+            if (s && s.id && !delLower.has(String(s.id).toLowerCase())) map.set(String(s.id).toLowerCase(), s);
+          });
+          body.submissions.forEach((s: any) => {
+            if (s && s.id && !delLower.has(String(s.id).toLowerCase())) map.set(String(s.id).toLowerCase(), s);
+          });
+          state.submissions = Array.from(map.values());
+          saveState(state);
+        } else if (body && body.submission && body.submission.id) {
+          const subId = String(body.submission.id).toLowerCase();
+          const idx = state.submissions.findIndex((s: any) => String(s?.id || "").toLowerCase() === subId);
+          if (idx >= 0) {
+            state.submissions[idx] = body.submission;
+          } else {
+            state.submissions.unshift(body.submission);
+          }
+          saveState(state);
+        } else if (body?.deletedId || Array.isArray(body?.deletedIds) || Array.isArray(body?.clearDeletedIds)) {
+          state.submissions = state.submissions.filter(
+            (s: any) => s && s.id && !delLower.has(String(s.id).toLowerCase())
+          );
           saveState(state);
         }
       }
@@ -481,6 +571,7 @@ export default async function handler(req: any, res: any) {
         JSON.stringify({
           success: true,
           count: (state.submissions || []).length,
+          deletedSubmissionIds: state.deletedSubmissionIds || [],
         })
       );
     }

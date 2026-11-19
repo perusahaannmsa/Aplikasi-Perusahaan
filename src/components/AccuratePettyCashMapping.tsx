@@ -554,8 +554,14 @@ export function AccuratePettyCashMapping({
           if (isFirebaseConfigured()) {
             await saveSubmissionToFirestore(updatedSubmission, userProfile?.companyId, userProfile?.companyName);
           }
+          const localRaw = localStorage.getItem('NUSANTARA_HO_SUBMISSIONS');
+          if (localRaw) {
+            const list: Submission[] = JSON.parse(localRaw);
+            const updatedList = list.map(s => s.id === updatedSubmission.id ? updatedSubmission : s);
+            localStorage.setItem('NUSANTARA_HO_SUBMISSIONS', JSON.stringify(updatedList));
+          }
         } catch (e) {
-          console.warn('Direct save notice:', e);
+          console.warn('Direct fallback save notice:', e);
         }
       }
 
@@ -986,6 +992,12 @@ export function AccuratePettyCashMapping({
         try {
           if (isFirebaseConfigured()) {
             await saveSubmissionToFirestore(updatedSub, userProfile?.companyId, userProfile?.companyName);
+          }
+          const localRaw = localStorage.getItem('NUSANTARA_HO_SUBMISSIONS');
+          if (localRaw) {
+            const list: Submission[] = JSON.parse(localRaw);
+            const updatedList = list.map(s => s.id === updatedSub.id ? updatedSub : s);
+            localStorage.setItem('NUSANTARA_HO_SUBMISSIONS', JSON.stringify(updatedList));
           }
         } catch (e) {}
       }

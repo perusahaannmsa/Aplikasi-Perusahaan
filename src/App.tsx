@@ -70,6 +70,7 @@ import {
   restoreSubmissionsToFirestore,
   loadAllLocalSubmissionsForCompany,
   persistSubmissionsToLocalCaches,
+  purgeAllLocalSubmissionCaches,
   addLocalDeletedSubmissionId,
   getLocalDeletedSubmissionIds,
   saveLocalDeletedSubmissionIds,
@@ -159,9 +160,79 @@ export default function App() {
 
   const submissionsRef = useRef<Submission[]>(submissions);
   const serverBackupSubmissionsRef = useRef<Submission[]>([]);
+  const serverBackupFetchPromiseRef = useRef<Promise<Submission[]> | null>(null);
   useEffect(() => {
     submissionsRef.current = submissions;
   }, [submissions]);
+
+  const hydrateServerBackupFromPayload = (payload: any): Submission[] => {
+    if (!payload || typeof payload !== 'object') return serverBackupSubmissionsRef.current;
+    const raw = payload.raw && typeof payload.raw === 'object' ? payload.raw : {};
+    const serverDelIds: string[] = Array.isArray(payload.menu1_vouchers?.deletedSubmissionIds)
+      ? payload.menu1_vouchers.deletedSubmissionIds
+      : Array.isArray(raw.deletedSubmissionIds)
+      ? raw.deletedSubmissionIds
+      : Array.isArray(payload.deletedSubmissionIds)
+      ? payload.deletedSubmissionIds
+      : [];
+    const mergedDelIds = Array.from(new Set([...getLocalDeletedSubmissionIds(), ...serverDelIds.map(String)]));
+    saveLocalDeletedSubmissionIds(mergedDelIds);
+    const delLower = new Set(mergedDelIds.map((x) => x.toLowerCase().trim()));
+
+    const rawSubs: any[] =
+      Array.isArray(raw.submissions) && raw.submissions.length > 0
+        ? raw.submissions
+        : Array.isArray(payload.menu1_vouchers?.submissions) && payload.menu1_vouchers.submissions.length > 0
+        ? payload.menu1_vouchers.submissions
+        : Array.isArray(payload.submissions)
+        ? payload.submissions
+        : [];
+
+    if (rawSubs.length === 0) return serverBackupSubmissionsRef.current;
+
+    const normalizedServerSubs: Submission[] = rawSubs
+      .filter((s: any) => s && s.id && !delLower.has(String(s.id).toLowerCase().trim()))
+      .map((s: any) => ({
+        ...s,
+        companyId: normalizeCompanyKey(s.companyId || 'nmsa'),
+      }));
+    const sortedServerSubs = sortSubmissionsList(normalizedServerSubs);
+    if (sortedServerSubs.length > 0) {
+      serverBackupSubmissionsRef.current = sortedServerSubs;
+    }
+    return sortedServerSubs;
+  };
+
+  const ensureServerBackupLoaded = async (forceRefresh = false): Promise<Submission[]> => {
+    if (!forceRefresh && serverBackupSubmissionsRef.current.length > 0) {
+      return serverBackupSubmissionsRef.current;
+    }
+    if (serverBackupFetchPromiseRef.current) {
+      return serverBackupFetchPromiseRef.current;
+    }
+    serverBackupFetchPromiseRef.current = (async () => {
+      try {
+        const res = await fetch('/api/unified-storage');
+        if (res.ok) {
+          const data = await res.json();
+          const hydrated = hydrateServerBackupFromPayload(data);
+          if (hydrated.length > 0) return hydrated;
+        }
+      } catch (_) {}
+      try {
+        const fbRes = await fetch('/api/shared-state');
+        if (fbRes.ok) {
+          const fbData = await fbRes.json();
+          const hydrated = hydrateServerBackupFromPayload(fbData);
+          if (hydrated.length > 0) return hydrated;
+        }
+      } catch (_) {}
+      return serverBackupSubmissionsRef.current;
+    })().finally(() => {
+      serverBackupFetchPromiseRef.current = null;
+    });
+    return serverBackupFetchPromiseRef.current;
+  };
 
   const [isCloudSyncing, setIsCloudSyncing] = useState<boolean>(false);
   const [cloudSyncNotice, setCloudSyncNotice] = useState<string | null>(null);
@@ -507,6 +578,23 @@ export default function App() {
                 setProjectExpenses(fbData.projectExpenses);
                 localStorage.setItem('nmsa_project_expenses_v1', JSON.stringify(fbData.projectExpenses));
               }
+              const hydratedFbSubs = hydrateServerBackupFromPayload(fbData);
+              if (hydratedFbSubs.length > 0) {
+                const currentComp = normalizeCompanyKey(localStorage.getItem('NUSANTARA_ACTIVE_COMPANY_ID') || 'nmsa');
+                const delLower = new Set(getLocalDeletedSubmissionIds().map((x) => x.toLowerCase().trim()));
+                const companyFbSubs = hydratedFbSubs.filter((s) => normalizeCompanyKey(s.companyId) === currentComp);
+                if (companyFbSubs.length > 0) {
+                  persistSubmissionsToLocalCaches(companyFbSubs, currentComp);
+                  setSubmissions((prev) => {
+                    const filteredPrev = prev.filter((p) => p?.id && !delLower.has(String(p.id).toLowerCase().trim()));
+                    if (filteredPrev.length === 0) return companyFbSubs;
+                    const map = new Map<string, Submission>();
+                    companyFbSubs.forEach((s) => map.set(String(s.id).toLowerCase(), s));
+                    filteredPrev.forEach((s) => map.set(String(s.id).toLowerCase(), s));
+                    return sortSubmissionsList(Array.from(map.values()));
+                  });
+                }
+              }
             }
             return;
           }
@@ -590,27 +678,10 @@ export default function App() {
               } catch (_) {}
             }
 
-            // Hydrate submission tombstones & server backup submissions (data-store.json)
-            const serverDelIds: string[] = Array.isArray(data.menu1_vouchers?.deletedSubmissionIds)
-              ? data.menu1_vouchers.deletedSubmissionIds
-              : (Array.isArray(raw.deletedSubmissionIds) ? raw.deletedSubmissionIds : []);
-            const mergedDelIds = Array.from(new Set([...getLocalDeletedSubmissionIds(), ...serverDelIds.map(String)]));
-            saveLocalDeletedSubmissionIds(mergedDelIds);
-            const delLower = new Set(mergedDelIds.map((x) => x.toLowerCase().trim()));
-
-            const rawSubs: any[] = Array.isArray(raw.submissions)
-              ? raw.submissions
-              : (Array.isArray(data.menu1_vouchers?.submissions) ? data.menu1_vouchers.submissions : []);
-            if (rawSubs.length > 0) {
-              const normalizedServerSubs: Submission[] = rawSubs
-                .filter((s: any) => s && s.id && !delLower.has(String(s.id).toLowerCase().trim()))
-                .map((s: any) => ({
-                  ...s,
-                  companyId: normalizeCompanyKey(s.companyId || 'nmsa'),
-                }));
-              const sortedServerSubs = sortSubmissionsList(normalizedServerSubs);
-              serverBackupSubmissionsRef.current = sortedServerSubs;
-
+            // Hydrate submission tombstones & server backup submissions (supports both Express raw/menu1_vouchers & Vercel top-level submissions)
+            const sortedServerSubs = hydrateServerBackupFromPayload(data);
+            if (sortedServerSubs.length > 0) {
+              const delLower = new Set(getLocalDeletedSubmissionIds().map((x) => x.toLowerCase().trim()));
               const currentComp = normalizeCompanyKey(localStorage.getItem('NUSANTARA_ACTIVE_COMPANY_ID') || 'nmsa');
               const companyServerSubs = sortedServerSubs.filter((s) => normalizeCompanyKey(s.companyId) === currentComp);
               if (companyServerSubs.length > 0) {
@@ -624,6 +695,15 @@ export default function App() {
                   companyServerSubs.forEach((s) => map.set(String(s.id).toLowerCase(), s));
                   filteredPrev.forEach((s) => map.set(String(s.id).toLowerCase(), s));
                   return sortSubmissionsList(Array.from(map.values()));
+                });
+                setCloudSyncNotice((prevNotice) => {
+                  if (prevNotice && prevNotice.includes('Menampilkan 0 transaksi')) {
+                    return prevNotice.replace(
+                      'Menampilkan 0 transaksi',
+                      `Menampilkan ${companyServerSubs.length} transaksi`
+                    );
+                  }
+                  return prevNotice;
                 });
               }
             }
@@ -1979,8 +2059,11 @@ export default function App() {
         // Load submissions safely from Cloud Firestore with server & local backup preservation
         try {
           setIsCloudSyncing(true);
+          const [, cloudRes] = await Promise.all([
+            ensureServerBackupLoaded(),
+            loadSubmissionsFromFirestoreSafe(companyId),
+          ]);
           const delLower = new Set(getLocalDeletedSubmissionIds().map((x) => x.toLowerCase().trim()));
-          const cloudRes = await loadSubmissionsFromFirestoreSafe(companyId);
 
           const localBackup = loadAllLocalSubmissionsForCompany(companyId);
           const serverBackup = serverBackupSubmissionsRef.current.filter(
@@ -2010,9 +2093,9 @@ export default function App() {
               persistSubmissionsToLocalCaches(bestBackup, companyId);
               setSubmissions(bestBackup);
               const reason = cloudRes.errorCode === 'permission-denied'
-                ? 'Akses baca Firestore dibatasi Rules'
+                ? 'Akses baca Firestore dibatasi Security Rules Firebase Console'
                 : (cloudRes.ok ? 'Firestore masih kosong (0 dokumen)' : `Koneksi Firestore terkendala (${cloudRes.error || 'offline'})`);
-              setCloudSyncNotice(`⚠️ ${reason}. Menampilkan ${bestBackup.length} transaksi dari cadangan server/lokal — klik "Upload Backup ke Firestore" untuk memulihkan ke Cloud.`);
+              setCloudSyncNotice(`⚠️ ${reason}. Menampilkan ${bestBackup.length} transaksi dari cadangan server/lokal — perbarui Rules Firestore lalu klik "Upload Backup ke Firestore" untuk sinkron ke Cloud.`);
             } else {
               setSubmissions([]);
             }
@@ -2056,6 +2139,7 @@ export default function App() {
   };
 
   const handleRestoreBackupToFirestore = async () => {
+    await ensureServerBackupLoaded();
     const backupList = getBestBackupForCompany(activeCompForSync);
     if (backupList.length === 0) {
       setCloudSyncNotice('⚠️ Tidak ada data cadangan yang ditemukan untuk diunggah ke Firestore.');
@@ -2086,7 +2170,10 @@ export default function App() {
       if (!silent) {
         await resetFirestoreQuotaCooldown();
       }
-      const cloudRes = await loadSubmissionsFromFirestoreSafe(activeCompForSync);
+      const [, cloudRes] = await Promise.all([
+        ensureServerBackupLoaded(),
+        loadSubmissionsFromFirestoreSafe(activeCompForSync),
+      ]);
       const bestBackup = getBestBackupForCompany(activeCompForSync);
       const pid = getActiveFirebaseProjectId();
 
@@ -2105,12 +2192,13 @@ export default function App() {
         }
       } else {
         if (bestBackup.length > 0) {
+          persistSubmissionsToLocalCaches(bestBackup, activeCompForSync);
           setSubmissions(bestBackup);
         }
         setShowQuotaBanner(isFirestoreQuotaExceeded());
         if (!silent) {
           const reason = cloudRes.errorCode === 'permission-denied'
-            ? `Akses Firestore (${pid}) dibatasi Security Rules`
+            ? `Akses Firestore (${pid}) dibatasi Security Rules Firebase Console`
             : (cloudRes.ok ? `Firestore (${pid}) masih kosong (0 dokumen)` : `Gagal membaca Firestore (${cloudRes.error || 'periksa jaringan'})`);
           setCloudSyncNotice(`⚠️ ${reason}. Menampilkan ${bestBackup.length} transaksi dari cadangan aman.`);
         }
