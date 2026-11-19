@@ -1,9 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Submission, CicilanPaymentRecord } from '../types';
 import { 
-  reconcileSubmissionsWithCloud,
-  loadAllLocalSubmissionsForCompany,
-  persistSubmissionsToLocalCaches,
+  loadSubmissionsFromFirestore,
   saveSubmissionToFirestore, 
   isFirebaseConfigured,
   googleDriveLogin,
@@ -154,47 +152,29 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
     };
   }, []);
 
-  // Reconcile submissions bidirectionally on startup without overwriting unsynced local data
+  // Load submissions directly from Firebase Firestore
   useEffect(() => {
     const fetchLatest = async () => {
       setIsLoading(true);
       const compId = (userProfile?.companyId || 'nmsa').toLowerCase().trim();
-      const compName = userProfile?.companyName || 'PT Nusantara Mineral Sukses Abadi';
       try {
         if (isFirebaseConfigured()) {
-          const syncRes = await reconcileSubmissionsWithCloud(compId, compName, {
-            localSnapshot: parentSubmissions,
-          });
-          if (syncRes.merged.length > 0) {
-            setLocalSubmissions(syncRes.merged);
-            onUpdateSubmissions(syncRes.merged);
-            setIsLoading(false);
-            return;
-          }
+          const cloudSubs = await loadSubmissionsFromFirestore(compId);
+          setLocalSubmissions(cloudSubs);
+          onUpdateSubmissions(cloudSubs);
+          setIsLoading(false);
+          return;
         }
       } catch (err) {
-        console.warn('Fallback silent read to local state', err);
+        console.warn('Gagal memuat data langsung dari Firestore:', err);
       }
 
-      const localMerged = loadAllLocalSubmissionsForCompany(compId);
-      setLocalSubmissions(localMerged.length > 0 ? localMerged : (parentSubmissions.length > 0 ? parentSubmissions : loadFromLocalStorage()));
+      setLocalSubmissions(parentSubmissions.length > 0 ? parentSubmissions : []);
       setIsLoading(false);
     };
 
     fetchLatest();
   }, [userProfile]);
-
-  const loadFromLocalStorage = (): Submission[] => {
-    try {
-      const stored = localStorage.getItem('NUSANTARA_HO_SUBMISSIONS');
-      if (stored) {
-        return JSON.parse(stored);
-      }
-    } catch (e) {
-      console.error(e);
-    }
-    return [];
-  };
 
   // Helper to calculate total for a submission
   const getSubmissionTotal = (sub: Submission): number => {
@@ -213,19 +193,6 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
       const sumHist = sub.riwayatCicilan.reduce((sum, r) => sum + (Number(r.nominal) || 0), 0);
       if (sumHist > 0) return sumHist;
     }
-    // Also check local cache for recovery
-    try {
-      const localStored = localStorage.getItem('NUSANTARA_HO_SUBMISSIONS') || localStorage.getItem('voucher_submissions');
-      if (localStored) {
-        const parsed = JSON.parse(localStored);
-        if (Array.isArray(parsed)) {
-          const match = parsed.find((p: any) => p.id === sub.id || (p.kode && p.kode === sub.kode));
-          if (match && typeof match.dpAmount === 'number' && match.dpAmount > 0) {
-            return match.dpAmount;
-          }
-        }
-      }
-    } catch (_) {}
     return sub.dpAmount || 0;
   };
 
@@ -1035,28 +1002,22 @@ export const InputBuktiTransfer: React.FC<InputBuktiTransferProps> = ({
         };
       }
 
-      setSaveProgress('6/6. Menyimpan data ke Firebase Firestore & backup lokal...');
+      setSaveProgress('6/6. Menyimpan data langsung ke Firebase Firestore...');
 
-      // Push to Firestore
+      // Push directly to Firestore
       if (isFirebaseConfigured()) {
         const finalCompanyId = selectedSubmission.companyId || 'nmsa';
         const finalCompanyName = selectedSubmission.companyName || 'PT Nusantara Mineral Sukses Abadi';
         await saveSubmissionToFirestore(updatedSubmission, finalCompanyId, finalCompanyName);
       }
 
-      // Sync local listing states
+      // Update in-memory UI state
       const nextList = localSubmissions.map(sub => 
         sub.id === selectedSubmission.id ? updatedSubmission : sub
       );
 
       setLocalSubmissions(nextList);
       onUpdateSubmissions(nextList);
-
-      // Save directly to all unified localStorage caches as backup
-      persistSubmissionsToLocalCaches(
-        nextList,
-        selectedSubmission.companyId || userProfile?.companyId || 'nmsa'
-      );
 
       // Audit Log
       try {

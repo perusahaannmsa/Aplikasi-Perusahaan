@@ -33,22 +33,19 @@ export class ErrorBoundary extends Component<Props, State> {
 
   private handleResetCache = () => {
     try {
-      // Periksa dan bersihkan jika data cache di localStorage rusak
-      const stored = localStorage.getItem('NUSANTARA_HO_SUBMISSIONS');
-      if (stored) {
-        try {
-          const parsed = JSON.parse(stored);
-          if (!Array.isArray(parsed)) {
-            if (parsed && Array.isArray(parsed.updatedSubmissions)) {
-              localStorage.setItem('NUSANTARA_HO_SUBMISSIONS', JSON.stringify(parsed.updatedSubmissions));
-            } else {
-              localStorage.removeItem('NUSANTARA_HO_SUBMISSIONS');
-            }
-          }
-        } catch {
-          localStorage.removeItem('NUSANTARA_HO_SUBMISSIONS');
+      const keysToPurge: string[] = [
+        'NUSANTARA_HO_SUBMISSIONS',
+        'voucher_submissions',
+        'NUSANTARA_FIRESTORE_WRITE_QUEUE',
+        'NUSANTARA_DELETED_SUBMISSION_IDS',
+      ];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith('NUSANTARA_HO_SUBMISSIONS_')) {
+          keysToPurge.push(k);
         }
       }
+      keysToPurge.forEach((k) => localStorage.removeItem(k));
 
       const holders = localStorage.getItem('petty_cash_holders_v2');
       if (holders === 'undefined' || holders === 'null') {

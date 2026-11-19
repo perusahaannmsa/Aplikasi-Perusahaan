@@ -2642,6 +2642,51 @@ export const googleDriveLogin = async (
 
 const DELETED_SUBMISSIONS_STORAGE_KEY = 'NUSANTARA_DELETED_SUBMISSION_IDS';
 
+// Hapus seluruh penyimpanan sementara / cache lokal transaksi voucher di browser
+export const purgeAllLocalSubmissionCaches = (): void => {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    const keysToRemove: string[] = [
+      'NUSANTARA_HO_SUBMISSIONS',
+      'voucher_submissions',
+      DELETED_SUBMISSIONS_STORAGE_KEY,
+    ];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith('NUSANTARA_HO_SUBMISSIONS_')) {
+        keysToRemove.push(k);
+      }
+    }
+    keysToRemove.forEach((k) => {
+      try { localStorage.removeItem(k); } catch (_) {}
+    });
+
+    // Bersihkan entri 'submissions' dari antrian lokal lama bila ada
+    try {
+      const rawQ = localStorage.getItem('NUSANTARA_FIRESTORE_WRITE_QUEUE');
+      if (rawQ) {
+        const parsed = JSON.parse(rawQ);
+        if (Array.isArray(parsed)) {
+          const nonSub = parsed.filter((item: any) => item?.path && item.path !== 'submissions');
+          if (nonSub.length === 0) {
+            localStorage.removeItem('NUSANTARA_FIRESTORE_WRITE_QUEUE');
+          } else {
+            localStorage.setItem('NUSANTARA_FIRESTORE_WRITE_QUEUE', JSON.stringify(nonSub));
+          }
+        } else {
+          localStorage.removeItem('NUSANTARA_FIRESTORE_WRITE_QUEUE');
+        }
+      }
+    } catch (_) {
+      try { localStorage.removeItem('NUSANTARA_FIRESTORE_WRITE_QUEUE'); } catch (__) {}
+    }
+  } catch (_) {}
+};
+
+if (typeof window !== 'undefined') {
+  purgeAllLocalSubmissionCaches();
+}
+
 export const sortSubmissionsList = (list: Submission[]): Submission[] => {
   return [...list].sort((a, b) => {
     const dateA = a.tanggal || '';
@@ -2660,127 +2705,35 @@ export const sortSubmissionsList = (list: Submission[]): Submission[] => {
 };
 
 export const getLocalDeletedSubmissionIds = (): string[] => {
-  if (typeof localStorage === 'undefined') return [];
-  try {
-    const raw = localStorage.getItem(DELETED_SUBMISSIONS_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed.map(String);
-    }
-  } catch (_) {}
   return [];
 };
 
-export const saveLocalDeletedSubmissionIds = (ids: string[]) => {
-  if (typeof localStorage === 'undefined') return;
-  try {
-    const unique = Array.from(new Set(ids.map(String))).slice(-500);
-    localStorage.setItem(DELETED_SUBMISSIONS_STORAGE_KEY, JSON.stringify(unique));
-  } catch (_) {}
+export const saveLocalDeletedSubmissionIds = (_ids: string[]) => {
+  if (typeof localStorage !== 'undefined') {
+    try { localStorage.removeItem(DELETED_SUBMISSIONS_STORAGE_KEY); } catch (_) {}
+  }
 };
 
-export const addLocalDeletedSubmissionId = (id: string): string[] => {
-  const next = Array.from(new Set([...getLocalDeletedSubmissionIds(), String(id)]));
-  saveLocalDeletedSubmissionIds(next);
-  return next;
+export const addLocalDeletedSubmissionId = (_id: string): string[] => {
+  return [];
 };
 
-export const removeLocalDeletedSubmissionId = (id: string): string[] => {
-  const next = getLocalDeletedSubmissionIds().filter((d) => d !== String(id));
-  saveLocalDeletedSubmissionIds(next);
-  return next;
+export const removeLocalDeletedSubmissionId = (_id: string): string[] => {
+  return [];
 };
 
 export const loadDeletedSubmissionIdsFromFirestore = async (): Promise<string[]> => {
-  const localIds = getLocalDeletedSubmissionIds();
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) {
-    return localIds;
-  }
-  try {
-    const docRef = doc(firestoreDb, 'attendance', 'submissions_deleted_meta');
-    const snap = await getDoc(docRef);
-    recordFirestoreReads(1);
-    if (snap.exists()) {
-      const data = snap.data() || {};
-      const cloudIds: string[] = Array.isArray(data.deletedIds) ? data.deletedIds.map(String) : [];
-      const merged = Array.from(new Set([...localIds, ...cloudIds])).slice(-500);
-      saveLocalDeletedSubmissionIds(merged);
-      return merged;
-    }
-  } catch (err: any) {
-    markFirestoreQuotaExceeded(err);
-  }
-  return localIds;
+  return [];
 };
 
-export const syncDeletedSubmissionIdToCloud = async (id: string): Promise<void> => {
-  const updatedLocal = addLocalDeletedSubmissionId(id);
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return;
-  try {
-    const docRef = doc(firestoreDb, 'attendance', 'submissions_deleted_meta');
-    const existingSnap = await getDoc(docRef).catch(() => null);
-    const existingCloud: string[] = existingSnap?.exists() && Array.isArray(existingSnap.data()?.deletedIds)
-      ? existingSnap.data()!.deletedIds.map(String)
-      : [];
-    const merged = Array.from(new Set([...existingCloud, ...updatedLocal, String(id)])).slice(-500);
-    saveLocalDeletedSubmissionIds(merged);
-    await setDoc(docRef, {
-      deletedIds: merged,
-      updatedAt: new Date().toISOString()
-    }, { merge: true });
-    recordFirestoreWrites(1);
-  } catch (err: any) {
-    markFirestoreQuotaExceeded(err);
-  }
+export const syncDeletedSubmissionIdToCloud = async (_id: string): Promise<void> => {
+  // No-op: deleteDoc removes directly from Firestore 'submissions' collection
 };
 
 export const subscribeToDeletedSubmissionIdsFromFirestore = (
-  onUpdate: (deletedIds: string[]) => void
+  _onUpdate: (deletedIds: string[]) => void
 ): (() => void) => {
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) {
-    return () => {};
-  }
-  try {
-    const docRef = doc(firestoreDb, 'attendance', 'submissions_deleted_meta');
-    return onSnapshot(
-      docRef,
-      (snap) => {
-        if (snap.exists()) {
-          const data = snap.data() || {};
-          const cloudIds: string[] = Array.isArray(data.deletedIds) ? data.deletedIds.map(String) : [];
-          const merged = Array.from(new Set([...getLocalDeletedSubmissionIds(), ...cloudIds])).slice(-500);
-          saveLocalDeletedSubmissionIds(merged);
-          onUpdate(merged);
-        }
-      },
-      (err: any) => {
-        markFirestoreQuotaExceeded(err);
-      }
-    );
-  } catch (_) {
-    return () => {};
-  }
-};
-
-const getSubmissionTimestampMs = (sub: Submission): number => {
-  const raw = sub.updatedAt || sub.createdAt || sub.tanggal || '';
-  const t = new Date(raw).getTime();
-  return isNaN(t) ? 0 : t;
-};
-
-const pickRicherSubmission = (a: Submission, b: Submission): Submission => {
-  const tA = getSubmissionTimestampMs(a);
-  const tB = getSubmissionTimestampMs(b);
-  if (Math.abs(tA - tB) > 2000) {
-    return tA >= tB ? a : b;
-  }
-  // If timestamps are very close, prefer the one that is Lunas or has payment proof / more drive files
-  const score = (s: Submission) =>
-    (s.status === 'Lunas' ? 4 : s.status === 'DP / Cicilan' ? 2 : 0) +
-    (s.buktiPembayaran ? 3 : 0) +
-    ((s.googleDriveFiles || []).length) +
-    ((s.riwayatCicilan || []).length * 2);
-  return score(a) >= score(b) ? a : b;
+  return () => {};
 };
 
 const normalizeCompanyKey = (raw?: string | null): string => {
@@ -2791,58 +2744,16 @@ const normalizeCompanyKey = (raw?: string | null): string => {
   return val;
 };
 
-export const loadAllLocalSubmissionsForCompany = (companyId: string = 'nmsa'): Submission[] => {
-  if (typeof localStorage === 'undefined') return [];
-  const targetComp = normalizeCompanyKey(companyId);
-  const keysToInspect = [
-    `NUSANTARA_HO_SUBMISSIONS_${targetComp}`,
-    'NUSANTARA_HO_SUBMISSIONS',
-    'voucher_submissions'
-  ];
-  const map = new Map<string, Submission>();
-
-  const parseArrayFromKey = (raw: string | null): Submission[] => {
-    if (!raw) return [];
-    try {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed.filter(Boolean);
-      if (parsed && Array.isArray(parsed.updatedSubmissions)) return parsed.updatedSubmissions.filter(Boolean);
-      if (parsed && Array.isArray(parsed.submissions)) return parsed.submissions.filter(Boolean);
-    } catch (_) {}
-    return [];
-  };
-
-  for (const key of keysToInspect) {
-    const items = parseArrayFromKey(localStorage.getItem(key));
-    for (const sub of items) {
-      if (!sub || !sub.id) continue;
-      const subComp = normalizeCompanyKey(sub.companyId);
-      if (subComp !== targetComp) continue;
-      const existing = map.get(sub.id);
-      if (!existing) {
-        map.set(sub.id, sub);
-      } else {
-        map.set(sub.id, pickRicherSubmission(existing, sub));
-      }
-    }
-  }
-
-  return sortSubmissionsList(Array.from(map.values()));
+export const loadAllLocalSubmissionsForCompany = (_companyId: string = 'nmsa'): Submission[] => {
+  purgeAllLocalSubmissionCaches();
+  return [];
 };
 
-export const persistSubmissionsToLocalCaches = (list: Submission[], companyId: string = 'nmsa') => {
-  if (typeof localStorage === 'undefined' || !Array.isArray(list)) return;
-  const cleanComp = normalizeCompanyKey(companyId || activeCompanyId);
-  const json = JSON.stringify(list);
-  try {
-    localStorage.setItem('NUSANTARA_HO_SUBMISSIONS', json);
-    localStorage.setItem(`NUSANTARA_HO_SUBMISSIONS_${cleanComp}`, json);
-  } catch (e) {
-    console.warn('Error persisting submissions to local caches:', e);
-  }
+export const persistSubmissionsToLocalCaches = (_list: Submission[], _companyId: string = 'nmsa') => {
+  purgeAllLocalSubmissionCaches();
 };
 
-// Fetch submissions from Firestore, strictly filtered by user's companyId to achieve complete database segregation
+// Fetch submissions directly from Cloud Firestore (no local cache fallback)
 export const loadSubmissionsFromFirestore = async (companyId?: string): Promise<Submission[]> => {
   if (!isFirebaseConfigured() || !firestoreDb) {
     throw new Error('Firebase is not initialized. Please provide correct configuration.');
@@ -2850,47 +2761,22 @@ export const loadSubmissionsFromFirestore = async (companyId?: string): Promise<
 
   const path = 'submissions';
   try {
-    // Query the full collection without orderBy('tanggal') so documents with missing/alternate date fields are never dropped by Firestore
+    await enableNetwork(firestoreDb).catch(() => {});
     const snapshot = await getDocs(collection(firestoreDb, path));
     recordFirestoreReads(Math.max(1, snapshot.size));
     const list: Submission[] = [];
     const targetComp = companyId ? normalizeCompanyKey(companyId) : '';
-    
+
     snapshot.forEach(docSnap => {
       const data = docSnap.data();
       const mapped = mapFirestoreToSubmission(docSnap.id, data);
-      
-      // Strict data segregation per company
-      // Legacy submissions without explicit companyId belong to default 'nmsa'
       const docComp = normalizeCompanyKey(data.companyId || data.company_id);
-      
+
       if (!targetComp || docComp === targetComp) {
         list.push(mapped);
       }
     });
 
-    // Self-healing: if status is 'DP / Cicilan' and dpAmount is missing, recover from local cache if present
-    try {
-      const localSubsRaw = localStorage.getItem('NUSANTARA_HO_SUBMISSIONS') || localStorage.getItem('voucher_submissions');
-      if (localSubsRaw) {
-        const localSubs = JSON.parse(localSubsRaw);
-        if (Array.isArray(localSubs)) {
-          list.forEach(item => {
-            if (item.status === 'DP / Cicilan' && (!item.dpAmount || item.dpAmount === 0)) {
-              const matchedLocal = localSubs.find((ls: any) => ls.id === item.id || (ls.kode && ls.kode === item.kode));
-              if (matchedLocal && matchedLocal.dpAmount) {
-                item.dpAmount = Number(matchedLocal.dpAmount);
-                item.cicilanNotes = item.cicilanNotes || matchedLocal.cicilanNotes;
-                if (!isFirestoreQuotaExceeded()) {
-                  saveSubmissionToFirestore(item, targetComp || 'nmsa').catch(() => {});
-                }
-              }
-            }
-          });
-        }
-      }
-    } catch (_) {}
-    
     return sortSubmissionsList(list);
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
@@ -2979,10 +2865,7 @@ export const getSubmissionFromFirestore = async (docId: string): Promise<Submiss
   return null;
 };
 
-// ═════════ IN-MEMORY & PERSISTENT FIRESTORE BACKGROUND QUEUE ═════════
-// Solusi cerdas: Data langsung tersimpan instan di memori sementara (RAM) & cache lokal,
-// lalu di-upload secara asynchronous di latar belakang. Jika Firestore lambat/down,
-// data tersimpan aman dan di-upload otomatis saat koneksi pulih!
+// ═════════ IN-MEMORY FIRESTORE QUEUE (NON-VOUCHER COLLECTIONS ONLY) ═════════
 
 export interface FirestoreQueueItem {
   id: string; // unique key: `${path}/${docId}`
@@ -3004,7 +2887,9 @@ const loadPersistedFirestoreQueue = (): FirestoreQueueItem[] => {
     const raw = localStorage.getItem('NUSANTARA_FIRESTORE_WRITE_QUEUE');
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed;
+      if (Array.isArray(parsed)) {
+        return parsed.filter((item: any) => item?.path && item.path !== 'submissions');
+      }
     }
   } catch (e) {}
   return [];
@@ -3013,7 +2898,12 @@ const loadPersistedFirestoreQueue = (): FirestoreQueueItem[] => {
 const persistFirestoreQueue = () => {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem('NUSANTARA_FIRESTORE_WRITE_QUEUE', JSON.stringify(firestoreWriteQueue));
+    const nonSub = firestoreWriteQueue.filter(item => item.path !== 'submissions');
+    if (nonSub.length === 0) {
+      localStorage.removeItem('NUSANTARA_FIRESTORE_WRITE_QUEUE');
+    } else {
+      localStorage.setItem('NUSANTARA_FIRESTORE_WRITE_QUEUE', JSON.stringify(nonSub));
+    }
   } catch (e) {}
 };
 
@@ -3056,16 +2946,15 @@ export const enqueueFirestoreWrite = (
   payload: any, 
   description?: string
 ): void => {
-  // Strictly enforce user quota directive: only Absen, NPWP, and Voucher submissions
-  const ALLOWED_COLLECTIONS = ['submissions', 'npwp_records', 'attendance', 'workers'];
+  // Voucher 'submissions' writes are always direct-only to Firestore (no temporary local queue)
+  const ALLOWED_COLLECTIONS = ['npwp_records', 'attendance', 'workers'];
   if (!ALLOWED_COLLECTIONS.includes(path)) {
     return;
   }
 
   const key = `${path}/${docId}`;
   const now = Date.now();
-  
-  // Deduplicate: perbarui antrian jika dokumen yang sama sudah ada di antrian
+
   const existingIdx = firestoreWriteQueue.findIndex(item => item.id === key);
   const newItem: FirestoreQueueItem = {
     id: key,
@@ -3083,7 +2972,6 @@ export const enqueueFirestoreWrite = (
     firestoreWriteQueue.push(newItem);
   }
 
-  // ALWAYS persist to localStorage queue (even during quota cooldown or offline) so writes are NEVER lost
   persistFirestoreQueue();
   notifyFirestoreQueueStatus();
 
@@ -3091,7 +2979,6 @@ export const enqueueFirestoreWrite = (
     return;
   }
 
-  // Jadwalkan flush di background (debounce 80ms agar operasi batch bersatu)
   if (!queueFlushTimer) {
     queueFlushTimer = setTimeout(() => {
       queueFlushTimer = null;
@@ -3114,7 +3001,6 @@ export const flushFirestoreQueue = async (): Promise<{ processed: number; remain
   }
 
   if (isFirestoreQuotaExceeded()) {
-    console.log(`ℹ️ [Firestore Queue] Flush ditunda karena masa cooldown kuota. Antrian (${firestoreWriteQueue.length} data) tetap aman di antrian lokal.`);
     return { processed: 0, remaining: firestoreWriteQueue.length };
   }
 
@@ -3138,13 +3024,11 @@ export const flushFirestoreQueue = async (): Promise<{ processed: number; remain
         const docRef = doc(firestoreDb, item.path, item.docId);
         await setDoc(docRef, item.payload, { merge: true });
         
-        // Berhasil disimpan ke cloud, hapus dari antrian
         firestoreWriteQueue.shift();
         processed++;
         recordFirestoreWrites(1);
         persistFirestoreQueue();
         notifyFirestoreQueueStatus(true);
-        console.log(`☁️ [Firestore Background Sync] Berhasil mengunggah ${item.description || item.id} ke cloud.`);
       } catch (err: any) {
         console.warn(`[Firestore Queue] Gagal sinkronisasi data ${item.id}:`, err?.message || err);
         markFirestoreQuotaExceeded(err);
@@ -3152,7 +3036,6 @@ export const flushFirestoreQueue = async (): Promise<{ processed: number; remain
         item.retries = (item.retries || 0) + 1;
         persistFirestoreQueue();
 
-        // Keep item safely in queue on transient/network/quota failures; only break loop and retry next cycle
         if (isFirestoreQuotaExceeded()) {
           if (firestoreDb) disableNetwork(firestoreDb).catch(() => {});
         }
@@ -3167,34 +3050,20 @@ export const flushFirestoreQueue = async (): Promise<{ processed: number; remain
   return { processed, remaining: firestoreWriteQueue.length };
 };
 
-// Auto-sync listener & interval
 if (typeof window !== 'undefined') {
   window.addEventListener('online', () => {
-    console.log('🌐 Koneksi internet aktif kembali. Mengunggah antrian data Firestore yang tertunda...');
     flushFirestoreQueue().catch(() => {});
   });
-
-  setInterval(() => {
-    if (firestoreWriteQueue.length > 0 && !isProcessingFirestoreQueue && !isFirestoreQuotaExceeded()) {
-      flushFirestoreQueue().catch(() => {});
-    }
-  }, 20000);
-
-  setTimeout(() => {
-    if (firestoreWriteQueue.length > 0 && !isFirestoreQuotaExceeded()) {
-      console.log(`[Firestore Queue] Melanjutkan sinkronisasi ${firestoreWriteQueue.length} data tertunda dari sesi sebelumnya...`);
-      flushFirestoreQueue().catch(() => {});
-    }
-  }, 3000);
 }
 
-// Put/Save single submission in Firestore under user's actual companyId with immediate local + direct cloud write
+// Put/Save single submission DIRECTLY to Cloud Firestore (tanpa penyimpanan sementara/cache lokal)
 export const saveSubmissionToFirestore = async (
   submission: Submission, 
   userCompanyId: string = 'nmsa',
   userCompanyName: string = 'PT Nusantara Mineral Sukses Abadi',
   _options?: { waitForCloudAck?: boolean }
 ): Promise<{ syncedToCloud: boolean; error?: string }> => {
+  purgeAllLocalSubmissionCaches();
   const cleanComp = normalizeCompanyKey(submission.companyId || userCompanyId || activeCompanyId);
   const stampedSubmission: Submission = {
     ...submission,
@@ -3203,24 +3072,6 @@ export const saveSubmissionToFirestore = async (
     updatedAt: new Date().toISOString()
   };
 
-  // Ensure a restored/re-created submission is removed from deleted list
-  removeLocalDeletedSubmissionId(stampedSubmission.id);
-
-  // 1. Immediately cache in BOTH local storage keys so user sees the change instantly
-  try {
-    if (typeof localStorage !== 'undefined') {
-      const list = loadAllLocalSubmissionsForCompany(cleanComp);
-      const idx = list.findIndex(s => s.id === stampedSubmission.id);
-      if (idx !== -1) {
-        list[idx] = stampedSubmission;
-      } else {
-        list.unshift(stampedSubmission);
-      }
-      persistSubmissionsToLocalCaches(sortSubmissionsList(list), cleanComp);
-    }
-  } catch (e) {}
-
-  // 2. Prepare payload
   const path = 'submissions';
   const fPayload = mapSubmissionToFirestore(
     stampedSubmission, 
@@ -3230,62 +3081,50 @@ export const saveSubmissionToFirestore = async (
     userCompanyName
   );
   const cleanedPayload = cleanUndefined(fPayload);
-
   const safeDocId = sanitizeFirestoreDocId(stampedSubmission.id);
 
-  // 3. Attempt direct immediate Firestore write when online & not quota-exceeded, falling back to persistent queue
-  if (isFirebaseConfigured() && firestoreDb && !isFirestoreQuotaExceeded()) {
-    try {
-      await enableNetwork(firestoreDb).catch(() => {});
-      await setDoc(doc(firestoreDb, path, safeDocId), cleanedPayload, { merge: true });
-      removeFromFirestoreQueue(path, stampedSubmission.id);
-      removeFromFirestoreQueue(path, safeDocId);
-      recordFirestoreWrites(1);
-      console.log(`☁️ [Cloud Sync] Submission ${stampedSubmission.kode || stampedSubmission.id} langsung tersinkron ke Firestore.`);
-      return { syncedToCloud: true };
-    } catch (error: any) {
-      markFirestoreQuotaExceeded(error);
-      const msg = error?.message || String(error);
-      console.warn(`⚠️ [Cloud Sync] Gagal kirim langsung (${safeDocId}), masuk antrian persisten:`, msg);
-      enqueueFirestoreWrite(path, safeDocId, cleanedPayload, `Voucher ${stampedSubmission.kode || stampedSubmission.id}`);
-      return { syncedToCloud: false, error: msg };
-    }
+  if (!isFirebaseConfigured() || !firestoreDb) {
+    return {
+      syncedToCloud: false,
+      error: 'Konfigurasi Firebase Firestore belum aktif.'
+    };
   }
 
-  // Fallback: safely persist in retry queue so it syncs automatically when online/recovered
-  enqueueFirestoreWrite(path, safeDocId, cleanedPayload, `Voucher ${stampedSubmission.kode || stampedSubmission.id}`);
-  return {
-    syncedToCloud: false,
-    error: isFirestoreQuotaExceeded() ? 'Cooldown kuota Firestore aktif (antrean otomatis berjalan)' : 'Firestore belum aktif'
-  };
+  if (isFirestoreQuotaExceeded()) {
+    return {
+      syncedToCloud: false,
+      error: 'Kuota Firestore sedang cooldown sementara. Coba lagi sebentar atau klik Sinkron Cloud.'
+    };
+  }
+
+  try {
+    await enableNetwork(firestoreDb).catch(() => {});
+    await setDoc(doc(firestoreDb, path, safeDocId), cleanedPayload, { merge: true });
+    recordFirestoreWrites(1);
+    console.log(`☁️ [Firestore Direct] Voucher ${stampedSubmission.kode || stampedSubmission.id} langsung tersimpan ke Firebase Firestore.`);
+    return { syncedToCloud: true };
+  } catch (error: any) {
+    markFirestoreQuotaExceeded(error);
+    const msg = error?.message || String(error);
+    console.error(`❌ [Firestore Direct] Gagal menyimpan voucher (${safeDocId}):`, msg);
+    return { syncedToCloud: false, error: msg };
+  }
 };
 
-// Batch save/update multiple submissions in Firestore (e.g. after name consolidation or auto-reconciliation)
+// Batch save/update multiple submissions DIRECTLY in Firestore (no local queue fallback)
 export const saveSubmissionsBatchToFirestore = async (
   submissions: Submission[],
   userCompanyId: string = 'nmsa',
   userCompanyName: string = 'PT Nusantara Mineral Sukses Abadi'
 ): Promise<{ success: boolean; count: number }> => {
+  purgeAllLocalSubmissionCaches();
   if (submissions.length === 0) {
     return { success: true, count: 0 };
   }
 
-  const cleanComp = (userCompanyId || activeCompanyId || 'nmsa').toLowerCase().trim();
+  const cleanComp = normalizeCompanyKey(userCompanyId || activeCompanyId || 'nmsa');
 
   if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) {
-    // Queue each item cleanly so they sync automatically as soon as Firestore recovers
-    for (const sub of submissions) {
-      const payload = cleanUndefined(
-        mapSubmissionToFirestore(
-          sub,
-          currentUser?.email || 'admin@nmsa.com',
-          currentUser?.uid || 'pwsDJv3bKHQamy89PDaAeCoZQcU2',
-          sub.companyId || cleanComp,
-          sub.companyName || userCompanyName
-        )
-      );
-      enqueueFirestoreWrite('submissions', sub.id, payload, `Voucher ${sub.kode || sub.id}`);
-    }
     return { success: false, count: 0 };
   }
 
@@ -3293,7 +3132,7 @@ export const saveSubmissionsBatchToFirestore = async (
     await enableNetwork(firestoreDb).catch(() => {});
   } catch (_) {}
 
-  const BATCH_SIZE = 450; // Firestore limit is 500 operations per batch
+  const BATCH_SIZE = 450;
   let totalSaved = 0;
 
   for (let i = 0; i < submissions.length; i += BATCH_SIZE) {
@@ -3305,7 +3144,7 @@ export const saveSubmissionsBatchToFirestore = async (
         sub,
         currentUser?.email || 'admin@nmsa.com',
         currentUser?.uid || 'pwsDJv3bKHQamy89PDaAeCoZQcU2',
-        sub.companyId || cleanComp,
+        normalizeCompanyKey(sub.companyId || cleanComp),
         sub.companyName || userCompanyName
       );
       const cleaned = cleanUndefined(fPayload);
@@ -3318,18 +3157,16 @@ export const saveSubmissionsBatchToFirestore = async (
       await batch.commit();
       totalSaved += chunk.length;
       recordFirestoreWrites(chunk.length);
-      chunk.forEach((s) => removeFromFirestoreQueue('submissions', s.id));
-      console.log(`☁️ Batch saved ${chunk.length} submissions to Firestore.`);
+      console.log(`☁️ Batch saved ${chunk.length} submissions directly to Firestore.`);
     } catch (err) {
-      console.warn('Batch write fallback -> trying per-document writes for chunk:', err);
-      // Fallback: write individually so 1 bad/oversized document NEVER blocks the other valid vouchers!
+      console.warn('Batch write fallback -> trying per-document direct writes for chunk:', err);
       for (const sub of chunk) {
         const payload = cleanUndefined(
           mapSubmissionToFirestore(
             sub,
             currentUser?.email || 'admin@nmsa.com',
             currentUser?.uid || 'pwsDJv3bKHQamy89PDaAeCoZQcU2',
-            sub.companyId || cleanComp,
+            normalizeCompanyKey(sub.companyId || cleanComp),
             sub.companyName || userCompanyName
           )
         );
@@ -3339,14 +3176,10 @@ export const saveSubmissionsBatchToFirestore = async (
             await setDoc(doc(firestoreDb, 'submissions', docId), payload, { merge: true });
             totalSaved += 1;
             recordFirestoreWrites(1);
-            removeFromFirestoreQueue('submissions', sub.id);
-          } else {
-            enqueueFirestoreWrite('submissions', docId, payload, `Voucher ${sub.kode || sub.id}`);
           }
         } catch (docErr) {
           markFirestoreQuotaExceeded(docErr);
           console.warn(`⚠️ Gagal simpan individu voucher ${sub.kode || docId}:`, docErr);
-          enqueueFirestoreWrite('submissions', docId, payload, `Voucher ${sub.kode || sub.id}`);
         }
       }
     }
@@ -3355,21 +3188,10 @@ export const saveSubmissionsBatchToFirestore = async (
   return { success: totalSaved > 0, count: totalSaved };
 };
 
-// Bidirectional reconciliation: combines Cloud Firestore, Deleted IDs, Pending Queue, and Local Caches
-// Ensures unsynced local vouchers (e.g. trapped on PC or HP) are automatically pushed to Cloud Firestore,
-// deleted vouchers stay deleted across all devices, and all devices converge on the exact same dataset!
-let activeReconcilePromise: Promise<{
-  merged: Submission[];
-  uploadedCount: number;
-  cloudCount: number;
-  deletedIds: string[];
-  usedOfflineFallback: boolean;
-}> | null = null;
-let lastReconcileAt = 0;
-
+// Pure Firebase Firestore loader (no local cache merging or uploading)
 export const reconcileSubmissionsWithCloud = async (
   companyId: string = 'nmsa',
-  companyName: string = 'PT Nusantara Mineral Sukses Abadi',
+  _companyName: string = 'PT Nusantara Mineral Sukses Abadi',
   options?: { forceResetQuota?: boolean; localSnapshot?: Submission[] }
 ): Promise<{
   merged: Submission[];
@@ -3378,191 +3200,67 @@ export const reconcileSubmissionsWithCloud = async (
   deletedIds: string[];
   usedOfflineFallback: boolean;
 }> => {
-  if (activeReconcilePromise && !options?.forceResetQuota) {
-    return activeReconcilePromise;
+  purgeAllLocalSubmissionCaches();
+  const cleanComp = normalizeCompanyKey(companyId || 'nmsa');
+
+  if (options?.forceResetQuota) {
+    await resetFirestoreQuotaCooldown();
   }
-
-  const runPromise = (async () => {
-    const cleanComp = (companyId || 'nmsa').toLowerCase().trim();
-
-    if (options?.forceResetQuota) {
-      await resetFirestoreQuotaCooldown();
-    } else if (Date.now() - lastReconcileAt < 10000 && !getPendingFirestoreSyncCount()) {
-      const localSubs = loadAllLocalSubmissionsForCompany(cleanComp);
-      if (localSubs.length > 0) {
-        return {
-          merged: localSubs,
-          uploadedCount: 0,
-          cloudCount: localSubs.length,
-          deletedIds: getLocalDeletedSubmissionIds(),
-          usedOfflineFallback: false
-        };
-      }
-    }
-
-  // 1. Gather local submissions from localSnapshot + all localStorage keys
-  const localMap = new Map<string, Submission>();
-  for (const s of loadAllLocalSubmissionsForCompany(cleanComp)) {
-    if (s && s.id) localMap.set(s.id, s);
-  }
-  for (const s of options?.localSnapshot || []) {
-    if (!s || !s.id) continue;
-    const subComp = (s.companyId || 'nmsa').toLowerCase().trim();
-    if (subComp !== cleanComp) continue;
-    const prev = localMap.get(s.id);
-    localMap.set(s.id, prev ? pickRicherSubmission(prev, s) : s);
-  }
-
-  const localDeleted = getLocalDeletedSubmissionIds();
 
   if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) {
-    const delSet = new Set(localDeleted);
-    const localFiltered = sortSubmissionsList(
-      Array.from(localMap.values()).filter((s) => !delSet.has(s.id))
-    );
-    persistSubmissionsToLocalCaches(localFiltered, cleanComp);
     return {
-      merged: localFiltered,
+      merged: [],
       uploadedCount: 0,
       cloudCount: 0,
-      deletedIds: localDeleted,
+      deletedIds: [],
       usedOfflineFallback: true
     };
   }
 
   try {
     await enableNetwork(firestoreDb).catch(() => {});
-
-    // 2. Pull authoritative cloud submissions + deleted IDs list
-    const [cloudSubs, cloudDeletedIds] = await Promise.all([
-      loadSubmissionsFromFirestore(cleanComp),
-      loadDeletedSubmissionIdsFromFirestore()
-    ]);
-
-    const delSet = new Set<string>(cloudDeletedIds);
-    const pendingQueueIds = new Set<string>(
-      firestoreWriteQueue.filter((q) => q.path === 'submissions').map((q) => q.docId)
-    );
-
-    const cloudMap = new Map<string, Submission>();
-    for (const cSub of cloudSubs) {
-      if (cSub && cSub.id) {
-        cloudMap.set(cSub.id, cSub);
-      }
-    }
-
-    const mergedMap = new Map<string, Submission>();
-    const toUploadToCloud: Submission[] = [];
-
-    // 3. Include all non-deleted cloud submissions
-    for (const cSub of cloudSubs) {
-      if (!delSet.has(cSub.id) || pendingQueueIds.has(cSub.id)) {
-        mergedMap.set(cSub.id, cSub);
-      }
-    }
-
-    // 4. Reconcile local submissions against cloud
-    for (const [id, lSub] of localMap.entries()) {
-      if (delSet.has(id) && !pendingQueueIds.has(id)) {
-        // Intentionally deleted on another device -> drop from local cache & queue
-        removeFromFirestoreQueue('submissions', id);
-        continue;
-      }
-
-      const cSub = cloudMap.get(id);
-      if (!cSub) {
-        // Local voucher missing from Cloud Firestore (e.g. saved during offline/quota cooldown) -> PUSH TO CLOUD!
-        const stamped: Submission = {
-          ...lSub,
-          companyId: cleanComp,
-          companyName: lSub.companyName || companyName,
-          updatedAt: lSub.updatedAt || lSub.createdAt || new Date().toISOString()
-        };
-        mergedMap.set(id, stamped);
-        toUploadToCloud.push(stamped);
-      } else {
-        // Exists in both: check if local has newer unsynced edits or queued writes
-        const tLocal = getSubmissionTimestampMs(lSub);
-        const tCloud = getSubmissionTimestampMs(cSub);
-        const localHasNewerProof = Boolean(lSub.buktiPembayaran && !cSub.buktiPembayaran);
-        const localHasMoreCicilan = (lSub.riwayatCicilan?.length || 0) > (cSub.riwayatCicilan?.length || 0);
-        const isQueued = pendingQueueIds.has(id);
-
-        if (isQueued || localHasNewerProof || localHasMoreCicilan || tLocal > tCloud + 2000) {
-          const richer = pickRicherSubmission(lSub, cSub);
-          mergedMap.set(id, richer);
-          toUploadToCloud.push(richer);
-        } else {
-          mergedMap.set(id, cSub);
-        }
-      }
-    }
-
-    // 5. Push all missing/newer local vouchers to Firestore so every other device gets them
-    let uploadedCount = 0;
-    if (toUploadToCloud.length > 0) {
-      console.log(`🔄 [Cloud Sync] Mengunggah ${toUploadToCloud.length} voucher lokal yang belum ada di Cloud Firestore...`);
-      const batchRes = await saveSubmissionsBatchToFirestore(toUploadToCloud, cleanComp, companyName);
-      uploadedCount = batchRes.count;
-    }
-
-    // Also flush any remaining items in persistent queue
-    await flushFirestoreQueue().catch(() => {});
-
-    const finalMerged = sortSubmissionsList(Array.from(mergedMap.values()));
-    persistSubmissionsToLocalCaches(finalMerged, cleanComp);
-    lastReconcileAt = Date.now();
-
+    const cloudSubs = await loadSubmissionsFromFirestore(cleanComp);
     return {
-      merged: finalMerged,
-      uploadedCount,
+      merged: cloudSubs,
+      uploadedCount: 0,
       cloudCount: cloudSubs.length,
-      deletedIds: cloudDeletedIds,
+      deletedIds: [],
       usedOfflineFallback: false
     };
   } catch (err) {
-    console.warn('⚠️ [Cloud Sync] Gagal rekonsiliasi penuh dengan Firestore, menggunakan cache lokal:', err);
-    const delSet = new Set(localDeleted);
-    const fallbackList = sortSubmissionsList(
-      Array.from(localMap.values()).filter((s) => !delSet.has(s.id))
-    );
-    persistSubmissionsToLocalCaches(fallbackList, cleanComp);
+    console.warn('⚠️ [Firestore Direct] Gagal memuat data langsung dari Firestore:', err);
     return {
-      merged: fallbackList,
+      merged: [],
       uploadedCount: 0,
       cloudCount: 0,
-      deletedIds: localDeleted,
+      deletedIds: [],
       usedOfflineFallback: true
     };
   }
-  })();
-
-  activeReconcilePromise = runPromise.finally(() => {
-    activeReconcilePromise = null;
-  });
-  return activeReconcilePromise;
 };
 
-// Delete single submission from Firestore & sync deletion marker across all devices
+// Delete single submission directly from Firestore
 export const deleteSubmissionFromFirestore = async (id: string): Promise<void> => {
-  addLocalDeletedSubmissionId(id);
-  removeFromFirestoreQueue('submissions', id);
+  purgeAllLocalSubmissionCaches();
 
   if (!isFirebaseConfigured() || !firestoreDb) {
     throw new Error('Firebase is not initialized.');
   }
 
   if (isFirestoreQuotaExceeded()) {
-    console.log(`ℹ️ [Firestore Quota Guard] Operasi hapus submission ${id} ke Firestore tertunda karena cooldown kuota.`);
-    return;
+    throw new Error('Kuota Firestore sedang cooldown sementara.');
   }
 
   const path = 'submissions';
+  const safeId = sanitizeFirestoreDocId(id);
   try {
+    await enableNetwork(firestoreDb).catch(() => {});
     await deleteDoc(doc(firestoreDb, path, id));
+    if (safeId && safeId !== id) {
+      await deleteDoc(doc(firestoreDb, path, safeId)).catch(() => {});
+    }
     recordFirestoreDeletes(1);
-    await syncDeletedSubmissionIdToCloud(id);
-    console.log(`☁️ Submission ${id} deleted from Firestore and marked deleted across devices.`);
+    console.log(`☁️ Submission ${id} deleted directly from Firestore.`);
   } catch (error) {
     markFirestoreQuotaExceeded(error);
     handleFirestoreError(error, OperationType.DELETE, `${path}/${id}`);

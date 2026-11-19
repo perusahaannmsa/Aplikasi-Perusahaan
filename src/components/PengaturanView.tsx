@@ -348,7 +348,7 @@ export const PengaturanView: React.FC<PengaturanViewProps> = ({
                   </span>
                 </div>
                 <p className="text-xs text-stone-500 mt-0.5">
-                  Unggah voucher lokal yang tertahan dan samakan data HP &amp; Komputer lewat Cloud Firestore.
+                  Muat ulang seluruh data voucher langsung dari Firebase Firestore (tanpa penyimpanan sementara/cache lokal).
                 </p>
               </div>
             </button>

@@ -278,16 +278,7 @@ export const runAutoRefreshAndDeduplicateDrive = async (
     } catch (_) {}
   }
 
-  if (hasModifications) {
-    try {
-      localStorage.setItem('NUSANTARA_HO_SUBMISSIONS', JSON.stringify(updatedList));
-      fetch('/api/shared-state', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ submissions: updatedList })
-      }).catch(() => {});
-    } catch (_) {}
-  }
+  // Updated submissions are returned directly to caller (persisted in Firestore by the caller)
 
   if (onProgress) {
     onProgress(`✓ Sinkronisasi selesai: ${result.duplicatesRemoved} file duplikat dibersihkan dari Google Drive.`);
