@@ -14,7 +14,8 @@ import {
   Settings, 
   Sparkles, 
   Database,
-  Cloud 
+  Cloud,
+  Activity 
 } from 'lucide-react';
 import { DriveAccountsManager } from './DriveAccountsManager';
 import { getConnectedDrives, saveConnectedDrives } from '../firebase';
@@ -25,6 +26,7 @@ interface UserProfileModalProps {
   userProfile: any;
   authUser: any;
   onOpenCompanySwitcher?: () => void;
+  onOpenFirebaseQuota?: () => void;
 }
 
 export const UserProfileModal: React.FC<UserProfileModalProps> = ({
@@ -32,7 +34,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   onClose,
   userProfile,
   authUser,
-  onOpenCompanySwitcher
+  onOpenCompanySwitcher,
+  onOpenFirebaseQuota
 }) => {
   // Signatures configuration state
   const [creatorName, setCreatorName] = useState('');
@@ -208,6 +211,41 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                   />
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Firebase Quota & Usage Monitor Card */}
+          {onOpenFirebaseQuota && (
+            <div className="bg-gradient-to-r from-amber-500/10 via-amber-600/5 to-amber-700/10 border border-amber-300/80 rounded-2xl p-4.5 flex items-center justify-between gap-4 shadow-sm hover:border-amber-400 transition-all">
+              <div className="flex items-center gap-3.5">
+                <div className="w-11 h-11 rounded-xl bg-amber-600 text-white flex items-center justify-center shadow-sm shrink-0">
+                  <Database size={22} className="text-amber-100" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-xs font-bold text-stone-850 uppercase tracking-wide">
+                      Status Kuota & Penggunaan Firebase
+                    </h4>
+                    <span className="text-[9px] font-mono font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-200">
+                      SPARK PLAN
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-stone-500 mt-0.5">
+                    Pantau limit baca/tulis/hapus Firestore & status master karyawan & NPWP secara real-time.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenFirebaseQuota();
+                }}
+                className="px-4 py-2 bg-amber-700 hover:bg-amber-800 text-white rounded-xl text-xs font-bold transition shadow-sm shrink-0 cursor-pointer flex items-center gap-1.5"
+              >
+                <Activity size={14} />
+                <span>Lihat Kuota</span>
+              </button>
             </div>
           )}
           
