@@ -2,6 +2,8 @@ import { initializeApp, getApp, getApps, FirebaseApp, deleteApp } from 'firebase
 import firebaseAppletConfig from '../firebase-applet-config.json';
 import { 
   getFirestore, 
+  initializeFirestore,
+  memoryLocalCache,
   collection, 
   doc, 
   getDocs, 
@@ -67,6 +69,41 @@ let firebaseApp: FirebaseApp | null = null;
 export let firestoreDb: Firestore | null = null;
 let firebaseAuth: Auth | null = null;
 let currentUser: User | null = null;
+
+export const getSharedFirebaseApp = (): FirebaseApp | null => {
+  if (!firebaseApp) isFirebaseConfigured();
+  return firebaseApp;
+};
+
+export const getSharedFirestoreDb = (): Firestore | null => {
+  if (!firestoreDb) isFirebaseConfigured();
+  return firestoreDb;
+};
+
+export const getSharedFirebaseAuth = (): Auth | null => {
+  if (!firebaseAuth) isFirebaseConfigured();
+  return firebaseAuth;
+};
+
+export const withTimeout = <T>(promise: Promise<T>, timeoutMs: number, label = 'Operasi Firestore'): Promise<T> => {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const err: any = new Error(`${label} melebihi batas waktu (${Math.round(timeoutMs / 1000)} detik).`);
+      err.code = 'deadline-exceeded';
+      reject(err);
+    }, timeoutMs);
+    promise.then(
+      (val) => {
+        clearTimeout(timer);
+        resolve(val);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+};
 
 // 🔒 PERMANENT LOCKED OFFICIAL FIREBASE CONFIGURATION (PT Nusantara Mineral Sukses Abadi)
 // JANGAN DIUBAH OLEH AI GITHUB ATAU SISTEM APAPUN - KONFIGURASI RESMI & PERMANEN PERUSAHAAN
@@ -527,10 +564,10 @@ export const mapSubmissionToFirestore = (
 };
 
 export const getUserProfileFromFirestore = async (uid: string): Promise<any> => {
-  if (!isFirebaseConfigured() || !firestoreDb) return null;
+  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded() || isFirestoreInternalDegraded()) return null;
   try {
     const docRef = doc(firestoreDb, 'users', uid);
-    const snap = await getDoc(docRef);
+    const snap = await withTimeout(getDoc(docRef), 8000, 'Baca profil user');
     if (snap.exists()) {
       const data = snap.data();
       if (data?.companyId) {
@@ -539,6 +576,7 @@ export const getUserProfileFromFirestore = async (uid: string): Promise<any> => 
       return data;
     }
   } catch (err) {
+    markFirestoreInternalAssertion(err);
     console.warn('Silent read rejection - failed to fetch user profile:', err);
   }
   return null;
@@ -555,10 +593,10 @@ export const getCompanyProfileFromFirestore = async (companyId: string): Promise
   setActiveCompanyId(cleanId);
   
   // Try fetching from Firestore
-  if (isFirebaseConfigured() && firestoreDb) {
+  if (isFirebaseConfigured() && firestoreDb && !isFirestoreQuotaExceeded() && !isFirestoreInternalDegraded()) {
     try {
       const docRef = doc(firestoreDb, 'companies', cleanId);
-      const snap = await getDoc(docRef);
+      const snap = await withTimeout(getDoc(docRef), 8000, 'Baca profil perusahaan');
       if (snap.exists()) {
         const data = snap.data();
         // Auto-load shared Google Drive settings from Firestore to achieve zero-friction default connection!
@@ -575,6 +613,7 @@ export const getCompanyProfileFromFirestore = async (companyId: string): Promise
         return data;
       }
     } catch (err) {
+      markFirestoreInternalAssertion(err);
       console.warn('Silent read rejection - failed to fetch company profile from Firestore:', err);
     }
   }
@@ -599,14 +638,15 @@ export const getCompanyProfileFromFirestore = async (companyId: string): Promise
 export const loadAllCompaniesFromFirestore = async (): Promise<any[]> => {
   const result: any[] = [];
   
-  if (isFirebaseConfigured() && firestoreDb) {
+  if (isFirebaseConfigured() && firestoreDb && !isFirestoreQuotaExceeded() && !isFirestoreInternalDegraded()) {
     try {
       const colRef = collection(firestoreDb, 'companies');
-      const snap = await getDocs(colRef);
+      const snap = await withTimeout(getDocs(colRef), 8000, 'Baca daftar perusahaan');
       snap.forEach((doc) => {
         result.push(doc.data());
       });
     } catch (err) {
+      markFirestoreInternalAssertion(err);
       console.warn('Silent read rejection - failed to fetch companies from Firestore:', err);
     }
   }
@@ -754,6 +794,23 @@ export const getActiveFirebaseProjectId = (): string => {
   return cfg?.projectId || 'unknown';
 };
 
+const createSafeFirestoreInstance = (app: FirebaseApp, dbId: string): Firestore => {
+  try {
+    // Use memoryLocalCache + experimentalAutoDetectLongPolling to prevent IndexedDB WatchChangeAggregator (ca9/b815)
+    // assertion failures and proxy/iFrame WebChannel stalls; app already persists backups in localStorage & server JSON.
+    return initializeFirestore(
+      app,
+      {
+        localCache: memoryLocalCache(),
+        experimentalAutoDetectLongPolling: true,
+      },
+      dbId
+    );
+  } catch {
+    return getFirestore(app, dbId);
+  }
+};
+
 // Initialize Firebase dynamically based on configs
 export const initializeFirebaseApp = (customConfig?: any): boolean => {
   const config = customConfig || getStoredFirebaseConfig();
@@ -781,7 +838,7 @@ export const initializeFirebaseApp = (customConfig?: any): boolean => {
     }
     // Set firestore and auth instances
     const dbId = config.firestoreDatabaseId || (firebaseAppletConfig as any)?.firestoreDatabaseId || "(default)";
-    firestoreDb = getFirestore(firebaseApp, dbId);
+    firestoreDb = createSafeFirestoreInstance(firebaseApp, dbId);
     registerFirestoreInstance(firestoreDb);
     firebaseAuth = getAuth(firebaseApp);
     
@@ -801,6 +858,7 @@ export const initializeFirebaseApp = (customConfig?: any): boolean => {
     
     // If quota is already exceeded, immediately disable network to prevent gRPC Write stream errors
     if (isFirestoreQuotaExceeded()) {
+      isFirestoreNetworkDisabledByQuota = true;
       console.log('ℹ️ [Firestore Init] Kuota harian Firestore sedang dalam masa cooldown. Jaringan dinonaktifkan untuk mencegah gRPC Write stream errors.');
       disableNetwork(firestoreDb).catch(() => {});
     }
@@ -816,11 +874,12 @@ export const initializeFirebaseApp = (customConfig?: any): boolean => {
 
 // Asynchronously validate connection
 async function testConnection() {
-  if (!firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) return;
+  if (!firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied() || isFirestoreInternalDegraded()) return;
   try {
-    await getDocFromServer(doc(firestoreDb, 'test', 'connection'));
+    await withTimeout(getDocFromServer(doc(firestoreDb, 'test', 'connection')), 6000, 'Tes koneksi Firestore');
     console.log('📡 Firestore database connection status: ACTIVE');
   } catch (error: any) {
+    markFirestoreInternalAssertion(error);
     if (isFirestorePermissionError(error)) {
       return;
     }
@@ -832,17 +891,57 @@ async function testConnection() {
 
 // Registered Firestore instances across the application
 const registeredFirestoreInstances = new Set<Firestore>();
+let isFirestoreNetworkDisabledByQuota = false;
 
 export const registerFirestoreInstance = (dbInstance: Firestore | null) => {
   if (dbInstance) {
     registeredFirestoreInstances.add(dbInstance);
     if (isFirestoreQuotaExceeded()) {
+      isFirestoreNetworkDisabledByQuota = true;
       disableNetwork(dbInstance).catch(() => {});
     }
   }
 };
 
-// Global interceptor for unhandled console.error from @firebase/firestore
+// Circuit breaker for Firebase SDK internal state assertion errors (e.g. b815 / ca9)
+let lastInternalAssertionTime = 0;
+let lastInternalAssertionLogTime = 0;
+const INTERNAL_ASSERTION_COOLDOWN_MS = 60 * 1000;
+
+export const isFirestoreInternalAssertionError = (err?: any): boolean => {
+  const errStr = String(err?.message || err?.code || err || '');
+  return (
+    errStr.includes('INTERNAL ASSERTION FAILED') ||
+    errStr.includes('ID: b815') ||
+    errStr.includes('ID: ca9') ||
+    errStr.includes('Unexpected state')
+  );
+};
+
+export const isFirestoreInternalDegraded = (): boolean => {
+  return lastInternalAssertionTime > 0 && (Date.now() - lastInternalAssertionTime < INTERNAL_ASSERTION_COOLDOWN_MS);
+};
+
+export const markFirestoreInternalAssertion = (err?: any) => {
+  if (isFirestoreInternalAssertionError(err)) {
+    const now = Date.now();
+    const wasDegraded = isFirestoreInternalDegraded();
+    lastInternalAssertionTime = now;
+    if (!wasDegraded && now - lastInternalAssertionLogTime > 15000) {
+      lastInternalAssertionLogTime = now;
+      console.warn('⚠️ [Firestore SDK Guard] Mendeteksi reset stream Watch internal Firebase SDK (ca9/b815). Menggunakan cadangan lokal/server sementara tanpa membebani kuota.');
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('firestore-internal-error'));
+      }
+    }
+  }
+};
+
+export const resetFirestoreInternalAssertionCooldown = () => {
+  lastInternalAssertionTime = 0;
+};
+
+// Global interceptor for unhandled console.error / unhandledrejection from @firebase/firestore
 if (typeof window !== 'undefined') {
   const originalConsoleError = console.error;
   console.error = function (...args: any[]) {
@@ -867,8 +966,32 @@ if (typeof window !== 'undefined') {
       markFirestorePermissionDenied(fullMsg);
       return;
     }
+    if (isFirestoreInternalAssertionError(fullMsg)) {
+      const alreadyDegraded = isFirestoreInternalDegraded();
+      markFirestoreInternalAssertion(fullMsg);
+      if (alreadyDegraded) {
+        return; // Suppress endless SDK assertion flood in console
+      }
+      return;
+    }
     originalConsoleError.apply(console, args);
   };
+
+  window.addEventListener('unhandledrejection', (event) => {
+    const msg = String(event?.reason?.message || event?.reason || '');
+    if (isFirestoreInternalAssertionError(msg)) {
+      markFirestoreInternalAssertion(msg);
+      event.preventDefault();
+    }
+  });
+
+  window.addEventListener('error', (event) => {
+    const msg = String(event?.message || event?.error?.message || '');
+    if (isFirestoreInternalAssertionError(msg)) {
+      markFirestoreInternalAssertion(msg);
+      event.preventDefault();
+    }
+  });
 }
 
 // Helper to check configuration readiness
@@ -914,6 +1037,7 @@ export const markFirestoreQuotaExceeded = (err?: any) => {
   if (isQuota) {
     const wasAlreadyExceeded = isFirestoreQuotaExceeded();
     lastQuotaExceededTime = Date.now();
+    isFirestoreNetworkDisabledByQuota = true;
     try {
       localStorage.setItem('nmsa_fs_quota_exceeded', String(lastQuotaExceededTime));
       sessionStorage.setItem('nmsa_fs_quota_exceeded', String(lastQuotaExceededTime));
@@ -924,7 +1048,7 @@ export const markFirestoreQuotaExceeded = (err?: any) => {
       console.warn('⚠️ [Firestore Quota Guard] Kuota harian gratis Firebase (Spark Plan) telah tercapai (RESOURCE_EXHAUSTED). Mengalihkan operasi tulis ke penyimpanan lokal dan backend server sementara.');
     }
 
-    // CRITICAL: Shut down the GrpcConnection RPC 'Write' stream immediately on ALL instances
+    // CRITICAL: Shut down the GrpcConnection RPC 'Write' stream immediately on ALL instances ONLY when quota is exceeded
     for (const inst of registeredFirestoreInstances) {
       disableNetwork(inst).catch(() => {});
     }
@@ -936,19 +1060,24 @@ export const markFirestoreQuotaExceeded = (err?: any) => {
 
 export const resetFirestoreQuotaCooldown = async () => {
   lastQuotaExceededTime = 0;
+  resetFirestoreInternalAssertionCooldown();
   try {
     localStorage.removeItem('nmsa_fs_quota_exceeded');
     sessionStorage.removeItem('nmsa_fs_quota_exceeded');
     window.dispatchEvent(new CustomEvent('firestore-quota-reset'));
   } catch (_) {}
+  if (!isFirestoreNetworkDisabledByQuota) {
+    return;
+  }
+  isFirestoreNetworkDisabledByQuota = false;
   for (const inst of registeredFirestoreInstances) {
     try {
-      await enableNetwork(inst);
+      await withTimeout(enableNetwork(inst), 4000, 'Aktifkan kembali jaringan Firestore');
     } catch (_) {}
   }
   if (firestoreDb) {
     try {
-      await enableNetwork(firestoreDb);
+      await withTimeout(enableNetwork(firestoreDb), 4000, 'Aktifkan kembali jaringan Firestore');
     } catch (_) {}
   }
 };
@@ -2397,10 +2526,11 @@ export const executeDriveApiWithAutoRefresh = async <T>(
 let tokenAutoRefreshIntervalId: any = null;
 let isRefreshingDriveToken = false;
 let lastDriveRefreshTime = 0;
+let lastDriveQuotaCheckTime = 0;
 
 /**
  * Universal Trigger for Google Drive Token Refresh.
- * Called automatically every 30 seconds, on view/menu switch, on user actions, and on demand.
+ * Checks token validity cleanly without unnecessary 30s spam when token is healthy.
  */
 export const triggerGoogleDriveAutoRefresh = async (
   reason = 'manual', 
@@ -2410,8 +2540,13 @@ export const triggerGoogleDriveAutoRefresh = async (
   if (typeof window === 'undefined') return null;
   const now = Date.now();
 
-  // Debounce non-forced checks to prevent network thrashing (at least 3s between runs unless forced)
-  if (!force && (now - lastDriveRefreshTime < 3000)) {
+  // Skip background timer checks when tab is hidden unless forced manually
+  if (reason === '30s-timer' && document.visibilityState === 'hidden') {
+    return getStoredGoogleDriveToken(true);
+  }
+
+  // Debounce non-forced checks to prevent network thrashing
+  if (!force && (now - lastDriveRefreshTime < 5000)) {
     return getStoredGoogleDriveToken(true);
   }
   
@@ -2423,28 +2558,23 @@ export const triggerGoogleDriveAutoRefresh = async (
   lastDriveRefreshTime = now;
 
   try {
-    console.log(`⏰ [Google Drive Auto-Keeper] Memeriksa & memperbarui token (${reason})...`);
-
-    // 1. Always pull latest shared drives from Firestore (so cross-device/tab updates sync instantly)
-    try {
-      await loadConnectedDrivesFromFirestore();
-    } catch (fsErr) {
-      console.warn('[Google Drive Auto-Keeper] Firestore sync notice:', fsErr);
-    }
-
-    // 2. Check all connected drives
     const activeDrives = getConnectedDrives();
     const currentToken = getStoredGoogleDriveToken(true);
+    const shouldCheckQuotaApi =
+      force && reason !== '30s-timer'
+        ? true
+        : (now - lastDriveQuotaCheckTime > 5 * 60 * 1000);
 
-    if (!currentToken || force) {
-      // Token missing or forced: get or renew token from cache, Firestore, backend, or interactive login
+    if (!currentToken || (force && reason !== '30s-timer')) {
+      if (reason !== '30s-timer') {
+        console.log(`⏰ [Google Drive Auto-Keeper] Memeriksa & memperbarui token (${reason})...`);
+      }
       const freshToken = await getOrRenewDriveToken(undefined, allowInteractive);
       if (freshToken) {
-        console.log(`✅ [Google Drive Auto-Keeper] Token Google Drive berhasil aktif & diperbarui (${reason}).`);
         return freshToken;
       }
-    } else if (activeDrives.length > 0) {
-      // 3. Verify token with active Google Drive ping
+    } else if (activeDrives.length > 0 && shouldCheckQuotaApi) {
+      lastDriveQuotaCheckTime = now;
       try {
         await refreshAllDrivesQuota();
       } catch (qErr: any) {
@@ -2455,14 +2585,12 @@ export const triggerGoogleDriveAutoRefresh = async (
           if (currentToken) {
             invalidateDriveToken(currentToken);
           }
-          // Reload from Firestore or interactive renewal
           const refreshed = await loadConnectedDrivesFromFirestore();
           const valid = refreshed.find(d => isDriveTokenValid(d) && d.accessToken);
           if (valid && valid.accessToken) {
             setGoogleDriveToken(valid.accessToken);
             return valid.accessToken;
           }
-          // Attempt renewal
           return await getOrRenewDriveToken(undefined, allowInteractive);
         }
       }
@@ -2488,10 +2616,9 @@ export const startGoogleDriveTokenAutoRefresh = (intervalSeconds = 30): (() => v
     clearInterval(tokenAutoRefreshIntervalId);
   }
 
-  // Set interval (every 30 seconds as explicitly requested by user)
-  const intervalMs = Math.max(5, intervalSeconds) * 1000;
+  const intervalMs = Math.max(30, intervalSeconds) * 1000;
   tokenAutoRefreshIntervalId = setInterval(() => {
-    triggerGoogleDriveAutoRefresh('30s-timer', true);
+    triggerGoogleDriveAutoRefresh('30s-timer', false);
   }, intervalMs);
 
   // Trigger when tab becomes visible or gains focus
@@ -2928,7 +3055,18 @@ export const mergeSubmissionsSafely = (
   return sortSubmissionsList(Array.from(map.values()));
 };
 
-// Safe loader from Cloud Firestore that returns explicit diagnostics instead of throwing
+// Single-flight deduplication for submissions collection reads per company
+const inFlightSubmissionsLoadMap = new Map<string, Promise<{
+  list: Submission[];
+  ok: boolean;
+  error?: string;
+  errorCode?: string;
+  totalCloudDocs?: number;
+  skippedByCompany?: number;
+  skippedDeleted?: number;
+}>>();
+
+// Safe loader from Cloud Firestore that returns explicit diagnostics instead of throwing or hanging
 export const loadSubmissionsFromFirestoreSafe = async (
   companyId?: string
 ): Promise<{
@@ -2956,55 +3094,91 @@ export const loadSubmissionsFromFirestoreSafe = async (
       errorCode: 'unauthenticated'
     };
   }
-
-  const path = 'submissions';
-  try {
-    await enableNetwork(firestoreDb).catch(() => {});
-    const snapshot = await getDocs(collection(firestoreDb, path));
-    recordFirestoreReads(Math.max(1, snapshot.size));
-    const delLower = new Set(getLocalDeletedSubmissionIds().map((x) => x.toLowerCase()));
-    const list: Submission[] = [];
-    const targetComp = companyId ? normalizeCompanyKey(companyId) : '';
-    let skippedDeleted = 0;
-    let skippedByCompany = 0;
-
-    snapshot.forEach(docSnap => {
-      const data = docSnap.data();
-      const mapped = mapFirestoreToSubmission(docSnap.id, data);
-      if (delLower.has(String(mapped.id || '').toLowerCase())) {
-        skippedDeleted++;
-        return;
-      }
-      const docComp = normalizeCompanyKey(data.companyId || data.company_id);
-
-      if (!targetComp || docComp === targetComp) {
-        list.push(mapped);
-      } else {
-        skippedByCompany++;
-      }
-    });
-
-    const sorted = sortSubmissionsList(list);
-    return {
-      list: sorted,
-      ok: true,
-      totalCloudDocs: snapshot.size,
-      skippedByCompany,
-      skippedDeleted,
-    };
-  } catch (error: any) {
-    markFirestoreQuotaExceeded(error);
-    markFirestorePermissionDenied(error);
-    const errorCode = error?.code || '';
-    const errorMsg = error?.message || String(error);
-    console.warn(`⚠️ [Firestore Safe Load] Gagal membaca koleksi "${path}" (${errorCode}):`, errorMsg);
+  if (isFirestoreQuotaExceeded()) {
     return {
       list: [],
       ok: false,
-      error: errorMsg,
-      errorCode
+      error: 'Kuota harian Spark Firestore sedang cooldown sementara.',
+      errorCode: 'resource-exhausted'
     };
   }
+  if (isFirestoreInternalDegraded()) {
+    return {
+      list: [],
+      ok: false,
+      error: 'Stream Firestore SDK sedang dalam pemulihan sementara.',
+      errorCode: 'internal-sdk-error'
+    };
+  }
+
+  const targetComp = companyId ? normalizeCompanyKey(companyId) : '';
+  const dedupeKey = targetComp || '__all__';
+  const existingPromise = inFlightSubmissionsLoadMap.get(dedupeKey);
+  if (existingPromise) {
+    return existingPromise;
+  }
+
+  const path = 'submissions';
+  const loadPromise = (async () => {
+    try {
+      const snapshot = await withTimeout(
+        getDocs(collection(firestoreDb!, path)),
+        12000,
+        'Memuat voucher dari Firestore'
+      );
+      recordFirestoreReads(Math.max(1, snapshot.size));
+      resetFirestorePermissionDenied();
+      const delLower = new Set(getLocalDeletedSubmissionIds().map((x) => x.toLowerCase()));
+      const list: Submission[] = [];
+      let skippedDeleted = 0;
+      let skippedByCompany = 0;
+
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        const mapped = mapFirestoreToSubmission(docSnap.id, data);
+        if (delLower.has(String(mapped.id || '').toLowerCase())) {
+          skippedDeleted++;
+          return;
+        }
+        const docComp = normalizeCompanyKey(data.companyId || data.company_id);
+
+        if (!targetComp || docComp === targetComp) {
+          list.push(mapped);
+        } else {
+          skippedByCompany++;
+        }
+      });
+
+      const sorted = sortSubmissionsList(list);
+      return {
+        list: sorted,
+        ok: true,
+        totalCloudDocs: snapshot.size,
+        skippedByCompany,
+        skippedDeleted,
+      };
+    } catch (error: any) {
+      markFirestoreQuotaExceeded(error);
+      markFirestorePermissionDenied(error);
+      markFirestoreInternalAssertion(error);
+      const errorCode = isFirestoreInternalAssertionError(error)
+        ? 'internal-sdk-error'
+        : (error?.code || 'unknown');
+      const errorMsg = error?.message || String(error);
+      console.warn(`⚠️ [Firestore Safe Load] Gagal membaca koleksi "${path}" (${errorCode}):`, errorMsg);
+      return {
+        list: [],
+        ok: false,
+        error: errorMsg,
+        errorCode
+      };
+    } finally {
+      inFlightSubmissionsLoadMap.delete(dedupeKey);
+    }
+  })();
+
+  inFlightSubmissionsLoadMap.set(dedupeKey, loadPromise);
+  return loadPromise;
 };
 
 // Fetch submissions from Cloud Firestore with safe local cache fallback on error/empty
@@ -3026,7 +3200,7 @@ export const subscribeToSubmissionsFromFirestore = (
   onUpdate: (cloudSubmissions: Submission[]) => void,
   onError?: (err: any) => void
 ): (() => void) => {
-  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) {
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied() || isFirestoreInternalDegraded()) {
     return () => {};
   }
   const targetComp = normalizeCompanyKey(companyId || 'nmsa');
@@ -3062,12 +3236,15 @@ export const subscribeToSubmissionsFromFirestore = (
       },
       (err: any) => {
         markFirestoreQuotaExceeded(err);
+        markFirestorePermissionDenied(err);
+        markFirestoreInternalAssertion(err);
         console.warn('⚠️ Realtime listener submissions notice:', err?.message || err);
         if (onError) onError(err);
       }
     );
     return unsub;
   } catch (err) {
+    markFirestoreInternalAssertion(err);
     console.warn('Failed to subscribe to submissions:', err);
     return () => {};
   }
@@ -3242,13 +3419,9 @@ export const flushFirestoreQueue = async (): Promise<{ processed: number; remain
     return { processed: 0, remaining: firestoreWriteQueue.length };
   }
 
-  if (isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) {
+  if (isFirestoreQuotaExceeded() || isFirestorePermissionDenied() || isFirestoreInternalDegraded()) {
     return { processed: 0, remaining: firestoreWriteQueue.length };
   }
-
-  try {
-    await enableNetwork(firestoreDb);
-  } catch (_) {}
 
   isProcessingFirestoreQueue = true;
   notifyFirestoreQueueStatus(true);
@@ -3256,15 +3429,14 @@ export const flushFirestoreQueue = async (): Promise<{ processed: number; remain
 
   try {
     while (firestoreWriteQueue.length > 0) {
-      if (isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) {
-        if (isFirestoreQuotaExceeded() && firestoreDb) disableNetwork(firestoreDb).catch(() => {});
+      if (isFirestoreQuotaExceeded() || isFirestorePermissionDenied() || isFirestoreInternalDegraded()) {
         break;
       }
 
       const item = firestoreWriteQueue[0];
       try {
         const docRef = doc(firestoreDb, item.path, item.docId);
-        await setDoc(docRef, item.payload, { merge: true });
+        await withTimeout(setDoc(docRef, item.payload, { merge: true }), 10000, `Simpan antrean ${item.id}`);
         
         firestoreWriteQueue.shift();
         processed++;
@@ -3275,13 +3447,10 @@ export const flushFirestoreQueue = async (): Promise<{ processed: number; remain
         console.warn(`[Firestore Queue] Gagal sinkronisasi data ${item.id}:`, err?.message || err);
         markFirestoreQuotaExceeded(err);
         markFirestorePermissionDenied(err);
+        markFirestoreInternalAssertion(err);
         
         item.retries = (item.retries || 0) + 1;
         persistFirestoreQueue();
-
-        if (isFirestoreQuotaExceeded()) {
-          if (firestoreDb) disableNetwork(firestoreDb).catch(() => {});
-        }
         break;
       }
     }
@@ -3346,10 +3515,15 @@ export const saveSubmissionToFirestore = async (
       error: 'Kuota Firestore sedang cooldown sementara. Coba lagi sebentar atau klik Sinkron Cloud.'
     };
   }
+  if (isFirestoreInternalDegraded()) {
+    return {
+      syncedToCloud: false,
+      error: 'Koneksi Firestore SDK sedang dipulihkan sementara. Data aman di penyimpanan lokal/server.'
+    };
+  }
 
   try {
-    await enableNetwork(firestoreDb).catch(() => {});
-    await setDoc(doc(firestoreDb, path, safeDocId), cleanedPayload, { merge: true });
+    await withTimeout(setDoc(doc(firestoreDb, path, safeDocId), cleanedPayload, { merge: true }), 12000, 'Simpan voucher ke Firestore');
     recordFirestoreWrites(1);
     resetFirestorePermissionDenied();
     console.log(`☁️ [Firestore Direct] Voucher ${stampedSubmission.kode || stampedSubmission.id} langsung tersimpan ke Firebase Firestore.`);
@@ -3357,6 +3531,7 @@ export const saveSubmissionToFirestore = async (
   } catch (error: any) {
     markFirestoreQuotaExceeded(error);
     markFirestorePermissionDenied(error);
+    markFirestoreInternalAssertion(error);
     const msg = error?.message || String(error);
     console.warn(`⚠️ [Firestore Direct] Gagal menyimpan voucher (${safeDocId}):`, msg);
     return { syncedToCloud: false, error: msg };
@@ -3384,17 +3559,16 @@ export const saveSubmissionsBatchToFirestore = async (
   if (isFirestoreQuotaExceeded()) {
     return { success: false, count: 0, error: 'Kuota Firestore sedang cooldown sementara.' };
   }
-
-  try {
-    await enableNetwork(firestoreDb).catch(() => {});
-  } catch (_) {}
+  if (isFirestoreInternalDegraded()) {
+    return { success: false, count: 0, error: 'Stream Firestore SDK sedang dalam pemulihan sementara.' };
+  }
 
   const BATCH_SIZE = 400;
   let totalSaved = 0;
   let lastError = '';
 
   for (let i = 0; i < submissions.length; i += BATCH_SIZE) {
-    if (isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) break;
+    if (isFirestoreQuotaExceeded() || isFirestorePermissionDenied() || isFirestoreInternalDegraded()) break;
     const chunk = submissions.slice(i, i + BATCH_SIZE);
     const batch = writeBatch(firestoreDb);
 
@@ -3413,20 +3587,25 @@ export const saveSubmissionsBatchToFirestore = async (
     }
 
     try {
-      await batch.commit();
+      await withTimeout(batch.commit(), 15000, 'Upload batch voucher ke Firestore');
       totalSaved += chunk.length;
       recordFirestoreWrites(chunk.length);
       resetFirestorePermissionDenied();
       console.log(`☁️ Batch saved ${chunk.length} submissions directly to Firestore.`);
     } catch (err: any) {
       lastError = err?.message || String(err);
+      markFirestoreQuotaExceeded(err);
+      markFirestoreInternalAssertion(err);
       if (isFirestorePermissionError(err)) {
         markFirestorePermissionDenied(err);
         break;
       }
+      if (isFirestoreInternalDegraded() || err?.code === 'deadline-exceeded') {
+        break;
+      }
       console.warn('Batch write fallback -> trying per-document direct writes for chunk:', err);
       for (const sub of chunk) {
-        if (isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) break;
+        if (isFirestoreQuotaExceeded() || isFirestorePermissionDenied() || isFirestoreInternalDegraded()) break;
         const payload = cleanUndefined(
           mapSubmissionToFirestore(
             sub,
@@ -3439,7 +3618,7 @@ export const saveSubmissionsBatchToFirestore = async (
         const docId = sanitizeFirestoreDocId(sub.id);
         try {
           if (!isFirestoreQuotaExceeded()) {
-            await setDoc(doc(firestoreDb, 'submissions', docId), payload, { merge: true });
+            await withTimeout(setDoc(doc(firestoreDb, 'submissions', docId), payload, { merge: true }), 8000, `Simpan voucher ${docId}`);
             totalSaved += 1;
             recordFirestoreWrites(1);
           }
@@ -3447,8 +3626,9 @@ export const saveSubmissionsBatchToFirestore = async (
           lastError = docErr?.message || String(docErr);
           markFirestoreQuotaExceeded(docErr);
           markFirestorePermissionDenied(docErr);
+          markFirestoreInternalAssertion(docErr);
           console.warn(`⚠️ Gagal simpan individu voucher ${sub.kode || docId}:`, docErr);
-          if (isFirestorePermissionError(docErr)) break;
+          if (isFirestorePermissionError(docErr) || isFirestoreInternalDegraded()) break;
         }
       }
     }
@@ -3508,7 +3688,6 @@ export const reconcileSubmissionsWithCloud = async (
   }
 
   try {
-    await enableNetwork(firestoreDb).catch(() => {});
     const safeRes = await loadSubmissionsFromFirestoreSafe(cleanComp);
     return {
       merged: safeRes.ok && safeRes.list.length > 0 ? safeRes.list : localFallback,
@@ -3540,19 +3719,22 @@ export const deleteSubmissionFromFirestore = async (id: string): Promise<void> =
   if (isFirestoreQuotaExceeded()) {
     throw new Error('Kuota Firestore sedang cooldown sementara.');
   }
+  if (isFirestoreInternalDegraded()) {
+    throw new Error('Koneksi Firestore SDK sedang dipulihkan sementara.');
+  }
 
   const path = 'submissions';
   const safeId = sanitizeFirestoreDocId(id);
   try {
-    await enableNetwork(firestoreDb).catch(() => {});
-    await deleteDoc(doc(firestoreDb, path, id));
+    await withTimeout(deleteDoc(doc(firestoreDb, path, id)), 10000, `Hapus voucher ${id}`);
     if (safeId && safeId !== id) {
-      await deleteDoc(doc(firestoreDb, path, safeId)).catch(() => {});
+      await withTimeout(deleteDoc(doc(firestoreDb, path, safeId)), 6000, `Hapus voucher ${safeId}`).catch(() => {});
     }
     recordFirestoreDeletes(1);
     console.log(`☁️ Submission ${id} deleted directly from Firestore.`);
   } catch (error) {
     markFirestoreQuotaExceeded(error);
+    markFirestoreInternalAssertion(error);
     handleFirestoreError(error, OperationType.DELETE, `${path}/${id}`);
   }
 };
@@ -3651,13 +3833,13 @@ export const loadNpwpRecordsFromFirestore = async (): Promise<NpwpRecord[]> => {
   const delSet = new Set(deletedList);
   const localRecords = readLocalNpwpBackup(delSet);
 
-  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) {
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied() || isFirestoreInternalDegraded()) {
     return localRecords;
   }
 
   const path = 'npwp_records';
   try {
-    const snapshot = await getDocs(collection(firestoreDb, path));
+    const snapshot = await withTimeout(getDocs(collection(firestoreDb, path)), 10000, 'Memuat data NPWP');
     recordFirestoreReads(snapshot.size || 1);
     const cloudList: NpwpRecord[] = [];
     
@@ -3682,7 +3864,7 @@ export const loadNpwpRecordsFromFirestore = async (): Promise<NpwpRecord[]> => {
     // If collection was empty, check company doc snapshot
     if (cloudList.length === 0) {
       try {
-        const compSnap = await getDoc(doc(firestoreDb, 'companies', 'nmsa'));
+        const compSnap = await withTimeout(getDoc(doc(firestoreDb, 'companies', 'nmsa')), 6000, 'Baca company NPWP');
         if (compSnap.exists()) {
           const compData = compSnap.data();
           if (compData && Array.isArray(compData.npwpRecords) && compData.npwpRecords.length > 0) {
@@ -3718,6 +3900,7 @@ export const loadNpwpRecordsFromFirestore = async (): Promise<NpwpRecord[]> => {
   } catch (error) {
     markFirestoreQuotaExceeded(error);
     markFirestorePermissionDenied(error);
+    markFirestoreInternalAssertion(error);
     if (!isFirestorePermissionError(error)) {
       console.warn('Gagal memuat data NPWP dari Firestore:', error);
     }
@@ -3729,7 +3912,7 @@ export const loadNpwpRecordsFromFirestore = async (): Promise<NpwpRecord[]> => {
 export const subscribeToNpwpRecordsFromFirestore = (
   onUpdate: (records: NpwpRecord[]) => void
 ): (() => void) => {
-  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) return () => {};
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied() || isFirestoreInternalDegraded()) return () => {};
   try {
     const unsub = onSnapshot(collection(firestoreDb, 'npwp_records'), (snapshot) => {
       if (snapshot.empty && snapshot.metadata?.fromCache) {
@@ -3772,12 +3955,14 @@ export const subscribeToNpwpRecordsFromFirestore = (
     }, (error) => {
       markFirestoreQuotaExceeded(error);
       markFirestorePermissionDenied(error);
+      markFirestoreInternalAssertion(error);
       if (!isFirestorePermissionError(error)) {
         console.warn('Real-time listener notice for npwp_records:', error);
       }
     });
     return unsub;
   } catch (err) {
+    markFirestoreInternalAssertion(err);
     console.warn('Failed to subscribe to npwp_records:', err);
     return () => {};
   }
@@ -4409,7 +4594,7 @@ export const loadWorkersFromFirestore = async (): Promise<Worker[]> => {
 export const subscribeToWorkersMasterFromFirestore = (
   onUpdate: (workers: Worker[], deletedIds: string[]) => void
 ): (() => void) => {
-  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) {
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied() || isFirestoreInternalDegraded()) {
     return () => {};
   }
   try {
@@ -4429,9 +4614,11 @@ export const subscribeToWorkersMasterFromFirestore = (
       (err) => {
         markFirestoreQuotaExceeded(err);
         markFirestorePermissionDenied(err);
+        markFirestoreInternalAssertion(err);
       }
     );
-  } catch (_) {
+  } catch (err) {
+    markFirestoreInternalAssertion(err);
     return () => {};
   }
 };
@@ -5360,11 +5547,11 @@ export const subscribeToEmployeeLoansFromFirestore = (
 
 // --- Monthly Recurring Transactions Cloud Sync (Single master doc on existing attendance collection) ---
 export const loadMonthlyTransactionsFromFirestore = async (): Promise<{ items: MonthlyRecurringTransaction[]; deletedIds: string[] } | null> => {
-  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) return null;
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied() || isFirestoreInternalDegraded()) return null;
   const docPath = 'attendance/monthly_transactions_master';
   try {
     const docRef = doc(firestoreDb, 'attendance', 'monthly_transactions_master');
-    const snap = await getDoc(docRef);
+    const snap = await withTimeout(getDoc(docRef), 10000, 'Memuat transaksi bulanan');
     recordFirestoreReads(1);
     if (snap.exists()) {
       const data = snap.data() || {};
@@ -5379,6 +5566,7 @@ export const loadMonthlyTransactionsFromFirestore = async (): Promise<{ items: M
     } else if (isFirestorePermissionError(err)) {
       markFirestorePermissionDenied(err);
     } else {
+      markFirestoreInternalAssertion(err);
       console.warn(`⚠️ Gagal memuat ${docPath} dari Firestore:`, err?.message || err);
     }
     return null;
@@ -5389,7 +5577,7 @@ export const saveMonthlyTransactionsToFirestore = async (
   items: MonthlyRecurringTransaction[],
   deletedIds: string[] = []
 ): Promise<boolean> => {
-  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) return false;
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied() || isFirestoreInternalDegraded()) return false;
   const docPath = 'attendance/monthly_transactions_master';
   try {
     const docRef = doc(firestoreDb, 'attendance', 'monthly_transactions_master');
@@ -5397,15 +5585,19 @@ export const saveMonthlyTransactionsToFirestore = async (
     const cleanItems = cleanUndefined(
       items.filter(item => item && item.id && !delSet.has(String(item.id)))
     );
-    await setDoc(
-      docRef,
-      {
-        monthlyTransactions: cleanItems,
-        deletedMonthlyIds: Array.from(delSet).slice(-200),
-        totalItems: cleanItems.length,
-        updatedAt: new Date().toISOString()
-      },
-      { merge: true }
+    await withTimeout(
+      setDoc(
+        docRef,
+        {
+          monthlyTransactions: cleanItems,
+          deletedMonthlyIds: Array.from(delSet).slice(-200),
+          totalItems: cleanItems.length,
+          updatedAt: new Date().toISOString()
+        },
+        { merge: true }
+      ),
+      10000,
+      'Menyimpan transaksi bulanan'
     );
     recordFirestoreWrites(1);
     return true;
@@ -5415,6 +5607,7 @@ export const saveMonthlyTransactionsToFirestore = async (
     } else if (isFirestorePermissionError(err)) {
       markFirestorePermissionDenied(err);
     } else {
+      markFirestoreInternalAssertion(err);
       console.warn(`⚠️ Gagal menyimpan ${docPath} ke Firestore:`, err?.message || err);
     }
     return false;
@@ -5424,31 +5617,37 @@ export const saveMonthlyTransactionsToFirestore = async (
 export const subscribeToMonthlyTransactionsFromFirestore = (
   onUpdate: (items: MonthlyRecurringTransaction[], deletedIds: string[]) => void
 ): (() => void) => {
-  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) {
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied() || isFirestoreInternalDegraded()) {
     return () => {};
   }
-  const docRef = doc(firestoreDb, 'attendance', 'monthly_transactions_master');
-  return onSnapshot(
-    docRef,
-    (snap) => {
-      recordFirestoreReads(1);
-      if (snap.exists()) {
-        const data = snap.data() || {};
-        const items: MonthlyRecurringTransaction[] = Array.isArray(data.monthlyTransactions) ? data.monthlyTransactions : [];
-        const deletedIds: string[] = Array.isArray(data.deletedMonthlyIds) ? data.deletedMonthlyIds.map(String) : [];
-        onUpdate(items, deletedIds);
+  try {
+    const docRef = doc(firestoreDb, 'attendance', 'monthly_transactions_master');
+    return onSnapshot(
+      docRef,
+      (snap) => {
+        recordFirestoreReads(1);
+        if (snap.exists()) {
+          const data = snap.data() || {};
+          const items: MonthlyRecurringTransaction[] = Array.isArray(data.monthlyTransactions) ? data.monthlyTransactions : [];
+          const deletedIds: string[] = Array.isArray(data.deletedMonthlyIds) ? data.deletedMonthlyIds.map(String) : [];
+          onUpdate(items, deletedIds);
+        }
+      },
+      (err: any) => {
+        if (err?.code === 'resource-exhausted' || err?.message?.includes('Quota exceeded')) {
+          markFirestoreQuotaExceeded(err);
+        } else if (isFirestorePermissionError(err)) {
+          markFirestorePermissionDenied(err);
+        } else {
+          markFirestoreInternalAssertion(err);
+          console.warn('⚠️ Realtime listener monthly_transactions_master notice:', err?.message || err);
+        }
       }
-    },
-    (err: any) => {
-      if (err?.code === 'resource-exhausted' || err?.message?.includes('Quota exceeded')) {
-        markFirestoreQuotaExceeded(err);
-      } else if (isFirestorePermissionError(err)) {
-        markFirestorePermissionDenied(err);
-      } else {
-        console.warn('⚠️ Realtime listener monthly_transactions_master notice:', err?.message || err);
-      }
-    }
-  );
+    );
+  } catch (err) {
+    markFirestoreInternalAssertion(err);
+    return () => {};
+  }
 };
 
 // Load initial config checking

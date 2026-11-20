@@ -110,7 +110,8 @@ import {
   mergeSubmissionsSafely,
   mergeNpwpListsSafely,
   getDeletedNpwpIds,
-  getActiveFirebaseProjectId
+  getActiveFirebaseProjectId,
+  withTimeout
 } from './firebase';
 import { loadAttendanceFromFirestore, loadWorkersFromFirestore, mergeWorkerListsSafely, getDeletedWorkerIds } from './lib/firebaseAbsen';
 
@@ -517,9 +518,9 @@ export default function App() {
     return () => window.removeEventListener('firestore-queue-status', onQueueStatus);
   }, []);
 
-  // Real-time Cloud Firestore subscription & Shared State sync across all computers/devices
+  // Shared Server State sync (Express unified-storage / shared-state + Google Drive keeper + local caches)
   useEffect(() => {
-    // 1. Subscribe to Firestore real-time snapshot for instant updates across devices
+    // 1. Keep local settings subscription (no-op on Firestore)
     const unsubscribeCompany = subscribeToCompanySettingsFromFirestore((settings) => {
       if (settings.pettyCashHolders && Array.isArray(settings.pettyCashHolders) && settings.pettyCashHolders.length > 0) {
         setPettyCashHolders(settings.pettyCashHolders);
@@ -550,28 +551,6 @@ export default function App() {
         setTheme(settings.theme as any);
       }
     });
-
-    // 1b. Subscribe directly to npwp_records collection for real-time synchronization
-    const unsubscribeNpwp = subscribeToNpwpRecordsFromFirestore((records) => {
-      if (records && records.length > 0) {
-        setNpwpRecords(records);
-      }
-    });
-
-    // 1c. Subscribe directly to monthly_transactions_master for real-time cross-device sync
-    const unsubscribeMonthly = subscribeToMonthlyTransactionsFromFirestore((cloudItems, cloudDeletedIds) => {
-      setDeletedMonthlyIds(prevDel => {
-        const mergedDel = Array.from(new Set([...prevDel, ...cloudDeletedIds]));
-        try { localStorage.setItem('nmsa_monthly_deleted_ids_v1', JSON.stringify(mergedDel)); } catch (e) {}
-        setMonthlyTransactions(prevItems => {
-          const merged = mergeMonthlyListsSafely(prevItems, cloudItems, mergedDel);
-          try { localStorage.setItem(STORAGE_KEY_MONTHLY_TRANSACTIONS, JSON.stringify(merged)); } catch (e) {}
-          return merged;
-        });
-        return mergedDel;
-      });
-    });
-
 
     // 2. Initial fallback fetch from server /api/unified-storage & /api/shared-state with resilient retry
     const loadSharedState = async (retries = 3, delay = 800) => {
@@ -817,21 +796,6 @@ export default function App() {
     };
     loadSharedState();
 
-    loadNpwpRecordsFromFirestore()
-      .then(fsRecords => {
-        if (fsRecords && fsRecords.length > 0) {
-          setNpwpRecords(prev => {
-            const map = new Map<string, NpwpRecord>();
-            prev.forEach(r => map.set(r.id, r));
-            fsRecords.forEach(r => map.set(r.id, r));
-            const merged = Array.from(map.values());
-            localStorage.setItem('npwp_records_v1', JSON.stringify(merged));
-            return merged;
-          });
-        }
-      })
-      .catch(err => console.warn('Firestore NPWP sync skipped:', err));
-
     loadSppdRecordsFromFirestore()
       .then(fsRecords => {
         if (fsRecords && fsRecords.length > 0) {
@@ -845,16 +809,16 @@ export default function App() {
           });
         }
       })
-      .catch(err => console.warn('Firestore SPPD sync skipped:', err));
+      .catch(err => console.warn('Local SPPD sync skipped:', err));
 
     // Automatically sync Google Drive connection across the entire app
     loadConnectedDrivesFromFirestore()
       .then(drives => {
         if (drives && drives.length > 0) {
-          console.log(`☁️ Synced ${drives.length} Google Drive account(s) globally from Firestore.`);
+          console.log(`☁️ Synced ${drives.length} Google Drive account(s) globally.`);
         }
       })
-      .catch(err => console.warn('Firestore Drive sync skipped:', err));
+      .catch(err => console.warn('Drive sync skipped:', err));
 
     // Start background auto-keeper for Google Drive token (every 30 seconds)
     const stopAutoRefresh = startGoogleDriveTokenAutoRefresh(30);
@@ -872,27 +836,8 @@ export default function App() {
     window.addEventListener('pointerdown', handleFirstUserInteraction, { once: true });
     window.addEventListener('keydown', handleFirstUserInteraction, { once: true });
 
-    loadMonthlyTransactionsFromFirestore()
-      .then(cloudRes => {
-        if (cloudRes) {
-          const mergedDel = Array.from(new Set([...deletedMonthlyIds, ...(cloudRes.deletedIds || [])]));
-          setDeletedMonthlyIds(mergedDel);
-          setMonthlyTransactions(prev => {
-            const merged = mergeMonthlyListsSafely(prev, cloudRes.items || [], mergedDel);
-            try {
-              localStorage.setItem(STORAGE_KEY_MONTHLY_TRANSACTIONS, JSON.stringify(merged));
-              localStorage.setItem('nmsa_monthly_deleted_ids_v1', JSON.stringify(mergedDel));
-            } catch (_) {}
-            return merged;
-          });
-        }
-      })
-      .catch(err => console.warn('Firestore Monthly sync skipped:', err));
-
     return () => {
       unsubscribeCompany();
-      if (typeof unsubscribeNpwp === 'function') unsubscribeNpwp();
-      if (typeof unsubscribeMonthly === 'function') unsubscribeMonthly();
       stopAutoRefresh();
       window.removeEventListener('pointerdown', handleFirstUserInteraction);
       window.removeEventListener('keydown', handleFirstUserInteraction);
@@ -2093,10 +2038,8 @@ export default function App() {
     const lastHeartbeat = Number(localStorage.getItem('NUSANTARA_ACTIVE_TAB_HEARTBEAT') || '0');
     const hasLiveOtherTab = lastHeartbeat > 0 && (Date.now() - lastHeartbeat) < 15000;
 
-    if (!isPublicPortalUrl && !hasActiveSession && !hasLiveOtherTab) {
-      logoutFromFirebase();
-    }
-
+    let isDisposed = false;
+    let unsubscribe: (() => void) | null = null;
     const heartbeatTimer = window.setInterval(() => {
       if (!isPublicPortalUrl && sessionStorage.getItem('NUSANTARA_SESSION_ACTIVE') === 'true') {
         try {
@@ -2105,126 +2048,156 @@ export default function App() {
       }
     }, 4000);
 
-    const unsubscribe = registerAuthChangeListener(async (user) => {
-      setAuthUser(user);
-      if (!user) {
-        setUserProfile(null);
-        setIsInitialReconcileDone(false);
-        // DO NOT implicitly delete localStorage or empty submissions here.
-        // This avoids race conditions and data-loss during initial app loading stages or tab reopenings!
-      } else {
-        setIsInitialReconcileDone(false);
-        // Mark session as active to prevent force-logout during same-tab refreshes and sibling tabs
-        if (!isPublicPortalUrl) {
-          sessionStorage.setItem('NUSANTARA_SESSION_ACTIVE', 'true');
-          try {
-            localStorage.setItem('NUSANTARA_ACTIVE_TAB_HEARTBEAT', String(Date.now()));
-          } catch (_) {}
-        }
-        // Fetch user profile info from Firestore collection
-        let profile = await getUserProfileFromFirestore(user.uid);
-        if (!profile) {
-          profile = {
-            fullName: user.email === 'admin@nmsa.com' ? 'Nur Wahyudi' : user.email.split('@')[0],
-            role: user.email === 'admin@nmsa.com' ? 'Accounting' : 'User',
-            email: user.email,
-            companyId: 'nmsa',
-            companyName: 'PT Nusantara Mineral Sukses Abadi'
-          };
-        }
+    const setupAuthLifecycle = async () => {
+      // Wait for explicit logout BEFORE attaching auth listener so Firestore listeners don't race with signOut
+      if (!isPublicPortalUrl && !hasActiveSession && !hasLiveOtherTab) {
+        await logoutFromFirebase().catch(() => {});
+      }
+      if (isDisposed) return;
 
-        // Determine active company from localStorage or user profile
-        const storedActiveCompId = localStorage.getItem('NUSANTARA_ACTIVE_COMPANY_ID');
-        const companyId = (storedActiveCompId || profile.companyId || 'nmsa').toLowerCase().trim();
-        setActiveCompanyId(companyId);
-
-        let companyDetails = await getCompanyProfileFromFirestore(companyId);
-        
-        // If not found, fall back to default template
-        if (!companyDetails) {
-          companyDetails = {
-            id: companyId,
-            code: companyId.toUpperCase(),
-            name: companyId === 'nmsa' ? 'PT Nusantara Mineral Sukses Abadi' : companyId.toUpperCase(),
-            fullName: companyId === 'nmsa' ? 'PT. Nusantara Mineral Sukses Abadi' : companyId.toUpperCase(),
-            defaultJenis: 'Operasional Kantor',
-            defaultKode: `BKK-${companyId.toUpperCase()}/V/2026/10001`,
-            defaultLokasi: 'Lt.1',
-            displayName: `Invoice-${companyId.toUpperCase()}`,
-            icon: '🏢',
-            isActive: true,
-            no_invoice_prefix: `BKK-${companyId.toUpperCase()}`,
-            sigAccounting: 'Sri Ekowati',
-            sigDibuat: 'Nur Wahyudi',
-            sigDirKeuangan: 'Harijon',
-            sigDirektur: 'Andi Nursyam Halid',
-            sigDisetujui: 'Harijon',
-            sigKeuangan: 'Andi Dhiya Salsabila'
-          };
-        }
-
-        const combinedProfile = {
-          ...profile,
-          companyId,
-          companyName: companyDetails.name || companyDetails.fullName || 'PT Nusantara Mineral Sukses Abadi',
-          companyLogoUrl: companyDetails?.logoUrl || profile?.companyLogoUrl || '',
-          companyDetails
-        };
-        setUserProfile(combinedProfile);
-
-        // Load submissions safely from Cloud Firestore with server & local backup preservation
-        try {
-          setIsCloudSyncing(true);
-          const [, cloudRes] = await Promise.all([
-            ensureServerBackupLoaded(),
-            loadSubmissionsFromFirestoreSafe(companyId),
-          ]);
-          const delIds = getLocalDeletedSubmissionIds();
-          const localBackup = loadAllLocalSubmissionsForCompany(companyId);
-          const serverBackup = serverBackupSubmissionsRef.current.filter(
-            (s) => normalizeCompanyKey(s.companyId) === normalizeCompanyKey(companyId)
-          );
-          const currentCompSubs = submissionsRef.current.filter(
-            (s) => s?.id && normalizeCompanyKey(s.companyId) === normalizeCompanyKey(companyId)
-          );
-          const bestBackup = mergeSubmissionsSafely(
-            [serverBackup, localBackup, currentCompSubs],
-            delIds
-          );
-
-          if (cloudRes.ok) {
-            updateCloudInventoryFromList(cloudRes.list);
-          } else {
-            resetCloudInventory();
+      unsubscribe = registerAuthChangeListener(async (user) => {
+        if (isDisposed) return;
+        setAuthUser(user);
+        if (!user) {
+          setUserProfile(null);
+          setIsInitialReconcileDone(false);
+          setIsCloudSyncing(false);
+          // DO NOT implicitly delete localStorage or empty submissions here.
+        } else {
+          setIsInitialReconcileDone(false);
+          // Mark session as active to prevent force-logout during same-tab refreshes and sibling tabs
+          if (!isPublicPortalUrl) {
+            sessionStorage.setItem('NUSANTARA_SESSION_ACTIVE', 'true');
+            try {
+              localStorage.setItem('NUSANTARA_ACTIVE_TAB_HEARTBEAT', String(Date.now()));
+            } catch (_) {}
           }
 
-          if (cloudRes.ok && cloudRes.list.length > 0) {
-            const combined = mergeSubmissionsSafely([bestBackup, cloudRes.list], delIds);
-            persistSubmissionsToLocalCaches(combined, companyId);
-            setSubmissions(combined);
-          } else {
-            if (bestBackup.length > 0) {
+          // Determine cached company fallback immediately
+          const storedActiveCompId = localStorage.getItem('NUSANTARA_ACTIVE_COMPANY_ID');
+          let companyId = (storedActiveCompId || 'nmsa').toLowerCase().trim();
+          setActiveCompanyId(companyId);
+
+          // Fetch user & company profiles with timeout protection
+          let profile = await getUserProfileFromFirestore(user.uid).catch(() => null);
+          if (!profile) {
+            profile = {
+              fullName: user.email === 'admin@nmsa.com' ? 'Nur Wahyudi' : user.email?.split('@')[0] || 'User',
+              role: user.email === 'admin@nmsa.com' ? 'Accounting' : 'User',
+              email: user.email,
+              companyId: companyId,
+              companyName: 'PT Nusantara Mineral Sukses Abadi'
+            };
+          }
+
+          companyId = (storedActiveCompId || profile.companyId || 'nmsa').toLowerCase().trim();
+          setActiveCompanyId(companyId);
+
+          let companyDetails = await getCompanyProfileFromFirestore(companyId).catch(() => null);
+          if (!companyDetails) {
+            companyDetails = {
+              id: companyId,
+              code: companyId.toUpperCase(),
+              name: companyId === 'nmsa' ? 'PT Nusantara Mineral Sukses Abadi' : companyId.toUpperCase(),
+              fullName: companyId === 'nmsa' ? 'PT. Nusantara Mineral Sukses Abadi' : companyId.toUpperCase(),
+              defaultJenis: 'Operasional Kantor',
+              defaultKode: `BKK-${companyId.toUpperCase()}/V/2026/10001`,
+              defaultLokasi: 'Lt.1',
+              displayName: `Invoice-${companyId.toUpperCase()}`,
+              icon: '🏢',
+              isActive: true,
+              no_invoice_prefix: `BKK-${companyId.toUpperCase()}`,
+              sigAccounting: 'Sri Ekowati',
+              sigDibuat: 'Nur Wahyudi',
+              sigDirKeuangan: 'Harijon',
+              sigDirektur: 'Andi Nursyam Halid',
+              sigDisetujui: 'Harijon',
+              sigKeuangan: 'Andi Dhiya Salsabila'
+            };
+          }
+
+          if (isDisposed) return;
+          const combinedProfile = {
+            ...profile,
+            companyId,
+            companyName: companyDetails.name || companyDetails.fullName || 'PT Nusantara Mineral Sukses Abadi',
+            companyLogoUrl: companyDetails?.logoUrl || profile?.companyLogoUrl || '',
+            companyDetails
+          };
+          setUserProfile(combinedProfile);
+
+          // Load submissions safely from Cloud Firestore with timeout & server/local backup preservation
+          try {
+            setIsCloudSyncing(true);
+            const [, cloudRes] = await withTimeout(
+              Promise.all([
+                ensureServerBackupLoaded(),
+                loadSubmissionsFromFirestoreSafe(companyId),
+              ]),
+              14000,
+              'Sinkronisasi awal transaksi'
+            );
+            if (isDisposed) return;
+            const delIds = getLocalDeletedSubmissionIds();
+            const localBackup = loadAllLocalSubmissionsForCompany(companyId);
+            const serverBackup = serverBackupSubmissionsRef.current.filter(
+              (s) => normalizeCompanyKey(s.companyId) === normalizeCompanyKey(companyId)
+            );
+            const currentCompSubs = submissionsRef.current.filter(
+              (s) => s?.id && normalizeCompanyKey(s.companyId) === normalizeCompanyKey(companyId)
+            );
+            const bestBackup = mergeSubmissionsSafely(
+              [serverBackup, localBackup, currentCompSubs],
+              delIds
+            );
+
+            if (cloudRes.ok) {
+              updateCloudInventoryFromList(cloudRes.list);
+            } else {
+              resetCloudInventory();
+            }
+
+            if (cloudRes.ok && cloudRes.list.length > 0) {
+              const combined = mergeSubmissionsSafely([bestBackup, cloudRes.list], delIds);
+              persistSubmissionsToLocalCaches(combined, companyId);
+              setSubmissions(combined);
+              setCloudSyncNotice((prev) =>
+                prev && (prev.includes('Rules') || prev.includes('terkendala') || prev.includes('tertunda')) ? null : prev
+              );
+            } else if (bestBackup.length > 0) {
               persistSubmissionsToLocalCaches(bestBackup, companyId);
               setSubmissions(bestBackup);
               const reason = cloudRes.errorCode === 'permission-denied'
                 ? 'Akses baca Firestore dibatasi Security Rules Firebase Console'
+                : cloudRes.errorCode === 'resource-exhausted'
+                ? 'Kuota baca harian Firestore (Spark) sedang cooldown sementara'
+                : cloudRes.errorCode === 'internal-sdk-error' || cloudRes.errorCode === 'deadline-exceeded'
+                ? 'Sinkronisasi Cloud Firestore tertunda sementara (timeout/stream reset)'
                 : (cloudRes.ok ? 'Firestore masih kosong (0 dokumen)' : `Koneksi Firestore terkendala (${cloudRes.error || 'offline'})`);
-              setCloudSyncNotice(`⚠️ ${reason}. Menampilkan ${bestBackup.length} transaksi dari cadangan server/lokal — perbarui Rules Firestore lalu klik "Upload Backup ke Firestore" untuk sinkron ke Cloud.`);
+              setCloudSyncNotice(`⚠️ ${reason}. Menampilkan ${bestBackup.length} transaksi dari cadangan server/lokal.`);
             } else {
               setSubmissions([]);
             }
+          } catch (e: any) {
+            console.warn('Gagal memuat voucher dari Firestore:', e);
+            const localBackup = getBestBackupForCompany(companyId);
+            if (localBackup.length > 0) {
+              setSubmissions(localBackup);
+            }
+          } finally {
+            setIsCloudSyncing(false);
+            setIsInitialReconcileDone(true);
           }
-        } catch (e) {
-          console.warn('Gagal memuat voucher dari Firestore:', e);
-        } finally {
-          setIsCloudSyncing(false);
-          setIsInitialReconcileDone(true);
         }
-      }
-    });
+      });
+    };
+
+    setupAuthLifecycle();
+
     return () => {
+      isDisposed = true;
       window.clearInterval(heartbeatTimer);
-      unsubscribe();
+      if (unsubscribe) unsubscribe();
     };
   }, []);
 
@@ -2370,75 +2343,107 @@ export default function App() {
     }
   };
 
+  const forceCloudSyncInFlightRef = useRef<Promise<void> | null>(null);
+
   const handleForceCloudSync = async (silent: boolean = false) => {
     if (!authUser) return;
-    setIsCloudSyncing(true);
-    if (!silent) setCloudSyncNotice('Memuat ulang seluruh voucher dari Firebase Firestore & cadangan server...');
-    try {
-      if (!silent) {
-        await resetFirestoreQuotaCooldown();
-      }
-      const [, cloudRes] = await Promise.all([
-        ensureServerBackupLoaded(),
-        loadSubmissionsFromFirestoreSafe(activeCompForSync),
-      ]);
-      if (cloudRes.ok) {
-        updateCloudInventoryFromList(cloudRes.list);
-      }
-      const bestBackup = getBestBackupForCompany(activeCompForSync);
-      const pid = getActiveFirebaseProjectId();
-
-      if (cloudRes.ok && cloudRes.list.length > 0) {
-        const finalMerged = mergeSubmissionsSafely([bestBackup, cloudRes.list]);
-        persistSubmissionsToLocalCaches(finalMerged, activeCompForSync);
-        setSubmissions(finalMerged);
-        setShowQuotaBanner(isFirestoreQuotaExceeded());
-        if (!silent) {
-          setSyncListenerEpoch((n) => n + 1);
-          setCloudSyncNotice(`☁️ Tersinkron dari Firebase Firestore (${pid}): ${cloudRes.list.length} cloud, total ${finalMerged.length} voucher aktif.`);
-          setTimeout(() => setCloudSyncNotice(null), 5000);
-        }
-      } else {
-        if (bestBackup.length > 0) {
-          persistSubmissionsToLocalCaches(bestBackup, activeCompForSync);
-          setSubmissions(bestBackup);
-        }
-        setShowQuotaBanner(isFirestoreQuotaExceeded());
-        if (!silent) {
-          const skipHints: string[] = [];
-          if ((cloudRes.skippedByCompany || 0) > 0) {
-            skipHints.push(`${cloudRes.skippedByCompany} dokumen berada di kode perusahaan lain`);
-          }
-          if ((cloudRes.skippedDeleted || 0) > 0) {
-            skipHints.push(`${cloudRes.skippedDeleted} tersembunyi di daftar hapus lokal`);
-          }
-          const hintText = skipHints.length > 0 ? ` (${skipHints.join(', ')})` : '';
-          const reason = cloudRes.errorCode === 'permission-denied'
-            ? `Akses Firestore (${pid}) dibatasi Security Rules Firebase Console`
-            : (cloudRes.ok ? `Firestore (${pid}) mengembalikan 0 transaksi untuk PT "${activeCompForSync.toUpperCase()}"${hintText}` : `Gagal membaca Firestore (${cloudRes.error || 'periksa jaringan'})`);
-          setCloudSyncNotice(`⚠️ ${reason}. Menampilkan ${bestBackup.length} transaksi dari cadangan aman.`);
-        }
-      }
-    } catch (err: any) {
-      if (!silent) {
-        setCloudSyncNotice('Gagal memuat data dari Firebase Firestore: ' + (err?.message || 'Periksa jaringan'));
-      }
-    } finally {
-      setIsCloudSyncing(false);
+    if (forceCloudSyncInFlightRef.current) {
+      return forceCloudSyncInFlightRef.current;
     }
+    const run = (async () => {
+      setIsCloudSyncing(true);
+      if (!silent) setCloudSyncNotice('Memuat ulang seluruh voucher dari Firebase Firestore & cadangan server...');
+      try {
+        if (!silent) {
+          await resetFirestoreQuotaCooldown().catch(() => {});
+        }
+        const [, cloudRes] = await withTimeout(
+          Promise.all([
+            ensureServerBackupLoaded(),
+            loadSubmissionsFromFirestoreSafe(activeCompForSync),
+          ]),
+          14000,
+          'Sinkronisasi cloud'
+        );
+        if (cloudRes.ok) {
+          updateCloudInventoryFromList(cloudRes.list);
+        }
+        const bestBackup = getBestBackupForCompany(activeCompForSync);
+        const pid = getActiveFirebaseProjectId();
+
+        if (cloudRes.ok && cloudRes.list.length > 0) {
+          const finalMerged = mergeSubmissionsSafely([bestBackup, cloudRes.list]);
+          persistSubmissionsToLocalCaches(finalMerged, activeCompForSync);
+          setSubmissions(finalMerged);
+          setShowQuotaBanner(isFirestoreQuotaExceeded());
+          if (!silent) {
+            setSyncListenerEpoch((n) => n + 1);
+            setCloudSyncNotice(`☁️ Tersinkron dari Firebase Firestore (${pid}): ${cloudRes.list.length} cloud, total ${finalMerged.length} voucher aktif.`);
+            setTimeout(() => setCloudSyncNotice(null), 5000);
+          } else {
+            setCloudSyncNotice((prev) =>
+              prev && (prev.includes('Rules') || prev.includes('terkendala') || prev.includes('tertunda')) ? null : prev
+            );
+          }
+        } else {
+          if (bestBackup.length > 0) {
+            persistSubmissionsToLocalCaches(bestBackup, activeCompForSync);
+            setSubmissions(bestBackup);
+          }
+          setShowQuotaBanner(isFirestoreQuotaExceeded());
+          if (!silent) {
+            const skipHints: string[] = [];
+            if ((cloudRes.skippedByCompany || 0) > 0) {
+              skipHints.push(`${cloudRes.skippedByCompany} dokumen berada di kode perusahaan lain`);
+            }
+            if ((cloudRes.skippedDeleted || 0) > 0) {
+              skipHints.push(`${cloudRes.skippedDeleted} tersembunyi di daftar hapus lokal`);
+            }
+            const hintText = skipHints.length > 0 ? ` (${skipHints.join(', ')})` : '';
+            const reason = cloudRes.errorCode === 'permission-denied'
+              ? `Akses Firestore (${pid}) dibatasi Security Rules Firebase Console`
+              : cloudRes.errorCode === 'resource-exhausted'
+              ? `Kuota harian Spark Firestore (${pid}) sedang cooldown sementara`
+              : cloudRes.errorCode === 'internal-sdk-error' || cloudRes.errorCode === 'deadline-exceeded'
+              ? `Koneksi Cloud Firestore (${pid}) tertunda sementara (timeout/stream reset)`
+              : (cloudRes.ok ? `Firestore (${pid}) mengembalikan 0 transaksi untuk PT "${activeCompForSync.toUpperCase()}"${hintText}` : `Gagal membaca Firestore (${cloudRes.error || 'periksa jaringan'})`);
+            setCloudSyncNotice(`⚠️ ${reason}. Menampilkan ${bestBackup.length} transaksi dari cadangan aman.`);
+          }
+        }
+      } catch (err: any) {
+        if (!silent) {
+          setCloudSyncNotice('Gagal memuat data dari Firebase Firestore: ' + (err?.message || 'Periksa jaringan'));
+        }
+      } finally {
+        setIsCloudSyncing(false);
+        forceCloudSyncInFlightRef.current = null;
+      }
+    })();
+
+    forceCloudSyncInFlightRef.current = run;
+    return run;
   };
 
   useEffect(() => {
     const onQuotaReset = () => setSyncListenerEpoch((n) => n + 1);
+    const onInternalError = () => {
+      setIsCloudSyncing(false);
+    };
     window.addEventListener('firestore-quota-reset', onQuotaReset);
-    return () => window.removeEventListener('firestore-quota-reset', onQuotaReset);
+    window.addEventListener('firestore-internal-error', onInternalError);
+    return () => {
+      window.removeEventListener('firestore-quota-reset', onQuotaReset);
+      window.removeEventListener('firestore-internal-error', onInternalError);
+    };
   }, []);
 
+  // Authenticated-only Firestore realtime subscriptions (prevents unauthenticated stream churn & ca9/b815)
   useEffect(() => {
     if (!authUser || !isInitialReconcileDone) return;
 
     let lastFocusSyncAt = 0;
 
+    // 1. Submissions realtime listener
     const unsubSubs = subscribeToSubmissionsFromFirestore(activeCompForSync, (cloudSubs) => {
       updateCloudInventoryFromList(cloudSubs);
       if (cloudSubs.length === 0 && submissionsRef.current.length > 0) {
@@ -2448,6 +2453,60 @@ export default function App() {
       const merged = mergeSubmissionsSafely([bestBackup, cloudSubs]);
       persistSubmissionsToLocalCaches(merged, activeCompForSync);
       setSubmissions(merged);
+    });
+
+    // 2. NPWP initial load & realtime listener
+    loadNpwpRecordsFromFirestore()
+      .then(fsRecords => {
+        if (fsRecords && fsRecords.length > 0) {
+          setNpwpRecords(prev => {
+            const map = new Map<string, NpwpRecord>();
+            prev.forEach(r => map.set(r.id, r));
+            fsRecords.forEach(r => map.set(r.id, r));
+            const merged = Array.from(map.values());
+            localStorage.setItem('npwp_records_v1', JSON.stringify(merged));
+            return merged;
+          });
+        }
+      })
+      .catch(err => console.warn('Firestore NPWP sync skipped:', err));
+
+    const unsubscribeNpwp = subscribeToNpwpRecordsFromFirestore((records) => {
+      if (records && records.length > 0) {
+        setNpwpRecords(records);
+      }
+    });
+
+    // 3. Monthly transactions initial load & realtime listener
+    const applyCloudMonthlyUpdate = (cloudItems: MonthlyRecurringTransaction[], cloudDeletedIds: string[]) => {
+      let existingLocalDeleted: string[] = [];
+      try {
+        const raw = localStorage.getItem('nmsa_monthly_deleted_ids_v1');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) existingLocalDeleted = parsed.map(String);
+        }
+      } catch (_) {}
+      const mergedDel = Array.from(new Set([...existingLocalDeleted, ...(cloudDeletedIds || []).map(String)]));
+      try { localStorage.setItem('nmsa_monthly_deleted_ids_v1', JSON.stringify(mergedDel)); } catch (_) {}
+      setDeletedMonthlyIds(mergedDel);
+      setMonthlyTransactions(prev => {
+        const merged = mergeMonthlyListsSafely(prev, cloudItems || [], mergedDel);
+        try { localStorage.setItem(STORAGE_KEY_MONTHLY_TRANSACTIONS, JSON.stringify(merged)); } catch (_) {}
+        return merged;
+      });
+    };
+
+    loadMonthlyTransactionsFromFirestore()
+      .then(cloudRes => {
+        if (cloudRes) {
+          applyCloudMonthlyUpdate(cloudRes.items || [], cloudRes.deletedIds || []);
+        }
+      })
+      .catch(err => console.warn('Firestore Monthly sync skipped:', err));
+
+    const unsubscribeMonthly = subscribeToMonthlyTransactionsFromFirestore((cloudItems, cloudDeletedIds) => {
+      applyCloudMonthlyUpdate(cloudItems, cloudDeletedIds);
     });
 
     const handleWakeSync = (forceFullCheck: boolean = false) => {
@@ -2472,6 +2531,8 @@ export default function App() {
 
     return () => {
       unsubSubs();
+      unsubscribeNpwp();
+      unsubscribeMonthly();
       window.removeEventListener('focus', onFocus);
       window.removeEventListener('online', onOnline);
       document.removeEventListener('visibilitychange', onVisibility);
@@ -3569,28 +3630,6 @@ export default function App() {
           const backupSeed = getBestBackupForCompany(compId);
           const initialValid = Array.isArray(initialData) && initialData.length > 0 ? initialData : backupSeed;
           setSubmissions(sortSubmissionsList(initialValid));
-
-          // Fetch fresh from Cloud Firestore with backup preservation
-          setIsCloudSyncing(true);
-          loadSubmissionsFromFirestoreSafe(compId)
-            .then((cloudRes) => {
-              const latestBackup = getBestBackupForCompany(compId);
-              if (cloudRes.ok && cloudRes.list.length > 0) {
-                const map = new Map<string, Submission>();
-                latestBackup.forEach((s) => map.set(String(s.id).toLowerCase(), s));
-                cloudRes.list.forEach((s) => map.set(String(s.id).toLowerCase(), s));
-                const combined = sortSubmissionsList(Array.from(map.values()));
-                persistSubmissionsToLocalCaches(combined, compId);
-                setSubmissions(combined);
-              } else if (latestBackup.length > 0) {
-                setSubmissions(latestBackup);
-              }
-            })
-            .catch(() => {})
-            .finally(() => {
-              setIsCloudSyncing(false);
-              setIsInitialReconcileDone(true);
-            });
         }}
       />
     );
@@ -3973,6 +4012,7 @@ export default function App() {
             onOpenDriveCleaner={() => setIsDriveOrphanCleanerOpen(true)}
             isCloudSyncing={isCloudSyncing}
             cloudSyncNotice={cloudSyncNotice}
+            onDismissCloudSyncNotice={() => setCloudSyncNotice(null)}
             onOpenConsolidateModal={() => setIsConsolidateNamesModalOpen(true)}
             onOpenPph23View={() => setView('pph23')}
             onOpenRabView={() => setView('rab')}
@@ -4415,6 +4455,7 @@ export default function App() {
         userProfile={userProfile}
         authUser={authUser}
         onOpenCompanySwitcher={() => setIsCompanyModalOpen(true)}
+        onOpenFirebaseQuota={() => setIsFirebaseQuotaModalOpen(true)}
       />
 
       {/* Multi-Tenant Firebase Company Switcher & Creation Modal */}

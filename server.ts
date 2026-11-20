@@ -17,7 +17,6 @@ import fs from "fs";
 import crypto from "crypto";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
-import { google } from "googleapis";
 import dotenv from "dotenv";
 import { PDFParse } from "pdf-parse";
 import { 
@@ -974,6 +973,50 @@ function getServiceAccountCredentials(): { clientEmail: string; privateKey: stri
   return null;
 }
 
+async function authorizeServiceAccountJwt(opts: {
+  email: string;
+  key: string;
+  scopes: string[];
+}): Promise<{ access_token: string; expiry_date: number }> {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const expSec = nowSec + 3600;
+  const headerB64 = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
+  const claimB64 = Buffer.from(
+    JSON.stringify({
+      iss: opts.email,
+      scope: opts.scopes.join(" "),
+      aud: "https://oauth2.googleapis.com/token",
+      exp: expSec,
+      iat: nowSec,
+    })
+  ).toString("base64url");
+  const signingInput = `${headerB64}.${claimB64}`;
+  const signer = crypto.createSign("RSA-SHA256");
+  signer.update(signingInput);
+  signer.end();
+  const signatureB64 = signer.sign(opts.key, "base64url");
+  const assertion = `${signingInput}.${signatureB64}`;
+
+  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion,
+    }).toString(),
+  });
+  const tokenData: any = await tokenRes.json().catch(() => ({}));
+  if (!tokenRes.ok || !tokenData?.access_token) {
+    throw new Error(
+      tokenData?.error_description || tokenData?.error || `HTTP ${tokenRes.status} saat otorisasi JWT Google`
+    );
+  }
+  return {
+    access_token: tokenData.access_token,
+    expiry_date: Date.now() + (Number(tokenData.expires_in) || 3600) * 1000,
+  };
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // GOOGLE SERVICE ACCOUNT & DRIVE ENDPOINTS
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1027,13 +1070,11 @@ app.post("/api/service-account/save", async (req, res) => {
     }
 
     // Verify validity by requesting a real JWT authorization test
-    const jwtClient = new google.auth.JWT({
+    const tokens = await authorizeServiceAccountJwt({
       email: clientEmail.trim(),
       key: cleanPrivateKey,
       scopes: ["https://www.googleapis.com/auth/drive"]
     });
-
-    const tokens = await jwtClient.authorize();
     if (!tokens.access_token) {
       throw new Error("Gagal mengotorisasi Service Account dengan Google API.");
     }
@@ -1091,33 +1132,40 @@ app.post("/api/service-account/test", async (req, res) => {
       return res.status(400).json({ error: "Service Account belum dikonfigurasi di server." });
     }
 
-    const jwtClient = new google.auth.JWT({
+    const tokens = await authorizeServiceAccountJwt({
       email: creds.clientEmail,
       key: creds.privateKey,
       scopes: ["https://www.googleapis.com/auth/drive"]
     });
-
-    const tokens = await jwtClient.authorize();
     if (!tokens.access_token) {
       throw new Error("Gagal mengotorisasi token JWT.");
     }
 
     // Call Google Drive API About to check storage/status
-    const drive = google.drive({ version: "v3", auth: jwtClient });
     let isApiDisabled = false;
     let activationUrl: string | null = null;
+    let aboutData: any = null;
 
-    const aboutRes = await drive.about.get({ fields: "user, storageQuota" }).catch((err) => {
-      const errMsg = String(err?.message || '');
-      const errStr = JSON.stringify(err?.response?.data || '');
-      if (errMsg.includes("has not been used in project") || errMsg.includes("it is disabled") || errStr.includes("SERVICE_DISABLED") || errStr.includes("accessNotConfigured")) {
-        isApiDisabled = true;
-        isServiceAccountDriveApiDisabled = true;
-        const match = errMsg.match(/https:\/\/console\.developers\.google\.com[^\s]+/);
-        if (match) activationUrl = match[0];
+    try {
+      const aboutHttpRes = await fetch("https://www.googleapis.com/drive/v3/about?fields=user%2CstorageQuota", {
+        headers: { Authorization: `Bearer ${tokens.access_token}` }
+      });
+      if (aboutHttpRes.ok) {
+        aboutData = await aboutHttpRes.json();
+      } else {
+        const errPayload: any = await aboutHttpRes.json().catch(() => ({}));
+        const errMsg = String(errPayload?.error?.message || "");
+        const errStr = JSON.stringify(errPayload || "");
+        if (errMsg.includes("has not been used in project") || errMsg.includes("it is disabled") || errStr.includes("SERVICE_DISABLED") || errStr.includes("accessNotConfigured")) {
+          isApiDisabled = true;
+          isServiceAccountDriveApiDisabled = true;
+          const match = errMsg.match(/https:\/\/console\.developers\.google\.com[^\s]+/);
+          if (match) activationUrl = match[0];
+        }
       }
-      return null;
-    });
+    } catch {
+      aboutData = null;
+    }
 
     if (isApiDisabled) {
       return res.json({
@@ -1136,8 +1184,8 @@ app.post("/api/service-account/test", async (req, res) => {
       message: "Koneksi Google Drive Service Account 100% Aktif & Berfungsi Normal!",
       clientEmail: creds.clientEmail,
       projectId: creds.projectId,
-      storageQuota: aboutRes?.data?.storageQuota || null,
-      user: aboutRes?.data?.user || null
+      storageQuota: aboutData?.storageQuota || null,
+      user: aboutData?.user || null
     });
   } catch (error: any) {
     console.error("Service Account test error:", error);
@@ -1179,13 +1227,11 @@ app.get("/api/drive-token", async (req, res) => {
       return res.status(404).json({ error: "Kredensial Service Account belum ditanamkan di server." });
     }
 
-    const jwtClient = new google.auth.JWT({
+    const tokens = await authorizeServiceAccountJwt({
       email: creds.clientEmail,
       key: creds.privateKey,
       scopes: ["https://www.googleapis.com/auth/drive"]
     });
-
-    const tokens = await jwtClient.authorize();
     if (tokens.access_token) {
       return res.json({ 
         success: true, 
@@ -1260,7 +1306,7 @@ app.get("/api/drive-proxy", async (req, res) => {
     try {
       const creds = getServiceAccountCredentials();
       if (creds && creds.clientEmail && creds.privateKey) {
-        const jwtClient = new google.auth.JWT({
+        const saTokens = await authorizeServiceAccountJwt({
           email: creds.clientEmail,
           key: creds.privateKey,
           scopes: [
@@ -1268,38 +1314,37 @@ app.get("/api/drive-proxy", async (req, res) => {
             "https://www.googleapis.com/auth/drive"
           ]
         });
-        const drive = google.drive({ version: 'v3', auth: jwtClient });
         try {
-          const driveRes = await drive.files.get({ 
-            fileId, 
-            alt: 'media',
-            supportsAllDrives: true,
-            acknowledgeAbuse: true
-          }, { responseType: 'arraybuffer' });
-          const metadata = await drive.files.get({ 
-            fileId, 
-            fields: 'mimeType, name',
-            supportsAllDrives: true
-          }).catch(() => null);
-
-          const mimeType = metadata?.data?.mimeType || 'application/pdf';
-          res.setHeader("Content-Type", mimeType);
-          res.setHeader("Cache-Control", "public, max-age=86400");
-          return res.send(Buffer.from(driveRes.data as ArrayBuffer));
-        } catch (errDrive: any) {
-          const errMsg = String(errDrive?.message || '');
-          const errDataStr = JSON.stringify(errDrive?.response?.data || '');
-          const isGcpDisabled = errMsg.includes("has not been used in project") || 
-                                errMsg.includes("it is disabled") || 
-                                errDataStr.includes("SERVICE_DISABLED") || 
-                                errDataStr.includes("accessNotConfigured");
-          if (isGcpDisabled) {
-            isServiceAccountDriveApiDisabled = true;
-            if (!hasLoggedDriveApiDisabledNotice) {
-              hasLoggedDriveApiDisabledNotice = true;
-              console.info("[Google Drive] Info: Google Drive API belum diaktifkan di GCP Console untuk Service Account. Menggunakan jalur unduhan publik & token pengguna secara otomatis.");
+          const mediaRes = await fetch(
+            `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true&acknowledgeAbuse=true`,
+            { headers: { Authorization: `Bearer ${saTokens.access_token}` } }
+          );
+          if (mediaRes.ok) {
+            const metaRes = await fetch(
+              `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=mimeType%2Cname&supportsAllDrives=true`,
+              { headers: { Authorization: `Bearer ${saTokens.access_token}` } }
+            ).catch(() => null);
+            const metaJson: any = metaRes && metaRes.ok ? await metaRes.json().catch(() => null) : null;
+            const ab = await mediaRes.arrayBuffer();
+            const mimeType = metaJson?.mimeType || mediaRes.headers.get("content-type") || "application/pdf";
+            res.setHeader("Content-Type", mimeType);
+            res.setHeader("Cache-Control", "public, max-age=86400");
+            return res.send(Buffer.from(ab));
+          } else {
+            const errBody = await mediaRes.text().catch(() => "");
+            const isGcpDisabled = errBody.includes("has not been used in project") ||
+                                  errBody.includes("it is disabled") ||
+                                  errBody.includes("SERVICE_DISABLED") ||
+                                  errBody.includes("accessNotConfigured");
+            if (isGcpDisabled) {
+              isServiceAccountDriveApiDisabled = true;
+              if (!hasLoggedDriveApiDisabledNotice) {
+                hasLoggedDriveApiDisabledNotice = true;
+                console.info("[Google Drive] Info: Google Drive API belum diaktifkan di GCP Console untuk Service Account. Menggunakan jalur unduhan publik & token pengguna secara otomatis.");
+              }
             }
           }
+        } catch {
           // Do not log warning on 403/404 to avoid false error alarms, cleanly fall back to public URLs
         }
       }
@@ -4330,12 +4375,11 @@ app.post("/api/drive/delete-submission-folder", async (req, res) => {
     try {
       const creds = getServiceAccountCredentials();
       if (creds && creds.clientEmail && creds.privateKey) {
-        const jwtClient = new google.auth.JWT({
+        const saTokens = await authorizeServiceAccountJwt({
           email: creds.clientEmail,
           key: creds.privateKey,
           scopes: ["https://www.googleapis.com/auth/drive"]
         });
-        const saTokens = await jwtClient.authorize();
         if (saTokens?.access_token) {
           tokensToTry.push({ token: saTokens.access_token, source: "service_account" });
         }

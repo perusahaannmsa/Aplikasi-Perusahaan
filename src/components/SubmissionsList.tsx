@@ -38,6 +38,7 @@ interface SubmissionsListProps {
   onOpenDriveCleaner?: () => void;
   isCloudSyncing?: boolean;
   cloudSyncNotice?: string | null;
+  onDismissCloudSyncNotice?: () => void;
 }
 
 export const SubmissionsList: React.FC<SubmissionsListProps> = ({
@@ -70,6 +71,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   onOpenDriveCleaner,
   isCloudSyncing = false,
   cloudSyncNotice = null,
+  onDismissCloudSyncNotice,
 }) => {
   const [searchTerm, setSearchTerm] = useState(() => {
     try { return sessionStorage.getItem('sublist_searchTerm') || ''; } catch (e) { return ''; }
@@ -1255,6 +1257,16 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 className="px-3 py-1.5 rounded-xl bg-white hover:bg-stone-100 text-stone-700 border border-stone-300 text-[11px] font-bold transition cursor-pointer"
               >
                 🧹 Buka Pembersih Drive
+              </button>
+            )}
+            {onDismissCloudSyncNotice && (
+              <button
+                type="button"
+                onClick={onDismissCloudSyncNotice}
+                className="p-1.5 rounded-lg hover:bg-sky-200/70 text-sky-700 transition cursor-pointer"
+                title="Tutup notifikasi"
+              >
+                <X size={14} />
               </button>
             )}
           </div>

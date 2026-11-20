@@ -1,7 +1,5 @@
-import { initializeApp, getApps } from "firebase/app";
-import { getFirestore, doc, setDoc, getDoc, collection, getDocs, onSnapshot, disableNetwork, enableNetwork } from "firebase/firestore";
+import { doc, setDoc, getDoc, collection, getDocs, onSnapshot, disableNetwork } from "firebase/firestore";
 import { 
-  getAuth, 
   signInWithPopup, 
   GoogleAuthProvider, 
   onAuthStateChanged, 
@@ -26,7 +24,16 @@ import {
   getDeletedWorkerIds,
   saveDeletedWorkerIds,
   recordFirestoreWrites,
-  recordFirestoreReads
+  recordFirestoreReads,
+  getSharedFirestoreDb,
+  getSharedFirebaseAuth,
+  withTimeout,
+  isFirestorePermissionError,
+  isFirestorePermissionDenied,
+  markFirestorePermissionDenied,
+  isFirestoreInternalAssertionError,
+  isFirestoreInternalDegraded,
+  markFirestoreInternalAssertion
 } from "../firebase";
 
 export {
@@ -39,17 +46,11 @@ export {
   getDeletedWorkerIds,
   saveDeletedWorkerIds
 };
-import firebaseAppletConfig from "../../firebase-applet-config.json";
 
-// Initialize Firebase with unified applet credentials & target database
-const app = getApps().find(a => a.name === "[DEFAULT]") || initializeApp(firebaseAppletConfig);
-export const auth = getAuth(app);
-export const db = getFirestore(app, firebaseAppletConfig.firestoreDatabaseId || "(default)");
+// Reuse unified initialized Auth & Firestore instances from ../firebase (with memoryLocalCache + long polling auto-detect)
+export const auth = getSharedFirebaseAuth()!;
+export const db = getSharedFirestoreDb()!;
 registerFirestoreInstance(db);
-
-if (isFirestoreQuotaExceeded()) {
-  disableNetwork(db).catch(() => {});
-}
 
 // Setup Google Auth Provider
 export const provider = new GoogleAuthProvider();
@@ -218,8 +219,8 @@ export const saveAttendanceToFirestore = async (
   workersList: any[],
   weeklyReportsList?: any[]
 ): Promise<boolean> => {
-  // If Firestore daily quota is exceeded, bypass immediately to prevent Grpc Write Stream errors
-  if (isFirestoreQuotaExceeded()) {
+  const activeDb = getSharedFirestoreDb() || db;
+  if (!activeDb || isFirestoreQuotaExceeded() || isFirestorePermissionDenied() || isFirestoreInternalDegraded()) {
     return false;
   }
 
@@ -264,26 +265,29 @@ export const saveAttendanceToFirestore = async (
 
     const cleanWeeklyReports = cleanDataForFirestore(weeklyReportsList || []);
 
-    await setDoc(doc(db, "attendance", "current_records"), {
-      attendanceRecords: cleanDataForFirestore(cleanedRecords),
-      workers: cleanDataForFirestore(workersList),
-      weeklyReports: cleanWeeklyReports,
-      updatedAt: timestamp,
-      totalWorkers: (workersList || []).length,
-      totalRecords: (cleanedRecords || []).length,
-      totalReports: cleanWeeklyReports.length
-    }, { merge: true });
+    await withTimeout(
+      setDoc(doc(activeDb, "attendance", "current_records"), {
+        attendanceRecords: cleanDataForFirestore(cleanedRecords),
+        workers: cleanDataForFirestore(workersList),
+        weeklyReports: cleanWeeklyReports,
+        updatedAt: timestamp,
+        totalWorkers: (workersList || []).length,
+        totalRecords: (cleanedRecords || []).length,
+        totalReports: cleanWeeklyReports.length
+      }, { merge: true }),
+      10000,
+      'Simpan absensi ke Firestore'
+    );
 
     recordFirestoreWrites(1);
     return true;
 
   } catch (err: any) {
     markFirestoreQuotaExceeded(err);
-    if (db && isFirestoreQuotaExceeded()) {
-      disableNetwork(db).catch(() => {});
-    }
+    markFirestorePermissionDenied(err);
+    markFirestoreInternalAssertion(err);
     const errStr = String(err?.message || err?.code || err || '');
-    const isPermissionDenied = err?.code === 'permission-denied' || errStr.includes('PERMISSION_DENIED');
+    const isPermissionDenied = isFirestorePermissionError(err);
     const isQuotaExceeded = err?.code === 'resource-exhausted' || errStr.includes('RESOURCE_EXHAUSTED') || errStr.includes('Quota exceeded');
 
     if (isQuotaExceeded) {
@@ -306,9 +310,13 @@ export const loadAttendanceFromFirestore = async (): Promise<{
   weeklyReports: any[];
   latestActiveDate?: string | null;
 } | null> => {
+  const activeDb = getSharedFirestoreDb() || db;
+  if (!activeDb || isFirestoreQuotaExceeded() || isFirestorePermissionDenied() || isFirestoreInternalDegraded()) {
+    return null;
+  }
   try {
-    const masterDoc = await getDoc(doc(db, "attendance", "current_records"));
-    const workersMasterDoc = await getDoc(doc(db, "attendance", "workers_master")).catch(() => null);
+    const masterDoc = await withTimeout(getDoc(doc(activeDb, "attendance", "current_records")), 10000, 'Memuat absensi');
+    const workersMasterDoc = await withTimeout(getDoc(doc(activeDb, "attendance", "workers_master")), 6000, 'Memuat master karyawan').catch(() => null);
     recordFirestoreReads(workersMasterDoc ? 2 : 1);
     let wrks: any[] = [];
     const workerMap = new Map<string, any>();
@@ -470,12 +478,14 @@ export const subscribeToAttendanceFromFirestore = (
     latestActiveDate?: string | null;
   }) => void
 ): (() => void) => {
-  if (isFirestoreQuotaExceeded()) {
+  const activeDb = getSharedFirestoreDb() || db;
+  if (!activeDb || isFirestoreQuotaExceeded() || isFirestorePermissionDenied() || isFirestoreInternalDegraded()) {
     return () => {};
   }
   try {
-    const unsub = onSnapshot(doc(db, "attendance", "current_records"), (snapshot) => {
+    const unsub = onSnapshot(doc(activeDb, "attendance", "current_records"), (snapshot) => {
       if (!snapshot.exists()) return;
+      recordFirestoreReads(1);
       const data = snapshot.data();
       if (!data) return;
 
@@ -571,12 +581,16 @@ export const subscribeToAttendanceFromFirestore = (
       });
     }, (err) => {
       markFirestoreQuotaExceeded(err);
-      if (db) disableNetwork(db).catch(() => {});
-      console.warn("[Firestore Attendance Realtime] Snapshot listener notice:", err?.message || err);
+      markFirestorePermissionDenied(err);
+      markFirestoreInternalAssertion(err);
+      if (!isFirestorePermissionError(err) && !isFirestoreInternalAssertionError(err)) {
+        console.warn("[Firestore Attendance Realtime] Snapshot listener notice:", err?.message || err);
+      }
     });
 
     return unsub;
   } catch (err: any) {
+    markFirestoreInternalAssertion(err);
     console.warn("[Firestore Attendance Realtime] Setup notice:", err?.message);
     return () => {};
   }

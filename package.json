@@ -8,11 +8,11 @@
   },
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "NODE_OPTIONS='--max-old-space-size=1536' vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "build": "NODE_OPTIONS='--max-old-space-size=1280' vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "build:pages": "vite build",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
-    "lint": "./node_modules/.bin/tsc --noEmit"
+    "lint": "NODE_OPTIONS='--max-old-space-size=1024' ./node_modules/.bin/tsc --noEmit"
   },
   "dependencies": {
     "@e965/xlsx": "^0.20.3",
