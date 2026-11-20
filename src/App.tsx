@@ -112,7 +112,6 @@ import {
   getDeletedNpwpIds,
   getActiveFirebaseProjectId,
   withTimeout,
-  isAuthorizedPortalFirebaseEmail,
   maskLockedAccountLabel
 } from './firebase';
 import { loadAttendanceFromFirestore, loadWorkersFromFirestore, mergeWorkerListsSafely, getDeletedWorkerIds } from './lib/firebaseAbsen';
@@ -2049,15 +2048,6 @@ export default function App() {
       unsubscribe = registerAuthChangeListener(async (user) => {
         if (isDisposed) return;
 
-        // Enforce locked Firebase portal account: if an unrecognized/old hijacked session exists, sign it out cleanly
-        if (user && !isAuthorizedPortalFirebaseEmail(user.email)) {
-          console.warn('🔒 Sesi Firebase tidak sesuai dengan akun portal resmi. Membersihkan sesi...');
-          await logoutFromFirebase().catch(() => {});
-          setAuthUser(null);
-          setUserProfile(null);
-          return;
-        }
-
         setAuthUser(user);
         if (!user) {
           setUserProfile(null);
@@ -2082,20 +2072,11 @@ export default function App() {
           let profile = await getUserProfileFromFirestore(user.uid).catch(() => null);
           if (!profile) {
             profile = {
-              fullName: 'Nur Wahyudi',
-              role: 'Accounting',
+              fullName: user.email === 'admin@nmsa.com' ? 'Nur Wahyudi' : (user.email?.split('@')[0] || 'User'),
+              role: user.email === 'admin@nmsa.com' ? 'Accounting' : 'User',
               email: user.email,
               companyId: companyId,
               companyName: 'PT Nusantara Mineral Sukses Abadi'
-            };
-          } else if (
-            !profile.fullName ||
-            profile.fullName.toLowerCase().includes('yudiakungaming') ||
-            profile.fullName.toLowerCase().includes('akuncoding')
-          ) {
-            profile = {
-              ...profile,
-              fullName: 'Nur Wahyudi'
             };
           }
 

@@ -86,7 +86,7 @@ export const PengaturanView: React.FC<PengaturanViewProps> = ({
 }) => {
   const fullName = userProfile?.fullName || 'Nur Wahyudi';
   const roleLabel = userProfile?.role || 'Divisi Keuangan HO';
-  const email = maskLockedAccountLabel(authUser?.email, 'Terkunci Otomatis (Portal Resmi NMSA)');
+  const email = authUser?.email || 'Terotentikasi via Cloud';
   const companyCode =
     userProfile?.companyDetails?.code || userProfile?.companyId?.toUpperCase() || 'NMSA';
   const companyName =

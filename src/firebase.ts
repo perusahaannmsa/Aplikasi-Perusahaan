@@ -851,7 +851,7 @@ export const initializeFirebaseApp = (customConfig?: any): boolean => {
     onAuthStateChanged(firebaseAuth, (user) => {
       if (isDrivePopupConnecting) return;
       currentUser = user;
-      console.log('📡 Auth State Modified. User logged in:', user ? 'AUTHORIZED_PORTAL_SESSION' : 'NONE');
+      console.log('📡 Auth State Modified. User logged in:', user ? user.email : 'NONE');
       if (user) {
         resetFirestorePermissionDenied();
         if (!isFirestoreQuotaExceeded()) {
@@ -1300,13 +1300,13 @@ export const loginToFirebase = async (email: string, password: string): Promise<
   if (!firebaseAuth) {
     throw new Error('Firebase Auth is not initialized. Please configure credentials first.');
   }
-  const cleanEmail = (email || '').trim().toLowerCase() || LOCKED_FIREBASE_AUTH_EMAIL;
-  if (!isAuthorizedPortalFirebaseEmail(cleanEmail)) {
-    throw new Error('Akses ditolak: hanya akun otorisasi resmi portal HO NMSA yang dapat masuk.');
+  const cleanEmail = (email || '').trim();
+  if (!cleanEmail) {
+    throw new Error('Alamat E-Mail wajib diisi.');
   }
   try {
     await setPersistence(firebaseAuth, browserLocalPersistence).catch(() => {});
-    const creds = await signInWithEmailAndPassword(firebaseAuth, LOCKED_FIREBASE_AUTH_EMAIL, password);
+    const creds = await signInWithEmailAndPassword(firebaseAuth, cleanEmail, password);
     currentUser = creds.user;
     return creds.user;
   } catch (error) {
@@ -1316,29 +1316,18 @@ export const loginToFirebase = async (email: string, password: string): Promise<
 };
 
 export const loginWithGoogle = async (): Promise<User> => {
-  if (!firebaseAuth) {
-    throw new Error('Firebase Auth belum dikonfigurasi.');
-  }
-  await setPersistence(firebaseAuth, browserLocalPersistence).catch(() => {});
-  const provider = new GoogleAuthProvider();
-  provider.setCustomParameters({
-    login_hint: LOCKED_FIREBASE_AUTH_EMAIL
-  });
-  const result = await signInWithPopup(firebaseAuth, provider);
-  if (!isAuthorizedPortalFirebaseEmail(result.user?.email)) {
-    await signOut(firebaseAuth).catch(() => {});
-    currentUser = null;
-    throw new Error('Akun Google yang dipilih tidak cocok dengan akun resmi sistem portal HO NMSA.');
-  }
-  currentUser = result.user;
-  return result.user;
+  throw new Error('Login Akun Google dinonaktifkan. Aplikasi berstatus tertutup khusus akun terdaftar di Firebase Console.');
 };
 
-export const resetPasswordViaEmail = async (_email?: string): Promise<void> => {
+export const resetPasswordViaEmail = async (email: string): Promise<void> => {
   if (!firebaseAuth) {
     throw new Error('Firebase Auth belum dikonfigurasi.');
   }
-  await sendPasswordResetEmail(firebaseAuth, LOCKED_FIREBASE_AUTH_EMAIL);
+  const cleanEmail = (email || '').trim();
+  if (!cleanEmail) {
+    throw new Error('Silakan masukkan alamat e-mail terlebih dahulu.');
+  }
+  await sendPasswordResetEmail(firebaseAuth, cleanEmail);
 };
 
 export const ensureUserProfile = async (
