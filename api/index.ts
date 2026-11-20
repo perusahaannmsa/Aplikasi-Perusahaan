@@ -567,24 +567,26 @@ export default async function handler(req: any, res: any) {
           delSet.delete(String(body.submission.id).trim());
         }
         state.deletedSubmissionIds = Array.from(delSet).slice(-1000);
-        const delLower = new Set(state.deletedSubmissionIds.map((x: string) => x.toLowerCase()));
+        const delLower = new Set(state.deletedSubmissionIds.map((x: string) => x.toLowerCase().trim()));
 
         if (Array.isArray(body)) {
-          state.submissions = body.filter((s: any) => s && s.id && !delLower.has(String(s.id).toLowerCase()));
+          state.submissions = body.filter((s: any) => s && s.id && !delLower.has(String(s.id).toLowerCase().trim()));
           saveState(state);
         } else if (body && Array.isArray(body.submissions)) {
           const map = new Map<string, any>();
           state.submissions.forEach((s: any) => {
-            if (s && s.id && !delLower.has(String(s.id).toLowerCase())) map.set(String(s.id).toLowerCase(), s);
+            const key = String(s?.id || "").toLowerCase().trim();
+            if (key && !delLower.has(key)) map.set(key, s);
           });
           body.submissions.forEach((s: any) => {
-            if (s && s.id && !delLower.has(String(s.id).toLowerCase())) map.set(String(s.id).toLowerCase(), s);
+            const key = String(s?.id || "").toLowerCase().trim();
+            if (key && !delLower.has(key)) map.set(key, s);
           });
           state.submissions = Array.from(map.values());
           saveState(state);
         } else if (body && body.submission && body.submission.id) {
-          const subId = String(body.submission.id).toLowerCase();
-          const idx = state.submissions.findIndex((s: any) => String(s?.id || "").toLowerCase() === subId);
+          const subId = String(body.submission.id).toLowerCase().trim();
+          const idx = state.submissions.findIndex((s: any) => String(s?.id || "").toLowerCase().trim() === subId);
           if (idx >= 0) {
             state.submissions[idx] = body.submission;
           } else {
@@ -593,7 +595,7 @@ export default async function handler(req: any, res: any) {
           saveState(state);
         } else if (body?.deletedId || Array.isArray(body?.deletedIds) || Array.isArray(body?.clearDeletedIds)) {
           state.submissions = state.submissions.filter(
-            (s: any) => s && s.id && !delLower.has(String(s.id).toLowerCase())
+            (s: any) => s && s.id && !delLower.has(String(s.id).toLowerCase().trim())
           );
           saveState(state);
         }

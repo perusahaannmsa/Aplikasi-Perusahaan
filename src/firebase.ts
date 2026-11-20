@@ -2989,6 +2989,48 @@ export const removeLocalDeletedSubmissionId = (id: string): string[] => {
   return next;
 };
 
+const PENDING_FIRESTORE_DELETES_KEY = 'NUSANTARA_PENDING_FIRESTORE_DELETE_IDS';
+
+export const getPendingFirestoreDeleteIds = (): string[] => {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(PENDING_FIRESTORE_DELETES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? Array.from(new Set(parsed.map((x: any) => String(x || '').trim()).filter(Boolean))) : [];
+  } catch (_) {
+    return [];
+  }
+};
+
+const savePendingFirestoreDeleteIds = (ids: string[]) => {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    const unique = Array.from(new Set((ids || []).map((x) => String(x || '').trim()).filter(Boolean))).slice(-1000);
+    if (unique.length === 0) {
+      localStorage.removeItem(PENDING_FIRESTORE_DELETES_KEY);
+    } else {
+      localStorage.setItem(PENDING_FIRESTORE_DELETES_KEY, JSON.stringify(unique));
+    }
+  } catch (_) {}
+};
+
+export const addPendingFirestoreDeleteId = (id: string): string[] => {
+  const cleanId = String(id || '').trim();
+  if (!cleanId) return getPendingFirestoreDeleteIds();
+  const next = Array.from(new Set([...getPendingFirestoreDeleteIds(), cleanId]));
+  savePendingFirestoreDeleteIds(next);
+  return next;
+};
+
+export const removePendingFirestoreDeleteId = (id: string): string[] => {
+  const cleanLower = String(id || '').trim().toLowerCase();
+  if (!cleanLower) return getPendingFirestoreDeleteIds();
+  const next = getPendingFirestoreDeleteIds().filter((x) => x.toLowerCase().trim() !== cleanLower);
+  savePendingFirestoreDeleteIds(next);
+  return next;
+};
+
 export const loadDeletedSubmissionIdsFromFirestore = async (): Promise<string[]> => {
   return getLocalDeletedSubmissionIds();
 };
@@ -3063,7 +3105,9 @@ export const loadAllLocalSubmissionsForCompany = (companyId: string = 'nmsa'): S
 export const persistSubmissionsToLocalCaches = (list: Submission[], companyId: string = 'nmsa') => {
   if (typeof localStorage === 'undefined' || !Array.isArray(list)) return;
   const targetComp = normalizeCompanyKey(companyId);
-  const lightweight = stripHeavyFieldsForLocalCache(list);
+  const delLower = new Set(getLocalDeletedSubmissionIds().map((x) => String(x || '').toLowerCase().trim()).filter(Boolean));
+  const filteredList = list.filter((s) => s && s.id && !delLower.has(String(s.id).toLowerCase().trim()));
+  const lightweight = stripHeavyFieldsForLocalCache(filteredList);
   const serialized = JSON.stringify(lightweight);
   try {
     localStorage.setItem(`NUSANTARA_HO_SUBMISSIONS_${targetComp}`, serialized);
@@ -3071,8 +3115,34 @@ export const persistSubmissionsToLocalCaches = (list: Submission[], companyId: s
   try {
     if (targetComp === 'nmsa') {
       localStorage.setItem('NUSANTARA_HO_SUBMISSIONS', serialized);
+    } else if (delLower.size > 0) {
+      const legacyShared = localStorage.getItem('NUSANTARA_HO_SUBMISSIONS');
+      if (legacyShared) {
+        const parsed = JSON.parse(legacyShared);
+        if (Array.isArray(parsed)) {
+          const pruned = parsed.filter((s: any) => s && s.id && !delLower.has(String(s.id).toLowerCase().trim()));
+          if (pruned.length !== parsed.length) {
+            localStorage.setItem('NUSANTARA_HO_SUBMISSIONS', JSON.stringify(pruned));
+          }
+        }
+      }
     }
   } catch (_) {}
+  // Prune any deleted IDs from legacy voucher_submissions key so deleted transactions never resurrect
+  if (delLower.size > 0) {
+    try {
+      const legacyRaw = localStorage.getItem('voucher_submissions');
+      if (legacyRaw) {
+        const parsed = JSON.parse(legacyRaw);
+        if (Array.isArray(parsed)) {
+          const pruned = parsed.filter((s: any) => s && s.id && !delLower.has(String(s.id).toLowerCase().trim()));
+          if (pruned.length !== parsed.length) {
+            localStorage.setItem('voucher_submissions', JSON.stringify(pruned));
+          }
+        }
+      }
+    } catch (_) {}
+  }
 };
 
 const getSubmissionTimestamp = (sub: Partial<Submission> | null | undefined): number => {
@@ -3227,7 +3297,10 @@ export const loadSubmissionsFromFirestoreSafe = async (
       snapshot.forEach(docSnap => {
         const data = docSnap.data();
         const mapped = mapFirestoreToSubmission(docSnap.id, data);
-        if (delLower.has(String(mapped.id || '').toLowerCase())) {
+        const docIdLow = String(mapped.id || '').toLowerCase().trim();
+        const dataIdLow = String(data?.id || '').toLowerCase().trim();
+        const safeDataIdLow = dataIdLow ? sanitizeFirestoreDocId(dataIdLow).toLowerCase() : '';
+        if (delLower.has(docIdLow) || (dataIdLow && delLower.has(dataIdLow)) || (safeDataIdLow && delLower.has(safeDataIdLow))) {
           skippedDeleted++;
           return;
         }
@@ -3315,7 +3388,10 @@ export const subscribeToSubmissionsFromFirestore = (
         snapshot.forEach(docSnap => {
           const data = docSnap.data();
           const mapped = mapFirestoreToSubmission(docSnap.id, data);
-          if (delLower.has(String(mapped.id || '').toLowerCase())) return;
+          const docIdLow = String(mapped.id || '').toLowerCase().trim();
+          const dataIdLow = String(data?.id || '').toLowerCase().trim();
+          const safeDataIdLow = dataIdLow ? sanitizeFirestoreDocId(dataIdLow).toLowerCase() : '';
+          if (delLower.has(docIdLow) || (dataIdLow && delLower.has(dataIdLow)) || (safeDataIdLow && delLower.has(safeDataIdLow))) return;
           const docComp = normalizeCompanyKey(data.companyId || data.company_id);
           if (!targetComp || docComp === targetComp) {
             list.push(mapped);
@@ -3519,6 +3595,7 @@ export const flushFirestoreQueue = async (): Promise<{ processed: number; remain
   let processed = 0;
 
   try {
+    await flushPendingFirestoreDeletes().catch(() => {});
     while (firestoreWriteQueue.length > 0) {
       if (isFirestoreQuotaExceeded() || isFirestorePermissionDenied() || isFirestoreInternalDegraded()) {
         break;
@@ -3555,6 +3632,7 @@ export const flushFirestoreQueue = async (): Promise<{ processed: number; remain
 
 if (typeof window !== 'undefined') {
   window.addEventListener('online', () => {
+    flushPendingFirestoreDeletes().catch(() => {});
     flushFirestoreQueue().catch(() => {});
   });
 }
@@ -3799,35 +3877,139 @@ export const reconcileSubmissionsWithCloud = async (
   }
 };
 
-// Delete single submission directly from Firestore and record tombstone
-export const deleteSubmissionFromFirestore = async (id: string): Promise<void> => {
-  addLocalDeletedSubmissionId(id);
+// Delete single submission directly from Firestore (by doc ID, sanitized ID, and matching field `id`) and record tombstone
+export const deleteSubmissionFromFirestore = async (
+  id: string
+): Promise<{
+  deletedFromCloud: boolean;
+  deletedDocIds: string[];
+  queuedForRetry?: boolean;
+  error?: string;
+}> => {
+  const cleanId = String(id || '').trim();
+  if (!cleanId) {
+    return { deletedFromCloud: false, deletedDocIds: [], error: 'ID transaksi tidak valid.' };
+  }
+
+  addLocalDeletedSubmissionId(cleanId);
 
   if (!isFirebaseConfigured() || !firestoreDb) {
-    throw new Error('Firebase is not initialized.');
+    addPendingFirestoreDeleteId(cleanId);
+    return {
+      deletedFromCloud: false,
+      deletedDocIds: [],
+      queuedForRetry: true,
+      error: 'Konfigurasi Firebase Firestore belum siap.'
+    };
+  }
+
+  if (!hasAuthenticatedFirebaseUser()) {
+    addPendingFirestoreDeleteId(cleanId);
+    return {
+      deletedFromCloud: false,
+      deletedDocIds: [],
+      queuedForRetry: true,
+      error: 'Sesi login Firebase Auth belum aktif.'
+    };
   }
 
   if (isFirestoreQuotaExceeded()) {
-    throw new Error('Kuota Firestore sedang cooldown sementara.');
+    addPendingFirestoreDeleteId(cleanId);
+    return {
+      deletedFromCloud: false,
+      deletedDocIds: [],
+      queuedForRetry: true,
+      error: 'Kuota Firestore sedang cooldown sementara.'
+    };
   }
   if (isFirestoreInternalDegraded()) {
-    throw new Error('Koneksi Firestore SDK sedang dipulihkan sementara.');
+    addPendingFirestoreDeleteId(cleanId);
+    return {
+      deletedFromCloud: false,
+      deletedDocIds: [],
+      queuedForRetry: true,
+      error: 'Koneksi Firestore SDK sedang dipulihkan sementara.'
+    };
   }
 
   const path = 'submissions';
-  const safeId = sanitizeFirestoreDocId(id);
-  try {
-    await withTimeout(deleteDoc(doc(firestoreDb, path, id)), 10000, `Hapus voucher ${id}`);
-    if (safeId && safeId !== id) {
-      await withTimeout(deleteDoc(doc(firestoreDb, path, safeId)), 6000, `Hapus voucher ${safeId}`).catch(() => {});
-    }
-    recordFirestoreDeletes(1);
-    console.log(`☁️ Submission ${id} deleted directly from Firestore.`);
-  } catch (error) {
-    markFirestoreQuotaExceeded(error);
-    markFirestoreInternalAssertion(error);
-    handleFirestoreError(error, OperationType.DELETE, `${path}/${id}`);
+  const safeId = sanitizeFirestoreDocId(cleanId);
+  const candidateDocIds = new Set<string>([cleanId]);
+  if (safeId && safeId !== cleanId) {
+    candidateDocIds.add(safeId);
   }
+
+  // Also check if any legacy Firestore doc has auto-generated docSnap.id with field data.id === cleanId
+  try {
+    const qByFieldId = query(collection(firestoreDb, path), where('id', '==', cleanId));
+    const fieldSnap = await withTimeout(getDocs(qByFieldId), 6000, `Cari dokumen Firestore ${cleanId}`);
+    fieldSnap.forEach((docSnap) => {
+      if (docSnap.id) {
+        candidateDocIds.add(docSnap.id);
+        addLocalDeletedSubmissionId(docSnap.id);
+      }
+    });
+  } catch (_) {
+    // Non-fatal; proceed with direct doc IDs
+  }
+
+  const deletedDocIds: string[] = [];
+  let lastErrorMsg = '';
+  let anyFailed = false;
+
+  for (const targetDocId of Array.from(candidateDocIds)) {
+    try {
+      await withTimeout(deleteDoc(doc(firestoreDb, path, targetDocId)), 10000, `Hapus voucher ${targetDocId}`);
+      deletedDocIds.push(targetDocId);
+    } catch (error: any) {
+      anyFailed = true;
+      lastErrorMsg = error?.message || String(error);
+      markFirestoreQuotaExceeded(error);
+      markFirestorePermissionDenied(error);
+      markFirestoreInternalAssertion(error);
+      console.warn(`⚠️ Gagal menghapus dokumen Firestore ${path}/${targetDocId}:`, lastErrorMsg);
+    }
+  }
+
+  if (!anyFailed && deletedDocIds.length > 0) {
+    recordFirestoreDeletes(deletedDocIds.length);
+    resetFirestorePermissionDenied();
+    removePendingFirestoreDeleteId(cleanId);
+    deletedDocIds.forEach((dId) => removePendingFirestoreDeleteId(dId));
+    console.log(`☁️ Submission ${cleanId} deleted directly from Firestore (${deletedDocIds.join(', ')}).`);
+    return { deletedFromCloud: true, deletedDocIds };
+  }
+
+  const isPermErr = isFirestorePermissionDenied();
+  if (!isPermErr) {
+    addPendingFirestoreDeleteId(cleanId);
+  }
+  return {
+    deletedFromCloud: false,
+    deletedDocIds,
+    queuedForRetry: !isPermErr,
+    error: lastErrorMsg || 'Gagal menghapus dokumen di Cloud Firestore.'
+  };
+};
+
+export const flushPendingFirestoreDeletes = async (): Promise<{ deletedCount: number; remainingCount: number }> => {
+  const pendingIds = getPendingFirestoreDeleteIds();
+  if (pendingIds.length === 0) return { deletedCount: 0, remainingCount: 0 };
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied() || isFirestoreInternalDegraded()) {
+    return { deletedCount: 0, remainingCount: pendingIds.length };
+  }
+
+  let deletedCount = 0;
+  for (const id of pendingIds) {
+    if (isFirestoreQuotaExceeded() || isFirestorePermissionDenied() || isFirestoreInternalDegraded()) break;
+    const res = await deleteSubmissionFromFirestore(id);
+    if (res.deletedFromCloud) {
+      deletedCount++;
+    } else if (!res.queuedForRetry) {
+      break;
+    }
+  }
+  return { deletedCount, remainingCount: getPendingFirestoreDeleteIds().length };
 };
 
 // Fetch activity logs (stored locally to conserve daily free Firestore quota)

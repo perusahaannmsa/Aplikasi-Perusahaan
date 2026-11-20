@@ -1965,7 +1965,7 @@ function readState() {
 // =========================================================================
 export function enforceSubmissionIdFormat(item: any): any {
   if (!item) return item;
-  if (!item.id || !String(item.id).startsWith("sub-")) {
+  if (!item.id || String(item.id).trim().length === 0) {
     let ts = Date.now();
     if (item.createdAt) {
       if (typeof item.createdAt.seconds === "number") {
@@ -1979,6 +1979,8 @@ export function enforceSubmissionIdFormat(item: any): any {
       if (!isNaN(p)) ts = p;
     }
     item.id = `sub-${ts}`;
+  } else {
+    item.id = String(item.id).trim();
   }
   return item;
 }
@@ -4283,14 +4285,17 @@ app.post("/api/sync-submissions", (req, res) => {
     if (Array.isArray(submissions)) {
       const map = new Map<string, any>();
       (state.submissions || []).forEach((s: any) => {
-        if (s && s.id && !delLowerSet.has(String(s.id).toLowerCase())) {
-          map.set(String(s.id).toLowerCase(), s);
+        if (s && s.id && !delLowerSet.has(String(s.id).toLowerCase().trim())) {
+          map.set(String(s.id).toLowerCase().trim(), s);
         }
       });
       submissions.forEach((s: any) => {
-        if (s && s.id && !delLowerSet.has(String(s.id).toLowerCase())) {
+        if (s && s.id && !delLowerSet.has(String(s.id).toLowerCase().trim())) {
           const normalized = enforceSubmissionIdFormat(s);
-          map.set(String(normalized.id).toLowerCase(), normalized);
+          const normKey = String(normalized.id).toLowerCase().trim();
+          if (!delLowerSet.has(normKey)) {
+            map.set(normKey, normalized);
+          }
         }
       });
       state.submissions = Array.from(map.values());
@@ -4302,8 +4307,8 @@ app.post("/api/sync-submissions", (req, res) => {
       });
     } else if (submission && submission.id) {
       const normalized = enforceSubmissionIdFormat(submission);
-      const subId = String(normalized.id).toLowerCase();
-      const idx = state.submissions.findIndex((s: any) => String(s.id).toLowerCase() === subId);
+      const subId = String(normalized.id).toLowerCase().trim();
+      const idx = state.submissions.findIndex((s: any) => String(s.id).toLowerCase().trim() === subId);
       if (idx >= 0) {
         state.submissions[idx] = normalized;
       } else {
@@ -4318,7 +4323,7 @@ app.post("/api/sync-submissions", (req, res) => {
       });
     } else if (deletedId || Array.isArray(deletedIds) || Array.isArray(clearDeletedIds)) {
       state.submissions = state.submissions.filter(
-        (s: any) => s && s.id && !delLowerSet.has(String(s.id).toLowerCase())
+        (s: any) => s && s.id && !delLowerSet.has(String(s.id).toLowerCase().trim())
       );
       writeState(state);
       return res.json({

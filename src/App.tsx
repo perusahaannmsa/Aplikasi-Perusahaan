@@ -74,6 +74,8 @@ import {
   addLocalDeletedSubmissionId,
   getLocalDeletedSubmissionIds,
   saveLocalDeletedSubmissionIds,
+  flushPendingFirestoreDeletes,
+  getPendingFirestoreDeleteIds,
   normalizeCompanyKey,
   getCompanyProfileFromFirestore,
   logoutFromFirebase,
@@ -943,13 +945,14 @@ export default function App() {
     }
   }, [submissions, pettyCashHolders]);
 
-  // Sync all submissions to backend memory & data-store for WhatsApp AI Bot
+  // Sync all submissions & tombstones to backend memory & data-store
   useEffect(() => {
-    if (submissions && submissions.length > 0) {
+    const deletedIds = getLocalDeletedSubmissionIds();
+    if ((submissions && submissions.length > 0) || deletedIds.length > 0) {
       fetch('/api/sync-submissions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ submissions })
+        body: JSON.stringify({ submissions: submissions || [], deletedIds })
       }).catch(err => console.warn('Sync submissions to server error:', err));
     }
   }, [submissions]);
@@ -2347,6 +2350,7 @@ export default function App() {
         if (!silent) {
           await resetFirestoreQuotaCooldown().catch(() => {});
         }
+        await flushPendingFirestoreDeletes().catch(() => {});
         const [, cloudRes] = await withTimeout(
           Promise.all([
             ensureServerBackupLoaded(),
@@ -2501,7 +2505,7 @@ export default function App() {
 
     const handleWakeSync = (forceFullCheck: boolean = false) => {
       const now = Date.now();
-      if (getPendingFirestoreSyncCount() > 0 && !isFirestoreQuotaExceeded()) {
+      if ((getPendingFirestoreSyncCount() > 0 || getPendingFirestoreDeleteIds().length > 0) && !isFirestoreQuotaExceeded()) {
         flushFirestoreQueue().catch(() => {});
       }
       if (!forceFullCheck && now - lastFocusSyncAt < 10 * 60 * 1000) return;
@@ -2542,50 +2546,41 @@ export default function App() {
 
   // Delete handler (removes from UI state, server data-store.json, Firestore, and Google Drive folder)
   const handleDelete = async (id: string, options?: { deleteDriveFolder?: boolean }) => {
-    const targetSub = submissions.find(s => s.id === id);
+    const idLower = normalizeSubId(id);
+    const targetSub = submissions.find(s => normalizeSubId(s.id) === idLower);
+    const targetLabel = targetSub?.kode || targetSub?.dibayarkanKepada || id;
     const shouldDeleteDrive = options?.deleteDriveFolder !== false;
 
     addLocalDeletedSubmissionId(id);
     clearPendingFirestoreIds([id]);
+    serverBackupSubmissionsRef.current = serverBackupSubmissionsRef.current.filter(
+      (s) => normalizeSubId(s?.id) !== idLower
+    );
     setCloudSyncedIds((prev) => {
       const next = new Set(prev);
-      next.delete(normalizeSubId(id));
+      next.delete(idLower);
       return next;
     });
-    const updated = submissions.filter((sub) => sub.id !== id);
+    const updated = submissions.filter((sub) => normalizeSubId(sub.id) !== idLower);
+    submissionsRef.current = sortSubmissionsList(updated);
     saveSubmissionsToStorage(updated);
 
-    // Hapus juga dari data-store.json backend & catat tombstone
-    fetch(`/api/sync-submissions/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-    }).catch((err) => console.warn('Gagal hapus voucher dari backup server:', err));
+    setCloudSyncNotice(`🗑️ Menghapus voucher "${targetLabel}" dari aplikasi, server & Cloud Firestore...`);
 
-    // Auto-delete Google Drive folder if enabled (searches by folderId, attachments, standard name, kode, or voucher number)
-    if (targetSub && shouldDeleteDrive) {
-      const targetLabel = targetSub.kode || targetSub.dibayarkanKepada || targetSub.id;
-      setCloudSyncNotice(`🗑️ Voucher "${targetLabel}" dihapus. Sedang mencari & menghapus folder di Google Drive...`);
-      deleteSubmissionDriveFolder(targetSub).then((res) => {
-        if (res.success) {
-          console.log(`[Auto-Sync] ${res.message}`);
-          setCloudSyncNotice(`✅ Voucher "${targetLabel}" & folder Google Drive "${res.folderName || ''}" berhasil dihapus.`);
-          setTimeout(() => setCloudSyncNotice(null), 6000);
-        } else {
-          console.log(`[Auto-Sync] Info folder Drive: ${res.message}`);
-          if (res.needsAuth) {
-            setCloudSyncNotice(`⚠️ Voucher "${targetLabel}" terhapus dari sistem, namun Google Drive belum terhubung/berizin penuh untuk menghapus foldernya (${res.message}).`);
-          } else {
-            setCloudSyncNotice(`ℹ️ Voucher "${targetLabel}" terhapus. ${res.message}`);
-            setTimeout(() => setCloudSyncNotice(null), 6000);
-          }
-        }
-      }).catch((err) => {
-        console.warn('Gagal menghapus folder Google Drive saat menghapus transaksi:', err);
-        setCloudSyncNotice(`⚠️ Voucher "${targetLabel}" terhapus, namun gagal menghapus folder Google Drive: ${err?.message || err}`);
+    // Hapus dari data-store.json backend & catat tombstone
+    const serverDeletePromise = fetch(`/api/sync-submissions/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    })
+      .then((res) => res.ok)
+      .catch((err) => {
+        console.warn('Gagal hapus voucher dari backup server:', err);
+        return false;
       });
-    } else if (targetSub) {
-      setCloudSyncNotice(`✅ Voucher "${targetSub.kode || targetSub.dibayarkanKepada}" dihapus dari aplikasi (folder Drive dipertahankan).`);
-      setTimeout(() => setCloudSyncNotice(null), 4000);
-    }
+
+    // Hapus langsung dari Cloud Firestore (menunggu hasil sebenarnya agar status akurat)
+    const firestoreDeletePromise = isFirebaseConfigured()
+      ? deleteSubmissionFromFirestore(id)
+      : Promise.resolve({ deletedFromCloud: false, deletedDocIds: [], error: 'Firebase belum terkonfigurasi.' });
 
     // Re-sync pinjaman jika transaksi yang dihapus merupakan pinjaman
     if (targetSub && isLoanSubmission(targetSub)) {
@@ -2606,12 +2601,34 @@ export default function App() {
       } catch (e) {}
     }
 
-    if (isFirebaseConfigured()) {
-      try {
-        await deleteSubmissionFromFirestore(id);
-      } catch (err: any) {
-        console.warn('Gagal menghapus voucher di Firebase Firestore:', err);
+    const driveDeletePromise = (targetSub && shouldDeleteDrive)
+      ? deleteSubmissionDriveFolder(targetSub).catch((err) => ({
+          success: false,
+          needsAuth: false,
+          folderName: '',
+          message: err?.message || String(err)
+        }))
+      : Promise.resolve(null);
+
+    const [, fsRes, driveRes] = await Promise.all([
+      serverDeletePromise,
+      firestoreDeletePromise,
+      driveDeletePromise,
+    ]);
+
+    if (fsRes.deletedFromCloud) {
+      if (driveRes && driveRes.success) {
+        setCloudSyncNotice(`✅ Voucher "${targetLabel}" terhapus dari aplikasi, server, Cloud Firestore & folder Google Drive "${driveRes.folderName || ''}".`);
+        setTimeout(() => setCloudSyncNotice(null), 6000);
+      } else if (driveRes && driveRes.needsAuth) {
+        setCloudSyncNotice(`✅ Voucher "${targetLabel}" terhapus dari aplikasi, server & Cloud Firestore. (Google Drive belum terhubung untuk hapus folder: ${driveRes.message})`);
+      } else {
+        setCloudSyncNotice(`✅ Voucher "${targetLabel}" terhapus permanen dari aplikasi, server & Cloud Firestore.${driveRes ? ` (${driveRes.message})` : ''}`);
+        setTimeout(() => setCloudSyncNotice(null), 5000);
       }
+    } else {
+      const reason = fsRes.error || 'Koneksi / izin Cloud Firestore belum aktif';
+      setCloudSyncNotice(`⚠️ Voucher "${targetLabel}" terhapus dari aplikasi & server, namun Cloud Firestore belum terhapus (${reason}). Sistem akan otomatis menghapusnya di Firestore saat koneksi/kuota pulih.`);
     }
 
     if (targetSub) {

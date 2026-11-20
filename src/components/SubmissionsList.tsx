@@ -124,8 +124,16 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   const [deleteIncludeDrive, setDeleteIncludeDrive] = useState<boolean>(true);
   const didAutoExpandPeriodRef = useRef<boolean>(false);
 
-  // Filter khusus untuk hanya menampilkan potensi voucher dobel input atau status Firestore
-  const [showOnlyDuplicates, setShowOnlyDuplicates] = useState(false);
+  // Filter khusus untuk menampilkan transaksi duplikat (No-Kode atau Penerima + Nominal sama, baik tanggal sama maupun beda tanggal)
+  const [duplicateFilterMode, setDuplicateFilterMode] = useState<'all' | 'any_duplicate' | 'same_code' | 'same_recipient_nominal'>('all');
+  const showOnlyDuplicates = duplicateFilterMode !== 'all';
+  const setShowOnlyDuplicates = (updater: boolean | ((prev: boolean) => boolean)) => {
+    setDuplicateFilterMode((prevMode) => {
+      const prevBool = prevMode !== 'all';
+      const nextBool = typeof updater === 'function' ? updater(prevBool) : updater;
+      return nextBool ? 'any_duplicate' : 'all';
+    });
+  };
   const [showOnlyUnsynced, setShowOnlyUnsynced] = useState(false);
   const [firestoreFilter, setFirestoreFilter] = useState<'all' | 'synced' | 'unsynced'>('all');
   const [diffDateFilter, setDiffDateFilter] = useState<'all' | 'same_any_diff_date' | 'same_code_diff_date' | 'same_tx_diff_date'>('all');
@@ -263,6 +271,78 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
     });
     return ids;
   }, [duplicateClusters]);
+
+  // Deteksi transaksi duplikat menyeluruh (baik di tanggal yang sama maupun beda tanggal):
+  // 1) No-Kode Voucher yang sama (misal BKK-NMSA/XI/26/1017 muncul >1x)
+  // 2) Nama Penerima + Total Nominal yang sama persis
+  const duplicateInspection = useMemo(() => {
+    const codeGroups = new Map<string, Submission[]>();
+    const txGroups = new Map<string, Submission[]>();
+
+    (submissions || []).forEach((sub) => {
+      if (!sub || !sub.id) return;
+
+      const cleanKode = String(sub.kode || '').trim().toUpperCase();
+      if (cleanKode && cleanKode !== '-' && cleanKode !== 'HO' && cleanKode.length >= 3) {
+        const arr = codeGroups.get(cleanKode) || [];
+        arr.push(sub);
+        codeGroups.set(cleanKode, arr);
+      }
+
+      const subTotal = (sub.items || []).reduce((acc, it) => acc + (Number(it.total) || 0), 0) || (sub as any).nominal || 0;
+      const cleanRec = normalizeText(sub.dibayarkanKepada);
+      if (cleanRec && subTotal > 0) {
+        const txKey = `${cleanRec}_${subTotal}`;
+        const arr = txGroups.get(txKey) || [];
+        arr.push(sub);
+        txGroups.set(txKey, arr);
+      }
+    });
+
+    const sameCodeIds = new Set<string>();
+    const sameRecipientNominalIds = new Set<string>();
+    const groupSortKeyMap = new Map<string, string>();
+    const groupCountMap = new Map<string, number>();
+    let duplicateGroupCount = 0;
+
+    codeGroups.forEach((group, kodeKey) => {
+      if (group.length >= 2) {
+        duplicateGroupCount++;
+        group.forEach((s) => {
+          sameCodeIds.add(s.id);
+          groupSortKeyMap.set(s.id, `KODE:${kodeKey}`);
+          groupCountMap.set(s.id, group.length);
+        });
+      }
+    });
+
+    txGroups.forEach((group, txKey) => {
+      if (group.length >= 2) {
+        const anyNew = group.some((s) => !sameCodeIds.has(s.id));
+        if (anyNew) duplicateGroupCount++;
+        group.forEach((s) => {
+          sameRecipientNominalIds.add(s.id);
+          if (!groupSortKeyMap.has(s.id)) {
+            groupSortKeyMap.set(s.id, `TX:${txKey}`);
+            groupCountMap.set(s.id, group.length);
+          } else {
+            groupCountMap.set(s.id, Math.max(groupCountMap.get(s.id) || 0, group.length));
+          }
+        });
+      }
+    });
+
+    const allDuplicateIds = new Set<string>([...sameCodeIds, ...sameRecipientNominalIds]);
+
+    return {
+      sameCodeIds,
+      sameRecipientNominalIds,
+      allDuplicateIds,
+      groupSortKeyMap,
+      groupCountMap,
+      duplicateGroupCount,
+    };
+  }, [submissions]);
 
   // ID yang masih aktif (belum diberi tanda / dibuat setelah cutoff tanda):
   const activeDuplicateSubmissionIds = useMemo(() => {
@@ -783,9 +863,9 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
         }
       }
 
-      // Filter by Date, Month, Year (saat mode filter beda tanggal aktif, tampilkan lintas bulan/tahun agar pasangan terlihat jelas)
+      // Filter by Date, Month, Year (saat mode filter duplikat / beda tanggal aktif, tampilkan lintas bulan/tahun agar pasangan terlihat jelas)
       let matchDate = true;
-      if (diffDateFilter !== 'all') {
+      if (diffDateFilter !== 'all' || duplicateFilterMode !== 'all') {
         matchDate = !dateFilter || sub.tanggal === dateFilter;
       } else if (sub.tanggal) {
         const [y, m] = sub.tanggal.split('-'); // Format "YYYY-MM-DD"
@@ -799,7 +879,14 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
         matchDate = yearFilter === 'All' && monthFilter === 'All' && !dateFilter;
       }
 
-      const matchDuplicates = !showOnlyDuplicates || (activeDuplicateSubmissionIds.size > 0 ? activeDuplicateSubmissionIds.has(sub.id) : duplicateSubmissionIds.has(sub.id));
+      let matchDuplicates = true;
+      if (duplicateFilterMode === 'same_code') {
+        matchDuplicates = duplicateInspection.sameCodeIds.has(sub.id);
+      } else if (duplicateFilterMode === 'same_recipient_nominal') {
+        matchDuplicates = duplicateInspection.sameRecipientNominalIds.has(sub.id);
+      } else if (duplicateFilterMode === 'any_duplicate') {
+        matchDuplicates = duplicateInspection.allDuplicateIds.has(sub.id);
+      }
       const idLow = String(sub.id || '').toLowerCase().trim();
       const isRowUnsynced = Boolean(unsyncedSubmissionIds?.has(idLow));
       const isRowSynced = !isRowUnsynced && Boolean(hasCloudInventory && cloudSyncedIds?.has(idLow));
@@ -812,11 +899,17 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
       return matchSearch && matchMethod && matchStatus && matchDate && matchDuplicates && matchUnsynced && matchFirestoreFilter && matchDiffDate;
     });
 
-    // Sort descending by tanggal (latest date first), or group matching pairs together when diffDateFilter is active
+    // Sort descending by tanggal (latest date first), or group matching pairs together when duplicate / diffDate filter is active
     return list.sort((a, b) => {
       if (diffDateFilter !== 'all') {
         const keyA = diffDateDetection.groupSortKeyMap.get(a.id) || '';
         const keyB = diffDateDetection.groupSortKeyMap.get(b.id) || '';
+        if (keyA !== keyB) {
+          return keyA.localeCompare(keyB);
+        }
+      } else if (duplicateFilterMode !== 'all') {
+        const keyA = duplicateInspection.groupSortKeyMap.get(a.id) || '';
+        const keyB = duplicateInspection.groupSortKeyMap.get(b.id) || '';
         if (keyA !== keyB) {
           return keyA.localeCompare(keyB);
         }
@@ -846,7 +939,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
       // 4. Fallback to ID
       return b.id.localeCompare(a.id);
     });
-  }, [submissions, searchTerm, searchCategory, methodFilter, statusFilter, yearFilter, monthFilter, dateFilter, showOnlyDuplicates, showOnlyUnsynced, firestoreFilter, diffDateFilter, diffDateDetection, checkedDiffDateSet, unsyncedSubmissionIds, hasCloudInventory, cloudSyncedIds, activeDuplicateSubmissionIds, duplicateSubmissionIds]);
+  }, [submissions, searchTerm, searchCategory, methodFilter, statusFilter, yearFilter, monthFilter, dateFilter, duplicateFilterMode, duplicateInspection, showOnlyUnsynced, firestoreFilter, diffDateFilter, diffDateDetection, checkedDiffDateSet, unsyncedSubmissionIds, hasCloudInventory, cloudSyncedIds]);
 
   const unsyncedCount = useMemo(() => {
     if (!unsyncedSubmissionIds || unsyncedSubmissionIds.size === 0) return 0;
@@ -1766,37 +1859,65 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 </div>
               </div>
 
-              {/* Unified Filter: Status Firestore + Cek Kode / Transaksi Sama Beda Tanggal */}
+              {/* Unified Filter: Transaksi Duplikat + Status Firestore + Cek Kode / Transaksi Sama Beda Tanggal */}
               <div className="flex flex-col gap-1.5 w-full sm:w-auto">
                 <span className="text-[10px] font-bold text-stone-400 uppercase tracking-wider font-mono">Filter &amp; Cek Data</span>
                 <select
-                  className={`w-full sm:w-auto px-3 py-2 rounded-xl text-xs focus:ring-2 focus:outline-none sm:min-w-[195px] transition ${
-                    diffDateFilter !== 'all'
+                  className={`w-full sm:w-auto px-3 py-2 rounded-xl text-xs focus:ring-2 focus:outline-none sm:min-w-[205px] transition ${
+                    duplicateFilterMode !== 'all'
+                      ? 'bg-rose-50 border-2 border-rose-400 text-rose-950 font-bold focus:ring-rose-400'
+                      : diffDateFilter !== 'all'
                       ? 'bg-amber-50 border-2 border-amber-400 text-amber-950 font-bold focus:ring-amber-400'
                       : firestoreFilter !== 'all'
                       ? 'bg-sky-50 border-2 border-sky-400 text-sky-950 font-bold focus:ring-sky-400'
                       : 'bg-white border border-stone-250 text-stone-850 font-medium focus:ring-stone-400'
                   }`}
-                  value={diffDateFilter !== 'all' ? diffDateFilter : firestoreFilter}
+                  value={
+                    duplicateFilterMode !== 'all'
+                      ? `dup_${duplicateFilterMode}`
+                      : diffDateFilter !== 'all'
+                      ? diffDateFilter
+                      : firestoreFilter
+                  }
                   onChange={(e) => {
                     const val = e.target.value;
-                    if (val === 'same_any_diff_date' || val === 'same_code_diff_date' || val === 'same_tx_diff_date') {
+                    if (val === 'dup_any_duplicate' || val === 'dup_same_code' || val === 'dup_same_recipient_nominal') {
+                      const mode = val.replace('dup_', '') as 'any_duplicate' | 'same_code' | 'same_recipient_nominal';
+                      setDuplicateFilterMode(mode);
+                      setDiffDateFilter('all');
+                      setFirestoreFilter('all');
+                      setShowOnlyUnsynced(false);
+                    } else if (val === 'same_any_diff_date' || val === 'same_code_diff_date' || val === 'same_tx_diff_date') {
                       setDiffDateFilter(val);
+                      setDuplicateFilterMode('all');
                       setFirestoreFilter('all');
                       setShowOnlyUnsynced(false);
                     } else if (val === 'synced' || val === 'unsynced') {
                       setDiffDateFilter('all');
+                      setDuplicateFilterMode('all');
                       setFirestoreFilter(val);
                       setShowOnlyUnsynced(val === 'unsynced');
                     } else {
                       setDiffDateFilter('all');
+                      setDuplicateFilterMode('all');
                       setFirestoreFilter('all');
                       setShowOnlyUnsynced(false);
                     }
                   }}
-                  title="Saring status Cloud Firestore atau cari No-Kode / Transaksi sama namun berbeda tanggal"
+                  title="Saring transaksi duplikat, status Cloud Firestore, atau No-Kode/Transaksi sama beda tanggal"
                 >
                   <option value="all">Semua Data ({submissions.length})</option>
+                  <optgroup label="Filter Transaksi Duplikat (Semua Tanggal)">
+                    <option value="dup_any_duplicate">
+                      Semua Transaksi Duplikat ({duplicateInspection.allDuplicateIds.size})
+                    </option>
+                    <option value="dup_same_code">
+                      No-Kode Duplikat ({duplicateInspection.sameCodeIds.size})
+                    </option>
+                    <option value="dup_same_recipient_nominal">
+                      Penerima &amp; Nominal Sama ({duplicateInspection.sameRecipientNominalIds.size})
+                    </option>
+                  </optgroup>
                   <optgroup label="Cek Kode / Transaksi (Beda Tanggal)">
                     <option value="same_any_diff_date">
                       Kode / Transaksi Sama Beda Tgl ({diffDateDetection.uncheckedAnyCount})
@@ -1815,6 +1936,34 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                     <option value="unsynced">⏳ Belum di Firestore ({unsyncedCount})</option>
                   </optgroup>
                 </select>
+              </div>
+
+              {/* Quick One-Click Toggle Button: Filter Transaksi Duplikat */}
+              <div className="self-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (duplicateFilterMode !== 'all') {
+                      setDuplicateFilterMode('all');
+                    } else {
+                      setDuplicateFilterMode('any_duplicate');
+                      setDiffDateFilter('all');
+                      setFirestoreFilter('all');
+                      setShowOnlyUnsynced(false);
+                    }
+                  }}
+                  title="Tampilkan hanya transaksi yang terindikasi duplikat (No-Kode sama atau Penerima & Nominal sama) lintas tanggal"
+                  className={`px-3 py-2 text-xs font-bold font-mono rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-3xs whitespace-nowrap border ${
+                    duplicateFilterMode !== 'all'
+                      ? 'bg-rose-600 text-white border-rose-700 shadow-xs'
+                      : duplicateInspection.allDuplicateIds.size > 0
+                      ? 'bg-rose-50 hover:bg-rose-100 text-rose-800 border-rose-300'
+                      : 'bg-white hover:bg-stone-100 text-stone-600 border-stone-250'
+                  }`}
+                >
+                  <Layers size={13} />
+                  <span>Filter Duplikat ({duplicateInspection.allDuplicateIds.size})</span>
+                </button>
               </div>
             </div>
 
@@ -1846,23 +1995,60 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
         </div>
       )}
 
-      {/* Active Filter Notification: Potensi Dobel */}
+      {/* Active Filter Notification: Transaksi Duplikat */}
       {showOnlyDuplicates && (
-        <div className="p-3.5 bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-300 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-amber-950 font-sans shadow-3xs mb-4 animate-fade-in print:hidden">
+        <div className="p-3.5 bg-gradient-to-r from-rose-50 via-amber-50 to-orange-50 border-2 border-rose-300 rounded-2xl flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 text-xs text-stone-900 font-sans shadow-3xs mb-4 animate-fade-in print:hidden">
           <div className="flex items-start sm:items-center gap-2.5">
-            <div className="p-1.5 bg-amber-200 text-amber-900 rounded-xl shrink-0 border border-amber-300">
+            <div className="p-1.5 bg-rose-100 text-rose-700 rounded-xl shrink-0 border border-rose-300">
               <AlertTriangle size={18} />
             </div>
-            <div>
-              <span className="font-black text-amber-950 block sm:inline">
-                Mode Saring Dobel Aktif:
-              </span>{' '}
-              <span>
-                Menampilkan <strong>{filteredSubmissions.length} voucher</strong> yang terindikasi memiliki nama penerima & nominal yang sama persis di sistem.
-              </span>
+            <div className="space-y-1">
+              <div>
+                <span className="font-black text-rose-950 block sm:inline">
+                  Filter Transaksi Duplikat Aktif:
+                </span>{' '}
+                <span>
+                  Menampilkan <strong>{filteredSubmissions.length} voucher</strong> duplikat (dikelompokkan bersebelahan berdasarkan No-Kode atau Penerima &amp; Nominal yang sama, lintas seluruh bulan).
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                <button
+                  type="button"
+                  onClick={() => setDuplicateFilterMode('any_duplicate')}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold font-mono cursor-pointer border transition ${
+                    duplicateFilterMode === 'any_duplicate'
+                      ? 'bg-rose-600 text-white border-rose-700'
+                      : 'bg-white hover:bg-rose-50 text-stone-700 border-stone-300'
+                  }`}
+                >
+                  Semua Duplikat ({duplicateInspection.allDuplicateIds.size})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDuplicateFilterMode('same_code')}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold font-mono cursor-pointer border transition ${
+                    duplicateFilterMode === 'same_code'
+                      ? 'bg-rose-600 text-white border-rose-700'
+                      : 'bg-white hover:bg-rose-50 text-stone-700 border-stone-300'
+                  }`}
+                >
+                  No-Kode Sama ({duplicateInspection.sameCodeIds.size})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDuplicateFilterMode('same_recipient_nominal')}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold font-mono cursor-pointer border transition ${
+                    duplicateFilterMode === 'same_recipient_nominal'
+                      ? 'bg-rose-600 text-white border-rose-700'
+                      : 'bg-white hover:bg-rose-50 text-stone-700 border-stone-300'
+                  }`}
+                >
+                  Penerima &amp; Nominal Sama ({duplicateInspection.sameRecipientNominalIds.size})
+                </button>
+              </div>
             </div>
           </div>
-          <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+          <div className="flex items-center gap-2 shrink-0 self-end lg:self-auto">
             <button
               type="button"
               onClick={() => {
@@ -1877,7 +2063,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => setShowOnlyDuplicates(false)}
+              onClick={() => setDuplicateFilterMode('all')}
               className="px-3 py-1.5 bg-white hover:bg-stone-100 text-stone-700 font-bold border border-stone-300 rounded-xl text-xs transition cursor-pointer"
             >
               Tampilkan Semua
@@ -1973,6 +2159,15 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                                 : diffDateDetection.sameCodeIds.has(sub.id)
                                 ? 'Kode Sama Beda Tgl'
                                 : 'Transaksi Sama Beda Tgl'}
+                            </span>
+                          )}
+                          {duplicateFilterMode !== 'all' && (
+                            <span className="font-mono text-[9px] font-black bg-rose-100 text-rose-900 px-1.5 py-0.5 rounded border border-rose-300">
+                              {duplicateInspection.sameCodeIds.has(sub.id) && duplicateInspection.sameRecipientNominalIds.has(sub.id)
+                                ? `Kode & Nominal Duplikat (${duplicateInspection.groupCountMap.get(sub.id) || 2}x)`
+                                : duplicateInspection.sameCodeIds.has(sub.id)
+                                ? `No-Kode Duplikat (${duplicateInspection.groupCountMap.get(sub.id) || 2}x)`
+                                : `Penerima & Nominal Sama (${duplicateInspection.groupCountMap.get(sub.id) || 2}x)`}
                             </span>
                           )}
                           <span className="text-[10px] text-stone-500 font-medium truncate max-w-[130px]">
@@ -2311,6 +2506,15 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                                   : 'Transaksi Sama Beda Tgl'}
                               </span>
                             )}
+                            {duplicateFilterMode !== 'all' && (
+                              <span className="inline-block font-mono text-[9px] font-black bg-rose-100 text-rose-900 px-1.5 py-0.5 rounded border border-rose-300">
+                                {duplicateInspection.sameCodeIds.has(sub.id) && duplicateInspection.sameRecipientNominalIds.has(sub.id)
+                                  ? `Kode & Nominal Duplikat (${duplicateInspection.groupCountMap.get(sub.id) || 2}x)`
+                                  : duplicateInspection.sameCodeIds.has(sub.id)
+                                  ? `No-Kode Duplikat (${duplicateInspection.groupCountMap.get(sub.id) || 2}x)`
+                                  : `Penerima & Nominal Sama (${duplicateInspection.groupCountMap.get(sub.id) || 2}x)`}
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td className="py-4.5 px-6">
@@ -2501,7 +2705,9 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                     <td colSpan={7} className="py-12 px-4 text-center">
                       <div className="space-y-3">
                         <p className="text-sm font-bold text-stone-600">
-                          {diffDateFilter !== 'all'
+                          {duplicateFilterMode !== 'all'
+                            ? 'Tidak ada transaksi duplikat pada filter yang dipilih.'
+                            : diffDateFilter !== 'all'
                             ? 'Semua transaksi dengan No-Kode / Transaksi sama (beda tanggal) sudah di-check atau tidak ditemukan.'
                             : submissions.length > 0
                             ? `Tidak ada transaksi pada periode ${monthFilter === 'All' ? 'Semua Bulan' : MONTHS_LIST.find(m => m.value === monthFilter)?.label || monthFilter} ${yearFilter === 'All' ? 'Semua Tahun' : yearFilter}.`
@@ -2519,6 +2725,9 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                                 setMonthFilter('All');
                                 setYearFilter('All');
                                 setDiffDateFilter('all');
+                                setDuplicateFilterMode('all');
+                                setFirestoreFilter('all');
+                                setShowOnlyUnsynced(false);
                                 try { sessionStorage.setItem('sublist_hasCustomPeriodFilter', 'true'); } catch (_) {}
                               }}
                               className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-stone-950 font-bold text-xs transition cursor-pointer"
