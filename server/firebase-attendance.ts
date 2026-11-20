@@ -33,10 +33,15 @@ let firebaseApp: any = null;
 let firestoreDb: any = null;
 let firebaseAuth: any = null;
 
-// Server-side Firestore quota guard
+// Server-side Firestore quota & permission-denied guards
 let isServerQuotaExceeded = false;
 let lastServerQuotaExceededTime = 0;
 const SERVER_QUOTA_COOLDOWN_MS = 60 * 60 * 1000;
+
+let isServerPermissionDenied = false;
+let lastServerPermissionDeniedTime = 0;
+const SERVER_PERMISSION_COOLDOWN_MS = 15 * 60 * 1000;
+let loggedMissingServerAuthNotice = false;
 
 export function checkServerQuotaExceeded(): boolean {
   if (!isServerQuotaExceeded) return false;
@@ -56,6 +61,42 @@ export function markServerQuotaExceeded(err: any) {
     isServerQuotaExceeded = true;
     lastServerQuotaExceededTime = Date.now();
   }
+}
+
+export function isPermissionDeniedError(err: any): boolean {
+  const errStr = String(err?.message || err?.code || err || '');
+  return (
+    err?.code === 'permission-denied' ||
+    err?.code === 7 ||
+    errStr.includes('PERMISSION_DENIED') ||
+    errStr.includes('permission-denied') ||
+    errStr.includes('insufficient permissions')
+  );
+}
+
+export function checkServerPermissionDenied(): boolean {
+  if (!isServerPermissionDenied) return false;
+  if (Date.now() - lastServerPermissionDeniedTime > SERVER_PERMISSION_COOLDOWN_MS) {
+    isServerPermissionDenied = false;
+    return false;
+  }
+  return true;
+}
+
+export function markServerPermissionDenied(err: any) {
+  if (isPermissionDeniedError(err)) {
+    if (!isServerPermissionDenied) {
+      console.warn('⚠️ [Server Firestore Auth/Rules Guard] Akses Firestore di server ditolak (PERMISSION_DENIED). Sinkronisasi server ke Firestore ditangguhkan sementara; sinkronisasi browser tetap aktif untuk user yang sudah login.');
+    }
+    isServerPermissionDenied = true;
+    lastServerPermissionDeniedTime = Date.now();
+  }
+}
+
+export function hasConfiguredServerAuthCredentials(): boolean {
+  const email = process.env.FIREBASE_ADMIN_EMAIL || process.env.FIREBASE_AUTH_EMAIL;
+  const password = process.env.FIREBASE_ADMIN_PASSWORD || process.env.FIREBASE_AUTH_PASSWORD;
+  return Boolean(email && password);
 }
 
 export function initFirebaseFirestore() {
@@ -109,6 +150,7 @@ export async function ensureServerAuth(): Promise<any> {
     const password = process.env.FIREBASE_ADMIN_PASSWORD || process.env.FIREBASE_AUTH_PASSWORD;
     if (email && password && firebaseAuth) {
       const cred = await signInWithEmailAndPassword(firebaseAuth, email, password);
+      isServerPermissionDenied = false;
       console.log(`[Firebase] Server successfully authenticated as ${cred.user.email}`);
       return cred.user;
     }
@@ -125,12 +167,19 @@ export async function syncAttendanceToFirestore(state: {
   weeklyReports?: any[];
   attendanceLogs?: any[];
 }) {
-  if (checkServerQuotaExceeded()) return false;
+  if (checkServerQuotaExceeded() || checkServerPermissionDenied()) return false;
   const db = initFirebaseFirestore();
   if (!db) return false;
 
-  // Ensure server auth if available (optional for attendance collection)
-  await ensureServerAuth();
+  // Wajib ada sesi Firebase Auth di server karena firestore.rules mewajibkan request.auth != null
+  const serverUser = await ensureServerAuth();
+  if (!serverUser) {
+    if (!loggedMissingServerAuthNotice) {
+      loggedMissingServerAuthNotice = true;
+      console.info("[Firebase] Server auto-sync ke Firestore dilewati karena sesi Firebase Auth server belum dikonfigurasi (sinkronisasi Firestore dijalankan langsung dari browser user yang login).");
+    }
+    return false;
+  }
 
   try {
     const timestamp = new Date().toISOString();
@@ -168,7 +217,7 @@ export async function syncAttendanceToFirestore(state: {
     }
 
     // 2. Keep attendance/workers_master safely merged with any newer cloud workers
-    if (Array.isArray(state.workers) && state.workers.length > 0) {
+    if (Array.isArray(state.workers) && state.workers.length > 0 && !checkServerPermissionDenied()) {
       try {
         const wmRef = doc(db, "attendance", "workers_master");
         const wmSnap = await getDoc(wmRef).catch(() => null);
@@ -202,6 +251,7 @@ export async function syncAttendanceToFirestore(state: {
         }, { merge: true });
       } catch (wmErr: any) {
         markServerQuotaExceeded(wmErr);
+        markServerPermissionDenied(wmErr);
       }
     }
 
@@ -210,19 +260,24 @@ export async function syncAttendanceToFirestore(state: {
 
   } catch (err: any) {
     markServerQuotaExceeded(err);
-    console.warn("[Firebase] Notice during attendance Firestore sync:", err.message);
+    markServerPermissionDenied(err);
+    if (!isPermissionDeniedError(err)) {
+      console.warn("[Firebase] Notice during attendance Firestore sync:", err.message);
+    }
     return false;
   }
 }
 
 // 2. Restore attendance state from Firestore on startup
 export async function restoreAttendanceFromFirestore(currentState: any): Promise<any> {
-  if (checkServerQuotaExceeded()) return currentState;
+  if (checkServerQuotaExceeded() || checkServerPermissionDenied()) return currentState;
   const db = initFirebaseFirestore();
   if (!db) return currentState;
 
-  // Ensure server auth if available (optional for attendance collection)
-  await ensureServerAuth();
+  const serverUser = await ensureServerAuth();
+  if (!serverUser) {
+    return currentState;
+  }
 
   try {
     console.log("[Firebase] Checking Firestore for saved attendance data...");
@@ -409,18 +464,28 @@ export async function restoreAttendanceFromFirestore(currentState: any): Promise
     return hasChanges ? updated : currentState;
   } catch (err: any) {
     markServerQuotaExceeded(err);
-    console.warn("[Firebase] Notice restoring attendance from Firestore:", err.message);
+    markServerPermissionDenied(err);
+    if (!isPermissionDeniedError(err)) {
+      console.warn("[Firebase] Notice restoring attendance from Firestore:", err.message);
+    }
     return currentState;
   }
 }
 
 // 3. Sync NPWP master records to Firestore
 export async function syncNpwpToFirestore(npwpRecords: any[]): Promise<boolean> {
-  if (checkServerQuotaExceeded()) return false;
+  if (checkServerQuotaExceeded() || checkServerPermissionDenied()) return false;
   const db = initFirebaseFirestore();
   if (!db) return false;
 
-  await ensureServerAuth();
+  const serverUser = await ensureServerAuth();
+  if (!serverUser) {
+    if (!loggedMissingServerAuthNotice) {
+      loggedMissingServerAuthNotice = true;
+      console.info("[Firebase] Server auto-sync ke Firestore dilewati karena sesi Firebase Auth server belum dikonfigurasi (sinkronisasi Firestore dijalankan langsung dari browser user yang login).");
+    }
+    return false;
+  }
 
   try {
     const timestamp = new Date().toISOString();
@@ -435,6 +500,7 @@ export async function syncNpwpToFirestore(npwpRecords: any[]): Promise<boolean> 
 
     // 2. Granular docs in npwp_records collection for each record
     for (const record of list) {
+      if (checkServerQuotaExceeded() || checkServerPermissionDenied()) break;
       if (record && record.id) {
         await setDoc(doc(db, "npwp_records", String(record.id)), {
           ...record,
@@ -447,18 +513,24 @@ export async function syncNpwpToFirestore(npwpRecords: any[]): Promise<boolean> 
     return true;
   } catch (err: any) {
     markServerQuotaExceeded(err);
-    console.warn("[Firebase] Error during NPWP Firestore sync:", err.message);
+    markServerPermissionDenied(err);
+    if (!isPermissionDeniedError(err)) {
+      console.warn("[Firebase] Error during NPWP Firestore sync:", err.message);
+    }
     return false;
   }
 }
 
 // 4. Restore NPWP records from Firestore
 export async function restoreNpwpFromFirestore(currentState: any): Promise<any> {
-  if (checkServerQuotaExceeded()) return currentState;
+  if (checkServerQuotaExceeded() || checkServerPermissionDenied()) return currentState;
   const db = initFirebaseFirestore();
   if (!db) return currentState;
 
-  await ensureServerAuth();
+  const serverUser = await ensureServerAuth();
+  if (!serverUser) {
+    return currentState;
+  }
 
   try {
     console.log("[Firebase] Checking Firestore for saved NPWP records...");
@@ -477,11 +549,14 @@ export async function restoreNpwpFromFirestore(currentState: any): Promise<any> 
       }
     } catch (e: any) {
       markServerQuotaExceeded(e);
-      console.warn("[Firebase] Could not fetch master_records:", e.message);
+      markServerPermissionDenied(e);
+      if (!isPermissionDeniedError(e)) {
+        console.warn("[Firebase] Could not fetch master_records:", e.message);
+      }
     }
 
     // Check app_settings/general if not found yet
-    if (cloudRecords.length === 0 && !checkServerQuotaExceeded()) {
+    if (cloudRecords.length === 0 && !checkServerQuotaExceeded() && !checkServerPermissionDenied()) {
       try {
         const setSnap = await getDoc(doc(db, "app_settings", "general"));
         if (setSnap.exists()) {
@@ -492,11 +567,12 @@ export async function restoreNpwpFromFirestore(currentState: any): Promise<any> 
         }
       } catch (e) {
         markServerQuotaExceeded(e);
+        markServerPermissionDenied(e);
       }
     }
 
     // Fallback: list all docs in npwp_records collection
-    if (cloudRecords.length === 0 && !checkServerQuotaExceeded()) {
+    if (cloudRecords.length === 0 && !checkServerQuotaExceeded() && !checkServerPermissionDenied()) {
       try {
         const colSnap = await getDocs(collection(db, "npwp_records"));
         colSnap.forEach((d) => {
@@ -506,6 +582,7 @@ export async function restoreNpwpFromFirestore(currentState: any): Promise<any> 
         });
       } catch (e) {
         markServerQuotaExceeded(e);
+        markServerPermissionDenied(e);
       }
     }
 
@@ -531,7 +608,10 @@ export async function restoreNpwpFromFirestore(currentState: any): Promise<any> 
     return hasChanges ? updated : currentState;
   } catch (err: any) {
     markServerQuotaExceeded(err);
-    console.warn("[Firebase] Notice restoring NPWP from Firestore:", err.message);
+    markServerPermissionDenied(err);
+    if (!isPermissionDeniedError(err)) {
+      console.warn("[Firebase] Notice restoring NPWP from Firestore:", err.message);
+    }
     return currentState;
   }
 }

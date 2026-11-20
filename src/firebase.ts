@@ -789,6 +789,12 @@ export const initializeFirebaseApp = (customConfig?: any): boolean => {
     onAuthStateChanged(firebaseAuth, (user) => {
       currentUser = user;
       console.log('📡 Auth State Modified. User logged in:', user?.email || 'NONE');
+      if (user) {
+        resetFirestorePermissionDenied();
+        if (!isFirestoreQuotaExceeded()) {
+          testConnection();
+        }
+      }
     });
 
     console.log('✅ Firebase initialized successfully with project:', config.projectId);
@@ -797,9 +803,6 @@ export const initializeFirebaseApp = (customConfig?: any): boolean => {
     if (isFirestoreQuotaExceeded()) {
       console.log('ℹ️ [Firestore Init] Kuota harian Firestore sedang dalam masa cooldown. Jaringan dinonaktifkan untuk mencegah gRPC Write stream errors.');
       disableNetwork(firestoreDb).catch(() => {});
-    } else {
-      // Asynchronously validate connection to Firestore only if quota not exceeded
-      testConnection();
     }
     return true;
   } catch (e) {
@@ -813,11 +816,14 @@ export const initializeFirebaseApp = (customConfig?: any): boolean => {
 
 // Asynchronously validate connection
 async function testConnection() {
-  if (!firestoreDb || isFirestoreQuotaExceeded()) return;
+  if (!firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) return;
   try {
     await getDocFromServer(doc(firestoreDb, 'test', 'connection'));
     console.log('📡 Firestore database connection status: ACTIVE');
-  } catch (error) {
+  } catch (error: any) {
+    if (isFirestorePermissionError(error)) {
+      return;
+    }
     if (error instanceof Error && error.message.includes('the client is offline')) {
       console.warn("Please check your Firebase configuration or network status.");
     }
@@ -852,6 +858,13 @@ if (typeof window !== 'undefined') {
     ) {
       markFirestoreQuotaExceeded(fullMsg);
       console.warn('⚠️ [Firestore Quota Guard] GrpcConnection stream quota error intercepted. Mengalihkan ke mode lokal & menutup stream jaringan.');
+      return;
+    }
+    if (
+      (fullMsg.includes('PERMISSION_DENIED') || fullMsg.includes('Missing or insufficient permissions') || fullMsg.includes('Code: 7')) &&
+      (fullMsg.includes('Firestore') || fullMsg.includes('@firebase/firestore') || fullMsg.includes('GrpcConnection'))
+    ) {
+      markFirestorePermissionDenied(fullMsg);
       return;
     }
     originalConsoleError.apply(console, args);
@@ -938,6 +951,46 @@ export const resetFirestoreQuotaCooldown = async () => {
       await enableNetwork(firestoreDb);
     } catch (_) {}
   }
+};
+
+// Guard auth & permission-denied state across Firestore operations
+let lastPermissionDeniedTime = 0;
+const PERMISSION_DENIED_COOLDOWN_MS = 60 * 1000;
+
+export const hasAuthenticatedFirebaseUser = (): boolean => {
+  return Boolean(firebaseAuth?.currentUser || currentUser);
+};
+
+export const isFirestorePermissionError = (err?: any): boolean => {
+  const errStr = String(err?.message || err?.code || err || '');
+  return (
+    err?.code === 'permission-denied' ||
+    err?.code === 7 ||
+    errStr.includes('PERMISSION_DENIED') ||
+    errStr.includes('permission-denied') ||
+    errStr.includes('insufficient permissions')
+  );
+};
+
+export const isFirestorePermissionDenied = (): boolean => {
+  return lastPermissionDeniedTime > 0 && (Date.now() - lastPermissionDeniedTime < PERMISSION_DENIED_COOLDOWN_MS);
+};
+
+export const markFirestorePermissionDenied = (err?: any) => {
+  if (isFirestorePermissionError(err)) {
+    const wasDenied = isFirestorePermissionDenied();
+    lastPermissionDeniedTime = Date.now();
+    if (!wasDenied) {
+      console.warn('⚠️ [Firestore Rules Guard] Penulisan/pembacaan Firestore diblokir oleh Security Rules (PERMISSION_DENIED). Pastikan user sudah login dan Firestore Rules telah dipublikasikan di Firebase Console.');
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('firestore-permission-denied'));
+      }
+    }
+  }
+};
+
+export const resetFirestorePermissionDenied = () => {
+  lastPermissionDeniedTime = 0;
 };
 
 // ═════════════════════════════════════════════════════════════════════
@@ -2895,6 +2948,14 @@ export const loadSubmissionsFromFirestoreSafe = async (
       errorCode: 'not-configured'
     };
   }
+  if (!hasAuthenticatedFirebaseUser()) {
+    return {
+      list: [],
+      ok: false,
+      error: 'Sesi login Firebase belum aktif.',
+      errorCode: 'unauthenticated'
+    };
+  }
 
   const path = 'submissions';
   try {
@@ -2933,6 +2994,7 @@ export const loadSubmissionsFromFirestoreSafe = async (
     };
   } catch (error: any) {
     markFirestoreQuotaExceeded(error);
+    markFirestorePermissionDenied(error);
     const errorCode = error?.code || '';
     const errorMsg = error?.message || String(error);
     console.warn(`⚠️ [Firestore Safe Load] Gagal membaca koleksi "${path}" (${errorCode}):`, errorMsg);
@@ -2964,7 +3026,7 @@ export const subscribeToSubmissionsFromFirestore = (
   onUpdate: (cloudSubmissions: Submission[]) => void,
   onError?: (err: any) => void
 ): (() => void) => {
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) {
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) {
     return () => {};
   }
   const targetComp = normalizeCompanyKey(companyId || 'nmsa');
@@ -3176,11 +3238,11 @@ export const flushFirestoreQueue = async (): Promise<{ processed: number; remain
     return { processed: 0, remaining: 0 };
   }
 
-  if (!isFirebaseConfigured() || !firestoreDb) {
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser()) {
     return { processed: 0, remaining: firestoreWriteQueue.length };
   }
 
-  if (isFirestoreQuotaExceeded()) {
+  if (isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) {
     return { processed: 0, remaining: firestoreWriteQueue.length };
   }
 
@@ -3194,8 +3256,8 @@ export const flushFirestoreQueue = async (): Promise<{ processed: number; remain
 
   try {
     while (firestoreWriteQueue.length > 0) {
-      if (isFirestoreQuotaExceeded()) {
-        if (firestoreDb) disableNetwork(firestoreDb).catch(() => {});
+      if (isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) {
+        if (isFirestoreQuotaExceeded() && firestoreDb) disableNetwork(firestoreDb).catch(() => {});
         break;
       }
 
@@ -3212,6 +3274,7 @@ export const flushFirestoreQueue = async (): Promise<{ processed: number; remain
       } catch (err: any) {
         console.warn(`[Firestore Queue] Gagal sinkronisasi data ${item.id}:`, err?.message || err);
         markFirestoreQuotaExceeded(err);
+        markFirestorePermissionDenied(err);
         
         item.retries = (item.retries || 0) + 1;
         persistFirestoreQueue();
@@ -3270,6 +3333,13 @@ export const saveSubmissionToFirestore = async (
     };
   }
 
+  if (!hasAuthenticatedFirebaseUser()) {
+    return {
+      syncedToCloud: false,
+      error: 'Sesi login Firebase Auth belum aktif. Silakan login terlebih dahulu.'
+    };
+  }
+
   if (isFirestoreQuotaExceeded()) {
     return {
       syncedToCloud: false,
@@ -3281,12 +3351,14 @@ export const saveSubmissionToFirestore = async (
     await enableNetwork(firestoreDb).catch(() => {});
     await setDoc(doc(firestoreDb, path, safeDocId), cleanedPayload, { merge: true });
     recordFirestoreWrites(1);
+    resetFirestorePermissionDenied();
     console.log(`☁️ [Firestore Direct] Voucher ${stampedSubmission.kode || stampedSubmission.id} langsung tersimpan ke Firebase Firestore.`);
     return { syncedToCloud: true };
   } catch (error: any) {
     markFirestoreQuotaExceeded(error);
+    markFirestorePermissionDenied(error);
     const msg = error?.message || String(error);
-    console.error(`❌ [Firestore Direct] Gagal menyimpan voucher (${safeDocId}):`, msg);
+    console.warn(`⚠️ [Firestore Direct] Gagal menyimpan voucher (${safeDocId}):`, msg);
     return { syncedToCloud: false, error: msg };
   }
 };
@@ -3306,6 +3378,9 @@ export const saveSubmissionsBatchToFirestore = async (
   if (!isFirebaseConfigured() || !firestoreDb) {
     return { success: false, count: 0, error: 'Firebase Firestore belum terhubung.' };
   }
+  if (!hasAuthenticatedFirebaseUser()) {
+    return { success: false, count: 0, error: 'Sesi login Firebase Auth belum aktif. Silakan login ulang.' };
+  }
   if (isFirestoreQuotaExceeded()) {
     return { success: false, count: 0, error: 'Kuota Firestore sedang cooldown sementara.' };
   }
@@ -3319,6 +3394,7 @@ export const saveSubmissionsBatchToFirestore = async (
   let lastError = '';
 
   for (let i = 0; i < submissions.length; i += BATCH_SIZE) {
+    if (isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) break;
     const chunk = submissions.slice(i, i + BATCH_SIZE);
     const batch = writeBatch(firestoreDb);
 
@@ -3340,11 +3416,17 @@ export const saveSubmissionsBatchToFirestore = async (
       await batch.commit();
       totalSaved += chunk.length;
       recordFirestoreWrites(chunk.length);
+      resetFirestorePermissionDenied();
       console.log(`☁️ Batch saved ${chunk.length} submissions directly to Firestore.`);
     } catch (err: any) {
       lastError = err?.message || String(err);
+      if (isFirestorePermissionError(err)) {
+        markFirestorePermissionDenied(err);
+        break;
+      }
       console.warn('Batch write fallback -> trying per-document direct writes for chunk:', err);
       for (const sub of chunk) {
+        if (isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) break;
         const payload = cleanUndefined(
           mapSubmissionToFirestore(
             sub,
@@ -3364,7 +3446,9 @@ export const saveSubmissionsBatchToFirestore = async (
         } catch (docErr: any) {
           lastError = docErr?.message || String(docErr);
           markFirestoreQuotaExceeded(docErr);
+          markFirestorePermissionDenied(docErr);
           console.warn(`⚠️ Gagal simpan individu voucher ${sub.kode || docId}:`, docErr);
+          if (isFirestorePermissionError(docErr)) break;
         }
       }
     }
@@ -3379,6 +3463,7 @@ export const restoreSubmissionsToFirestore = async (
   companyId: string = 'nmsa',
   companyName: string = 'PT Nusantara Mineral Sukses Abadi'
 ): Promise<{ successCount: number; total: number; error?: string }> => {
+  resetFirestorePermissionDenied();
   await resetFirestoreQuotaCooldown().catch(() => {});
   const targetComp = normalizeCompanyKey(companyId || 'nmsa');
   const validSubs = (submissions || []).filter((s) => s && s.id);
@@ -3566,7 +3651,7 @@ export const loadNpwpRecordsFromFirestore = async (): Promise<NpwpRecord[]> => {
   const delSet = new Set(deletedList);
   const localRecords = readLocalNpwpBackup(delSet);
 
-  if (!isFirebaseConfigured() || !firestoreDb) {
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) {
     return localRecords;
   }
 
@@ -3631,7 +3716,11 @@ export const loadNpwpRecordsFromFirestore = async (): Promise<NpwpRecord[]> => {
     }
     return merged;
   } catch (error) {
-    console.warn('Gagal memuat data NPWP dari Firestore:', error);
+    markFirestoreQuotaExceeded(error);
+    markFirestorePermissionDenied(error);
+    if (!isFirestorePermissionError(error)) {
+      console.warn('Gagal memuat data NPWP dari Firestore:', error);
+    }
     return localRecords;
   }
 };
@@ -3640,7 +3729,7 @@ export const loadNpwpRecordsFromFirestore = async (): Promise<NpwpRecord[]> => {
 export const subscribeToNpwpRecordsFromFirestore = (
   onUpdate: (records: NpwpRecord[]) => void
 ): (() => void) => {
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return () => {};
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) return () => {};
   try {
     const unsub = onSnapshot(collection(firestoreDb, 'npwp_records'), (snapshot) => {
       if (snapshot.empty && snapshot.metadata?.fromCache) {
@@ -3682,7 +3771,10 @@ export const subscribeToNpwpRecordsFromFirestore = (
       onUpdate(merged);
     }, (error) => {
       markFirestoreQuotaExceeded(error);
-      console.warn('Real-time listener notice for npwp_records:', error);
+      markFirestorePermissionDenied(error);
+      if (!isFirestorePermissionError(error)) {
+        console.warn('Real-time listener notice for npwp_records:', error);
+      }
     });
     return unsub;
   } catch (err) {
@@ -3722,7 +3814,7 @@ export const saveSingleNpwpRecordToFirestore = async (record: NpwpRecord): Promi
   } catch (_) {}
 
   // 3. Write ONLY single document to Firestore (hanya 1 penulisan)
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return;
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) return;
   const path = 'npwp_records';
   try {
     await setDoc(doc(firestoreDb, path, record.id), cleanUndefined(record), { merge: true });
@@ -3730,7 +3822,10 @@ export const saveSingleNpwpRecordToFirestore = async (record: NpwpRecord): Promi
     console.log(`☁️ [NPWP Firestore] Dokumen NPWP "${record.companyName}" (${record.id}) berhasil disimpan ke Firestore.`);
   } catch (error) {
     markFirestoreQuotaExceeded(error);
-    console.warn('Gagal menyimpan single NPWP ke Firestore:', error);
+    markFirestorePermissionDenied(error);
+    if (!isFirestorePermissionError(error)) {
+      console.warn('Gagal menyimpan single NPWP ke Firestore:', error);
+    }
   }
 };
 
@@ -3751,21 +3846,27 @@ export const saveNpwpRecordsToFirestore = async (records: NpwpRecord[]): Promise
     }).catch(() => {});
   } catch {}
 
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return;
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) return;
 
   const path = 'npwp_records';
   try {
-    // 2. Save each record into npwp_records collection
-    for (const rec of records) {
-      if (rec.id) {
-        await setDoc(doc(firestoreDb, path, rec.id), cleanUndefined(rec), { merge: true });
-      }
-    }
-    recordFirestoreWrites(records.length);
-    console.log(`☁️ ${records.length} NPWP records synced to Firestore.`);
+    // 2. Save records in npwp_records collection (batch for efficiency, breaks cleanly on first permission/quota error)
+    const validRecords = (records || []).filter((r) => r && r.id);
+    if (validRecords.length === 0) return;
+
+    const batch = writeBatch(firestoreDb);
+    validRecords.slice(0, 400).forEach((rec) => {
+      batch.set(doc(firestoreDb!, path, rec.id), cleanUndefined(rec), { merge: true });
+    });
+    await batch.commit();
+    recordFirestoreWrites(Math.min(validRecords.length, 400));
+    console.log(`☁️ ${Math.min(validRecords.length, 400)} NPWP records synced to Firestore.`);
   } catch (error) {
     markFirestoreQuotaExceeded(error);
-    console.warn('Gagal menyimpan NPWP ke Firestore:', error);
+    markFirestorePermissionDenied(error);
+    if (!isFirestorePermissionError(error)) {
+      console.warn('Gagal menyimpan NPWP ke Firestore:', error);
+    }
   }
 };
 
@@ -3999,14 +4100,17 @@ export const deleteNpwpRecordFromFirestore = async (id: string): Promise<void> =
     console.warn('Gagal menghapus NPWP dari localStorage:', e);
   }
 
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return;
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) return;
   try {
     await deleteDoc(doc(firestoreDb, 'npwp_records', id));
     recordFirestoreDeletes(1);
     console.log(`🗑️ [NPWP Firestore] Dokumen tunggal NPWP ${id} berhasil dihapus dari Firestore.`);
   } catch (error) {
     markFirestoreQuotaExceeded(error);
-    console.warn('Gagal menghapus NPWP dari Firestore:', error);
+    markFirestorePermissionDenied(error);
+    if (!isFirestorePermissionError(error)) {
+      console.warn('Gagal menghapus NPWP dari Firestore:', error);
+    }
   }
 };
 
@@ -4125,7 +4229,7 @@ export const saveWorkersListToFirestore = async (
     }).catch(() => {});
   } catch (_) {}
 
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) {
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) {
     return false;
   }
 
@@ -4143,7 +4247,10 @@ export const saveWorkersListToFirestore = async (
     console.log(`☁️ [Workers Master Firestore] ${cleanList.length} karyawan berhasil disimpan permanen ke Firestore (attendance/workers_master).`);
   } catch (err: any) {
     markFirestoreQuotaExceeded(err);
-    console.warn('Notice menyimpan workers_master ke Firestore:', err?.message || err);
+    markFirestorePermissionDenied(err);
+    if (!isFirestorePermissionError(err)) {
+      console.warn('Notice menyimpan workers_master ke Firestore:', err?.message || err);
+    }
   }
 
   return savedToCloud;
@@ -4155,11 +4262,13 @@ export const loadWorkersFromFirestore = async (): Promise<Worker[]> => {
   let cloudCurrentWorkers: Worker[] = [];
   let cloudDeletedIds: string[] = getDeletedWorkerIds();
   let hadMasterDoc = false;
+  let masterReadOk = false;
 
   // 1. Coba baca dari Firestore (attendance/workers_master, attendance/current_records, dan koleksi workers)
-  if (isFirebaseConfigured() && firestoreDb && !isFirestoreQuotaExceeded()) {
+  if (isFirebaseConfigured() && firestoreDb && hasAuthenticatedFirebaseUser() && !isFirestoreQuotaExceeded() && !isFirestorePermissionDenied()) {
     try {
       const masterSnap = await getDoc(doc(firestoreDb, 'attendance', 'workers_master'));
+      masterReadOk = true;
       recordFirestoreReads(1);
       if (masterSnap.exists()) {
         hadMasterDoc = true;
@@ -4173,42 +4282,45 @@ export const loadWorkersFromFirestore = async (): Promise<Worker[]> => {
       }
     } catch (err: any) {
       markFirestoreQuotaExceeded(err);
+      markFirestorePermissionDenied(err);
     }
 
     // Baca koleksi 'workers' (opsional - tidak error jika rules hanya membuka /attendance)
-    try {
-      const snap = await getDocs(collection(firestoreDb, 'workers'));
-      if (!snap.empty) {
-        recordFirestoreReads(snap.size);
-        snap.forEach(d => {
-          const data = d.data() as Worker;
-          if (data && (data.id || d.id) && data.name) {
-            cloudDiscreteWorkers.push({
-              id: data.id || d.id,
-              name: data.name,
-              role: data.role || 'Karyawan',
-              isActive: data.isActive ?? true,
-              division: data.division,
-              bankName: data.bankName,
-              bankAccount: data.bankAccount,
-              phoneNumber: data.phoneNumber,
-              nik: data.nik,
-              photoUrl: data.photoUrl,
-              updatedAt: data.updatedAt
-            });
-          }
-        });
-      }
-    } catch (err: any) {
-      const msg = String(err?.message || err?.code || '');
-      if (!msg.includes('permission-denied') && !msg.includes('insufficient permissions')) {
-        markFirestoreQuotaExceeded(err);
-        console.warn('Notice membaca koleksi workers:', msg);
+    if (!isFirestoreQuotaExceeded() && !isFirestorePermissionDenied()) {
+      try {
+        const snap = await getDocs(collection(firestoreDb, 'workers'));
+        if (!snap.empty) {
+          recordFirestoreReads(snap.size);
+          snap.forEach(d => {
+            const data = d.data() as Worker;
+            if (data && (data.id || d.id) && data.name) {
+              cloudDiscreteWorkers.push({
+                id: data.id || d.id,
+                name: data.name,
+                role: data.role || 'Karyawan',
+                isActive: data.isActive ?? true,
+                division: data.division,
+                bankName: data.bankName,
+                bankAccount: data.bankAccount,
+                phoneNumber: data.phoneNumber,
+                nik: data.nik,
+                photoUrl: data.photoUrl,
+                updatedAt: data.updatedAt
+              });
+            }
+          });
+        }
+      } catch (err: any) {
+        const msg = String(err?.message || err?.code || '');
+        if (!isFirestorePermissionError(err)) {
+          markFirestoreQuotaExceeded(err);
+          console.warn('Notice membaca koleksi workers:', msg);
+        }
       }
     }
 
     // Jika workers_master belum ada atau kosong, baca juga dari attendance/current_records.workers
-    if (cloudMasterWorkers.length === 0) {
+    if (cloudMasterWorkers.length === 0 && !isFirestoreQuotaExceeded() && !isFirestorePermissionDenied()) {
       try {
         const curSnap = await getDoc(doc(firestoreDb, 'attendance', 'current_records'));
         recordFirestoreReads(1);
@@ -4220,6 +4332,7 @@ export const loadWorkersFromFirestore = async (): Promise<Worker[]> => {
         }
       } catch (err: any) {
         markFirestoreQuotaExceeded(err);
+        markFirestorePermissionDenied(err);
       }
     }
   }
@@ -4254,8 +4367,8 @@ export const loadWorkersFromFirestore = async (): Promise<Worker[]> => {
       }).catch(() => {});
     } catch (_) {}
 
-    // Otomatis seed attendance/workers_master jika belum pernah ada di Firestore
-    if (!hadMasterDoc && isFirebaseConfigured() && firestoreDb && !isFirestoreQuotaExceeded()) {
+    // Otomatis seed attendance/workers_master hanya jika pembacaan master berhasil & memang belum pernah ada doc-nya
+    if (masterReadOk && !hadMasterDoc && hasAuthenticatedFirebaseUser() && isFirebaseConfigured() && firestoreDb && !isFirestoreQuotaExceeded() && !isFirestorePermissionDenied()) {
       saveWorkersListToFirestore(finalWorkers, cloudDeletedIds).catch(() => {});
     }
 
@@ -4296,7 +4409,7 @@ export const loadWorkersFromFirestore = async (): Promise<Worker[]> => {
 export const subscribeToWorkersMasterFromFirestore = (
   onUpdate: (workers: Worker[], deletedIds: string[]) => void
 ): (() => void) => {
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) {
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) {
     return () => {};
   }
   try {
@@ -4315,6 +4428,7 @@ export const subscribeToWorkersMasterFromFirestore = (
       },
       (err) => {
         markFirestoreQuotaExceeded(err);
+        markFirestorePermissionDenied(err);
       }
     );
   } catch (_) {
@@ -4346,7 +4460,7 @@ export const saveWorkerToFirestore = async (worker: Worker): Promise<boolean> =>
     updatedList = [updatedWorker];
   }
 
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) {
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) {
     return false;
   }
 
@@ -4366,19 +4480,23 @@ export const saveWorkerToFirestore = async (worker: Worker): Promise<boolean> =>
     console.log(`☁️ [Worker Firestore] Karyawan "${updatedWorker.name}" (${updatedWorker.id}) tersimpan ke Firestore (workers_master).`);
   } catch (error) {
     markFirestoreQuotaExceeded(error);
-    console.warn(`Gagal menyimpan workers_master untuk ${updatedWorker.id}:`, error);
+    markFirestorePermissionDenied(error);
+    if (!isFirestorePermissionError(error)) {
+      console.warn(`Gagal menyimpan workers_master untuk ${updatedWorker.id}:`, error);
+    }
+    return false;
   }
 
-  // 3. Simpan juga ke koleksi 'workers/{id}' (opsional, tidak gagal jika rule belum aktif)
-  try {
-    const cleanWorker = cleanUndefined(updatedWorker);
-    await setDoc(doc(firestoreDb, 'workers', updatedWorker.id), cleanWorker, { merge: true });
-    recordFirestoreWrites(1);
-    saved = true;
-  } catch (error: any) {
-    const msg = String(error?.message || error?.code || '');
-    if (!msg.includes('permission-denied') && !msg.includes('insufficient permissions')) {
-      markFirestoreQuotaExceeded(error);
+  // 3. Simpan juga ke koleksi 'workers/{id}' jika workers_master berhasil
+  if (saved && !isFirestorePermissionDenied()) {
+    try {
+      const cleanWorker = cleanUndefined(updatedWorker);
+      await setDoc(doc(firestoreDb, 'workers', updatedWorker.id), cleanWorker, { merge: true });
+      recordFirestoreWrites(1);
+    } catch (error: any) {
+      if (!isFirestorePermissionError(error)) {
+        markFirestoreQuotaExceeded(error);
+      }
     }
   }
 
@@ -4408,7 +4526,7 @@ export const deleteWorkerFromFirestore = async (workerId: string): Promise<boole
     }
   } catch (_) {}
 
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) {
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) {
     return false;
   }
 
@@ -4427,18 +4545,22 @@ export const deleteWorkerFromFirestore = async (workerId: string): Promise<boole
     console.log(`🗑️ [Worker Firestore] Karyawan ${workerId} dihapus & dicatat di Firestore (workers_master).`);
   } catch (error) {
     markFirestoreQuotaExceeded(error);
-    console.warn(`Gagal memperbarui workers_master saat hapus ${workerId}:`, error);
+    markFirestorePermissionDenied(error);
+    if (!isFirestorePermissionError(error)) {
+      console.warn(`Gagal memperbarui workers_master saat hapus ${workerId}:`, error);
+    }
+    return false;
   }
 
   // 3. Hapus dokumen tunggal di koleksi 'workers' bila diizinkan
-  try {
-    await deleteDoc(doc(firestoreDb, 'workers', workerId));
-    recordFirestoreDeletes(1);
-    deleted = true;
-  } catch (error: any) {
-    const msg = String(error?.message || error?.code || '');
-    if (!msg.includes('permission-denied') && !msg.includes('insufficient permissions')) {
-      markFirestoreQuotaExceeded(error);
+  if (deleted && !isFirestorePermissionDenied()) {
+    try {
+      await deleteDoc(doc(firestoreDb, 'workers', workerId));
+      recordFirestoreDeletes(1);
+    } catch (error: any) {
+      if (!isFirestorePermissionError(error)) {
+        markFirestoreQuotaExceeded(error);
+      }
     }
   }
 
@@ -4607,7 +4729,7 @@ const mergeMemoListsSafely = (
 };
 
 const writeMemoMasterFallbackDoc = async (memosList: InternalMemo[], deletedIds: string[]): Promise<boolean> => {
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return false;
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) return false;
   try {
     const compactMemos = memosList.slice(0, 150).map(sanitizeMemoForMasterDoc);
     await setDoc(
@@ -4624,7 +4746,10 @@ const writeMemoMasterFallbackDoc = async (memosList: InternalMemo[], deletedIds:
     return true;
   } catch (err: any) {
     markFirestoreQuotaExceeded(err);
-    console.warn('⚠️ Notice menulis attendance/internal_memos_master:', err?.message || err);
+    markFirestorePermissionDenied(err);
+    if (!isFirestorePermissionError(err)) {
+      console.warn('⚠️ Notice menulis attendance/internal_memos_master:', err?.message || err);
+    }
     return false;
   }
 };
@@ -4651,7 +4776,7 @@ export const saveInternalMemoToFirestore = async (memo: InternalMemo): Promise<v
     }).catch(() => {});
   } catch (_) {}
 
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return;
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) return;
 
   let savedCollection = false;
   try {
@@ -4662,16 +4787,16 @@ export const saveInternalMemoToFirestore = async (memo: InternalMemo): Promise<v
     console.log(`☁️ [Internal Memo Firestore] Memo ${memo.nomorMemo} (${docId}) tersimpan ke Cloud Firestore.`);
   } catch (err: any) {
     const msg = String(err?.code || err?.message || '');
-    if (msg.includes('permission-denied') || msg.includes('insufficient permissions')) {
-      console.warn('⚠️ Koleksi internal_memos masih diblokir rules lama, otomatis sinkron ke attendance/internal_memos_master...');
+    if (isFirestorePermissionError(err)) {
+      console.warn('⚠️ Koleksi internal_memos masih diblokir rules lama, mencoba fallback attendance/internal_memos_master...');
     } else {
       markFirestoreQuotaExceeded(err);
       console.warn('⚠️ Gagal menyimpan memo ke koleksi internal_memos:', msg);
     }
   }
 
-  // Fallback langsung ke dokumen master di koleksi attendance (selalu diizinkan rules & sinkron lintas PC/HP)
-  if (!savedCollection) {
+  // Fallback langsung ke dokumen master di koleksi attendance (jika tidak sedang dalam cooldown global permission)
+  if (!savedCollection && !isFirestorePermissionDenied()) {
     await writeMemoMasterFallbackDoc(updatedLocal.length > 0 ? updatedLocal : [memo], deletedIds);
   }
 };
@@ -4689,7 +4814,7 @@ export const getInternalMemosFromFirestore = async (): Promise<InternalMemo[]> =
   const sources: InternalMemo[][] = [];
 
   // 1. Baca dari Cloud Firestore (koleksi internal_memos & attendance/internal_memos_master)
-  if (isFirebaseConfigured() && firestoreDb && !isFirestoreQuotaExceeded()) {
+  if (isFirebaseConfigured() && firestoreDb && hasAuthenticatedFirebaseUser() && !isFirestoreQuotaExceeded() && !isFirestorePermissionDenied()) {
     try {
       const masterSnap = await getDoc(doc(firestoreDb, 'attendance', MEMO_MASTER_DOC_ID));
       recordFirestoreReads(1);
@@ -4704,25 +4829,27 @@ export const getInternalMemosFromFirestore = async (): Promise<InternalMemo[]> =
       }
     } catch (err: any) {
       markFirestoreQuotaExceeded(err);
+      markFirestorePermissionDenied(err);
     }
 
-    try {
-      const snap = await getDocs(collection(firestoreDb, 'internal_memos'));
-      if (!snap.empty) {
-        recordFirestoreReads(snap.size);
-        const fsList: InternalMemo[] = [];
-        snap.forEach((d) => {
-          const data = d.data() as InternalMemo;
-          if (data && (data.id || d.id)) {
-            fsList.push({ ...data, id: data.id || d.id });
-          }
-        });
-        if (fsList.length > 0) sources.push(fsList);
-      }
-    } catch (err: any) {
-      const msg = String(err?.code || err?.message || '');
-      if (!msg.includes('permission-denied') && !msg.includes('insufficient permissions')) {
-        markFirestoreQuotaExceeded(err);
+    if (!isFirestorePermissionDenied() && !isFirestoreQuotaExceeded()) {
+      try {
+        const snap = await getDocs(collection(firestoreDb, 'internal_memos'));
+        if (!snap.empty) {
+          recordFirestoreReads(snap.size);
+          const fsList: InternalMemo[] = [];
+          snap.forEach((d) => {
+            const data = d.data() as InternalMemo;
+            if (data && (data.id || d.id)) {
+              fsList.push({ ...data, id: data.id || d.id });
+            }
+          });
+          if (fsList.length > 0) sources.push(fsList);
+        }
+      } catch (err: any) {
+        if (!isFirestorePermissionError(err)) {
+          markFirestoreQuotaExceeded(err);
+        }
       }
     }
   }
@@ -4757,7 +4884,7 @@ export const getInternalMemosFromFirestore = async (): Promise<InternalMemo[]> =
 export const subscribeToInternalMemosFromFirestore = (
   onUpdate: (memos: InternalMemo[]) => void
 ): (() => void) => {
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) {
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) {
     return () => {};
   }
 
@@ -4794,6 +4921,7 @@ export const subscribeToInternalMemosFromFirestore = (
       },
       (err: any) => {
         markFirestoreQuotaExceeded(err);
+        markFirestorePermissionDenied(err);
       }
     );
     unsubs.push(unsubMaster);
@@ -4815,8 +4943,7 @@ export const subscribeToInternalMemosFromFirestore = (
         emitMerged();
       },
       (err: any) => {
-        const msg = String(err?.code || err?.message || '');
-        if (!msg.includes('permission-denied') && !msg.includes('insufficient permissions')) {
+        if (!isFirestorePermissionError(err)) {
           markFirestoreQuotaExceeded(err);
         }
       }
@@ -4851,20 +4978,21 @@ export const deleteInternalMemoFromFirestore = async (id: string): Promise<void>
     apiFetch(`/api/internal-memos/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {});
   } catch (_) {}
 
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return;
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) return;
 
   try {
     await deleteDoc(doc(firestoreDb, 'internal_memos', sanitizeFirestoreDocId(id)));
     recordFirestoreDeletes(1);
   } catch (err: any) {
-    const msg = String(err?.code || err?.message || '');
-    if (!msg.includes('permission-denied') && !msg.includes('insufficient permissions')) {
+    if (!isFirestorePermissionError(err)) {
       markFirestoreQuotaExceeded(err);
     }
   }
 
   // Perbarui master doc agar penghapusan langsung tersinkron ke perangkat lain
-  await writeMemoMasterFallbackDoc(remaining, deletedIds).catch(() => {});
+  if (!isFirestorePermissionDenied()) {
+    await writeMemoMasterFallbackDoc(remaining, deletedIds).catch(() => {});
+  }
 };
 
 // --- Employee Loans Cloud Firestore + Local + Server Sync Methods ---
@@ -4938,7 +5066,7 @@ export const mergeEmployeeLoansSafely = (
 };
 
 const writeLoansMasterDoc = async (loansList: EmployeeLoan[], deletedIds: string[]): Promise<boolean> => {
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return false;
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) return false;
   try {
     const cleanLoans = cleanUndefined(loansList.slice(0, 200));
     await setDoc(
@@ -4955,7 +5083,10 @@ const writeLoansMasterDoc = async (loansList: EmployeeLoan[], deletedIds: string
     return true;
   } catch (err: any) {
     markFirestoreQuotaExceeded(err);
-    console.warn('⚠️ Notice menyimpan attendance/employee_loans_master:', err?.message || err);
+    markFirestorePermissionDenied(err);
+    if (!isFirestorePermissionError(err)) {
+      console.warn('⚠️ Notice menyimpan attendance/employee_loans_master:', err?.message || err);
+    }
     return false;
   }
 };
@@ -4970,7 +5101,7 @@ export const loadEmployeeLoansFromFirestore = async (): Promise<EmployeeLoan[] |
 
   const sources: EmployeeLoan[][] = [];
 
-  if (isFirebaseConfigured() && firestoreDb && !isFirestoreQuotaExceeded()) {
+  if (isFirebaseConfigured() && firestoreDb && hasAuthenticatedFirebaseUser() && !isFirestoreQuotaExceeded() && !isFirestorePermissionDenied()) {
     try {
       const masterSnap = await getDoc(doc(firestoreDb, 'attendance', LOANS_MASTER_DOC_ID));
       recordFirestoreReads(1);
@@ -4985,25 +5116,27 @@ export const loadEmployeeLoansFromFirestore = async (): Promise<EmployeeLoan[] |
       }
     } catch (err: any) {
       markFirestoreQuotaExceeded(err);
+      markFirestorePermissionDenied(err);
     }
 
-    try {
-      const snap = await getDocs(collection(firestoreDb, 'employee_loans'));
-      if (!snap.empty) {
-        recordFirestoreReads(snap.size);
-        const fsLoans: EmployeeLoan[] = [];
-        snap.forEach((d) => {
-          const data = d.data() as EmployeeLoan;
-          if (data && (data.id || d.id)) {
-            fsLoans.push({ ...data, id: data.id || d.id });
-          }
-        });
-        if (fsLoans.length > 0) sources.push(fsLoans);
-      }
-    } catch (err: any) {
-      const msg = String(err?.code || err?.message || '');
-      if (!msg.includes('permission-denied') && !msg.includes('insufficient permissions')) {
-        markFirestoreQuotaExceeded(err);
+    if (!isFirestorePermissionDenied() && !isFirestoreQuotaExceeded()) {
+      try {
+        const snap = await getDocs(collection(firestoreDb, 'employee_loans'));
+        if (!snap.empty) {
+          recordFirestoreReads(snap.size);
+          const fsLoans: EmployeeLoan[] = [];
+          snap.forEach((d) => {
+            const data = d.data() as EmployeeLoan;
+            if (data && (data.id || d.id)) {
+              fsLoans.push({ ...data, id: data.id || d.id });
+            }
+          });
+          if (fsLoans.length > 0) sources.push(fsLoans);
+        }
+      } catch (err: any) {
+        if (!isFirestorePermissionError(err)) {
+          markFirestoreQuotaExceeded(err);
+        }
       }
     }
   }
@@ -5049,22 +5182,24 @@ export const saveSingleEmployeeLoanToFirestore = async (loan: EmployeeLoan): Pro
     body: JSON.stringify({ loan, deletedLoanIds: deletedIds }),
   }).catch(() => {});
 
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return false;
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) return false;
+
+  // Simpan master doc terlebih dahulu agar aman; baru simpan dokumen per item jika tidak ditolak rules
+  const savedMaster = await writeLoansMasterDoc(updatedLocal.length > 0 ? updatedLocal : [loan], deletedIds);
 
   let savedDoc = false;
-  try {
-    await setDoc(doc(firestoreDb, 'employee_loans', sanitizeFirestoreDocId(loan.id)), cleanUndefined(loan), { merge: true });
-    recordFirestoreWrites(1);
-    savedDoc = true;
-  } catch (err: any) {
-    const msg = String(err?.code || err?.message || '');
-    if (!msg.includes('permission-denied') && !msg.includes('insufficient permissions')) {
-      markFirestoreQuotaExceeded(err);
+  if (!isFirestorePermissionDenied() && !isFirestoreQuotaExceeded()) {
+    try {
+      await setDoc(doc(firestoreDb, 'employee_loans', sanitizeFirestoreDocId(loan.id)), cleanUndefined(loan), { merge: true });
+      recordFirestoreWrites(1);
+      savedDoc = true;
+    } catch (err: any) {
+      if (!isFirestorePermissionError(err)) {
+        markFirestoreQuotaExceeded(err);
+      }
     }
   }
 
-  // Simpan juga master list agar perangkat lain yang memakai master doc selalu langsung sinkron
-  const savedMaster = await writeLoansMasterDoc(updatedLocal.length > 0 ? updatedLocal : [loan], deletedIds);
   return savedDoc || savedMaster;
 };
 
@@ -5089,11 +5224,14 @@ export const saveEmployeeLoansToFirestore = async (
     body: JSON.stringify({ employeeLoans: cleanList, deletedLoanIds: deletedIds }),
   }).catch(() => {});
 
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return false;
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) return false;
 
   const savedMaster = await writeLoansMasterDoc(cleanList, deletedIds);
+  if (!savedMaster || isFirestorePermissionDenied() || isFirestoreQuotaExceeded()) {
+    return savedMaster;
+  }
 
-  // Sync per-document juga jika rules mengizinkan (batch max 1 write per doc, hanya untuk efisiensi gunakan batch)
+  // Sync per-document juga jika rules mengizinkan
   try {
     const batch = writeBatch(firestoreDb);
     cleanList.slice(0, 100).forEach((l) => {
@@ -5102,8 +5240,7 @@ export const saveEmployeeLoansToFirestore = async (
     await batch.commit();
     recordFirestoreWrites(cleanList.slice(0, 100).length);
   } catch (err: any) {
-    const msg = String(err?.code || err?.message || '');
-    if (!msg.includes('permission-denied') && !msg.includes('insufficient permissions')) {
+    if (!isFirestorePermissionError(err)) {
       markFirestoreQuotaExceeded(err);
     }
   }
@@ -5127,25 +5264,27 @@ export const deleteEmployeeLoanFromFirestore = async (loanId: string): Promise<b
 
   apiFetch(`/api/employee-loans/${encodeURIComponent(loanId)}`, { method: 'DELETE' }).catch(() => {});
 
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return false;
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) return false;
 
-  try {
-    await deleteDoc(doc(firestoreDb, 'employee_loans', sanitizeFirestoreDocId(loanId)));
-    recordFirestoreDeletes(1);
-  } catch (err: any) {
-    const msg = String(err?.code || err?.message || '');
-    if (!msg.includes('permission-denied') && !msg.includes('insufficient permissions')) {
-      markFirestoreQuotaExceeded(err);
+  const savedMaster = await writeLoansMasterDoc(remaining, deletedIds);
+  if (savedMaster && !isFirestorePermissionDenied() && !isFirestoreQuotaExceeded()) {
+    try {
+      await deleteDoc(doc(firestoreDb, 'employee_loans', sanitizeFirestoreDocId(loanId)));
+      recordFirestoreDeletes(1);
+    } catch (err: any) {
+      if (!isFirestorePermissionError(err)) {
+        markFirestoreQuotaExceeded(err);
+      }
     }
   }
 
-  return await writeLoansMasterDoc(remaining, deletedIds);
+  return savedMaster;
 };
 
 export const subscribeToEmployeeLoansFromFirestore = (
   onUpdate: (loans: EmployeeLoan[], deletedIds: string[]) => void
 ): (() => void) => {
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) {
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) {
     return () => {};
   }
 
@@ -5182,6 +5321,7 @@ export const subscribeToEmployeeLoansFromFirestore = (
       },
       (err: any) => {
         markFirestoreQuotaExceeded(err);
+        markFirestorePermissionDenied(err);
       }
     );
     unsubs.push(unsubMaster);
@@ -5203,8 +5343,7 @@ export const subscribeToEmployeeLoansFromFirestore = (
         emitMerged();
       },
       (err: any) => {
-        const msg = String(err?.code || err?.message || '');
-        if (!msg.includes('permission-denied') && !msg.includes('insufficient permissions')) {
+        if (!isFirestorePermissionError(err)) {
           markFirestoreQuotaExceeded(err);
         }
       }
@@ -5221,7 +5360,7 @@ export const subscribeToEmployeeLoansFromFirestore = (
 
 // --- Monthly Recurring Transactions Cloud Sync (Single master doc on existing attendance collection) ---
 export const loadMonthlyTransactionsFromFirestore = async (): Promise<{ items: MonthlyRecurringTransaction[]; deletedIds: string[] } | null> => {
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return null;
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) return null;
   const docPath = 'attendance/monthly_transactions_master';
   try {
     const docRef = doc(firestoreDb, 'attendance', 'monthly_transactions_master');
@@ -5236,7 +5375,9 @@ export const loadMonthlyTransactionsFromFirestore = async (): Promise<{ items: M
     return { items: [], deletedIds: [] };
   } catch (err: any) {
     if (err?.code === 'resource-exhausted' || err?.message?.includes('Quota exceeded')) {
-      markFirestoreQuotaExceeded();
+      markFirestoreQuotaExceeded(err);
+    } else if (isFirestorePermissionError(err)) {
+      markFirestorePermissionDenied(err);
     } else {
       console.warn(`⚠️ Gagal memuat ${docPath} dari Firestore:`, err?.message || err);
     }
@@ -5248,7 +5389,7 @@ export const saveMonthlyTransactionsToFirestore = async (
   items: MonthlyRecurringTransaction[],
   deletedIds: string[] = []
 ): Promise<boolean> => {
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) return false;
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) return false;
   const docPath = 'attendance/monthly_transactions_master';
   try {
     const docRef = doc(firestoreDb, 'attendance', 'monthly_transactions_master');
@@ -5270,7 +5411,9 @@ export const saveMonthlyTransactionsToFirestore = async (
     return true;
   } catch (err: any) {
     if (err?.code === 'resource-exhausted' || err?.message?.includes('Quota exceeded')) {
-      markFirestoreQuotaExceeded();
+      markFirestoreQuotaExceeded(err);
+    } else if (isFirestorePermissionError(err)) {
+      markFirestorePermissionDenied(err);
     } else {
       console.warn(`⚠️ Gagal menyimpan ${docPath} ke Firestore:`, err?.message || err);
     }
@@ -5281,7 +5424,7 @@ export const saveMonthlyTransactionsToFirestore = async (
 export const subscribeToMonthlyTransactionsFromFirestore = (
   onUpdate: (items: MonthlyRecurringTransaction[], deletedIds: string[]) => void
 ): (() => void) => {
-  if (!isFirebaseConfigured() || !firestoreDb || isFirestoreQuotaExceeded()) {
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) {
     return () => {};
   }
   const docRef = doc(firestoreDb, 'attendance', 'monthly_transactions_master');
@@ -5298,7 +5441,9 @@ export const subscribeToMonthlyTransactionsFromFirestore = (
     },
     (err: any) => {
       if (err?.code === 'resource-exhausted' || err?.message?.includes('Quota exceeded')) {
-        markFirestoreQuotaExceeded();
+        markFirestoreQuotaExceeded(err);
+      } else if (isFirestorePermissionError(err)) {
+        markFirestorePermissionDenied(err);
       } else {
         console.warn('⚠️ Realtime listener monthly_transactions_master notice:', err?.message || err);
       }

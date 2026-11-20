@@ -3,7 +3,13 @@ import {
   syncAttendanceToFirestore, 
   restoreAttendanceFromFirestore,
   syncNpwpToFirestore,
-  restoreNpwpFromFirestore
+  restoreNpwpFromFirestore,
+  ensureServerAuth,
+  checkServerQuotaExceeded,
+  checkServerPermissionDenied,
+  markServerQuotaExceeded,
+  markServerPermissionDenied,
+  hasConfiguredServerAuthCredentials
 } from "./server/firebase-attendance";
 import express from "express";
 import path from "path";
@@ -1939,17 +1945,18 @@ function writeState(data: any) {
       data.attendancePin = getAutomaticDailyPin();
     }
     fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), "utf-8");
-    // Auto-sync attendance to Firebase Firestore so data is never lost across updates/restarts
-    if (data.attendanceRecords && data.attendanceRecords.length > 0) {
-      setTimeout(() => {
-        syncAttendanceToFirestore(data).catch(() => {});
-      }, 500);
-    }
-    // Auto-sync NPWP records to Firebase Firestore so data is never lost across updates/restarts
-    if (data.npwpRecords && data.npwpRecords.length > 0) {
-      setTimeout(() => {
-        syncNpwpToFirestore(data.npwpRecords).catch(() => {});
-      }, 500);
+    // Auto-sync ke Firestore dari server hanya jika kredensial Firebase Auth server dikonfigurasi
+    if (hasConfiguredServerAuthCredentials() && !checkServerPermissionDenied() && !checkServerQuotaExceeded()) {
+      if (data.attendanceRecords && data.attendanceRecords.length > 0) {
+        setTimeout(() => {
+          syncAttendanceToFirestore(data).catch(() => {});
+        }, 500);
+      }
+      if (data.npwpRecords && data.npwpRecords.length > 0) {
+        setTimeout(() => {
+          syncNpwpToFirestore(data.npwpRecords).catch(() => {});
+        }, 500);
+      }
     }
   } catch (error) {
     console.error("Error writing data-store.json:", error);
@@ -2277,13 +2284,15 @@ app.post("/api/shared-state", (req, res) => {
     };
 
     writeState(updatedState);
-    syncAttendanceToFirestore(updatedState).catch((err) => {
-      console.warn("[Firestore] Auto-sync notice:", err?.message);
-    });
-    if (updatedState.npwpRecords && updatedState.npwpRecords.length > 0) {
-      syncNpwpToFirestore(updatedState.npwpRecords).catch((err) => {
-        console.warn("[Firestore] Auto-sync NPWP notice:", err?.message);
+    if (hasConfiguredServerAuthCredentials() && !checkServerPermissionDenied() && !checkServerQuotaExceeded()) {
+      syncAttendanceToFirestore(updatedState).catch((err) => {
+        console.warn("[Firestore] Auto-sync notice:", err?.message);
       });
+      if (updatedState.npwpRecords && updatedState.npwpRecords.length > 0) {
+        syncNpwpToFirestore(updatedState.npwpRecords).catch((err) => {
+          console.warn("[Firestore] Auto-sync NPWP notice:", err?.message);
+        });
+      }
     }
     res.json({ success: true, message: "State synchronized successfully" });
   } catch (err: any) {
@@ -5789,23 +5798,36 @@ app.post("/api/attendance/save-report", async (req, res) => {
     state.weeklyReports = existing;
     writeState(state);
 
+    let syncedToFirestore = false;
     const db = initFirebaseFirestore();
-    if (db) {
-      const repId = report.id || `rep_${report.weekStartDate || Date.now()}`;
-      const { doc, setDoc } = await import("firebase/firestore");
-      await setDoc(doc(db, "weekly_attendance_reports", repId), {
-        ...report,
-        syncedAt: new Date().toISOString()
-      }, { merge: true });
-      await setDoc(doc(db, "attendance", "current_records"), {
-        weeklyReports: existing,
-        updatedAt: new Date().toISOString()
-      }, { merge: true });
+    if (db && !checkServerPermissionDenied() && !checkServerQuotaExceeded()) {
+      const serverUser = await ensureServerAuth();
+      if (serverUser) {
+        try {
+          const repId = report.id || `rep_${report.weekStartDate || Date.now()}`;
+          const { doc, setDoc } = await import("firebase/firestore");
+          await setDoc(doc(db, "attendance", `rep_${repId}`), {
+            ...report,
+            syncedAt: new Date().toISOString()
+          }, { merge: true });
+          await setDoc(doc(db, "attendance", "current_records"), {
+            weeklyReports: existing,
+            updatedAt: new Date().toISOString()
+          }, { merge: true });
+          syncedToFirestore = true;
+        } catch (fbErr: any) {
+          markServerQuotaExceeded(fbErr);
+          markServerPermissionDenied(fbErr);
+        }
+      }
     }
 
     return res.json({
       success: true,
-      message: "Laporan mingguan berhasil disimpan ke Firebase dan server!",
+      syncedToFirestore,
+      message: syncedToFirestore
+        ? "Laporan mingguan berhasil disimpan ke Firebase dan server!"
+        : "Laporan mingguan berhasil disimpan di server!",
       report
     });
   } catch (err: any) {
@@ -5890,9 +5912,10 @@ async function bootstrap() {
       }
     }, 10000);
 
-    // Restore attendance & NPWP records from Firebase Firestore so data is NEVER lost across updates/restarts
+    // Restore attendance & NPWP records from Firebase Firestore only if server Firebase Auth is configured
     setTimeout(async () => {
       try {
+        if (!hasConfiguredServerAuthCredentials()) return;
         console.log("[Startup] Memeriksa Firebase Firestore untuk memulihkan data absensi & NPWP...");
         const cur = readState();
         const restoredAtt = await restoreAttendanceFromFirestore(cur);
