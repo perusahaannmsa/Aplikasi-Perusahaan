@@ -87,7 +87,7 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({
     setIsConnecting(true);
     setConnectingEmail(email || null);
     try {
-      const result = await googleDriveLogin(email || LOCKED_MASTER_DRIVE_EMAIL, false);
+      const result = await googleDriveLogin(email || masterEmail || LOCKED_MASTER_DRIVE_EMAIL, false);
       if (result.accessToken) {
         loadDrives();
       }

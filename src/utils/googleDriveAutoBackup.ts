@@ -17,6 +17,7 @@ import {
   executeDriveApiWithAutoRefresh,
   getStoredGoogleDriveToken,
   getOrRenewDriveToken,
+  getMasterDriveEmail,
   LOCKED_MASTER_DRIVE_EMAIL
 } from '../firebase';
 
@@ -157,12 +158,13 @@ class GoogleDriveAutoBackupService {
    * Helper to ensure token is valid and execute drive operation with automatic renewal
    */
   private async withDriveToken<T>(fn: (token: string) => Promise<T>): Promise<T> {
+    const targetEmail = getMasterDriveEmail() || LOCKED_MASTER_DRIVE_EMAIL;
     return executeDriveApiWithAutoRefresh(async (tok) => {
       return await fn(tok);
     }, { 
       actionName: 'Auto Backup to Google Drive',
       interactiveIfRequired: true,
-      targetEmail: LOCKED_MASTER_DRIVE_EMAIL
+      targetEmail
     });
   }
 

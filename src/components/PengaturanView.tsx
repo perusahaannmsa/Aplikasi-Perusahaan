@@ -17,7 +17,7 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react';
-import { maskLockedAccountLabel } from '../firebase';
+import { maskLockedAccountLabel, getStoredGoogleDriveToken, getActiveGoogleDriveAccount } from '../firebase';
 
 interface PengaturanViewProps {
   userProfile: any;
@@ -124,45 +124,95 @@ export const PengaturanView: React.FC<PengaturanViewProps> = ({
       </div>
 
       {/* Account & Active Company Identity Card */}
-      <div className="bg-white rounded-2xl border border-stone-200 p-5 sm:p-6 shadow-3xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
-          <div className="w-14 h-14 rounded-2xl bg-emerald-600 text-white font-black text-lg flex items-center justify-center shadow-3xs shrink-0">
-            {fullName.substring(0, 2).toUpperCase()}
-          </div>
-          <div className="min-w-0 space-y-0.5">
-            <div className="flex flex-wrap items-center gap-2">
-              <h3 className="text-base sm:text-lg font-black text-stone-900 truncate">
-                {fullName}
-              </h3>
-              <span className="text-[11px] font-mono font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-md">
-                {roleLabel}
-              </span>
+      <div className="bg-white rounded-2xl border border-stone-200 p-5 sm:p-6 shadow-3xs space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="w-14 h-14 rounded-2xl bg-emerald-600 text-white font-black text-lg flex items-center justify-center shadow-3xs shrink-0">
+              {fullName.substring(0, 2).toUpperCase()}
             </div>
-            <p className="text-xs font-mono text-stone-500 truncate">{email}</p>
-            <p className="text-xs text-stone-600">
-              Perusahaan Aktif: <strong className="text-stone-900">{companyName}</strong> ({companyCode})
-            </p>
+            <div className="min-w-0 space-y-0.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-base sm:text-lg font-black text-stone-900 truncate">
+                  {fullName}
+                </h3>
+                <span className="text-[11px] font-mono font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-md">
+                  {roleLabel}
+                </span>
+              </div>
+              <p className="text-xs font-mono text-stone-500 truncate">{email}</p>
+              <p className="text-xs text-stone-600">
+                Perusahaan Aktif: <strong className="text-stone-900">{companyName}</strong> ({companyCode})
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={onOpenProfile}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 border border-stone-200 text-xs font-bold text-stone-800 transition cursor-pointer"
+            >
+              <Settings size={14} />
+              <span>Profil &amp; Storage</span>
+            </button>
+            <button
+              type="button"
+              onClick={onOpenCompanyModal}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-stone-950 text-xs font-black transition cursor-pointer"
+            >
+              <Building2 size={14} />
+              <span>Ganti / Tambah Perusahaan ({companyCode})</span>
+            </button>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
-          <button
-            type="button"
-            onClick={onOpenProfile}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 border border-stone-200 text-xs font-bold text-stone-800 transition cursor-pointer"
-          >
-            <Settings size={14} />
-            <span>Profil &amp; Storage</span>
-          </button>
-          <button
-            type="button"
-            onClick={onOpenCompanyModal}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-stone-950 text-xs font-black transition cursor-pointer"
-          >
-            <Building2 size={14} />
-            <span>Ganti / Tambah Perusahaan ({companyCode})</span>
-          </button>
-        </div>
+        {/* Clear Separation: Portal/Firestore Account vs Google Drive Storage Account */}
+        {(() => {
+          const activeDriveTok = getStoredGoogleDriveToken(true);
+          const activeDriveAcc = getActiveGoogleDriveAccount();
+          const activeDriveEmail = activeDriveAcc?.email || masterDriveEmail;
+          return (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-3 border-t border-stone-100">
+              <div className="p-3.5 rounded-xl bg-stone-50 border border-stone-200/80 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-stone-500 flex items-center gap-1.5">
+                    <Database size={12} className="text-emerald-600" />
+                    <span>Akun Login &amp; Database (Firestore)</span>
+                  </div>
+                  <p className="text-xs font-mono font-bold text-stone-900 truncate mt-1">
+                    {email}
+                  </p>
+                </div>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 shrink-0">
+                  Aktif
+                </span>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-amber-50/70 border border-amber-200 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-amber-900 flex items-center gap-1.5">
+                    <Cloud size={12} className="text-amber-600" />
+                    <span>Akun Penyimpanan Google Drive</span>
+                  </div>
+                  <p className="text-xs font-mono font-bold text-stone-900 truncate mt-1">
+                    {activeDriveEmail || 'Belum Terhubung'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={onOpenGoogleDrive}
+                  className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border transition cursor-pointer shrink-0 ${
+                    activeDriveTok
+                      ? 'bg-emerald-100 text-emerald-900 border-emerald-300 hover:bg-emerald-200'
+                      : 'bg-amber-500 text-stone-950 border-amber-600 hover:bg-amber-600'
+                  }`}
+                >
+                  {activeDriveTok ? 'Terhubung · Kelola' : 'Hubungkan Drive'}
+                </button>
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Section 1: Theme Selector */}

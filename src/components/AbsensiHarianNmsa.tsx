@@ -84,7 +84,7 @@ import { triggerExcelDownload } from "../lib/excelGenerator";
 import { triggerAttendanceExcelDownload, printWeeklyReportPDF, generateAttendanceExcelBlob } from "../lib/attendanceSheetGenerator";
 import { getOrCreateFolder, getOrCreateNestedFolder, uploadFileToDrive, exportAttendanceToGoogleSheet } from "../lib/googleWorkspaceAbsen";
 import { initAuth, googleSignIn, googleSignOut, getFreshGoogleToken, saveGoogleToken, saveAttendanceToFirestore, loadAttendanceFromFirestore, subscribeToAttendanceFromFirestore, loadWorkersFromFirestore, saveWorkerToFirestore, deleteWorkerFromFirestore, saveWorkersListToFirestore, subscribeToWorkersMasterFromFirestore, mergeWorkerListsSafely, getDeletedWorkerIds, saveDeletedWorkerIds } from "../lib/firebaseAbsen";
-import { saveSubmissionToFirestore, saveAbsenDataToFirestore, ensureValidDriveToken, getActiveGoogleDriveAccount, getConnectedDrives, getStoredGoogleDriveToken, executeDriveApiWithAutoRefresh, getOrRenewDriveToken, triggerGoogleDriveAutoRefresh, isFirestoreQuotaExceeded, markFirestoreQuotaExceeded, getFirestoreQuotaMetrics, FirestoreQuotaMetrics, LOCKED_MASTER_DRIVE_EMAIL } from "../firebase";
+import { saveSubmissionToFirestore, saveAbsenDataToFirestore, ensureValidDriveToken, getActiveGoogleDriveAccount, getConnectedDrives, getStoredGoogleDriveToken, getMasterDriveEmail, executeDriveApiWithAutoRefresh, getOrRenewDriveToken, triggerGoogleDriveAutoRefresh, isFirestoreQuotaExceeded, markFirestoreQuotaExceeded, getFirestoreQuotaMetrics, FirestoreQuotaMetrics, LOCKED_MASTER_DRIVE_EMAIL } from "../firebase";
 import { googleDriveAutoBackup, BackupSyncLog, DriveAutoBackupSettings } from "../utils/googleDriveAutoBackup";
 import { SignaturePad } from "./SignaturePad";
 import { OnlineSignatureModal } from "./OnlineSignatureModal";
@@ -2045,15 +2045,16 @@ export function AbsensiHarianNmsa({
 
   // Helper to execute Google Drive / Sheets operations with active unified token & auto-renewal
   const executeWithAutoRefreshToken = async <T,>(actionFn: (activeToken: string) => Promise<T>): Promise<T> => {
+    const targetEmail = getMasterDriveEmail() || LOCKED_MASTER_DRIVE_EMAIL;
     return executeDriveApiWithAutoRefresh(async (token) => {
       setGoogleToken(token);
       setIsDriveConnected(true);
-      setGoogleUserEmail(LOCKED_MASTER_DRIVE_EMAIL);
+      setGoogleUserEmail(getActiveGoogleDriveAccount()?.email || targetEmail);
       return await actionFn(token);
     }, {
       actionName: "Google Drive Absensi",
       interactiveIfRequired: true,
-      targetEmail: LOCKED_MASTER_DRIVE_EMAIL
+      targetEmail
     });
   };
 
@@ -8449,18 +8450,19 @@ export function AbsensiHarianNmsa({
                         }
                       }
 
+                      const activeDriveEmailLabel = getActiveGoogleDriveAccount()?.email || getMasterDriveEmail() || LOCKED_MASTER_DRIVE_EMAIL;
                       const skippedInfo = skippedEmptyCount > 0 ? `\n(ℹ️ ${skippedEmptyCount} periode minggu yang masih kosong berhasil dilewati).` : "";
 
                       if (absenDriveRes.success || uploadedPdfCount > 0) {
                         const totalFilesNote = `${uploadedPdfCount} berkas PDF laporan mingguan${absenDriveRes.success ? " + 1 berkas cadangan absensi harian" : ""}`;
                         alert(
-                          `✓ Sukses! Berhasil mencadangkan ${validCompiledReports.length} periode absensi ke Riwayat Pelaporan & Google Drive (${LOCKED_MASTER_DRIVE_EMAIL}).\n` +
+                          `✓ Sukses! Berhasil mencadangkan ${validCompiledReports.length} periode absensi ke Riwayat Pelaporan & Google Drive (${activeDriveEmailLabel}).\n` +
                           `✓ Terunggah ke Google Drive: ${totalFilesNote} di folder "My Drive > ABSENSI-NMSA-APP".${skippedInfo}`
                         );
                       } else {
                         alert(
-                          `⚠️ Data absensi (${validCompiledReports.length} periode) berhasil disimpan di aplikasi & server, NAMUN GAGAL diunggah ke Google Drive (${LOCKED_MASTER_DRIVE_EMAIL}).\n\n` +
-                          `Penyebab:\n${lastDriveUploadError || "Sesi Google Drive belum terhubung ke akun penyimpanan resmi."}${skippedInfo}`
+                          `⚠️ Data absensi (${validCompiledReports.length} periode) berhasil disimpan di aplikasi & server, NAMUN GAGAL diunggah ke Google Drive (${activeDriveEmailLabel}).\n\n` +
+                          `Penyebab:\n${lastDriveUploadError || "Sesi Google Drive belum terhubung."}${skippedInfo}`
                         );
                       }
                     } catch (err: any) {

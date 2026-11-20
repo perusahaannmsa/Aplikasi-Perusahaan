@@ -9,7 +9,8 @@ import {
   deleteSubmissionFromFirestore,
   loginToFirebase,
   logoutFromFirebase,
-  registerAuthChangeListener
+  registerAuthChangeListener,
+  LOCKED_FIREBASE_AUTH_EMAIL
 } from '../firebase';
 import { Submission } from '../types';
 import { Cloud, CloudOff, RefreshCw, Key, Check, Info, Trash2, Database, AlertCircle, LogIn, LogOut, ShieldCheck, UserCheck } from 'lucide-react';
@@ -31,9 +32,9 @@ export const FirebaseSyncConfig: React.FC<FirebaseSyncConfigProps> = ({ onSyncDa
   const [messagingSenderId, setMessagingSenderId] = useState('');
   const [appId, setAppId] = useState('');
   
-  // Auth states
+  // Auth states (otomatis terisi akun Firebase default: yudiakungaming@gmail.com)
   const [authUser, setAuthUser] = useState<User | null>(null);
-  const [loginEmail, setLoginEmail] = useState('');
+  const [loginEmail, setLoginEmail] = useState<string>(LOCKED_FIREBASE_AUTH_EMAIL);
   const [loginPassword, setLoginPassword] = useState('');
   const [showLoginPanel, setShowLoginPanel] = useState(false);
   

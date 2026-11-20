@@ -128,6 +128,33 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   const [showOnlyDuplicates, setShowOnlyDuplicates] = useState(false);
   const [showOnlyUnsynced, setShowOnlyUnsynced] = useState(false);
   const [firestoreFilter, setFirestoreFilter] = useState<'all' | 'synced' | 'unsynced'>('all');
+  const [diffDateFilter, setDiffDateFilter] = useState<'all' | 'same_any_diff_date' | 'same_code_diff_date' | 'same_tx_diff_date'>('all');
+  const [checkedDiffDateIds, setCheckedDiffDateIds] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem('nmsa_checked_diff_date_ids');
+      const parsed = stored ? JSON.parse(stored) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      return [];
+    }
+  });
+  const handleToggleCheckedDiffDate = (submissionId: string) => {
+    setCheckedDiffDateIds((prev) => {
+      const next = prev.includes(submissionId)
+        ? prev.filter((id) => id !== submissionId)
+        : [...prev, submissionId];
+      try {
+        localStorage.setItem('nmsa_checked_diff_date_ids', JSON.stringify(next));
+      } catch (e) {}
+      return next;
+    });
+  };
+  const handleResetCheckedDiffDate = () => {
+    setCheckedDiffDateIds([]);
+    try {
+      localStorage.removeItem('nmsa_checked_diff_date_ids');
+    } catch (e) {}
+  };
   const [isDuplicateModalOpen, setIsDuplicateModalOpen] = useState(false);
   const [duplicateModalSearch, setDuplicateModalSearch] = useState('');
   const [selectedClusterKey, setSelectedClusterKey] = useState<string | null>(null);
@@ -587,6 +614,90 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
     return Array.from(years).sort((a, b) => b.localeCompare(a));
   }, [submissions, currentYearDefault]);
 
+  // Deteksi No-Kode sama atau Transaksi sama namun BERBEDA TANGGAL
+  const checkedDiffDateSet = useMemo(() => new Set(checkedDiffDateIds), [checkedDiffDateIds]);
+
+  const diffDateDetection = useMemo(() => {
+    const codeGroups = new Map<string, Submission[]>();
+    const txGroups = new Map<string, Submission[]>();
+
+    const norm = (val?: string) =>
+      String(val || '')
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    submissions.forEach((sub) => {
+      if (!sub || !sub.id) return;
+
+      // 1. Group by No-Kode (abaikan kosong / '-' / 'HO')
+      const cleanKode = String(sub.kode || '').trim().toUpperCase();
+      if (cleanKode && cleanKode !== '-' && cleanKode !== 'HO' && cleanKode.length >= 3) {
+        const arr = codeGroups.get(cleanKode) || [];
+        arr.push(sub);
+        codeGroups.set(cleanKode, arr);
+      }
+
+      // 2. Group by Transaksi sama (Penerima + Jenis Pengajuan + Total Nominal)
+      const subTotal = (sub.items || []).reduce((sum, item) => sum + (Number(item.total) || 0), 0);
+      const penerimaKey = norm(sub.dibayarkanKepada);
+      const jenisKey = norm(sub.jenisPengajuan);
+      if (penerimaKey && subTotal > 0) {
+        const txKey = `${penerimaKey}|${jenisKey}|${subTotal}`;
+        const arr = txGroups.get(txKey) || [];
+        arr.push(sub);
+        txGroups.set(txKey, arr);
+      }
+    });
+
+    const sameCodeIds = new Set<string>();
+    const sameTxIds = new Set<string>();
+    const groupSortKeyMap = new Map<string, string>();
+
+    codeGroups.forEach((group, kodeKey) => {
+      const distinctDates = new Set(group.map((s) => (s.tanggal || '').trim()).filter(Boolean));
+      if (group.length >= 2 && distinctDates.size >= 2) {
+        group.forEach((s) => {
+          sameCodeIds.add(s.id);
+          groupSortKeyMap.set(s.id, `KODE:${kodeKey}`);
+        });
+      }
+    });
+
+    txGroups.forEach((group, txKey) => {
+      const distinctDates = new Set(group.map((s) => (s.tanggal || '').trim()).filter(Boolean));
+      if (group.length >= 2 && distinctDates.size >= 2) {
+        group.forEach((s) => {
+          sameTxIds.add(s.id);
+          if (!groupSortKeyMap.has(s.id)) {
+            groupSortKeyMap.set(s.id, `TX:${txKey}`);
+          }
+        });
+      }
+    });
+
+    const sameAnyIds = new Set<string>([...sameCodeIds, ...sameTxIds]);
+
+    let uncheckedCodeCount = 0;
+    sameCodeIds.forEach((id) => { if (!checkedDiffDateSet.has(id)) uncheckedCodeCount++; });
+
+    let uncheckedTxCount = 0;
+    sameTxIds.forEach((id) => { if (!checkedDiffDateSet.has(id)) uncheckedTxCount++; });
+
+    let uncheckedAnyCount = 0;
+    sameAnyIds.forEach((id) => { if (!checkedDiffDateSet.has(id)) uncheckedAnyCount++; });
+
+    return {
+      sameCodeIds,
+      sameTxIds,
+      sameAnyIds,
+      groupSortKeyMap,
+      uncheckedCodeCount,
+      uncheckedTxCount,
+      uncheckedAnyCount,
+    };
+  }, [submissions, checkedDiffDateSet]);
+
   // Filter logic
   const filteredSubmissions = useMemo(() => {
     const query = searchTerm.toLowerCase().trim();
@@ -658,9 +769,25 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
       const subStatus = getSubStatus(sub);
       const matchStatus = statusFilter === 'All' || subStatus === statusFilter;
 
-      // Filter by Date, Month, Year
+      // Filter Kode / Transaksi sama namun berbeda tanggal (sembunyikan otomatis yang sudah di-check)
+      let matchDiffDate = true;
+      if (diffDateFilter !== 'all') {
+        if (checkedDiffDateSet.has(sub.id)) {
+          matchDiffDate = false;
+        } else if (diffDateFilter === 'same_code_diff_date') {
+          matchDiffDate = diffDateDetection.sameCodeIds.has(sub.id);
+        } else if (diffDateFilter === 'same_tx_diff_date') {
+          matchDiffDate = diffDateDetection.sameTxIds.has(sub.id);
+        } else {
+          matchDiffDate = diffDateDetection.sameAnyIds.has(sub.id);
+        }
+      }
+
+      // Filter by Date, Month, Year (saat mode filter beda tanggal aktif, tampilkan lintas bulan/tahun agar pasangan terlihat jelas)
       let matchDate = true;
-      if (sub.tanggal) {
+      if (diffDateFilter !== 'all') {
+        matchDate = !dateFilter || sub.tanggal === dateFilter;
+      } else if (sub.tanggal) {
         const [y, m] = sub.tanggal.split('-'); // Format "YYYY-MM-DD"
         
         const matchYear = yearFilter === 'All' || y === yearFilter;
@@ -682,11 +809,19 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
         (firestoreFilter === 'unsynced' && isRowUnsynced) ||
         (firestoreFilter === 'synced' && isRowSynced);
 
-      return matchSearch && matchMethod && matchStatus && matchDate && matchDuplicates && matchUnsynced && matchFirestoreFilter;
+      return matchSearch && matchMethod && matchStatus && matchDate && matchDuplicates && matchUnsynced && matchFirestoreFilter && matchDiffDate;
     });
 
-    // Sort descending by tanggal (latest date first), with logical tie-breakers
+    // Sort descending by tanggal (latest date first), or group matching pairs together when diffDateFilter is active
     return list.sort((a, b) => {
+      if (diffDateFilter !== 'all') {
+        const keyA = diffDateDetection.groupSortKeyMap.get(a.id) || '';
+        const keyB = diffDateDetection.groupSortKeyMap.get(b.id) || '';
+        if (keyA !== keyB) {
+          return keyA.localeCompare(keyB);
+        }
+      }
+
       // 1. Compare Date (tanggal)
       const dateA = a.tanggal || '';
       const dateB = b.tanggal || '';
@@ -711,7 +846,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
       // 4. Fallback to ID
       return b.id.localeCompare(a.id);
     });
-  }, [submissions, searchTerm, searchCategory, methodFilter, statusFilter, yearFilter, monthFilter, dateFilter, showOnlyDuplicates, showOnlyUnsynced, firestoreFilter, unsyncedSubmissionIds, hasCloudInventory, cloudSyncedIds, activeDuplicateSubmissionIds, duplicateSubmissionIds]);
+  }, [submissions, searchTerm, searchCategory, methodFilter, statusFilter, yearFilter, monthFilter, dateFilter, showOnlyDuplicates, showOnlyUnsynced, firestoreFilter, diffDateFilter, diffDateDetection, checkedDiffDateSet, unsyncedSubmissionIds, hasCloudInventory, cloudSyncedIds, activeDuplicateSubmissionIds, duplicateSubmissionIds]);
 
   const unsyncedCount = useMemo(() => {
     if (!unsyncedSubmissionIds || unsyncedSubmissionIds.size === 0) return 0;
@@ -1533,15 +1668,15 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
             </div>
           </div>
 
-          {/* Row 2: Monthly, Yearly, and Date Filters & Download reports */}
-          <div className="p-3.5 sm:p-5 bg-stone-50/40 flex flex-col lg:flex-row lg:items-center justify-between gap-3 sm:gap-4">
-            <div className="flex-1 flex flex-wrap items-center gap-3 sm:gap-4">
+          {/* Row 2: Monthly, Yearly, Date, Unified Filter & Action Buttons */}
+          <div className="p-3.5 sm:px-5 sm:py-4 bg-stone-50/40 flex flex-col xl:flex-row xl:items-end justify-between gap-3">
+            <div className="flex flex-wrap items-end gap-2.5 sm:gap-3">
               {/* Year Filter Option */}
-              <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-end gap-2.5 sm:gap-4 w-full sm:w-auto">
+              <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-end gap-2.5 sm:gap-3 w-full sm:w-auto">
                 <div className="flex flex-col gap-1.5 min-w-0">
-                  <span className="text-[10px] font-bold text-stone-400 uppercase tracking-wider font-mono">Tahun Transaksi</span>
+                  <span className="text-[10px] font-bold text-stone-400 uppercase tracking-wider font-mono">Tahun</span>
                   <select
-                    className="w-full sm:w-auto px-3.5 py-2 bg-white border border-stone-250 rounded-xl text-xs focus:ring-2 focus:ring-stone-400 focus:outline-none text-stone-850 sm:min-w-[130px] font-medium"
+                    className="w-full sm:w-auto px-3 py-2 bg-white border border-stone-250 rounded-xl text-xs focus:ring-2 focus:ring-stone-400 focus:outline-none text-stone-850 sm:min-w-[96px] font-medium"
                     value={yearFilter}
                     onChange={(e) => {
                       const val = e.target.value;
@@ -1561,9 +1696,9 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
 
                 {/* Month Filter Option */}
                 <div className="flex flex-col gap-1.5 min-w-0">
-                  <span className="text-[10px] font-bold text-stone-400 uppercase tracking-wider font-mono">Bulan Transaksi</span>
+                  <span className="text-[10px] font-bold text-stone-400 uppercase tracking-wider font-mono">Bulan</span>
                   <select
-                    className="w-full sm:w-auto px-3.5 py-2 bg-white border border-stone-250 rounded-xl text-xs focus:ring-2 focus:ring-stone-400 focus:outline-none text-stone-850 sm:min-w-[150px] font-medium"
+                    className="w-full sm:w-auto px-3 py-2 bg-white border border-stone-250 rounded-xl text-xs focus:ring-2 focus:ring-stone-400 focus:outline-none text-stone-850 sm:min-w-[140px] font-medium"
                     value={monthFilter}
                     onChange={(e) => {
                       const val = e.target.value;
@@ -1584,7 +1719,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
               </div>
 
               {/* Quick Jump to Current Month Button */}
-              <div className="self-end pb-0.5">
+              <div className="self-end">
                 <button
                   type="button"
                   onClick={() => {
@@ -1598,7 +1733,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                     } catch (err) {}
                   }}
                   title={`Tampilkan default bulan ini (${MONTHS_LIST.find(m => m.value === currentMonthDefault)?.label || ''} ${currentYearDefault})`}
-                  className={`px-3 py-2 text-xs font-bold font-mono rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-3xs ${
+                  className={`px-3 py-2 text-xs font-bold font-mono rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-3xs whitespace-nowrap ${
                     monthFilter === currentMonthDefault && yearFilter === currentYearDefault && !dateFilter
                       ? 'bg-amber-600 text-white shadow-xs font-bold'
                       : 'bg-white hover:bg-amber-50 text-amber-800 border border-amber-300'
@@ -1609,15 +1744,13 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 </button>
               </div>
 
-
-
               {/* Specific Date Picker Input */}
               <div className="flex flex-col gap-1.5 w-full sm:w-auto">
                 <span className="text-[10px] font-bold text-stone-400 uppercase tracking-wider font-mono">Tanggal Spesifik</span>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   <input
                     type="date"
-                    className="w-full sm:w-auto px-3.5 py-2 bg-white border border-stone-250 rounded-xl text-xs focus:ring-2 focus:ring-stone-400 focus:outline-none text-stone-850 font-mono"
+                    className="w-full sm:w-auto px-3 py-2 bg-white border border-stone-250 rounded-xl text-xs focus:ring-2 focus:ring-stone-400 focus:outline-none text-stone-850 font-mono"
                     value={dateFilter}
                     onChange={(e) => setDateFilter(e.target.value)}
                   />
@@ -1633,48 +1766,65 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 </div>
               </div>
 
-              {/* Status Firestore Filter */}
+              {/* Unified Filter: Status Firestore + Cek Kode / Transaksi Sama Beda Tanggal */}
               <div className="flex flex-col gap-1.5 w-full sm:w-auto">
-                <span className="text-[10px] font-bold text-stone-400 uppercase tracking-wider font-mono">Status Firestore</span>
+                <span className="text-[10px] font-bold text-stone-400 uppercase tracking-wider font-mono">Filter &amp; Cek Data</span>
                 <select
-                  className="w-full sm:w-auto px-3.5 py-2 bg-white border border-stone-250 rounded-xl text-xs focus:ring-2 focus:ring-stone-400 focus:outline-none text-stone-850 sm:min-w-[165px] font-medium"
-                  value={firestoreFilter}
+                  className={`w-full sm:w-auto px-3 py-2 rounded-xl text-xs focus:ring-2 focus:outline-none sm:min-w-[195px] transition ${
+                    diffDateFilter !== 'all'
+                      ? 'bg-amber-50 border-2 border-amber-400 text-amber-950 font-bold focus:ring-amber-400'
+                      : firestoreFilter !== 'all'
+                      ? 'bg-sky-50 border-2 border-sky-400 text-sky-950 font-bold focus:ring-sky-400'
+                      : 'bg-white border border-stone-250 text-stone-850 font-medium focus:ring-stone-400'
+                  }`}
+                  value={diffDateFilter !== 'all' ? diffDateFilter : firestoreFilter}
                   onChange={(e) => {
-                    const val = e.target.value as 'all' | 'synced' | 'unsynced';
-                    setFirestoreFilter(val);
-                    setShowOnlyUnsynced(val === 'unsynced');
+                    const val = e.target.value;
+                    if (val === 'same_any_diff_date' || val === 'same_code_diff_date' || val === 'same_tx_diff_date') {
+                      setDiffDateFilter(val);
+                      setFirestoreFilter('all');
+                      setShowOnlyUnsynced(false);
+                    } else if (val === 'synced' || val === 'unsynced') {
+                      setDiffDateFilter('all');
+                      setFirestoreFilter(val);
+                      setShowOnlyUnsynced(val === 'unsynced');
+                    } else {
+                      setDiffDateFilter('all');
+                      setFirestoreFilter('all');
+                      setShowOnlyUnsynced(false);
+                    }
                   }}
-                  title="Saring transaksi yang sudah masuk Cloud Firestore atau belum"
+                  title="Saring status Cloud Firestore atau cari No-Kode / Transaksi sama namun berbeda tanggal"
                 >
-                  <option value="all">Semua ({submissions.length})</option>
-                  <option value="synced" disabled={!hasCloudInventory}>
-                    {hasCloudInventory ? `✓ Sudah di Firestore (${syncedFirestoreCount})` : '✓ Sudah di Firestore (Belum dicek)'}
-                  </option>
-                  <option value="unsynced">⏳ Belum di Firestore ({unsyncedCount})</option>
+                  <option value="all">Semua Data ({submissions.length})</option>
+                  <optgroup label="Cek Kode / Transaksi (Beda Tanggal)">
+                    <option value="same_any_diff_date">
+                      Kode / Transaksi Sama Beda Tgl ({diffDateDetection.uncheckedAnyCount})
+                    </option>
+                    <option value="same_code_diff_date">
+                      No-Kode Sama Beda Tanggal ({diffDateDetection.uncheckedCodeCount})
+                    </option>
+                    <option value="same_tx_diff_date">
+                      Transaksi Sama Beda Tanggal ({diffDateDetection.uncheckedTxCount})
+                    </option>
+                  </optgroup>
+                  <optgroup label="Status Cloud Firestore">
+                    <option value="synced" disabled={!hasCloudInventory}>
+                      {hasCloudInventory ? `✓ Sudah di Firestore (${syncedFirestoreCount})` : '✓ Sudah di Firestore (Belum dicek)'}
+                    </option>
+                    <option value="unsynced">⏳ Belum di Firestore ({unsyncedCount})</option>
+                  </optgroup>
                 </select>
               </div>
-
             </div>
 
-            {/* Print, Sync, and Export Buttons */}
-            <div className="flex flex-wrap items-center gap-2 self-stretch lg:self-end">
-              {onForceCloudSync && (
-                <button
-                  type="button"
-                  onClick={onForceCloudSync}
-                  disabled={isCloudSyncing}
-                  className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 bg-white hover:bg-sky-50 border border-sky-300 text-sky-900 font-bold rounded-xl transition duration-150 text-xs shadow-3xs cursor-pointer select-none disabled:opacity-60"
-                  title="Sinkronkan & samakan semua voucher di HP, Komputer, dan Cloud Firebase"
-                >
-                  <RefreshCw size={13} className={`text-sky-600 ${isCloudSyncing ? 'animate-spin' : ''}`} />
-                  <span>{isCloudSyncing ? 'Menyinkronkan...' : 'Sinkron Cloud'}</span>
-                </button>
-              )}
-
+            {/* Compact Action Buttons: Satukan Nama & Cetak List (PDF) */}
+            <div className="flex items-center gap-2 shrink-0 w-full xl:w-auto">
               {onOpenConsolidateModal && (
                 <button
+                  type="button"
                   onClick={onOpenConsolidateModal}
-                  className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 bg-amber-500 hover:bg-amber-600 border border-amber-600 text-stone-950 font-black rounded-xl transition duration-150 text-xs shadow-3xs cursor-pointer select-none"
+                  className="flex-1 xl:flex-initial inline-flex items-center justify-center gap-1.5 px-3.5 py-2 bg-amber-500 hover:bg-amber-600 border border-amber-600 text-stone-950 font-black rounded-xl transition duration-150 text-xs shadow-3xs cursor-pointer select-none whitespace-nowrap"
                   title="Satukan & Rapikan Variasi Nama Penerima atau Pemegang Petty Cash yang Mirip"
                 >
                   <Sparkles size={13} className="text-stone-950" />
@@ -1683,11 +1833,12 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
               )}
 
               <button
+                type="button"
                 onClick={() => window.print()}
-                className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-4.5 py-2.5 bg-stone-900 hover:bg-stone-800 border border-stone-955 text-white font-extrabold rounded-xl transition duration-150 text-xs shadow-3xs cursor-pointer select-none"
+                className="flex-1 xl:flex-initial inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-stone-900 hover:bg-stone-800 border border-stone-955 text-white font-extrabold rounded-xl transition duration-150 text-xs shadow-3xs cursor-pointer select-none whitespace-nowrap"
                 title="Cetak Laporan Bulanan / Filter Terpilih"
               >
-                <Printer size={13} className="text-amber-500 animate-pulse" />
+                <Printer size={13} className="text-amber-500" />
                 <span>Cetak List (PDF)</span>
               </button>
             </div>
@@ -1735,6 +1886,49 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
         </div>
       )}
 
+      {/* Active Filter Notification: Kode / Transaksi Sama Beda Tanggal */}
+      {diffDateFilter !== 'all' && (
+        <div className="p-3.5 bg-gradient-to-r from-amber-50 to-yellow-50 border-2 border-amber-300 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-amber-950 font-sans shadow-3xs mb-4 animate-fade-in print:hidden">
+          <div className="flex items-start sm:items-center gap-2.5">
+            <div className="p-1.5 bg-amber-200 text-amber-900 rounded-xl shrink-0 border border-amber-300">
+              <AlertTriangle size={18} />
+            </div>
+            <div>
+              <span className="font-black text-amber-950 block sm:inline">
+                Filter {diffDateFilter === 'same_code_diff_date' ? 'No-Kode Sama (Beda Tanggal)' : diffDateFilter === 'same_tx_diff_date' ? 'Transaksi Sama (Beda Tanggal)' : 'No-Kode / Transaksi Sama (Beda Tanggal)'} Aktif:
+              </span>{' '}
+              <span>
+                Menampilkan <strong>{filteredSubmissions.length} voucher</strong> yang belum di-check. Centang kolom <strong>Check</strong> agar baris yang sudah dicek tidak muncul lagi.
+                {checkedDiffDateIds.length > 0 && (
+                  <span className="ml-1.5 font-mono text-[11px] text-emerald-800 font-bold">
+                    ({checkedDiffDateIds.length} sudah di-check &amp; disembunyikan)
+                  </span>
+                )}
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+            {checkedDiffDateIds.length > 0 && (
+              <button
+                type="button"
+                onClick={handleResetCheckedDiffDate}
+                className="px-3 py-1.5 bg-white hover:bg-rose-50 text-rose-700 font-bold border border-rose-300 rounded-xl text-xs transition cursor-pointer"
+                title="Tampilkan kembali semua voucher yang sebelumnya sudah di-check"
+              >
+                Reset Check ({checkedDiffDateIds.length})
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setDiffDateFilter('all')}
+              className="px-3 py-1.5 bg-stone-900 hover:bg-stone-800 text-white font-bold rounded-xl text-xs transition cursor-pointer"
+            >
+              Tampilkan Semua
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Main Content Layout Block: Standard List vs Google Sheets Simulator */}
       {layoutMode === 'standard' ? (
         /* Standard Table & Mobile Card View */
@@ -1755,13 +1949,32 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                     {/* Header bar: Tanggal, Kode & Status */}
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <div className="font-extrabold text-stone-900 text-xs flex items-center gap-1.5">
+                        <div className="font-extrabold text-stone-900 text-xs flex items-center gap-2 flex-wrap">
+                          <label className="inline-flex items-center gap-1 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={checkedDiffDateSet.has(sub.id)}
+                              onChange={() => handleToggleCheckedDiffDate(sub.id)}
+                              className="w-4 h-4 rounded border-stone-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                              title="Tandai sudah dicek (tidak muncul lagi di filter beda tanggal)"
+                            />
+                            <span className="text-[10px] font-mono font-bold text-stone-500">Check</span>
+                          </label>
                           <span>📅 {formatDateIndonesian(sub.tanggal)}</span>
                         </div>
                         <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                           <span className="font-mono text-[10px] font-bold bg-stone-100 text-stone-700 px-2 py-0.5 rounded border border-stone-200">
                             Kode: {sub.kode || '-'}
                           </span>
+                          {diffDateFilter !== 'all' && (
+                            <span className="font-mono text-[9px] font-black bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded border border-amber-300">
+                              {diffDateDetection.sameCodeIds.has(sub.id) && diffDateDetection.sameTxIds.has(sub.id)
+                                ? 'Kode & Transaksi Sama'
+                                : diffDateDetection.sameCodeIds.has(sub.id)
+                                ? 'Kode Sama Beda Tgl'
+                                : 'Transaksi Sama Beda Tgl'}
+                            </span>
+                          )}
                           <span className="text-[10px] text-stone-500 font-medium truncate max-w-[130px]">
                             📍 {sub.lokasi || '-'}
                           </span>
@@ -2049,6 +2262,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-stone-50 border-b border-stone-200 text-stone-500 font-display text-[10px] uppercase tracking-widest font-extrabold">
+                  <th className="py-4.5 px-4 text-center w-16">Check</th>
                   <th className="py-4.5 px-6">Tanggal</th>
                   <th className="py-4.5 px-6">Lokasi & Kode</th>
                   <th className="py-4.5 px-6">Jenis Pengajuan</th>
@@ -2061,8 +2275,18 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 {filteredSubmissions.length > 0 ? (
                   filteredSubmissions.map((sub) => {
                     const subTotal = sub.items.reduce((sum, i) => sum + i.total, 0);
+                    const isChecked = checkedDiffDateSet.has(sub.id);
                     return (
                       <tr key={sub.id} className={`hover:bg-stone-50/50 transition ${openActionMenuId === sub.id ? 'relative z-[60] bg-amber-50/25' : ''}`}>
+                        <td className="py-4.5 px-4 text-center">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => handleToggleCheckedDiffDate(sub.id)}
+                            className="w-4 h-4 rounded border-stone-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
+                            title={isChecked ? 'Sudah dicek (klik untuk batalkan check)' : 'Centang jika sudah dicek agar tidak muncul lagi di filter beda tanggal'}
+                          />
+                        </td>
                         <td className="py-4.5 px-6 whitespace-nowrap">
                           <div className="font-extrabold text-stone-900">
                             {formatDateIndonesian(sub.tanggal)}
@@ -2074,9 +2298,20 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                             <MapPin size={13} className="text-stone-400" />
                             {sub.lokasi}
                           </div>
-                          <span className="inline-block mt-1 font-mono text-[10px] font-bold bg-stone-100 text-stone-600 px-2 py-0.5 rounded-sm border border-stone-200">
-                            Kode: {sub.kode}
-                          </span>
+                          <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                            <span className="inline-block font-mono text-[10px] font-bold bg-stone-100 text-stone-600 px-2 py-0.5 rounded-sm border border-stone-200">
+                              Kode: {sub.kode}
+                            </span>
+                            {diffDateFilter !== 'all' && (
+                              <span className="inline-block font-mono text-[9px] font-black bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded border border-amber-300">
+                                {diffDateDetection.sameCodeIds.has(sub.id) && diffDateDetection.sameTxIds.has(sub.id)
+                                  ? 'Kode & Transaksi Sama'
+                                  : diffDateDetection.sameCodeIds.has(sub.id)
+                                  ? 'Kode Sama Beda Tgl'
+                                  : 'Transaksi Sama Beda Tgl'}
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="py-4.5 px-6">
                           <div className="font-extrabold text-stone-900">{sub.jenisPengajuan}</div>
@@ -2263,10 +2498,12 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                   })
                 ) : (
                   <tr>
-                    <td colSpan={6} className="py-12 px-4 text-center">
+                    <td colSpan={7} className="py-12 px-4 text-center">
                       <div className="space-y-3">
                         <p className="text-sm font-bold text-stone-600">
-                          {submissions.length > 0
+                          {diffDateFilter !== 'all'
+                            ? 'Semua transaksi dengan No-Kode / Transaksi sama (beda tanggal) sudah di-check atau tidak ditemukan.'
+                            : submissions.length > 0
                             ? `Tidak ada transaksi pada periode ${monthFilter === 'All' ? 'Semua Bulan' : MONTHS_LIST.find(m => m.value === monthFilter)?.label || monthFilter} ${yearFilter === 'All' ? 'Semua Tahun' : yearFilter}.`
                             : 'Tidak ditemukan data transaksi yang dimuat.'}
                         </p>
@@ -2281,6 +2518,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                                 setDateFilter('');
                                 setMonthFilter('All');
                                 setYearFilter('All');
+                                setDiffDateFilter('all');
                                 try { sessionStorage.setItem('sublist_hasCustomPeriodFilter', 'true'); } catch (_) {}
                               }}
                               className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-stone-950 font-bold text-xs transition cursor-pointer"

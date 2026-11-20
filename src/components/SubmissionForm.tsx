@@ -969,7 +969,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
   const handleConnectDrive = async () => {
     setUploadError('');
     try {
-      const result = await googleDriveLogin();
+      const result = await googleDriveLogin(undefined, false);
       if (result.accessToken) {
         setIsDriveConnected(true);
       }
@@ -1676,6 +1676,12 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         setSaveProgress('1/6. Mencari/Membuat folder utama: "Voucher-APP"...');
         const rootId = 'root';
         const voucherAppId = await getOrCreateFolder(token, 'Voucher-APP', rootId);
+        // CRITICAL: If getOrCreateFolder auto-refreshed an expired token, immediately sync local `token`
+        // so all subsequent Drive API calls in this save use the fresh valid token!
+        const refreshedTok = getStoredGoogleDriveToken(true);
+        if (refreshedTok) {
+          token = refreshedTok;
+        }
         console.log('[Drive Upload] Folder "Voucher-APP" ID:', voucherAppId);
 
         setSaveProgress(`2/6. Mencari/Membuat folder perusahaan: "${folderCompanyUpper}"...`);

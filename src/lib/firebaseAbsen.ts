@@ -29,6 +29,7 @@ import {
   getSharedFirebaseAuth,
   getIsolatedDriveAuth,
   googleDriveLogin,
+  getMasterDriveEmail,
   LOCKED_MASTER_DRIVE_EMAIL,
   withTimeout,
   isFirestorePermissionError,
@@ -75,8 +76,8 @@ export const saveGoogleToken = (token: string, email?: string) => {
 };
 
 export const getFreshGoogleToken = async (forceRefresh = false): Promise<string> => {
-  // 1. Always target the official Master Drive account (never the Firebase/Firestore login account)
-  const emailToUse = LOCKED_MASTER_DRIVE_EMAIL;
+  // 1. Always target the active Master Drive account (never the Firebase/Firestore login account)
+  const emailToUse = getMasterDriveEmail() || LOCKED_MASTER_DRIVE_EMAIL;
   try {
     const unifiedToken = await getOrRenewDriveToken(emailToUse, forceRefresh);
     if (unifiedToken) {
@@ -145,20 +146,21 @@ export const initAuth = (
   });
 };
 
-export const googleSignIn = async (_forceSelectAccount = false): Promise<{ user: User; accessToken: string } | null> => {
+export const googleSignIn = async (forceSelectAccount = false): Promise<{ user: User; accessToken: string } | null> => {
   if (isSigningIn) {
     console.warn("Proses login Google sedang berjalan...");
     return null;
   }
   try {
     isSigningIn = true;
-    const result = await googleDriveLogin(LOCKED_MASTER_DRIVE_EMAIL, false, [
+    const targetDrive = getMasterDriveEmail() || LOCKED_MASTER_DRIVE_EMAIL;
+    const result = await googleDriveLogin(targetDrive, forceSelectAccount, [
       "https://www.googleapis.com/auth/spreadsheets"
     ]);
     if (!result?.accessToken) {
       throw new Error("Gagal memperoleh Google Access Token dari autentikasi.");
     }
-    saveGoogleToken(result.accessToken, result.driveDetails?.email || LOCKED_MASTER_DRIVE_EMAIL);
+    saveGoogleToken(result.accessToken, result.driveDetails?.email || targetDrive);
     return { user: result.user, accessToken: result.accessToken };
   } catch (error: any) {
     console.error("Google Drive Sign In failed:", error);

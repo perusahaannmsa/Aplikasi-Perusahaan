@@ -9,7 +9,8 @@ import {
   getUserProfileFromFirestore,
   switchToProductionDatabase,
   switchToAppletDatabase,
-  getActiveFirebaseProjectId
+  getActiveFirebaseProjectId,
+  LOCKED_FIREBASE_AUTH_EMAIL
 } from '../firebase';
 import { Submission } from '../types';
 import { NusantaraLogo } from './NusantaraLogo';
@@ -27,8 +28,8 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
   const [activeProjectId, setActiveProjectId] = useState<string>(() => getActiveFirebaseProjectId());
   const [isOperationNotAllowed, setIsOperationNotAllowed] = useState(false);
 
-  // Form Fields - Login
-  const [loginEmail, setLoginEmail] = useState('');
+  // Form Fields - Login (otomatis terisi akun Firebase default: yudiakungaming@gmail.com)
+  const [loginEmail, setLoginEmail] = useState<string>(LOCKED_FIREBASE_AUTH_EMAIL);
   const [loginPassword, setLoginPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 

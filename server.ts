@@ -2526,7 +2526,7 @@ app.post("/api/unified-storage", (req, res) => {
     if (incoming.googleDrives !== undefined && Array.isArray(incoming.googleDrives)) {
       state.googleDrives = incoming.googleDrives.filter((d: any) => {
         const em = String(d?.email || '').trim().toLowerCase();
-        return em && em !== 'penyimpanandrivenmsa1@gmail.com' && em !== 'penyimpanandrivenmsa2@gmail.com';
+        return Boolean(em);
       });
     }
 
