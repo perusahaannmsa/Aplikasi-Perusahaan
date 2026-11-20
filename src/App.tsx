@@ -4007,6 +4007,7 @@ export default function App() {
             onUploadSingleToFirestore={handleUploadSingleToFirestore}
             onUploadUnsyncedToFirestore={handleUploadUnsyncedToFirestore}
             unsyncedSubmissionIds={unsyncedSubmissionIds}
+            cloudSyncedIds={cloudSyncedIds}
             uploadingSubmissionIds={uploadingSubIds}
             hasCloudInventory={hasCloudInventory}
             onOpenDriveCleaner={() => setIsDriveOrphanCleanerOpen(true)}
