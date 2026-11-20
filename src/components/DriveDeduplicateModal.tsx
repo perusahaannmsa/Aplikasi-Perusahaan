@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { RefreshCw, CloudCheck, Trash2, CheckCircle2, AlertCircle, X, ShieldAlert, Sparkles, FolderSync, ExternalLink } from 'lucide-react';
 import { Submission } from '../types';
 import { runAutoRefreshAndDeduplicateDrive, DeduplicateResult } from '../utils/googleDriveDeduplicator';
-import { getStoredGoogleDriveToken, getActiveGoogleDriveAccount } from '../firebase';
+import { getStoredGoogleDriveToken, getActiveGoogleDriveAccount, maskLockedAccountLabel } from '../firebase';
 
 interface Props {
   isOpen: boolean;
@@ -111,7 +111,7 @@ export const DriveDeduplicateModal: React.FC<Props> = ({
                   {hasToken ? 'Google Drive Terhubung' : 'Google Drive Belum Terhubung'}
                 </span>
                 <span className="text-[11px] text-stone-500 font-mono">
-                  {driveAccount?.email || 'Silakan hubungkan akun Google Drive Anda'}
+                  {driveAccount?.email ? maskLockedAccountLabel(driveAccount.email, 'Master Drive NMSA (Terkunci)') : 'Silakan hubungkan akun Google Drive Anda'}
                 </span>
               </div>
             </div>

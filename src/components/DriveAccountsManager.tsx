@@ -10,7 +10,8 @@ import {
   getAuthorizedDriveEmails,
   isDriveTokenValid,
   getDriveRemainingMinutes,
-  LOCKED_MASTER_DRIVE_EMAIL
+  LOCKED_MASTER_DRIVE_EMAIL,
+  maskLockedAccountLabel
 } from '../firebase';
 import { Cloud, Plus, Trash2, ShieldCheck, RefreshCw, AlertTriangle, HardDrive, Star, Settings, Key, ArrowRight } from 'lucide-react';
 import { GoogleDriveSettingsModal } from './GoogleDriveSettingsModal';
@@ -68,7 +69,7 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({
     setIsConnecting(true);
     setConnectingEmail(null);
     try {
-      const result = await googleDriveLogin(undefined, true);
+      const result = await googleDriveLogin(LOCKED_MASTER_DRIVE_EMAIL, false);
       if (result.accessToken) {
         loadDrives();
       }
@@ -86,7 +87,7 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({
     setIsConnecting(true);
     setConnectingEmail(email || null);
     try {
-      const result = await googleDriveLogin(email, true);
+      const result = await googleDriveLogin(email || LOCKED_MASTER_DRIVE_EMAIL, false);
       if (result.accessToken) {
         loadDrives();
       }
@@ -267,14 +268,14 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({
                       <div className="space-y-0.5 min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="text-[12px] font-bold text-stone-800 truncate block">
-                            {drive.displayName}
+                            {maskLockedAccountLabel(drive.email, 'Master Drive NMSA (Terkunci)')}
                           </span>
                           <span className="text-[9px] text-stone-400 font-medium">
                             (Akun {idx === 0 ? 'Utama' : `Cadangan ${idx}`})
                           </span>
                         </div>
                         <span className="text-[10px] text-stone-500 font-mono block truncate">
-                          {drive.email}
+                          {maskLockedAccountLabel(drive.email, 'Otorisasi Google Drive Resmi NMSA')}
                         </span>
                       </div>
                     </div>

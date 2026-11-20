@@ -18,7 +18,7 @@ import {
   Activity 
 } from 'lucide-react';
 import { DriveAccountsManager } from './DriveAccountsManager';
-import { getConnectedDrives, saveConnectedDrives } from '../firebase';
+import { getConnectedDrives, saveConnectedDrives, maskLockedAccountLabel } from '../firebase';
 
 interface UserProfileModalProps {
   isOpen: boolean;
@@ -134,8 +134,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
   };
 
-  const userDisplayName = userProfile?.fullName || (authUser ? authUser.email : 'Nur Wahyudi');
-  const userEmailAddress = authUser?.email || 'yudiakungaming@gmail.com';
+  const userDisplayName = userProfile?.fullName || 'Nur Wahyudi';
+  const userEmailAddress = maskLockedAccountLabel(authUser?.email, 'Terkunci Otomatis (Portal Resmi NMSA)');
   const userRole = userProfile?.role || 'Admin HO / Staff';
   const companyName = userProfile?.companyName || 'PT. Nusantara Mineral Sukses Abadi';
 

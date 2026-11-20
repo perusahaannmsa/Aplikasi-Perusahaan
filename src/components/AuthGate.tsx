@@ -4,12 +4,14 @@ import {
   saveAndInitializeFirebaseConfig, 
   isFirebaseConfigured,
   loginToFirebase,
+  loginWithGoogle,
   resetPasswordViaEmail,
   loadSubmissionsFromFirestore,
   getUserProfileFromFirestore,
   switchToProductionDatabase,
   switchToAppletDatabase,
-  getActiveFirebaseProjectId
+  getActiveFirebaseProjectId,
+  LOCKED_FIREBASE_AUTH_EMAIL
 } from '../firebase';
 import { Submission } from '../types';
 import { NusantaraLogo } from './NusantaraLogo';
@@ -27,8 +29,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
   const [activeProjectId, setActiveProjectId] = useState<string>(() => getActiveFirebaseProjectId());
   const [isOperationNotAllowed, setIsOperationNotAllowed] = useState(false);
 
-  // Form Fields - Login
-  const [loginEmail, setLoginEmail] = useState('');
+  // Form Fields - Login (email target locked internally, hidden from UI)
   const [loginPassword, setLoginPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
@@ -146,10 +147,10 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
     e.preventDefault();
     setStatusMsg(null);
 
-    if (!loginEmail.trim() || !loginPassword.trim()) {
+    if (!loginPassword.trim()) {
       setStatusMsg({
         type: 'error',
-        text: 'Kombinasi Email dan Password wajib diisi.'
+        text: 'Kata Sandi wajib diisi.'
       });
       return;
     }
@@ -157,7 +158,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
     if (!isFirebaseConfigured() && !isConfigured) {
       setStatusMsg({
         type: 'error',
-        text: 'Koneksi database Cloud belum aktif. Silakan klik tombol roda gigi ⚙️ di pojok kanan bawah untuk mengonfigurasi Firebase Anda terlebih dahulu.'
+        text: 'Koneksi database Cloud belum aktif. Silakan klik tombol Database di pojok kanan bawah terlebih dahulu.'
       });
       return;
     }
@@ -165,18 +166,17 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
     setIsLoading(true);
     setStatusMsg({
       type: 'info',
-      text: 'Menghubungkan ke server autentikasi terenkripsi...'
+      text: 'Menghubungkan ke akun portal resmi yang terkunci...'
     });
 
     try {
-      const user = await loginToFirebase(loginEmail.trim(), loginPassword.trim());
+      const user = await loginToFirebase(LOCKED_FIREBASE_AUTH_EMAIL, loginPassword.trim());
       
       setStatusMsg({
         type: 'info',
         text: 'Autentikasi sukses! Mengimpor data transaksi aman dari cloud...'
       });
 
-      // Fetch user profile info from Firestore collection to retrieve companyId
       const profile = await getUserProfileFromFirestore(user.uid);
       const companyId = profile?.companyId || 'nmsa';
 
@@ -189,12 +189,12 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
       
       setStatusMsg({
         type: 'success',
-        text: `Sukses! Selamat datang kembali, ${profile?.fullName || user.email}.`
+        text: `Sukses! Selamat datang kembali, ${profile?.fullName || 'Administrator HO'}.`
       });
       
       setTimeout(() => {
         onLoginSuccess(user, cloudSubmissions);
-      }, 500);
+      }, 400);
     } catch (err: any) {
       const isInvalidCred = err?.code === 'auth/invalid-credential' || String(err?.message).includes('invalid-credential') || String(err?.message).includes('user-not-found') || String(err?.message).includes('wrong-password');
       const isOpNotAllowed = err?.code === 'auth/operation-not-allowed' || String(err?.message).includes('operation-not-allowed');
@@ -203,15 +203,15 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
         setIsOperationNotAllowed(true);
         setStatusMsg({
           type: 'error',
-          text: `Metode Login Email & Sandi belum diaktifkan di Firebase Console untuk project "${activeProjectId}".`
+          text: `Metode Login Email & Sandi belum diaktifkan di Firebase Console untuk project "${activeProjectId}". Gunakan tombol Masuk dengan Google di bawah.`
         });
       } else {
         setIsOperationNotAllowed(false);
         setStatusMsg({
           type: 'error',
           text: isInvalidCred
-            ? 'Email atau kata sandi tidak cocok. Pastikan akun Anda sudah didaftarkan langsung oleh Administrator di Firebase Console.'
-            : (err.message || 'Periksa kembali e-mail dan kata sandi Anda.')
+            ? 'Kata sandi tidak cocok untuk akun resmi yang tertanam di sistem, atau coba masuk langsung menggunakan Google SSO di bawah.'
+            : (err.message || 'Gagal memverifikasi sesi akun resmi.')
         });
       }
     } finally {
@@ -219,11 +219,12 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
     }
   };
 
-  const handleResetPassword = async () => {
-    if (!loginEmail.trim()) {
+  const handleLockedGoogleLogin = async () => {
+    setStatusMsg(null);
+    if (!isFirebaseConfigured() && !isConfigured) {
       setStatusMsg({
         type: 'error',
-        text: 'Silakan isi kolom Alamat E-mail terlebih dahulu untuk menerima tautan pemulihan kata sandi.'
+        text: 'Koneksi database Cloud belum aktif.'
       });
       return;
     }
@@ -231,14 +232,47 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
     setIsLoading(true);
     setStatusMsg({
       type: 'info',
-      text: `Mengirimkan email pemulihan sandi ke ${loginEmail.trim()}...`
+      text: 'Mengarahkan langsung ke akun resmi sistem...'
     });
 
     try {
-      await resetPasswordViaEmail(loginEmail.trim());
+      const user = await loginWithGoogle();
+      const profile = await getUserProfileFromFirestore(user.uid);
+      const companyId = profile?.companyId || 'nmsa';
+      let cloudSubmissions: Submission[] = [];
+      try {
+        cloudSubmissions = await loadSubmissionsFromFirestore(companyId);
+      } catch (_) {}
+
       setStatusMsg({
         type: 'success',
-        text: `Email pemulihan kata sandi telah dikirim ke ${loginEmail.trim()}. Silakan periksa kotak masuk (inbox / spam) Anda.`
+        text: `Autentikasi berhasil! Selamat datang kembali, ${profile?.fullName || 'Administrator HO'}.`
+      });
+      setTimeout(() => {
+        onLoginSuccess(user, cloudSubmissions);
+      }, 400);
+    } catch (err: any) {
+      setStatusMsg({
+        type: 'error',
+        text: err?.message || 'Gagal autentikasi Google untuk akun portal resmi.'
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleResetPassword = async () => {
+    setIsLoading(true);
+    setStatusMsg({
+      type: 'info',
+      text: 'Mengirimkan tautan pemulihan kata sandi ke email resmi portal HO...'
+    });
+
+    try {
+      await resetPasswordViaEmail(LOCKED_FIREBASE_AUTH_EMAIL);
+      setStatusMsg({
+        type: 'success',
+        text: 'Email pemulihan kata sandi telah dikirim ke email resmi yang tertanam di aplikasi. Silakan periksa inbox / spam Anda.'
       });
     } catch (err: any) {
       setStatusMsg({
@@ -371,21 +405,16 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
             <form onSubmit={handleLoginSubmit} className="space-y-4">
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-mono font-bold text-stone-400 uppercase tracking-widest">
-                  ALAMAT E-MAIL RESMI
+                  AKUN OTORISASI RESMI
                 </label>
-                <div className="relative">
-                  <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-stone-500 pointer-events-none">
-                    <Mail size={15} />
+                <div className="w-full px-3.5 py-2.5 bg-stone-900/90 border border-emerald-500/30 rounded-xl text-xs font-mono text-emerald-300 flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-2 font-bold">
+                    <ShieldCheck size={14} className="text-emerald-400 shrink-0" />
+                    <span>Terkunci ke Akun Resmi Portal NMSA</span>
                   </span>
-                  <input
-                    type="email"
-                    required
-                    value={loginEmail}
-                    onChange={(e) => setLoginEmail(e.target.value)}
-                    placeholder="nama@nmsa.com"
-                    disabled={isLoading}
-                    className="w-full pl-10 pr-3.5 py-2.5 bg-stone-900/90 border border-stone-800 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 text-stone-100 placeholder:text-stone-600 transition"
-                  />
+                  <span className="text-[10px] bg-emerald-500/20 border border-emerald-500/30 px-2 py-0.5 rounded-md font-bold">
+                    AUTO
+                  </span>
                 </div>
               </div>
 
@@ -398,7 +427,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
                     type="button"
                     onClick={handleResetPassword}
                     className="text-[11px] text-amber-400 hover:text-amber-300 font-semibold transition hover:underline cursor-pointer"
-                    title="Kirim email pemulihan sandi ke alamat email Anda"
+                    title="Kirim email pemulihan sandi ke akun resmi terdaftar"
                   >
                     Lupa Sandi?
                   </button>
@@ -442,6 +471,16 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
                     Masuk ke Sistem HO
                   </>
                 )}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleLockedGoogleLogin}
+                disabled={isLoading}
+                className="w-full bg-stone-900 hover:bg-stone-850 text-stone-200 border border-stone-700 hover:border-amber-500/40 font-bold py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider font-mono flex items-center justify-center gap-2 transition disabled:opacity-60 cursor-pointer"
+              >
+                <Mail size={14} className="text-amber-400" />
+                <span>Masuk Langsung via Google (Akun Terkunci)</span>
               </button>
 
               {!(window.location.hash === '#/input-bukti-transfer' || window.location.hash === '#input-bukti-transfer' || window.location.pathname === '/input-bukti-transfer') && (

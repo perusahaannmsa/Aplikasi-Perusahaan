@@ -2460,6 +2460,7 @@ app.get("/api/unified-storage", (req, res) => {
       menu_pinjaman_karyawan: {
         employeeLoans: state.employeeLoans || []
       },
+      googleDrives: state.googleDrives || [],
       riwayat_audit_log: state.auditLogs || [],
       companySettings: state.companySettings || {},
       raw: state
@@ -2522,6 +2523,12 @@ app.post("/api/unified-storage", (req, res) => {
     if (incoming.auditLogs !== undefined) state.auditLogs = incoming.auditLogs;
     if (incoming.companySettings !== undefined) state.companySettings = incoming.companySettings;
     if (incoming.employeeLoans !== undefined) state.employeeLoans = incoming.employeeLoans;
+    if (incoming.googleDrives !== undefined && Array.isArray(incoming.googleDrives)) {
+      state.googleDrives = incoming.googleDrives.filter((d: any) => {
+        const em = String(d?.email || '').trim().toLowerCase();
+        return em && em !== 'penyimpanandrivenmsa1@gmail.com' && em !== 'penyimpanandrivenmsa2@gmail.com';
+      });
+    }
 
     writeState(state);
     res.json({

@@ -17,6 +17,7 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react';
+import { maskLockedAccountLabel } from '../firebase';
 
 interface PengaturanViewProps {
   userProfile: any;
@@ -85,7 +86,7 @@ export const PengaturanView: React.FC<PengaturanViewProps> = ({
 }) => {
   const fullName = userProfile?.fullName || 'Nur Wahyudi';
   const roleLabel = userProfile?.role || 'Divisi Keuangan HO';
-  const email = authUser?.email || 'keuangan@nmsa.co.id';
+  const email = maskLockedAccountLabel(authUser?.email, 'Terkunci Otomatis (Portal Resmi NMSA)');
   const companyCode =
     userProfile?.companyDetails?.code || userProfile?.companyId?.toUpperCase() || 'NMSA';
   const companyName =
@@ -258,7 +259,7 @@ export const PengaturanView: React.FC<PengaturanViewProps> = ({
                 <span className="text-[10px] font-mono text-stone-400">24/7</span>
               </div>
               <p className="text-xs text-stone-500 mt-0.5 truncate">
-                Akun terhubung: {masterDriveEmail}
+                Status koneksi: {maskLockedAccountLabel(masterDriveEmail, 'Master Drive 24/7 Terkunci')}
               </p>
             </div>
           </button>

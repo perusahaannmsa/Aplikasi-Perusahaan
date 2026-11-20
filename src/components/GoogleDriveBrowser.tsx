@@ -11,6 +11,7 @@ import {
   isStrictlyAuthorizedDriveEmail,
   setMasterDriveEmail,
   ConnectedDrive,
+  maskLockedAccountLabel,
 } from '../firebase';
 import {
   DriveModuleKey,
@@ -282,13 +283,13 @@ export const GoogleDriveBrowser: React.FC<GoogleDriveBrowserProps> = ({
     setAccountFeedback(null);
     setRootError(null);
     try {
-      const res = await googleDriveLogin(selectedEmail, true);
+      const res = await googleDriveLogin(selectedEmail, false);
       if (res.accessToken) {
         syncAccountLists();
         await loadAccountRoot(selectedEmail);
         setAccountFeedback({
           type: 'success',
-          text: `Akun '${selectedEmail}' berhasil terhubung dan siap dibaca (khusus 5 folder utama).`,
+          text: `Akun '${maskLockedAccountLabel(selectedEmail, 'Master Drive NMSA')}' berhasil terhubung dan siap dibaca (khusus 5 folder utama).`,
         });
       }
     } catch (err: any) {
@@ -607,7 +608,7 @@ export const GoogleDriveBrowser: React.FC<GoogleDriveBrowserProps> = ({
                 <div className="min-w-0 space-y-1">
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <span className="text-xs font-mono font-bold text-stone-900 truncate">
-                      {clean}
+                      {maskLockedAccountLabel(clean, 'Akun Master Drive NMSA (Terkunci)')}
                     </span>
                     {isMaster && (
                       <span className="px-1.5 py-0.5 rounded bg-amber-200 text-amber-950 text-[9px] font-mono font-black uppercase">
@@ -644,7 +645,7 @@ export const GoogleDriveBrowser: React.FC<GoogleDriveBrowserProps> = ({
               <div className="flex items-center justify-between text-xs">
                 <span className="font-bold text-stone-800">
                   Kapasitas Penyimpanan:{' '}
-                  <span className="font-mono text-stone-900">{selectedEmail}</span>
+                  <span className="font-mono text-stone-900">{maskLockedAccountLabel(selectedEmail, 'Master Drive NMSA (Terkunci)')}</span>
                 </span>
                 <span className="font-mono text-stone-600 tabular-nums">
                   {formatDriveBytes(quotaUsed)} / {formatDriveBytes(quotaLimit)} ({quotaPercent}%)

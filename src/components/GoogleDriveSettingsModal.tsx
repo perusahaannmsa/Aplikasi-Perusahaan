@@ -20,7 +20,8 @@ import {
   loadConnectedDrivesFromFirestore,
   isDriveTokenValid,
   getDriveRemainingMinutes,
-  LOCKED_MASTER_DRIVE_EMAIL
+  LOCKED_MASTER_DRIVE_EMAIL,
+  maskLockedAccountLabel
 } from '../firebase';
 import { 
   Cloud, 
@@ -230,10 +231,10 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
     setIsConnecting(true);
     setConnectingEmail(targetEmail);
     try {
-      const result = await googleDriveLogin(targetEmail, true);
+      const result = await googleDriveLogin(targetEmail, false);
       if (result.accessToken) {
         await loadData();
-        showFeedback('success', `Google Drive (${result.user?.email || targetEmail}) berhasil terhubung & tersinkronisasi!`);
+        showFeedback('success', `Google Drive (${maskLockedAccountLabel(result.user?.email || targetEmail, 'Master Drive NMSA')}) berhasil terhubung & tersinkronisasi!`);
       }
     } catch (err: any) {
       console.error(err);
@@ -259,7 +260,7 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
       setManualTokenInput('');
       showFeedback(
         'success', 
-        `Sukses! Akun Google Drive (${drive.email}) berhasil diverifikasi & terhubung tanpa hambatan pop-up!`
+        `Sukses! Akun Google Drive (${maskLockedAccountLabel(drive.email, 'Master Drive NMSA')}) berhasil diverifikasi & terhubung tanpa hambatan pop-up!`
       );
     } catch (err: any) {
       showFeedback('error', err.message || 'Gagal memverifikasi token.');
@@ -484,7 +485,7 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
                       type="email"
                       value={newEmailInput}
                       onChange={(e) => setNewEmailInput(e.target.value)}
-                      placeholder="Masukkan alamat email Google (misal: perusahaannmsa@gmail.com)..."
+                      placeholder="Masukkan alamat email Google..."
                       className="w-full bg-stone-50 border border-stone-300 focus:border-amber-500 focus:bg-white rounded-xl pl-9 pr-3 py-2 text-xs font-mono focus:outline-none transition"
                     />
                   </div>
@@ -560,7 +561,7 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
                             <div className="min-w-0 space-y-0.5">
                               <div className="flex items-center gap-2 flex-wrap">
                                 <span className="text-xs font-mono font-bold text-stone-900 truncate">
-                                  {email}
+                                  {maskLockedAccountLabel(email, 'Akun Master Google Drive (Terkunci)')}
                                 </span>
                                 {isMaster && (
                                   <span className="bg-amber-100 border border-amber-300 text-amber-900 text-[9px] font-black font-mono px-2 py-0.5 rounded-md uppercase tracking-wider flex items-center gap-1">
@@ -696,7 +697,7 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
                       >
                         {authorizedEmails.map(e => (
                           <option key={e} value={e}>
-                            {e} {e.toLowerCase() === masterEmail.toLowerCase() ? '(Master)' : ''}
+                            {maskLockedAccountLabel(e, 'Akun Master Google Drive (Terkunci)')} {e.toLowerCase() === masterEmail.toLowerCase() ? '(Master)' : ''}
                           </option>
                         ))}
                       </select>
@@ -821,7 +822,7 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
                         Kapasitas Master Google Drive Aktif
                       </h4>
                       <p className="text-[11px] text-stone-500 font-mono">
-                        Akun aktif: <strong>{masterEmail}</strong>
+                        Status: <strong>{maskLockedAccountLabel(masterEmail, 'Akun Master Drive NMSA (Terkunci)')}</strong>
                       </p>
                     </div>
                   </div>
@@ -920,7 +921,7 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
         <div className="p-4 bg-stone-100 border-t border-stone-200 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2 text-xs font-mono text-stone-600">
             <ShieldCheck size={14} className="text-emerald-600 shrink-0" />
-            <span>Master Drive Aktif: <strong>{masterEmail}</strong></span>
+            <span>Master Drive Aktif: <strong>{maskLockedAccountLabel(masterEmail, 'Terkunci Otomatis (Master NMSA)')}</strong></span>
           </div>
 
           <div className="flex items-center gap-2">

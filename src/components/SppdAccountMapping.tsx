@@ -29,7 +29,8 @@ import {
   getConnectedDrives,
   saveSppdRecordsToFirestore,
   getMasterDriveEmail,
-  LOCKED_MASTER_DRIVE_EMAIL
+  LOCKED_MASTER_DRIVE_EMAIL,
+  maskLockedAccountLabel
 } from '../firebase';
 import { SPPDRecord } from './SppdManager';
 import { consolidateSppdCostItems } from './PrintSppdDocument';
@@ -244,7 +245,7 @@ export function SppdAccountMapping({
     try {
       setIsDriveConnecting(true);
       const target = getMasterDriveEmail();
-      const res = await googleDriveLogin(target, true);
+      const res = await googleDriveLogin(target, false);
       if (res && res.accessToken) {
         setDriveAccount({ email: (res as any).user?.email || target });
         setSuccessMessage('Google Drive Master terhubung secara otomatis ke seluruh modul!');
@@ -1403,7 +1404,7 @@ export function SppdAccountMapping({
             <div className="bg-amber-950/90 border border-amber-400/40 text-amber-300 font-bold px-3.5 py-2 rounded-xl flex items-center gap-2 shadow-xs">
               <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
               <span>Google Drive Master:</span>
-              <span className="text-white font-mono">{driveAccount?.email || 'Master Terhubung'}</span>
+              <span className="text-white font-mono">{maskLockedAccountLabel(driveAccount?.email, 'Master Drive Terhubung (Terkunci)')}</span>
             </div>
 
             <button

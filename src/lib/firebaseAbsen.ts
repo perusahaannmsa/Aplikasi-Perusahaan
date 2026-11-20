@@ -27,6 +27,9 @@ import {
   recordFirestoreReads,
   getSharedFirestoreDb,
   getSharedFirebaseAuth,
+  getIsolatedDriveAuth,
+  googleDriveLogin,
+  LOCKED_MASTER_DRIVE_EMAIL,
   withTimeout,
   isFirestorePermissionError,
   isFirestorePermissionDenied,
@@ -145,37 +148,28 @@ export const initAuth = (
       cachedAccessToken = null;
       localStorage.removeItem("g_access_token");
       localStorage.removeItem("g_access_token_time");
-      localStorage.removeItem("g_user_email");
       if (onAuthFailure) onAuthFailure();
     }
   });
 };
 
-export const googleSignIn = async (forceSelectAccount = false): Promise<{ user: User; accessToken: string } | null> => {
+export const googleSignIn = async (_forceSelectAccount = false): Promise<{ user: User; accessToken: string } | null> => {
   if (isSigningIn) {
     console.warn("Proses login Google sedang berjalan...");
     return null;
   }
   try {
     isSigningIn = true;
-    const savedEmail = localStorage.getItem("g_user_email");
-    if (forceSelectAccount) {
-      provider.setCustomParameters({ prompt: "select_account" });
-    } else if (savedEmail) {
-      provider.setCustomParameters({ login_hint: savedEmail });
-    } else {
-      provider.setCustomParameters({ prompt: "select_account" });
-    }
-
-    const result = await signInWithPopup(auth, provider);
-    const credential = GoogleAuthProvider.credentialFromResult(result);
-    if (!credential?.accessToken) {
+    const result = await googleDriveLogin(LOCKED_MASTER_DRIVE_EMAIL, false, [
+      "https://www.googleapis.com/auth/spreadsheets"
+    ]);
+    if (!result?.accessToken) {
       throw new Error("Gagal memperoleh Google Access Token dari autentikasi.");
     }
-    saveGoogleToken(credential.accessToken, result.user.email || undefined);
-    return { user: result.user, accessToken: credential.accessToken };
+    saveGoogleToken(result.accessToken, result.driveDetails?.email || LOCKED_MASTER_DRIVE_EMAIL);
+    return { user: result.user, accessToken: result.accessToken };
   } catch (error: any) {
-    console.error("Firebase Sign In with Google failed:", error);
+    console.error("Google Drive Sign In failed:", error);
     throw error;
   } finally {
     isSigningIn = false;
@@ -200,13 +194,14 @@ export const cleanDataForFirestore = (obj: any): any => {
 
 export const googleSignOut = async (): Promise<void> => {
   try {
-    await signOut(auth);
+    const driveAuth = getIsolatedDriveAuth();
+    await signOut(driveAuth).catch(() => {});
     cachedAccessToken = null;
     localStorage.removeItem("g_access_token");
     localStorage.removeItem("g_access_token_time");
-    localStorage.removeItem("g_user_email");
+    localStorage.removeItem("NUSANTARA_GOOGLE_DRIVE_TOKEN");
   } catch (error) {
-    console.error("Sign out failed:", error);
+    console.error("Sign out Drive failed:", error);
     throw error;
   }
 };

@@ -20,6 +20,7 @@ import {
   Trash2,
   Users,
 } from 'lucide-react';
+import { maskLockedAccountLabel } from '../firebase';
 
 export type AppViewMode =
   | 'list'
@@ -212,7 +213,7 @@ export const MenuAlatView: React.FC<MenuAlatViewProps> = ({
         id: 'drive',
         group: 'integrasi',
         title: 'Master Google Drive (Akun & Token)',
-        description: `Akun aktif: ${masterDriveEmail}`,
+        description: `Status: ${maskLockedAccountLabel(masterDriveEmail, 'Master Drive 24/7 Terkunci')}`,
         tag: 'Pengaturan',
         icon: <Cloud size={18} />,
         accentBg: 'bg-stone-100 text-stone-800',

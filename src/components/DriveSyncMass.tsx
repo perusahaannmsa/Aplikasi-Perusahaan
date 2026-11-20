@@ -8,7 +8,8 @@ import {
   getConnectedDrives,
   loadAllCompaniesFromFirestore,
   getOrRenewDriveToken,
-  getActiveGoogleDriveAccount
+  getActiveGoogleDriveAccount,
+  maskLockedAccountLabel
 } from '../firebase';
 import { 
   generateF1PdfBytes, 
@@ -150,9 +151,10 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
     try {
       const loginRes = await googleDriveLogin();
       if (loginRes.accessToken) {
+        const label = maskLockedAccountLabel(loginRes.user.email, 'Master Drive NMSA');
         setIsDriveConnected(true);
-        setActiveDriveEmail(loginRes.user.email || 'Google Drive');
-        addLog(`Google Drive berhasil terhubung: ${loginRes.user.email}`);
+        setActiveDriveEmail(label);
+        addLog(`Google Drive berhasil terhubung (${label})`);
       }
     } catch (err: any) {
       setErrorLog(`Gagal menghubungkan Google Drive: ${err.message || err}`);
@@ -1268,7 +1270,7 @@ export const DriveSyncMass: React.FC<DriveSyncMassProps> = ({ submissions, onUpd
                   Status Penyimpanan Cloud: {isDriveConnected ? 'Google Drive Terhubung' : 'Google Drive Belum Terhubung'}
                 </p>
                 {isDriveConnected ? (
-                  <p className="text-[10.5px] text-stone-500">Akun Aktif: <strong className="font-mono text-emerald-700 underline shrink-0">{activeDriveEmail}</strong></p>
+                  <p className="text-[10.5px] text-stone-500">Status Koneksi: <strong className="font-mono text-emerald-700 underline shrink-0">{maskLockedAccountLabel(activeDriveEmail, 'Master Drive NMSA (Terkunci)')}</strong></p>
                 ) : (
                   <p className="text-[10.5px] text-stone-400">Hubungkan untuk mengunggah otomatis kwitansi, F1, and F2.</p>
                 )}

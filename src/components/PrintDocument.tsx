@@ -13,7 +13,7 @@ import {
 import { getVoucherShareLink } from '../utils/appLinks';
 import { NusantaraLogo } from './NusantaraLogo';
 import { Printer, ArrowLeft, Layers, FileText, CheckCircle, Cloud, Loader2, Lock, ShieldAlert, RefreshCw, Share2, Copy, Check, Send, Edit2, Trash, Trash2, RotateCw, Coins, ExternalLink, QrCode, Upload, AlertTriangle, FileSpreadsheet, Receipt } from 'lucide-react';
-import { getStoredGoogleDriveToken, ensureValidDriveToken, googleDriveLogin, saveSubmissionToFirestore, getAllConnectedDriveTokens, getConnectedDrives, ensureGoogleDriveFileSharing, triggerGoogleDriveAutoRefresh, invalidateDriveToken, getMasterDriveEmail } from '../firebase';
+import { getStoredGoogleDriveToken, ensureValidDriveToken, googleDriveLogin, saveSubmissionToFirestore, getAllConnectedDriveTokens, getConnectedDrives, ensureGoogleDriveFileSharing, triggerGoogleDriveAutoRefresh, invalidateDriveToken, getMasterDriveEmail, maskLockedAccountLabel } from '../firebase';
 import { SppdSheetContent } from './PrintSppdDocument';
 import { SPPDRecord } from './SppdManager';
 import { SignerSettingsModal, SignerConfigItem } from './SignerSettingsModal';
@@ -4592,7 +4592,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
                         <div className="flex items-center gap-2 truncate">
                           <Lock size={14} className="text-[#D4AF37] shrink-0" />
                           <span className="truncate text-[11px] text-stone-200">
-                            Google Drive Resmi: <strong className="text-amber-400">{getMasterDriveEmail()}</strong>
+                            Google Drive Resmi: <strong className="text-amber-400">{maskLockedAccountLabel(getMasterDriveEmail(), 'Master Drive NMSA (Terkunci)')}</strong>
                           </span>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
@@ -4611,7 +4611,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
                             onClick={() => triggerReplaceFile(page.fileIndex)}
                             disabled={page.fileId ? isReplacingFile[page.fileId] : false}
                             className="bg-emerald-700 hover:bg-emerald-800 text-white px-2.5 py-1 rounded-lg text-[11px] font-bold transition flex items-center gap-1 cursor-pointer shadow-xs"
-                            title={`Unggah ulang berkas baru ke akun ${getMasterDriveEmail()}`}
+                            title="Unggah ulang berkas baru ke Master Google Drive"
                           >
                             <Upload size={12} />
                             <span>Unggah Ulang</span>

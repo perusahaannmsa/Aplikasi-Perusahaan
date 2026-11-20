@@ -31,7 +31,8 @@ import {
   getConnectedDrives,
   executeDriveApiWithAutoRefresh,
   getOrRenewDriveToken,
-  getStoredGoogleDriveToken
+  getStoredGoogleDriveToken,
+  maskLockedAccountLabel
 } from '../firebase';
 import { getOrCreateNestedFolder, uploadFileToDrive } from '../lib/googleWorkspaceAbsen';
 
@@ -265,7 +266,7 @@ export function AccuratePettyCashMapping({
       const res = await googleDriveLogin();
       if (res?.user || res?.accessToken) {
         setDriveAccount(getActiveGoogleDriveAccount());
-        setSuccessMessage(`Google Drive (${res.user?.email || 'Akun'}) berhasil terhubung!`);
+        setSuccessMessage(`Google Drive (${maskLockedAccountLabel(res.user?.email, 'Master Drive NMSA')}) berhasil terhubung!`);
         setTimeout(() => setSuccessMessage(''), 3500);
       }
     } catch (err: any) {
@@ -2768,7 +2769,7 @@ ${coaPromptList}`;
             <div className="bg-emerald-950/80 border border-emerald-400/40 text-emerald-300 font-bold px-3.5 py-2 rounded-xl flex items-center gap-2 shadow-xs">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
               <span>Google Drive:</span>
-              <span className="text-white font-mono">{driveAccount?.email || 'Master Terhubung'}</span>
+              <span className="text-white font-mono">{maskLockedAccountLabel(driveAccount?.email, 'Master Drive Terhubung (Terkunci)')}</span>
             </div>
 
             <button
@@ -4409,7 +4410,7 @@ ${coaPromptList}`;
                             <div className="flex items-center justify-center gap-2 text-[11px] text-emerald-300 bg-emerald-950/60 border border-emerald-500/30 rounded-xl px-3 py-1.5 w-fit mx-auto">
                               <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
                               <span>Tersimpan ke Google Drive:</span>
-                              <span className="font-bold text-white font-mono">{driveAccount.email}</span>
+                              <span className="font-bold text-white font-mono">{maskLockedAccountLabel(driveAccount.email, 'Master Drive NMSA (Terkunci)')}</span>
                             </div>
                           ) : (
                             <div className="flex items-center justify-center gap-2 text-[11px] text-amber-300 bg-amber-950/60 border border-amber-500/30 rounded-xl px-3 py-1.5 w-fit mx-auto">

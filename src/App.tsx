@@ -111,7 +111,9 @@ import {
   mergeNpwpListsSafely,
   getDeletedNpwpIds,
   getActiveFirebaseProjectId,
-  withTimeout
+  withTimeout,
+  isAuthorizedPortalFirebaseEmail,
+  maskLockedAccountLabel
 } from './firebase';
 import { loadAttendanceFromFirestore, loadWorkersFromFirestore, mergeWorkerListsSafely, getDeletedWorkerIds } from './lib/firebaseAbsen';
 
@@ -2031,13 +2033,6 @@ export default function App() {
       pSearch.has('transaksi') || pSearch.has('nominal') || pSearch.has('kode') || pSearch.has('id')
     );
 
-    // Elegant shared terminal/device logic:
-    // If the browser session is fresh (all tabs closed and reopened), prevent auto-login by logging out first.
-    // Preserves active logins across page reloads (F5) and NEVER logs out when opening public portals or another tab while a tab is active!
-    const hasActiveSession = sessionStorage.getItem('NUSANTARA_SESSION_ACTIVE') === 'true';
-    const lastHeartbeat = Number(localStorage.getItem('NUSANTARA_ACTIVE_TAB_HEARTBEAT') || '0');
-    const hasLiveOtherTab = lastHeartbeat > 0 && (Date.now() - lastHeartbeat) < 15000;
-
     let isDisposed = false;
     let unsubscribe: (() => void) | null = null;
     const heartbeatTimer = window.setInterval(() => {
@@ -2049,14 +2044,20 @@ export default function App() {
     }, 4000);
 
     const setupAuthLifecycle = async () => {
-      // Wait for explicit logout BEFORE attaching auth listener so Firestore listeners don't race with signOut
-      if (!isPublicPortalUrl && !hasActiveSession && !hasLiveOtherTab) {
-        await logoutFromFirebase().catch(() => {});
-      }
       if (isDisposed) return;
 
       unsubscribe = registerAuthChangeListener(async (user) => {
         if (isDisposed) return;
+
+        // Enforce locked Firebase portal account: if an unrecognized/old hijacked session exists, sign it out cleanly
+        if (user && !isAuthorizedPortalFirebaseEmail(user.email)) {
+          console.warn('🔒 Sesi Firebase tidak sesuai dengan akun portal resmi. Membersihkan sesi...');
+          await logoutFromFirebase().catch(() => {});
+          setAuthUser(null);
+          setUserProfile(null);
+          return;
+        }
+
         setAuthUser(user);
         if (!user) {
           setUserProfile(null);
@@ -2065,7 +2066,6 @@ export default function App() {
           // DO NOT implicitly delete localStorage or empty submissions here.
         } else {
           setIsInitialReconcileDone(false);
-          // Mark session as active to prevent force-logout during same-tab refreshes and sibling tabs
           if (!isPublicPortalUrl) {
             sessionStorage.setItem('NUSANTARA_SESSION_ACTIVE', 'true');
             try {
@@ -2082,11 +2082,20 @@ export default function App() {
           let profile = await getUserProfileFromFirestore(user.uid).catch(() => null);
           if (!profile) {
             profile = {
-              fullName: user.email === 'admin@nmsa.com' ? 'Nur Wahyudi' : user.email?.split('@')[0] || 'User',
-              role: user.email === 'admin@nmsa.com' ? 'Accounting' : 'User',
+              fullName: 'Nur Wahyudi',
+              role: 'Accounting',
               email: user.email,
               companyId: companyId,
               companyName: 'PT Nusantara Mineral Sukses Abadi'
+            };
+          } else if (
+            !profile.fullName ||
+            profile.fullName.toLowerCase().includes('yudiakungaming') ||
+            profile.fullName.toLowerCase().includes('akuncoding')
+          ) {
+            profile = {
+              ...profile,
+              fullName: 'Nur Wahyudi'
             };
           }
 
@@ -3687,7 +3696,7 @@ export default function App() {
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
                   <Cloud size={14} className="text-amber-600 shrink-0" />
                   <span className="font-bold truncate max-w-[140px] md:max-w-[200px]">
-                    {masterDriveEmail}
+                    {maskLockedAccountLabel(masterDriveEmail, 'Master Drive 24/7')}
                   </span>
                 </button>
 
