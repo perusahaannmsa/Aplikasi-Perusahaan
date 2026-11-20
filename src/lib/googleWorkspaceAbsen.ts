@@ -64,6 +64,9 @@ export async function getOrCreateFolder(accessToken: string, folderName: string,
   let queryStr = `name = '${folderName.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
   if (parentId) {
     queryStr += ` and '${parentId}' in parents`;
+  } else {
+    // Ensure root folder is ALWAYS inside the connected account's own "My Drive" (never a shared folder from another account)
+    queryStr += ` and 'root' in parents and 'me' in owners`;
   }
   const query = encodeURIComponent(queryStr);
   const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${query}&spaces=drive&fields=files(id,name)`;
@@ -112,6 +115,9 @@ export async function uploadFileToDrive(
         },
       }
     );
+    if (checkRes.status === 401) {
+      await handleApiError(checkRes, "memeriksa berkas Google Drive");
+    }
     if (checkRes.ok) {
       const checkData = await checkRes.json();
       if (checkData.files && checkData.files.length > 0) {
@@ -128,16 +134,23 @@ export async function uploadFileToDrive(
             body: fileBlob,
           }
         );
+        if (updateRes.status === 401) {
+          await handleApiError(updateRes, "memperbarui berkas Google Drive");
+        }
         if (updateRes.ok) {
           const updatedJson = await updateRes.json();
+          const finalId = updatedJson.id || existingFile.id;
           return {
-            id: updatedJson.id || existingFile.id,
-            webViewLink: updatedJson.webViewLink || existingFile.webViewLink || `https://drive.google.com/file/d/${existingFile.id}/view`,
+            id: finalId,
+            webViewLink: updatedJson.webViewLink || existingFile.webViewLink || `https://drive.google.com/file/d/${finalId}/view`,
           };
         }
       }
     }
-  } catch (lookupErr) {
+  } catch (lookupErr: any) {
+    if (String(lookupErr?.message || "").includes("TOKEN_EXPIRED_401")) {
+      throw lookupErr;
+    }
     console.warn("Could not check/update existing file on Drive, falling back to upload:", lookupErr);
   }
 
@@ -167,7 +180,11 @@ export async function uploadFileToDrive(
 
   await handleApiError(response, "mengunggah berkas ke Google Drive");
 
-  return await response.json();
+  const uploaded = await response.json();
+  return {
+    id: uploaded.id,
+    webViewLink: uploaded.webViewLink || `https://drive.google.com/file/d/${uploaded.id}/view`,
+  };
 }
 
 // Helper to export Attendance report to a new Google Sheet

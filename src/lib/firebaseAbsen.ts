@@ -75,12 +75,9 @@ export const saveGoogleToken = (token: string, email?: string) => {
 };
 
 export const getFreshGoogleToken = async (forceRefresh = false): Promise<string> => {
-  // 1. Try unified system drive token first to ensure identical Google Drive account
+  // 1. Always target the official Master Drive account (never the Firebase/Firestore login account)
+  const emailToUse = LOCKED_MASTER_DRIVE_EMAIL;
   try {
-    const activeAccount = getActiveGoogleDriveAccount();
-    const emailToUse = activeAccount?.email || localStorage.getItem("g_user_email") || undefined;
-    
-    // Proactively get or renew drive token
     const unifiedToken = await getOrRenewDriveToken(emailToUse, forceRefresh);
     if (unifiedToken) {
       cachedAccessToken = unifiedToken;
@@ -89,27 +86,20 @@ export const getFreshGoogleToken = async (forceRefresh = false): Promise<string>
       return unifiedToken;
     }
   } catch (err) {
+    if (forceRefresh) {
+      throw err;
+    }
     console.warn("Notice: unified drive token resolution fallback in absen:", err);
   }
 
-  const currentToken = localStorage.getItem("g_access_token") || getStoredGoogleDriveToken(!forceRefresh);
-  const tokenTimeStr = localStorage.getItem("g_access_token_time");
-  const tokenAgeMs = tokenTimeStr ? Date.now() - parseInt(tokenTimeStr, 10) : Infinity;
-
-  // Sandbox token bypass
-  if (currentToken === "ACCESSTOKEN_SANDBOX_ACTIVE") {
-    return currentToken;
-  }
-
-  // If token is less than 45 minutes old and forceRefresh is false, return active token
-  if (currentToken && tokenAgeMs < 45 * 60 * 1000 && !forceRefresh) {
-    return currentToken;
+  const storedUnifiedToken = getStoredGoogleDriveToken(true);
+  if (storedUnifiedToken && !forceRefresh) {
+    cachedAccessToken = storedUnifiedToken;
+    return storedUnifiedToken;
   }
 
   // Attempt interactive renewal if token is old or forceRefresh
   try {
-    const activeAccount = getActiveGoogleDriveAccount();
-    const emailToUse = activeAccount?.email || localStorage.getItem("g_user_email") || undefined;
     const renewed = await getOrRenewDriveToken(emailToUse, true);
     if (renewed) {
       cachedAccessToken = renewed;
@@ -119,35 +109,37 @@ export const getFreshGoogleToken = async (forceRefresh = false): Promise<string>
     }
   } catch (err) {
     console.warn("Failed interactive renewal in getFreshGoogleToken:", err);
+    throw err;
   }
 
-  if (currentToken && !forceRefresh) {
-    return currentToken;
-  }
-
-  if (currentToken) return currentToken;
-  throw new Error("TOKEN_EXPIRED_401: Sesi Google Drive kedaluwarsa. Silakan sambungkan ulang akun Google Anda.");
+  throw new Error("TOKEN_EXPIRED_401: Sesi Google Drive kedaluwarsa. Silakan sambungkan ulang akun Google Drive resmi.");
 };
 
 export const initAuth = (
   onAuthSuccess?: (user: User, token: string) => void,
   onAuthFailure?: () => void
 ) => {
+  // Immediately hydrate from unified Google Drive token store (independent of primary Firebase Auth)
+  const existingDriveToken = getStoredGoogleDriveToken(true);
+  if (existingDriveToken) {
+    cachedAccessToken = existingDriveToken;
+    const driveUser = ({
+      email: getActiveGoogleDriveAccount()?.email || LOCKED_MASTER_DRIVE_EMAIL,
+    } as unknown) as User;
+    if (onAuthSuccess) onAuthSuccess(driveUser, existingDriveToken);
+  }
+
   return onAuthStateChanged(auth, async (user: User | null) => {
-    if (user) {
-      const persistedToken = localStorage.getItem("g_access_token");
-      if (persistedToken) {
-        cachedAccessToken = persistedToken;
-        if (onAuthSuccess) onAuthSuccess(user, persistedToken);
-      } else if (cachedAccessToken) {
-        if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
-      } else if (!isSigningIn) {
-        if (onAuthFailure) onAuthFailure();
-      }
-    } else {
-      cachedAccessToken = null;
-      localStorage.removeItem("g_access_token");
-      localStorage.removeItem("g_access_token_time");
+    // NEVER wipe Google Drive token when primary Firebase Auth changes; Drive uses its own isolated OAuth session.
+    const driveToken = getStoredGoogleDriveToken(true) || cachedAccessToken;
+    if (driveToken) {
+      cachedAccessToken = driveToken;
+      const driveUser = ({
+        ...(user || {}),
+        email: getActiveGoogleDriveAccount()?.email || LOCKED_MASTER_DRIVE_EMAIL,
+      } as unknown) as User;
+      if (onAuthSuccess) onAuthSuccess(driveUser, driveToken);
+    } else if (!isSigningIn) {
       if (onAuthFailure) onAuthFailure();
     }
   });

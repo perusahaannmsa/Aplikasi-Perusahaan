@@ -16,7 +16,8 @@ import {
   getConnectedDrives, 
   executeDriveApiWithAutoRefresh,
   getStoredGoogleDriveToken,
-  getOrRenewDriveToken
+  getOrRenewDriveToken,
+  LOCKED_MASTER_DRIVE_EMAIL
 } from '../firebase';
 
 export interface BackupSyncLog {
@@ -156,22 +157,12 @@ class GoogleDriveAutoBackupService {
    * Helper to ensure token is valid and execute drive operation with automatic renewal
    */
   private async withDriveToken<T>(fn: (token: string) => Promise<T>): Promise<T> {
-    const activeAccount = getActiveGoogleDriveAccount();
-    const lastEmail = localStorage.getItem('NUSANTARA_LAST_ACTIVE_EMAIL');
-    const targetEmail = activeAccount?.email || lastEmail || undefined;
-
-    // Ensure valid token or refresh interactively with account hint
-    let token = await getOrRenewDriveToken(targetEmail, true);
-    if (!token) {
-      token = await ensureValidDriveToken(true);
-    }
-
     return executeDriveApiWithAutoRefresh(async (tok) => {
       return await fn(tok);
     }, { 
       actionName: 'Auto Backup to Google Drive',
       interactiveIfRequired: true,
-      targetEmail
+      targetEmail: LOCKED_MASTER_DRIVE_EMAIL
     });
   }
 
@@ -278,7 +269,10 @@ class GoogleDriveAutoBackupService {
       // Guard: Do not overwrite Google Drive with empty records or unpopulated data
       const targetRecords = liveRecords.length > 0 ? liveRecords : recordsList;
       const hasAnyAttendance = targetRecords.some((r: any) => 
-        r && r.attendance && Object.values(r.attendance).some((val) => Boolean(val))
+        r && (
+          (r.attendance && Object.values(r.attendance).some((val) => Boolean(val))) ||
+          (r.customStatus && Object.values(r.customStatus).some((val) => typeof val === 'string' && val.trim() !== ''))
+        )
       );
 
       if (targetRecords.length === 0 || !hasAnyAttendance) {

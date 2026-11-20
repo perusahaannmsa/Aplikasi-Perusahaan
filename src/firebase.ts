@@ -1985,8 +1985,9 @@ export const saveConnectedDrives = async (drives: ConnectedDrive[]) => {
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('nusantara-drive-updated', {
         detail: {
-          drives,
+          drives: cleanDrives,
           activeAccount: getActiveGoogleDriveAccount(),
+          accessToken: bestToken,
           hasToken: !!bestToken
         }
       }));
@@ -2469,9 +2470,12 @@ export const getOrRenewDriveToken = async (
 
   activeDriveRenewalPromise = (async () => {
     try {
-      // 1. Check local drives first - if we have a currently valid token, return it immediately without popup!
+      // 1. Check local drives first - prioritize official Master Drive email (akuncoding211@gmail.com)
       const currentDrives = getConnectedDrives();
-      const currentValid = currentDrives.find(d => isDriveTokenValid(d) && (d.quotaLimit - d.quotaUsed > 10 * 1024 * 1024));
+      const masterValid = currentDrives.find(
+        d => d.email?.toLowerCase() === LOCKED_MASTER_DRIVE_EMAIL && isDriveTokenValid(d) && (d.quotaLimit - d.quotaUsed > 10 * 1024 * 1024)
+      );
+      const currentValid = masterValid || currentDrives.find(d => isDriveTokenValid(d) && (d.quotaLimit - d.quotaUsed > 10 * 1024 * 1024));
       if (currentValid && currentValid.accessToken) {
         setGoogleDriveToken(currentValid.accessToken);
         localStorage.setItem('g_access_token', currentValid.accessToken);
@@ -2479,11 +2483,14 @@ export const getOrRenewDriveToken = async (
         return currentValid.accessToken;
       }
 
-      // 2. Check Firestore for latest synced cloud drive token from other tabs/devices
+      // 2. Check server unified-storage for latest synced cloud drive token from other tabs/devices
       try {
         const cloudDrives = await loadConnectedDrivesFromFirestore();
         if (cloudDrives && cloudDrives.length > 0) {
-          const validDrive = cloudDrives.find(d => isDriveTokenValid(d) && d.accessToken);
+          const validMaster = cloudDrives.find(
+            d => d.email?.toLowerCase() === LOCKED_MASTER_DRIVE_EMAIL && isDriveTokenValid(d) && d.accessToken
+          );
+          const validDrive = validMaster || cloudDrives.find(d => isDriveTokenValid(d) && d.accessToken);
           if (validDrive && validDrive.accessToken) {
             setGoogleDriveToken(validDrive.accessToken);
             localStorage.setItem('g_access_token', validDrive.accessToken);
@@ -2493,25 +2500,12 @@ export const getOrRenewDriveToken = async (
         }
       } catch (fsErr) {}
 
-      // 2b. Check backend /api/drive-token (if server service account is available, provides fresh token instantly)
-      try {
-        const srvRes = await fetch('/api/drive-token');
-        if (srvRes.ok) {
-          const srvData = await srvRes.json();
-          if (srvData?.accessToken) {
-            setGoogleDriveToken(srvData.accessToken);
-            localStorage.setItem('g_access_token', srvData.accessToken);
-            localStorage.setItem('g_access_token_time', Date.now().toString());
-            return srvData.accessToken;
-          }
-        }
-      } catch (_) {}
-
-      // 3. Determine the exact Google Drive email to connect / reconnect (locked default)
+      // 3. Always lock Google Drive OAuth target to the official Master Drive email (akuncoding211@gmail.com)
       const activeAccount = getActiveGoogleDriveAccount();
-      const emailToUse = targetEmail || activeAccount?.email || getMasterDriveEmail() || LOCKED_MASTER_DRIVE_EMAIL;
+      const candidateEmail = (targetEmail || activeAccount?.email || getMasterDriveEmail() || LOCKED_MASTER_DRIVE_EMAIL).trim().toLowerCase();
+      const emailToUse = isStrictlyAuthorizedDriveEmail(candidateEmail) ? candidateEmail : LOCKED_MASTER_DRIVE_EMAIL;
 
-      // 4. If interactive renewal is allowed (explicit user action), perform login directly to locked email
+      // 4. If interactive renewal is allowed (explicit user action), perform login directly to locked Master Drive email
       if (interactiveIfRequired && emailToUse) {
         try {
           const loginRes = await googleDriveLogin(emailToUse, false);
@@ -2528,9 +2522,11 @@ export const getOrRenewDriveToken = async (
         }
       }
 
-      // 5. Fallback to any memory or localStorage token
-      const fallback = googleDriveTokenMemory || localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
-      if (fallback) return fallback;
+      // 5. Fallback to memory token only when non-interactive
+      if (!interactiveIfRequired) {
+        const fallback = googleDriveTokenMemory || localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
+        if (fallback) return fallback;
+      }
 
       return '';
     } finally {
@@ -2850,9 +2846,13 @@ export const googleDriveLogin = async (
 
     const userEmail = (driveDetails.email || result.user.email || '').trim().toLowerCase();
     if (!userEmail || !isStrictlyAuthorizedDriveEmail(userEmail)) {
+      const isFirestoreAccount = userEmail === LOCKED_FIREBASE_AUTH_EMAIL;
       throw new Error(
-        `Akun Google yang dipilih tidak cocok dengan akun Google Drive resmi aplikasi.\n\n` +
-        `Silakan gunakan akun Google Drive resmi yang terdaftar di sistem.`
+        isFirestoreAccount
+          ? `Akun yang Anda pilih (${userEmail}) adalah akun login Portal/Firestore, BUKAN akun Google Drive penyimpanan.\n\n` +
+            `File tidak diunggah agar tidak salah masuk ke Drive lain. Silakan pilih akun Google Drive penyimpanan resmi (${LOCKED_MASTER_DRIVE_EMAIL}) saat jendela izin Google Drive muncul.`
+          : `Akun Google yang dipilih (${userEmail || 'tidak dikenal'}) tidak cocok dengan akun Google Drive penyimpanan resmi (${LOCKED_MASTER_DRIVE_EMAIL}).\n\n` +
+            `Silakan login menggunakan akun Google Drive penyimpanan resmi agar berkas langsung masuk ke Google Drive tujuan.`
       );
     }
 
