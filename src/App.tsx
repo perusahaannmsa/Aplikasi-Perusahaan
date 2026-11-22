@@ -799,30 +799,6 @@ export default function App() {
     };
     loadSharedState();
 
-    loadSppdRecordsFromFirestore()
-      .then(fsRecords => {
-        if (fsRecords && fsRecords.length > 0) {
-          setSppdRecords(prev => {
-            const map = new Map<string, SPPDRecord>();
-            prev.forEach(r => map.set(r.id, r));
-            fsRecords.forEach(r => map.set(r.id, r));
-            const merged = Array.from(map.values());
-            localStorage.setItem('sppd_records_v1', JSON.stringify(merged));
-            return merged;
-          });
-        }
-      })
-      .catch(err => console.warn('Local SPPD sync skipped:', err));
-
-    // Automatically sync Google Drive connection across the entire app
-    loadConnectedDrivesFromFirestore()
-      .then(drives => {
-        if (drives && drives.length > 0) {
-          console.log(`☁️ Synced ${drives.length} Google Drive account(s) globally.`);
-        }
-      })
-      .catch(err => console.warn('Drive sync skipped:', err));
-
     // Start background auto-keeper for Google Drive token (every 30 seconds)
     const stopAutoRefresh = startGoogleDriveTokenAutoRefresh(30);
 
@@ -1276,6 +1252,7 @@ export default function App() {
 
   const [memoSubmissionTarget, setMemoSubmissionTarget] = useState<Submission | null>(null);
   const [targetAccurateSubmission, setTargetAccurateSubmission] = useState<Submission | null>(null);
+  const [authUser, setAuthUser] = useState<any>(null);
 
   const setView = (
     newView: AppViewMode,
@@ -1298,6 +1275,8 @@ export default function App() {
   useEffect(() => {
     // Keep Google Drive token alive and ready across all view changes
     triggerGoogleDriveAutoRefresh('view-' + view, false, false).catch(() => {});
+
+    if (!authUser) return;
 
     if (view === 'npwp' || view === 'pph23') {
       loadNpwpRecordsFromFirestore()
@@ -1369,7 +1348,7 @@ export default function App() {
         })
         .catch(err => console.warn('Auto-read Monthly transactions from Firestore failed:', err));
     }
-  }, [view]);
+  }, [view, authUser?.uid]);
 
   // Handlers for Project & RAB Management
   const handleSaveProject = async (project: Project) => {
@@ -1578,7 +1557,6 @@ export default function App() {
   };
   const [printInitialTab, setPrintInitialTab] = useState<'both' | 'pengajuan' | 'pengeluaran' | 'lampiran' | 'slip_gaji' | 'sppd_sheet' | 'only_invoice_payment' | 'lembar_cicilan'>('both');
   const [editingSubmission, setEditingSubmission] = useState<Submission | null>(null);
-  const [authUser, setAuthUser] = useState<any>(null);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isCompanyModalOpen, setIsCompanyModalOpen] = useState(false);
@@ -2503,6 +2481,30 @@ export default function App() {
       applyCloudMonthlyUpdate(cloudItems, cloudDeletedIds);
     });
 
+    // 4. SPPD & Connected Drives initial authenticated sync
+    loadSppdRecordsFromFirestore()
+      .then(fsRecords => {
+        if (fsRecords && fsRecords.length > 0) {
+          setSppdRecords(prev => {
+            const map = new Map<string, SPPDRecord>();
+            prev.forEach(r => map.set(r.id, r));
+            fsRecords.forEach(r => map.set(r.id, r));
+            const merged = Array.from(map.values());
+            localStorage.setItem('sppd_records_v1', JSON.stringify(merged));
+            return merged;
+          });
+        }
+      })
+      .catch(err => console.warn('Local SPPD sync skipped:', err));
+
+    loadConnectedDrivesFromFirestore()
+      .then(drives => {
+        if (drives && drives.length > 0) {
+          console.log(`☁️ Synced ${drives.length} Google Drive account(s) globally.`);
+        }
+      })
+      .catch(err => console.warn('Drive sync skipped:', err));
+
     const handleWakeSync = (forceFullCheck: boolean = false) => {
       const now = Date.now();
       if ((getPendingFirestoreSyncCount() > 0 || getPendingFirestoreDeleteIds().length > 0) && !isFirestoreQuotaExceeded()) {
@@ -2648,6 +2650,104 @@ export default function App() {
     }
 
     if (activeSubmission?.id === id) {
+      setActiveSubmission(null);
+      if (view === 'print' || view === 'form') {
+        setView(previousView || 'list');
+      }
+    }
+  };
+
+  // Atomic bulk-delete handler for selected/checked transactions
+  const handleBulkDelete = async (ids: string[], options?: { deleteDriveFolder?: boolean }) => {
+    const cleanIds = Array.from(new Set((ids || []).filter(Boolean)));
+    if (cleanIds.length === 0) return;
+    const idLowerSet = new Set(cleanIds.map(normalizeSubId));
+    const targetSubs = submissions.filter((s) => s?.id && idLowerSet.has(normalizeSubId(s.id)));
+    const shouldDeleteDrive = options?.deleteDriveFolder !== false;
+
+    cleanIds.forEach((id) => addLocalDeletedSubmissionId(id));
+    clearPendingFirestoreIds(cleanIds);
+    serverBackupSubmissionsRef.current = serverBackupSubmissionsRef.current.filter(
+      (s) => !idLowerSet.has(normalizeSubId(s?.id))
+    );
+    setCloudSyncedIds((prev) => {
+      const next = new Set(prev);
+      idLowerSet.forEach((idLow) => next.delete(idLow));
+      return next;
+    });
+    const updated = submissions.filter((sub) => !idLowerSet.has(normalizeSubId(sub?.id)));
+    submissionsRef.current = sortSubmissionsList(updated);
+    saveSubmissionsToStorage(updated);
+
+    setCloudSyncNotice(`🗑️ Menghapus ${cleanIds.length} transaksi terpilih dari aplikasi, server & Cloud Firestore...`);
+
+    const serverDeletePromises = cleanIds.map((id) =>
+      fetch(`/api/sync-submissions/${encodeURIComponent(id)}`, { method: 'DELETE' })
+        .then((res) => res.ok)
+        .catch(() => false)
+    );
+
+    const firestoreDeletePromises = isFirebaseConfigured()
+      ? cleanIds.map((id) => deleteSubmissionFromFirestore(id))
+      : [];
+
+    const hasLoan = targetSubs.some((s) => isLoanSubmission(s));
+    if (hasLoan) {
+      try {
+        const deletedCodes = new Set(targetSubs.map((s) => s.kode).filter(Boolean));
+        const currentLoans = getSavedEmployeeLoans();
+        const cleanedLoans = currentLoans.map((l) => {
+          const disbList = (l.disbursements || []).filter(
+            (d) => !cleanIds.includes(d.submissionId) && !deletedCodes.has(d.kodeDokumen)
+          );
+          const totalFromDisbursements = disbList.reduce((sum, d) => sum + (Number(d.jumlah) || 0), 0);
+          return {
+            ...l,
+            disbursements: disbList,
+            jumlahPinjaman: disbList.length > 0 ? totalFromDisbursements : l.jumlahPinjaman,
+            linkedSubmissionId: l.linkedSubmissionId && cleanIds.includes(l.linkedSubmissionId) ? undefined : l.linkedSubmissionId,
+            linkedSubmissionKode: l.linkedSubmissionKode && deletedCodes.has(l.linkedSubmissionKode) ? undefined : l.linkedSubmissionKode,
+          };
+        });
+        saveEmployeeLoans(cleanedLoans);
+      } catch (e) {}
+    }
+
+    const driveDeletePromises = shouldDeleteDrive
+      ? targetSubs.map((targetSub) =>
+          deleteSubmissionDriveFolder(targetSub).catch(() => null)
+        )
+      : [];
+
+    const [, fsResults] = await Promise.all([
+      Promise.all(serverDeletePromises),
+      Promise.all(firestoreDeletePromises),
+      Promise.all(driveDeletePromises),
+    ]);
+
+    const allCloudDeleted = fsResults.length === 0 || fsResults.every((r) => r?.deletedFromCloud);
+    if (allCloudDeleted) {
+      setCloudSyncNotice(`✅ ${cleanIds.length} transaksi terpilih berhasil dihapus permanen dari aplikasi, server & Cloud Firestore.`);
+      setTimeout(() => setCloudSyncNotice(null), 5000);
+    } else {
+      setCloudSyncNotice(`⚠️ ${cleanIds.length} transaksi dihapus dari aplikasi & server; sebagian penghapusan Firestore ditunda sampai koneksi/izin aktif.`);
+    }
+
+    try {
+      const sampleCodes = targetSubs.slice(0, 5).map((s) => s.kode || s.dibayarkanKepada).join(', ');
+      await saveActivityLogToFirestore(
+        'delete_submission',
+        `Menghapus massal ${cleanIds.length} transaksi (${sampleCodes}${targetSubs.length > 5 ? ', ...' : ''}).`,
+        'warning',
+        cleanIds[0],
+        targetSubs[0]?.kode,
+        userProfile
+      );
+    } catch (logErr) {
+      console.warn('Gagal mencatat log hapus massal:', logErr);
+    }
+
+    if (activeSubmission?.id && idLowerSet.has(normalizeSubId(activeSubmission.id))) {
       setActiveSubmission(null);
       if (view === 'print' || view === 'form') {
         setView(previousView || 'list');
@@ -4047,6 +4147,7 @@ export default function App() {
               setView('sppd');
             }}
             onDelete={handleDelete}
+            onBulkDelete={handleBulkDelete}
             onDuplicate={handleDuplicate}
             onAddNew={() => {
               try { sessionStorage.setItem('sublist_scrollPos', window.scrollY.toString()); } catch (e) {}

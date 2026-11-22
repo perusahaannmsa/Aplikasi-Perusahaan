@@ -12,9 +12,11 @@ export interface DuplicateSubmissionMatch {
     sameContent: boolean;
     sameNominal: boolean;
     sameDate: boolean;
+    sameCode?: boolean;
     matchedRecipientName?: string;
     matchedTypeName?: string;
     matchedContentSnippet?: string;
+    matchedCode?: string;
   };
   matchedLabels: string[];
   itemSnippet?: string;
@@ -31,6 +33,15 @@ export function normalizeText(text: string = ''): string {
     .replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/**
+ * Strictly preserves EVERY digit, letter (case-exact), slash (/), and character of a transaction code.
+ * Only trims leading/trailing spaces so "001/BKK/NMSA/XI/2026" and "002/BKK/NMSA/XI/2026" or
+ * "001/BKK/NMSA" vs "001-BKK-NMSA" are always treated as distinct transactions.
+ */
+export function normalizeExactTransactionCode(code?: string): string {
+  return String(code ?? '').trim();
 }
 
 /**
@@ -89,16 +100,6 @@ export function removeDuplicateItems(items: SubmissionItem[]): {
 }
 
 /**
- * Checks for potential duplicate submissions / vouchers across the database.
- * Detects matches based on user requirement:
- * "voucher dengan jenis, atau nama, atau isi dan nominal yang sama"
- * 
- * 1. Same Payee (dibayarkanKepada) + Same Nominal
- * 2. Same Type (jenisPengajuan) + Same Nominal
- * 3. Same Content / Item Details (items / notes) + Same Nominal
- * 4. Combinations of the above (highest risk duplicate)
- */
-/**
  * Helper to extract YYYY-MM from date string
  */
 export function extractYearMonth(dateStr?: string): string | null {
@@ -126,6 +127,7 @@ export function findPotentialDuplicateSubmissions(
     total?: number;
     tanggal?: string;
     jenisPengajuan?: string;
+    kode?: string;
     items?: SubmissionItem[];
     notes?: string;
     id?: string;
@@ -134,17 +136,23 @@ export function findPotentialDuplicateSubmissions(
   options?: {
     onlyCompareWithLastTransaction?: boolean;
     sameMonthOnly?: boolean;
+    requireSameCode?: boolean;
   }
 ): DuplicateSubmissionMatch[] {
   if (!existingSubmissions || existingSubmissions.length === 0) return [];
   const currentTotal = Number(current.total) || (current.items?.reduce((acc, it) => acc + (Number(it.total) || 0), 0) || 0);
   
-  // If no nominal and no items, nothing to compare
-  if (currentTotal <= 0 && (!current.items || current.items.length === 0)) return [];
+  // Must have valid nominal (> 0), recipient, and transaction type to detect strict 100% duplicates
+  if (currentTotal <= 0) return [];
 
   const cleanRecipient = normalizeText(current.dibayarkanKepada);
   const cleanType = normalizeText(current.jenisPengajuan);
   const cleanNotes = normalizeText(current.notes);
+  const currentKode = normalizeExactTransactionCode(current.kode);
+  const requireSameCode = options?.requireSameCode ?? Boolean(current.kode !== undefined);
+
+  if (!cleanRecipient || !cleanType) return [];
+  if (requireSameCode && (!currentKode || currentKode === '-')) return [];
 
   // Filter out self
   let candidates = existingSubmissions.filter(s => !current.id || s.id !== current.id);
@@ -153,16 +161,12 @@ export function findPotentialDuplicateSubmissions(
   const sameMonthOnly = options?.sameMonthOnly ?? true;
   const onlyCompareWithLast = options?.onlyCompareWithLastTransaction ?? false;
 
-  // Filter khusus: Dalam jangka bulan itu saja (sesuai tanggal transaksi yang sedang diinput/diedit)
-  if (sameMonthOnly && current.tanggal) {
+  // Wajib dalam bulan yang sama (YYYY-MM) sesuai tanggal transaksi yang sedang diinput/diedit
+  if (sameMonthOnly) {
     const curYM = extractYearMonth(current.tanggal);
-    if (curYM) {
-      candidates = candidates.filter(s => {
-        const sYM = extractYearMonth(s.tanggal);
-        return sYM === curYM;
-      });
-      if (candidates.length === 0) return [];
-    }
+    if (!curYM) return [];
+    candidates = candidates.filter(s => extractYearMonth(s.tanggal) === curYM);
+    if (candidates.length === 0) return [];
   }
 
   // Urutkan transaksi dari yang paling terakhir/terbaru berdasarkan tanggal & ID
@@ -175,7 +179,6 @@ export function findPotentialDuplicateSubmissions(
 
   let targetSubmissions = sortedCandidates;
   if (onlyCompareWithLast) {
-    // Ambil hanya transaksi paling terakhir jika diminta
     targetSubmissions = sortedCandidates.slice(0, 1);
   }
 
@@ -189,193 +192,106 @@ export function findPotentialDuplicateSubmissions(
     const existingRecipient = normalizeText(existing.dibayarkanKepada);
     const existingType = normalizeText(existing.jenisPengajuan);
     const existingNotes = normalizeText(existing.notes);
+    const existingKode = normalizeExactTransactionCode(existing.kode);
 
-    // 1. Same Nominal Check
+    // 1. Exact Nominal Match (100% sama)
     const isTotalNominalMatch = currentTotal > 0 && existingTotal > 0 && Math.abs(currentTotal - existingTotal) < 0.01;
+    if (!isTotalNominalMatch) continue;
 
-    // 2. Same Name Check (Dibayarkan Kepada)
-    const isSameName = Boolean(
-      cleanRecipient &&
-      existingRecipient &&
-      cleanRecipient.length >= 2 &&
-      existingRecipient.length >= 2 &&
-      (
-        cleanRecipient === existingRecipient ||
-        (cleanRecipient.length >= 4 && (cleanRecipient.includes(existingRecipient) || existingRecipient.includes(cleanRecipient)))
-      )
-    );
+    // 2. Exact Recipient Match (100% sama, tanpa substring .includes())
+    const isSameName = Boolean(cleanRecipient && existingRecipient && cleanRecipient === existingRecipient);
+    if (!isSameName) continue;
 
-    // 3. Same Type Check (Jenis Pengajuan)
-    const isSameType = Boolean(
-      cleanType &&
-      existingType &&
-      cleanType.length >= 3 &&
-      existingType.length >= 3 &&
-      (
-        cleanType === existingType ||
-        (cleanType.length >= 4 && (cleanType.includes(existingType) || existingType.includes(cleanType)))
-      )
-    );
+    // 3. Exact Transaction Type Match (100% sama, tanpa substring .includes())
+    const isSameType = Boolean(cleanType && existingType && cleanType === existingType);
+    if (!isSameType) continue;
 
-    // 4. Same Content Check (Isi: items & notes)
+    // 4. Exact Transaction Code Match (100% sama angka, huruf, dan garis miring '/')
+    const isSameCode = Boolean(currentKode && currentKode !== '-' && existingKode && existingKode !== '-' && currentKode === existingKode);
+    if (requireSameCode && !isSameCode) continue;
+
+    // 5. Same Content Check (opsional untuk skor 100% + sorot item yang identik)
     let isSameContent = false;
     let matchedItemSnippet = '';
-    let isItemLevelMatch = false;
-    let itemMatchNominal = 0;
-
-    // Check notes
-    if (cleanNotes && existingNotes && cleanNotes.length >= 4 && existingNotes.length >= 4) {
-      if (cleanNotes === existingNotes || cleanNotes.includes(existingNotes) || existingNotes.includes(cleanNotes)) {
-        isSameContent = true;
-        matchedItemSnippet = `Catatan: "${existing.notes}"`;
-      }
-    }
-
     const matchedCurItemIndices: number[] = [];
 
-    // Check items description and line-item nominals
-    if (current.items && current.items.length > 0) {
+    if (cleanNotes && existingNotes && cleanNotes === existingNotes) {
+      isSameContent = true;
+      matchedItemSnippet = `Catatan: "${existing.notes}"`;
+    }
+
+    if (current.items && current.items.length > 0 && existing.items && existing.items.length > 0) {
       current.items.forEach((curIt, curIdx) => {
         const curDesc = normalizeText(curIt.item || curIt.keterangan);
         const curAmt = Number(curIt.total) || 0;
         if (!curDesc && curAmt <= 0) return;
 
-        // Check against existing items
-        if (existing.items && existing.items.length > 0) {
-          for (const exIt of existing.items) {
-            const exDesc = normalizeText(exIt.item || exIt.keterangan);
-            const exAmt = Number(exIt.total) || 0;
-            if (!exDesc && exAmt <= 0) continue;
+        for (const exIt of existing.items) {
+          const exDesc = normalizeText(exIt.item || exIt.keterangan);
+          const exAmt = Number(exIt.total) || 0;
+          if (!exDesc && exAmt <= 0) continue;
 
-            const descMatches = Boolean(
-              curDesc && exDesc && (
-                curDesc === exDesc || 
-                (curDesc.length >= 4 && exDesc.length >= 4 && (curDesc.includes(exDesc) || exDesc.includes(curDesc)))
-              )
-            );
-
-            const amtMatches = curAmt > 0 && exAmt > 0 && Math.abs(curAmt - exAmt) < 0.01;
-
-            if (descMatches) {
-              isSameContent = true;
-              matchedItemSnippet = `Item: "${exIt.item || exIt.keterangan}"`;
-              if (amtMatches) {
-                isItemLevelMatch = true;
-                itemMatchNominal = curAmt;
-                matchedItemSnippet = `Item "${exIt.item || exIt.keterangan}" senilai Rp ${curAmt.toLocaleString('id-ID')}`;
-                if (!matchedCurItemIndices.includes(curIdx)) matchedCurItemIndices.push(curIdx);
-                break;
-              }
-            } else if (amtMatches && (isSameName || isSameType)) {
-              if (!matchedCurItemIndices.includes(curIdx)) matchedCurItemIndices.push(curIdx);
-            }
-          }
-        }
-
-        // Also check if item description matches existing jenisPengajuan or vice versa with same amount
-        if (curDesc && existingType && (curDesc === existingType || (curDesc.length >= 4 && (curDesc.includes(existingType) || existingType.includes(curDesc))))) {
-          if (curAmt > 0 && existingTotal > 0 && Math.abs(curAmt - existingTotal) < 0.01) {
+          if (curDesc && exDesc && curDesc === exDesc && Math.abs(curAmt - exAmt) < 0.01) {
             isSameContent = true;
-            isItemLevelMatch = true;
-            itemMatchNominal = curAmt;
-            matchedItemSnippet = `Pos/Jenis: "${existing.jenisPengajuan}" senilai Rp ${curAmt.toLocaleString('id-ID')}`;
+            matchedItemSnippet = `Item "${exIt.item || exIt.keterangan}" senilai Rp ${curAmt.toLocaleString('id-ID')}`;
             if (!matchedCurItemIndices.includes(curIdx)) matchedCurItemIndices.push(curIdx);
+            break;
           }
         }
       });
     }
 
-    if (isTotalNominalMatch && (isSameName || isSameType) && current.items && current.items.length === 1) {
-      if (!matchedCurItemIndices.includes(0)) matchedCurItemIndices.push(0);
+    if (matchedCurItemIndices.length === 0 && current.items && current.items.length === 1) {
+      matchedCurItemIndices.push(0);
     }
 
-    // 5. Same Date Check
-    const isSameDate = Boolean(current.tanggal && existing.tanggal && current.tanggal === existing.tanggal);
+    // 6. Same Date vs Different Date (within same YYYY-MM month)
+    const isSameDate = Boolean(
+      current.tanggal &&
+      existing.tanggal &&
+      current.tanggal.trim().substring(0, 10) === existing.tanggal.trim().substring(0, 10)
+    );
 
-    // Determine if this constitutes a match based on user requirements:
-    // "voucher dengan jenis, atau nama, atau isi dan nominal yang sama"
-    const hasCoreMatch = (isSameName && isTotalNominalMatch) ||
-                         (isSameType && isTotalNominalMatch) ||
-                         (isSameContent && isTotalNominalMatch) ||
-                         isItemLevelMatch;
+    const matchedLabels: string[] = [
+      ...(isSameCode ? [`Kode Transaksi Sama 100% (${existingKode})`] : []),
+      `Penerima Sama 100% (${existing.dibayarkanKepada})`,
+      `Jenis Transaksi Sama 100% (${existing.jenisPengajuan})`,
+      `Nominal Total Sama (Rp ${currentTotal.toLocaleString('id-ID')})`,
+      isSameDate ? `Tanggal Sama (${existing.tanggal})` : `Bulan Sama, Beda Tanggal (${existing.tanggal})`
+    ];
+    if (isSameContent) matchedLabels.push('Isi/Rincian Identik');
 
-    if (!hasCoreMatch) continue;
-
-    // Build reason, score, and labels
-    const matchedLabels: string[] = [];
-    let matchScore = 0;
-
-    if (isSameName) matchedLabels.push(`Nama Penerima Sama (${existing.dibayarkanKepada})`);
-    if (isSameType) matchedLabels.push(`Jenis Sama (${existing.jenisPengajuan})`);
-    if (isSameContent) matchedLabels.push(`Isi/Rincian Sama`);
-    if (isTotalNominalMatch) matchedLabels.push(`Nominal Total Sama (Rp ${currentTotal.toLocaleString('id-ID')})`);
-    else if (isItemLevelMatch) matchedLabels.push(`Nominal Item Sama (Rp ${itemMatchNominal.toLocaleString('id-ID')})`);
-    if (isSameDate) matchedLabels.push(`Tanggal Sama (${existing.tanggal})`);
-
-    let similarityLevel: 'identik' | 'tinggi' | 'sedang' = 'sedang';
-    let reason = '';
-
-    const effectiveNominal = isTotalNominalMatch ? currentTotal : itemMatchNominal;
-
-    if (isSameName && isSameType && isSameContent && isTotalNominalMatch) {
-      similarityLevel = 'identik';
-      matchScore = 100;
-      reason = `Sangat Identik: Jenis (${existing.jenisPengajuan}), Nama (${existing.dibayarkanKepada}), Rincian Isi, dan Total Nominal (Rp ${effectiveNominal.toLocaleString('id-ID')}) sama persis`;
-    } else if (isSameName && isSameContent && isTotalNominalMatch) {
-      similarityLevel = 'tinggi';
-      matchScore = 90;
-      reason = `Nama Penerima (${existing.dibayarkanKepada}), Isi Rincian, dan Total Nominal (Rp ${effectiveNominal.toLocaleString('id-ID')}) sama persis`;
-    } else if (isSameName && isSameType && isTotalNominalMatch) {
-      similarityLevel = 'tinggi';
-      matchScore = 85;
-      reason = `Nama Penerima (${existing.dibayarkanKepada}), Jenis (${existing.jenisPengajuan}), dan Total Nominal (Rp ${effectiveNominal.toLocaleString('id-ID')}) sama persis`;
-    } else if (isSameName && isTotalNominalMatch) {
-      similarityLevel = 'tinggi';
-      matchScore = 75;
-      reason = `Nama Penerima (${existing.dibayarkanKepada}) & Total Nominal (Rp ${effectiveNominal.toLocaleString('id-ID')}) sama persis`;
-    } else if (isItemLevelMatch) {
-      similarityLevel = isSameName ? 'tinggi' : 'sedang';
-      matchScore = isSameName ? 80 : 65;
-      reason = `Rincian Isi ${matchedItemSnippet} sama persis dengan voucher sebelumnya`;
-    } else if (isSameContent && isTotalNominalMatch) {
-      similarityLevel = 'sedang';
-      matchScore = 60;
-      reason = `Isi/Rincian Transaksi (${matchedItemSnippet || 'Rincian Sama'}) & Total Nominal (Rp ${effectiveNominal.toLocaleString('id-ID')}) sama persis`;
-    } else if (isSameType && isTotalNominalMatch) {
-      similarityLevel = 'sedang';
-      matchScore = 50;
-      reason = `Jenis Pengajuan (${existing.jenisPengajuan}) & Total Nominal (Rp ${effectiveNominal.toLocaleString('id-ID')}) sama persis`;
-    }
-
-    if (isSameDate) {
-      matchScore = Math.min(100, matchScore + 5);
-      reason += ` pada tanggal yang sama (${existing.tanggal})`;
-    }
+    const similarityLevel: 'identik' | 'tinggi' | 'sedang' = isSameDate ? 'identik' : 'tinggi';
+    const matchScore = isSameDate ? (isSameContent ? 100 : 98) : (isSameContent ? 90 : 85);
+    const reason = isSameDate
+      ? `Duplikat 100% Sama: Tanggal (${existing.tanggal}), ${isSameCode ? `Kode (${existingKode}), ` : ''}Nominal (Rp ${currentTotal.toLocaleString('id-ID')}), Penerima (${existing.dibayarkanKepada}), dan Jenis Transaksi (${existing.jenisPengajuan}) sama persis`
+      : `Sama Bulan & Transaksi 100% (Beda Tanggal): ${isSameCode ? `Kode (${existingKode}), ` : ''}Penerima (${existing.dibayarkanKepada}), Jenis (${existing.jenisPengajuan}), dan Nominal (Rp ${currentTotal.toLocaleString('id-ID')}) sama persis di bulan yang sama pada tanggal ${existing.tanggal}`;
 
     matches.push({
       submission: existing,
       reason,
-      matchedNominal: effectiveNominal,
+      matchedNominal: currentTotal,
       matchScore,
       similarityLevel,
       matchedFactors: {
-        sameName: isSameName,
-        sameType: isSameType,
+        sameName: true,
+        sameType: true,
         sameContent: isSameContent,
-        sameNominal: isTotalNominalMatch || isItemLevelMatch,
+        sameNominal: true,
         sameDate: isSameDate,
+        sameCode: isSameCode,
         matchedRecipientName: existing.dibayarkanKepada,
         matchedTypeName: existing.jenisPengajuan,
-        matchedContentSnippet: matchedItemSnippet || existing.notes
+        matchedContentSnippet: matchedItemSnippet || existing.notes,
+        matchedCode: existingKode || undefined
       },
       matchedLabels,
       itemSnippet: matchedItemSnippet,
       matchedCurrentItemIndices: matchedCurItemIndices,
-      matchedNameOrDescription: existing.dibayarkanKepada || existing.jenisPengajuan || matchedItemSnippet || 'Pengeluaran'
+      matchedNameOrDescription: existing.dibayarkanKepada || existing.jenisPengajuan || 'Pengeluaran'
     });
   }
 
-  // Sort by matchScore descending, then by existing date descending
   return matches.sort((a, b) => {
     if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
     return new Date(b.submission.tanggal || 0).getTime() - new Date(a.submission.tanggal || 0).getTime();

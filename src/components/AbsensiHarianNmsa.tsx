@@ -83,8 +83,8 @@ import { INITIAL_WORKERS, INDONESIAN_DAYS, COMMON_CATEGORIES } from "../constant
 import { triggerExcelDownload } from "../lib/excelGenerator";
 import { triggerAttendanceExcelDownload, printWeeklyReportPDF, generateAttendanceExcelBlob } from "../lib/attendanceSheetGenerator";
 import { getOrCreateFolder, getOrCreateNestedFolder, uploadFileToDrive, exportAttendanceToGoogleSheet } from "../lib/googleWorkspaceAbsen";
-import { initAuth, googleSignIn, googleSignOut, getFreshGoogleToken, saveGoogleToken, saveAttendanceToFirestore, loadAttendanceFromFirestore, subscribeToAttendanceFromFirestore, loadWorkersFromFirestore, saveWorkerToFirestore, deleteWorkerFromFirestore, saveWorkersListToFirestore, subscribeToWorkersMasterFromFirestore, mergeWorkerListsSafely, getDeletedWorkerIds, saveDeletedWorkerIds } from "../lib/firebaseAbsen";
-import { saveSubmissionToFirestore, saveAbsenDataToFirestore, ensureValidDriveToken, getActiveGoogleDriveAccount, getConnectedDrives, getStoredGoogleDriveToken, getMasterDriveEmail, executeDriveApiWithAutoRefresh, getOrRenewDriveToken, triggerGoogleDriveAutoRefresh, isFirestoreQuotaExceeded, markFirestoreQuotaExceeded, getFirestoreQuotaMetrics, FirestoreQuotaMetrics, LOCKED_MASTER_DRIVE_EMAIL } from "../firebase";
+import { initAuth, googleSignIn, googleSignOut, getFreshGoogleToken, saveGoogleToken, saveAttendanceToFirestore, loadAttendanceFromFirestore, subscribeToAttendanceFromFirestore, loadWorkersFromFirestore, saveWorkerToFirestore, deleteWorkerFromFirestore, saveWorkersListToFirestore, subscribeToWorkersMasterFromFirestore, mergeWorkerListsSafely, getDeletedWorkerIds, saveDeletedWorkerIds, hasAbsenAuthUser } from "../lib/firebaseAbsen";
+import { saveSubmissionToFirestore, saveAbsenDataToFirestore, ensureValidDriveToken, getActiveGoogleDriveAccount, getConnectedDrives, getStoredGoogleDriveToken, getMasterDriveEmail, executeDriveApiWithAutoRefresh, getOrRenewDriveToken, triggerGoogleDriveAutoRefresh, isFirestoreQuotaExceeded, markFirestoreQuotaExceeded, isFirestorePermissionDenied, markFirestorePermissionDenied, isFirestorePermissionError, getFirestoreQuotaMetrics, FirestoreQuotaMetrics, LOCKED_MASTER_DRIVE_EMAIL } from "../firebase";
 import { googleDriveAutoBackup, BackupSyncLog, DriveAutoBackupSettings } from "../utils/googleDriveAutoBackup";
 import { SignaturePad } from "./SignaturePad";
 import { OnlineSignatureModal } from "./OnlineSignatureModal";
@@ -3483,7 +3483,7 @@ export function AbsensiHarianNmsa({
     );
 
     // Synchronize to Firebase
-    if (!isFirestoreQuotaExceeded()) {
+    if (hasAbsenAuthUser() && !isFirestoreQuotaExceeded() && !isFirestorePermissionDenied()) {
       try {
         const { db, cleanDataForFirestore } = await import('../lib/firebaseAbsen');
         const { doc, setDoc } = await import('firebase/firestore');
@@ -3491,7 +3491,10 @@ export function AbsensiHarianNmsa({
         await saveAttendanceToFirestore(attendanceRecords, workers, updatedReports);
       } catch (fbErr) {
         markFirestoreQuotaExceeded(fbErr);
-        console.warn("Firebase sync notice:", fbErr);
+        markFirestorePermissionDenied(fbErr);
+        if (!isFirestorePermissionError(fbErr)) {
+          console.warn("Firebase sync notice:", fbErr);
+        }
       }
     }
 
@@ -3539,7 +3542,7 @@ export function AbsensiHarianNmsa({
       });
     } catch (e) {}
 
-    if (!isFirestoreQuotaExceeded()) {
+    if (hasAbsenAuthUser() && !isFirestoreQuotaExceeded() && !isFirestorePermissionDenied()) {
       try {
         const { db } = await import('../lib/firebaseAbsen');
         const { doc, deleteDoc } = await import('firebase/firestore');
@@ -3547,7 +3550,10 @@ export function AbsensiHarianNmsa({
         await saveAttendanceToFirestore(attendanceRecords, workers, updated);
       } catch (fbErr) {
         markFirestoreQuotaExceeded(fbErr);
-        console.warn("Could not remove report from Firebase:", fbErr);
+        markFirestorePermissionDenied(fbErr);
+        if (!isFirestorePermissionError(fbErr)) {
+          console.warn("Could not remove report from Firebase:", fbErr);
+        }
       }
     }
 
@@ -3667,7 +3673,7 @@ export function AbsensiHarianNmsa({
       localStorage.setItem("weekly_reports", JSON.stringify(updatedList));
     } catch (e) {}
 
-    if (!isFirestoreQuotaExceeded()) {
+    if (hasAbsenAuthUser() && !isFirestoreQuotaExceeded() && !isFirestorePermissionDenied()) {
       try {
         const { db, cleanDataForFirestore } = await import('../lib/firebaseAbsen');
         const { doc, setDoc } = await import('firebase/firestore');
@@ -3675,7 +3681,10 @@ export function AbsensiHarianNmsa({
         await saveAttendanceToFirestore(attendanceRecords, workers, updatedList);
       } catch (fbErr) {
         markFirestoreQuotaExceeded(fbErr);
-        console.warn("Firebase update notice:", fbErr);
+        markFirestorePermissionDenied(fbErr);
+        if (!isFirestorePermissionError(fbErr)) {
+          console.warn("Firebase update notice:", fbErr);
+        }
       }
     }
 
@@ -4942,7 +4951,7 @@ export function AbsensiHarianNmsa({
     );
 
     // Synchronize to Firebase Firestore
-    if (!isFirestoreQuotaExceeded()) {
+    if (hasAbsenAuthUser() && !isFirestoreQuotaExceeded() && !isFirestorePermissionDenied()) {
       try {
         const { db, cleanDataForFirestore } = await import('../lib/firebaseAbsen');
         const { doc, setDoc } = await import('firebase/firestore');
@@ -4952,7 +4961,10 @@ export function AbsensiHarianNmsa({
         await saveAttendanceToFirestore(updatedRecords, workers, updatedReports);
       } catch (fbErr) {
         markFirestoreQuotaExceeded(fbErr);
-        console.warn("Firebase sync notice:", fbErr);
+        markFirestorePermissionDenied(fbErr);
+        if (!isFirestorePermissionError(fbErr)) {
+          console.warn("Firebase sync notice:", fbErr);
+        }
       }
     }
 

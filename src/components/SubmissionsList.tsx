@@ -6,7 +6,7 @@ import { getVoucherShareLink } from '../utils/appLinks';
 import { Search, Eye, Edit2, Trash2, Calendar, MapPin, DollarSign, Plus, Copy, RefreshCw, Cloud, CloudUpload, FileText, Database, History, FileSpreadsheet, CheckCircle, AlertCircle, Printer, Check, ExternalLink, Coins, User, Bell, ChevronDown, Sparkles, Share2, Send, MoreVertical, Receipt, Building2, X, AlertTriangle, Info, Layers, Filter, CreditCard } from 'lucide-react';
 import { loadActivityLogsFromFirestore, isFirebaseConfigured, triggerGoogleDriveAutoRefresh } from '../firebase';
 import { LiveClock } from './LiveClock';
-import { normalizeText } from '../utils/duplicateDetector';
+import { normalizeText, extractYearMonth, normalizeExactTransactionCode } from '../utils/duplicateDetector';
 
 interface SubmissionsListProps {
   submissions: Submission[];
@@ -16,6 +16,7 @@ interface SubmissionsListProps {
   onOpenSppdManager?: () => void;
   onOpenLoanManager?: () => void;
   onDelete: (id: string, options?: { deleteDriveFolder?: boolean }) => void;
+  onBulkDelete?: (ids: string[], options?: { deleteDriveFolder?: boolean }) => void;
   onDuplicate: (submission: Submission) => void;
   onAddNew: () => void;
   onOpenBuktiTransfer?: (submission?: Submission) => void;
@@ -50,6 +51,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   onOpenSppdManager,
   onOpenLoanManager,
   onDelete,
+  onBulkDelete,
   onDuplicate,
   onAddNew,
   onOpenBuktiTransfer,
@@ -124,8 +126,8 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   const [deleteIncludeDrive, setDeleteIncludeDrive] = useState<boolean>(true);
   const didAutoExpandPeriodRef = useRef<boolean>(false);
 
-  // Filter khusus untuk menampilkan transaksi duplikat (No-Kode atau Penerima + Nominal sama, baik tanggal sama maupun beda tanggal)
-  const [duplicateFilterMode, setDuplicateFilterMode] = useState<'all' | 'any_duplicate' | 'same_code' | 'same_recipient_nominal'>('all');
+  // Filter khusus duplikat ketat (100% sama: Tanggal, Nominal, Penerima & Jenis Transaksi, serta bulan sama beda tanggal)
+  const [duplicateFilterMode, setDuplicateFilterMode] = useState<'all' | 'any_duplicate' | 'exact_same' | 'same_month_diff_date' | 'same_code'>('all');
   const showOnlyDuplicates = duplicateFilterMode !== 'all';
   const setShowOnlyDuplicates = (updater: boolean | ((prev: boolean) => boolean)) => {
     setDuplicateFilterMode((prevMode) => {
@@ -168,7 +170,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   const [selectedClusterKey, setSelectedClusterKey] = useState<string | null>(null);
   const [showArchivedDuplicates, setShowArchivedDuplicates] = useState(false);
 
-  // Status tanda aman / bukan dobel (agar status potensi dobel menjadi 0 & tidak ada bacaan potensi dobel)
+  // Status tanda aman / transaksi sah (tidak lagi terdeteksi duplikat)
   const [acknowledgedDuplicateIds, setAcknowledgedDuplicateIds] = useState<string[]>(() => {
     try {
       const stored = localStorage.getItem('acknowledged_double_submission_ids');
@@ -187,12 +189,53 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
     }
   });
 
-  const handleToggleAcknowledgeDuplicate = (submissionId: string) => {
-    setAcknowledgedDuplicateIds(prev => {
-      const next = prev.includes(submissionId) ? prev.filter(id => id !== submissionId) : [...prev, submissionId];
-      try { localStorage.setItem('acknowledged_double_submission_ids', JSON.stringify(next)); } catch (e) {}
-      return next;
+  // Centang (Check) aktif untuk pilihan baris massal -> Tandai Sah atau Hapus Terpilih
+  const [selectedCheckedIds, setSelectedCheckedIds] = useState<string[]>([]);
+  const selectedCheckedSet = useMemo(() => new Set(selectedCheckedIds), [selectedCheckedIds]);
+  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
+  const [bulkDeleteIncludeDrive, setBulkDeleteIncludeDrive] = useState(true);
+  const [bulkActionToast, setBulkActionToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    const existingSet = new Set((submissions || []).map((s) => s.id));
+    setSelectedCheckedIds((prev) => {
+      const next = prev.filter((id) => existingSet.has(id));
+      return next.length === prev.length ? prev : next;
     });
+  }, [submissions]);
+
+  const handleToggleSelectCheck = (submissionId: string) => {
+    setSelectedCheckedIds((prev) =>
+      prev.includes(submissionId)
+        ? prev.filter((id) => id !== submissionId)
+        : [...prev, submissionId]
+    );
+  };
+
+  const handleClearSelectedChecks = () => {
+    setSelectedCheckedIds([]);
+  };
+
+  const handleToggleAcknowledgeDuplicate = (submissionId: string) => {
+    const currentlyMarked = acknowledgedDuplicateIds.includes(submissionId) || checkedDiffDateIds.includes(submissionId);
+    if (currentlyMarked) {
+      setAcknowledgedDuplicateIds(prev => {
+        const next = prev.filter(id => id !== submissionId);
+        try { localStorage.setItem('acknowledged_double_submission_ids', JSON.stringify(next)); } catch (e) {}
+        return next;
+      });
+      setCheckedDiffDateIds(prev => {
+        const next = prev.filter(id => id !== submissionId);
+        try { localStorage.setItem('nmsa_checked_diff_date_ids', JSON.stringify(next)); } catch (e) {}
+        return next;
+      });
+    } else {
+      setAcknowledgedDuplicateIds(prev => {
+        const next = [...prev, submissionId];
+        try { localStorage.setItem('acknowledged_double_submission_ids', JSON.stringify(next)); } catch (e) {}
+        return next;
+      });
+    }
   };
 
   const handleAcknowledgeAllDuplicates = (idsToAcknowledge: string[]) => {
@@ -224,27 +267,76 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   const handleResetAcknowledgeDuplicates = () => {
     setAcknowledgedDuplicateIds([]);
     setAcknowledgedAllHistoryTimestamp(0);
+    setCheckedDiffDateIds([]);
     try {
       localStorage.removeItem('acknowledged_double_submission_ids');
       localStorage.removeItem('acknowledged_double_all_history_until');
+      localStorage.removeItem('nmsa_checked_diff_date_ids');
     } catch (e) {}
   };
 
-  // Seluruh kelompok dobel dari sistem berdasarkan Nama Penerima + Nominal (menampilkan rekap kelompok seperti di Gambar 1)
+  // Tandai seluruh baris yang sedang di-check sebagai Transaksi yang Sah (kecualikan dari deteksi duplikat & beda tanggal)
+  const handleMarkSelectedAsLegitimate = () => {
+    if (selectedCheckedIds.length === 0) return;
+    const count = selectedCheckedIds.length;
+    handleAcknowledgeAllDuplicates(selectedCheckedIds);
+    setCheckedDiffDateIds((prev) => {
+      const next = Array.from(new Set([...prev, ...selectedCheckedIds]));
+      try {
+        localStorage.setItem('nmsa_checked_diff_date_ids', JSON.stringify(next));
+      } catch (e) {}
+      return next;
+    });
+    setSelectedCheckedIds([]);
+    setBulkActionToast(`✓ ${count} transaksi berhasil ditandai sebagai transaksi yang SAH dan tidak lagi terdeteksi sebagai duplikat.`);
+    setTimeout(() => setBulkActionToast(null), 5000);
+  };
+
+  const isSubVerifiedLegit = useMemo(() => {
+    const ackSet = new Set(acknowledgedDuplicateIds);
+    const checkedDiffSet = new Set(checkedDiffDateIds);
+    return (sub: Submission): boolean => {
+      if (!sub?.id) return false;
+      if (ackSet.has(sub.id) || checkedDiffSet.has(sub.id)) return true;
+      if (acknowledgedAllHistoryTimestamp > 0) {
+        const subTime = new Date(sub.createdAt || sub.tanggal || 0).getTime();
+        if (subTime <= acknowledgedAllHistoryTimestamp) return true;
+      }
+      return false;
+    };
+  }, [acknowledgedDuplicateIds, checkedDiffDateIds, acknowledgedAllHistoryTimestamp]);
+
+  // Seluruh kelompok duplikat ketat (100% sama: Bulan sama + Kode Transaksi 100% sama + Penerima sama + Jenis Transaksi sama + Total Nominal sama)
   const duplicateClusters = useMemo(() => {
     if (!submissions || submissions.length < 2) return [];
 
-    const map = new Map<string, { recipientName: string; nominal: number; submissions: Submission[] }>();
+    const map = new Map<string, {
+      key: string;
+      yearMonth: string;
+      kode: string;
+      recipientName: string;
+      jenisPengajuan: string;
+      nominal: number;
+      submissions: Submission[];
+    }>();
 
     submissions.forEach(sub => {
+      if (!sub || !sub.id) return;
+      const yearMonth = extractYearMonth(sub.tanggal);
       const subTotal = (sub.items || []).reduce((acc, it) => acc + (Number(it.total) || 0), 0) || (sub as any).nominal || 0;
       const cleanRec = normalizeText(sub.dibayarkanKepada);
-      if (!cleanRec || subTotal <= 0) return;
+      const cleanJenis = normalizeText(sub.jenisPengajuan);
+      const exactKode = normalizeExactTransactionCode(sub.kode);
+      if (!yearMonth || !cleanRec || !cleanJenis || !exactKode || exactKode === '-' || subTotal <= 0) return;
 
-      const key = `${cleanRec}_${subTotal}`;
+      const key = `${yearMonth}|${exactKode}|${cleanRec}|${cleanJenis}|${subTotal}`;
       if (!map.has(key)) {
         map.set(key, {
+          key,
+          yearMonth,
+          kode: exactKode,
           recipientName: sub.dibayarkanKepada || 'Tanpa Nama',
+          jenisPengajuan: sub.jenisPengajuan || '-',
           nominal: subTotal,
           submissions: []
         });
@@ -255,15 +347,13 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
     return Array.from(map.values())
       .filter(g => g.submissions.length > 1)
       .map(g => ({
-        key: `${normalizeText(g.recipientName)}_${g.nominal}`,
-        recipientName: g.recipientName,
-        nominal: g.nominal,
+        ...g,
         submissions: g.submissions.sort((a, b) => new Date(b.tanggal || 0).getTime() - new Date(a.tanggal || 0).getTime())
       }))
       .sort((a, b) => b.submissions.length - a.submissions.length);
   }, [submissions]);
 
-  // Seluruh ID yang terkelompok serupa
+  // Seluruh ID yang terkelompok 100% sama dalam bulan yang sama
   const duplicateSubmissionIds = useMemo(() => {
     const ids = new Set<string>();
     duplicateClusters.forEach(cluster => {
@@ -272,92 +362,123 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
     return ids;
   }, [duplicateClusters]);
 
-  // Deteksi transaksi duplikat menyeluruh (baik di tanggal yang sama maupun beda tanggal):
-  // 1) No-Kode Voucher yang sama (misal BKK-NMSA/XI/26/1017 muncul >1x)
-  // 2) Nama Penerima + Total Nominal yang sama persis
+  // Deteksi transaksi duplikat KETAT (berdasarkan bulan yang sama):
+  // 1) 100% Sama Semua (Tanggal sama + Kode Transaksi 100% sama angka/huruf/garis miring + Nominal sama + Penerima sama + Jenis Transaksi sama)
+  // 2) Sama Bulan & Transaksi 100%, Beda Tanggal (Bulan YYYY-MM sama + Kode Transaksi 100% sama + Nominal sama + Penerima sama + Jenis Transaksi sama, tanggal berbeda)
+  // 3) No-Kode Voucher Duplikat 100% sama di bulan yang sama (opsional di dropdown)
+  // Transaksi yang sudah ditandai SAH dikecualikan sebelum menghitung pasangan aktif.
   const duplicateInspection = useMemo(() => {
-    const codeGroups = new Map<string, Submission[]>();
-    const txGroups = new Map<string, Submission[]>();
+    const exactSameGroups = new Map<string, Submission[]>();
+    const sameMonthTxGroups = new Map<string, Submission[]>();
+    const codeMonthGroups = new Map<string, Submission[]>();
+
+    const normalizeDateKey = (rawDate?: string) => String(rawDate || '').trim().substring(0, 10);
 
     (submissions || []).forEach((sub) => {
       if (!sub || !sub.id) return;
+      if (isSubVerifiedLegit(sub)) return;
 
-      const cleanKode = String(sub.kode || '').trim().toUpperCase();
-      if (cleanKode && cleanKode !== '-' && cleanKode !== 'HO' && cleanKode.length >= 3) {
-        const arr = codeGroups.get(cleanKode) || [];
-        arr.push(sub);
-        codeGroups.set(cleanKode, arr);
+      const yearMonth = extractYearMonth(sub.tanggal);
+      if (!yearMonth) return;
+
+      const exactDate = normalizeDateKey(sub.tanggal);
+      const subTotal = (sub.items || []).reduce((acc, it) => acc + (Number(it.total) || 0), 0) || Number((sub as any).nominal) || 0;
+      const cleanRec = normalizeText(sub.dibayarkanKepada);
+      const cleanJenis = normalizeText(sub.jenisPengajuan);
+      const exactKode = normalizeExactTransactionCode(sub.kode);
+      const hasValidKode = Boolean(exactKode && exactKode !== '-');
+
+      if (cleanRec && cleanJenis && hasValidKode && subTotal > 0) {
+        if (exactDate) {
+          const exactKey = `${exactDate}|${exactKode}|${subTotal}|${cleanRec}|${cleanJenis}`;
+          const arr = exactSameGroups.get(exactKey) || [];
+          arr.push(sub);
+          exactSameGroups.set(exactKey, arr);
+        }
+
+        const monthTxKey = `${yearMonth}|${exactKode}|${subTotal}|${cleanRec}|${cleanJenis}`;
+        const mArr = sameMonthTxGroups.get(monthTxKey) || [];
+        mArr.push(sub);
+        sameMonthTxGroups.set(monthTxKey, mArr);
       }
 
-      const subTotal = (sub.items || []).reduce((acc, it) => acc + (Number(it.total) || 0), 0) || (sub as any).nominal || 0;
-      const cleanRec = normalizeText(sub.dibayarkanKepada);
-      if (cleanRec && subTotal > 0) {
-        const txKey = `${cleanRec}_${subTotal}`;
-        const arr = txGroups.get(txKey) || [];
-        arr.push(sub);
-        txGroups.set(txKey, arr);
+      if (hasValidKode && exactKode !== 'HO' && exactKode.length >= 3) {
+        const kodeKey = `${yearMonth}|${exactKode}`;
+        const kArr = codeMonthGroups.get(kodeKey) || [];
+        kArr.push(sub);
+        codeMonthGroups.set(kodeKey, kArr);
       }
     });
 
+    const exactSameIds = new Set<string>();
+    const sameMonthDiffDateIds = new Set<string>();
     const sameCodeIds = new Set<string>();
-    const sameRecipientNominalIds = new Set<string>();
     const groupSortKeyMap = new Map<string, string>();
     const groupCountMap = new Map<string, number>();
     let duplicateGroupCount = 0;
 
-    codeGroups.forEach((group, kodeKey) => {
+    exactSameGroups.forEach((group) => {
       if (group.length >= 2) {
         duplicateGroupCount++;
+        const first = group[0];
+        const ym = extractYearMonth(first.tanggal) || '';
+        const total = (first.items || []).reduce((acc, it) => acc + (Number(it.total) || 0), 0) || Number((first as any).nominal) || 0;
+        const firstKode = normalizeExactTransactionCode(first.kode);
+        const sortClusterKey = `STRICT:${ym}|${firstKode}|${total}|${normalizeText(first.dibayarkanKepada)}|${normalizeText(first.jenisPengajuan)}`;
         group.forEach((s) => {
-          sameCodeIds.add(s.id);
-          groupSortKeyMap.set(s.id, `KODE:${kodeKey}`);
+          exactSameIds.add(s.id);
+          groupSortKeyMap.set(s.id, sortClusterKey);
           groupCountMap.set(s.id, group.length);
         });
       }
     });
 
-    txGroups.forEach((group, txKey) => {
-      if (group.length >= 2) {
-        const anyNew = group.some((s) => !sameCodeIds.has(s.id));
-        if (anyNew) duplicateGroupCount++;
+    sameMonthTxGroups.forEach((group, monthTxKey) => {
+      const distinctDates = new Set(group.map((s) => normalizeDateKey(s.tanggal)).filter(Boolean));
+      if (group.length >= 2 && distinctDates.size >= 2) {
+        const hasNewGroup = group.some((s) => !exactSameIds.has(s.id));
+        if (hasNewGroup) duplicateGroupCount++;
+        const sortClusterKey = `STRICT:${monthTxKey}`;
         group.forEach((s) => {
-          sameRecipientNominalIds.add(s.id);
+          sameMonthDiffDateIds.add(s.id);
+          groupSortKeyMap.set(s.id, sortClusterKey);
+          groupCountMap.set(s.id, Math.max(groupCountMap.get(s.id) || 0, group.length));
+        });
+      }
+    });
+
+    codeMonthGroups.forEach((group, kodeKey) => {
+      if (group.length >= 2) {
+        group.forEach((s) => {
+          sameCodeIds.add(s.id);
           if (!groupSortKeyMap.has(s.id)) {
-            groupSortKeyMap.set(s.id, `TX:${txKey}`);
+            groupSortKeyMap.set(s.id, `KODE:${kodeKey}`);
             groupCountMap.set(s.id, group.length);
-          } else {
-            groupCountMap.set(s.id, Math.max(groupCountMap.get(s.id) || 0, group.length));
           }
         });
       }
     });
 
-    const allDuplicateIds = new Set<string>([...sameCodeIds, ...sameRecipientNominalIds]);
+    // Gabungan ketat utama sesuai permintaan: 100% Sama (Tgl & Kode Sama) + Sama Bulan & Transaksi & Kode (Beda Tanggal)
+    const allDuplicateIds = new Set<string>([...exactSameIds, ...sameMonthDiffDateIds]);
 
     return {
+      exactSameIds,
+      sameMonthDiffDateIds,
       sameCodeIds,
-      sameRecipientNominalIds,
       allDuplicateIds,
       groupSortKeyMap,
       groupCountMap,
       duplicateGroupCount,
     };
-  }, [submissions]);
+  }, [submissions, isSubVerifiedLegit]);
 
-  // ID yang masih aktif (belum diberi tanda / dibuat setelah cutoff tanda):
+  // ID yang masih aktif (belum diberi tanda SAH):
   const activeDuplicateSubmissionIds = useMemo(() => {
     const ids = new Set<string>();
-    duplicateSubmissionIds.forEach(id => {
-      if (acknowledgedDuplicateIds.includes(id)) return;
-      const sub = submissions.find(s => s.id === id);
-      if (acknowledgedAllHistoryTimestamp > 0 && sub) {
-        const subTime = new Date(sub.tanggal || 0).getTime();
-        if (subTime <= acknowledgedAllHistoryTimestamp) return;
-      }
-      ids.add(id);
-    });
+    duplicateInspection.allDuplicateIds.forEach(id => ids.add(id));
     return ids;
-  }, [duplicateSubmissionIds, acknowledgedDuplicateIds, acknowledgedAllHistoryTimestamp, submissions]);
+  }, [duplicateInspection.allDuplicateIds]);
 
   const [shareModalSub, setShareModalSub] = useState<Submission | null>(null);
   const [isCopiedShare, setIsCopiedShare] = useState(false);
@@ -694,36 +815,37 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
     return Array.from(years).sort((a, b) => b.localeCompare(a));
   }, [submissions, currentYearDefault]);
 
-  // Deteksi No-Kode sama atau Transaksi sama namun BERBEDA TANGGAL
+  // Deteksi No-Kode sama atau Transaksi 100% sama namun BERBEDA TANGGAL (wajib dalam bulan YYYY-MM yang sama)
   const checkedDiffDateSet = useMemo(() => new Set(checkedDiffDateIds), [checkedDiffDateIds]);
 
   const diffDateDetection = useMemo(() => {
     const codeGroups = new Map<string, Submission[]>();
     const txGroups = new Map<string, Submission[]>();
 
-    const norm = (val?: string) =>
-      String(val || '')
-        .toLowerCase()
-        .replace(/\s+/g, ' ')
-        .trim();
+    const normalizeDateKey = (rawDate?: string) => String(rawDate || '').trim().substring(0, 10);
 
     submissions.forEach((sub) => {
       if (!sub || !sub.id) return;
+      if (isSubVerifiedLegit(sub)) return;
 
-      // 1. Group by No-Kode (abaikan kosong / '-' / 'HO')
-      const cleanKode = String(sub.kode || '').trim().toUpperCase();
-      if (cleanKode && cleanKode !== '-' && cleanKode !== 'HO' && cleanKode.length >= 3) {
-        const arr = codeGroups.get(cleanKode) || [];
+      const yearMonth = extractYearMonth(sub.tanggal);
+      if (!yearMonth) return;
+
+      // 1. Group by No-Kode 100% sama (angka, huruf, & garis miring) dalam bulan yang sama (abaikan kosong / '-' / 'HO')
+      const exactKode = normalizeExactTransactionCode(sub.kode);
+      if (exactKode && exactKode !== '-' && exactKode !== 'HO' && exactKode.length >= 3) {
+        const kodeKey = `${yearMonth}|${exactKode}`;
+        const arr = codeGroups.get(kodeKey) || [];
         arr.push(sub);
-        codeGroups.set(cleanKode, arr);
+        codeGroups.set(kodeKey, arr);
       }
 
-      // 2. Group by Transaksi sama (Penerima + Jenis Pengajuan + Total Nominal)
-      const subTotal = (sub.items || []).reduce((sum, item) => sum + (Number(item.total) || 0), 0);
-      const penerimaKey = norm(sub.dibayarkanKepada);
-      const jenisKey = norm(sub.jenisPengajuan);
-      if (penerimaKey && subTotal > 0) {
-        const txKey = `${penerimaKey}|${jenisKey}|${subTotal}`;
+      // 2. Group by Bulan + Kode Transaksi 100% sama + Penerima + Jenis Pengajuan + Total Nominal 100% sama
+      const subTotal = (sub.items || []).reduce((sum, item) => sum + (Number(item.total) || 0), 0) || Number((sub as any).nominal) || 0;
+      const penerimaKey = normalizeText(sub.dibayarkanKepada);
+      const jenisKey = normalizeText(sub.jenisPengajuan);
+      if (penerimaKey && jenisKey && exactKode && exactKode !== '-' && subTotal > 0) {
+        const txKey = `${yearMonth}|${exactKode}|${penerimaKey}|${jenisKey}|${subTotal}`;
         const arr = txGroups.get(txKey) || [];
         arr.push(sub);
         txGroups.set(txKey, arr);
@@ -735,7 +857,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
     const groupSortKeyMap = new Map<string, string>();
 
     codeGroups.forEach((group, kodeKey) => {
-      const distinctDates = new Set(group.map((s) => (s.tanggal || '').trim()).filter(Boolean));
+      const distinctDates = new Set(group.map((s) => normalizeDateKey(s.tanggal)).filter(Boolean));
       if (group.length >= 2 && distinctDates.size >= 2) {
         group.forEach((s) => {
           sameCodeIds.add(s.id);
@@ -745,7 +867,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
     });
 
     txGroups.forEach((group, txKey) => {
-      const distinctDates = new Set(group.map((s) => (s.tanggal || '').trim()).filter(Boolean));
+      const distinctDates = new Set(group.map((s) => normalizeDateKey(s.tanggal)).filter(Boolean));
       if (group.length >= 2 && distinctDates.size >= 2) {
         group.forEach((s) => {
           sameTxIds.add(s.id);
@@ -758,25 +880,16 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
 
     const sameAnyIds = new Set<string>([...sameCodeIds, ...sameTxIds]);
 
-    let uncheckedCodeCount = 0;
-    sameCodeIds.forEach((id) => { if (!checkedDiffDateSet.has(id)) uncheckedCodeCount++; });
-
-    let uncheckedTxCount = 0;
-    sameTxIds.forEach((id) => { if (!checkedDiffDateSet.has(id)) uncheckedTxCount++; });
-
-    let uncheckedAnyCount = 0;
-    sameAnyIds.forEach((id) => { if (!checkedDiffDateSet.has(id)) uncheckedAnyCount++; });
-
     return {
       sameCodeIds,
       sameTxIds,
       sameAnyIds,
       groupSortKeyMap,
-      uncheckedCodeCount,
-      uncheckedTxCount,
-      uncheckedAnyCount,
+      uncheckedCodeCount: sameCodeIds.size,
+      uncheckedTxCount: sameTxIds.size,
+      uncheckedAnyCount: sameAnyIds.size,
     };
-  }, [submissions, checkedDiffDateSet]);
+  }, [submissions, isSubVerifiedLegit]);
 
   // Filter logic
   const filteredSubmissions = useMemo(() => {
@@ -849,12 +962,10 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
       const subStatus = getSubStatus(sub);
       const matchStatus = statusFilter === 'All' || subStatus === statusFilter;
 
-      // Filter Kode / Transaksi sama namun berbeda tanggal (sembunyikan otomatis yang sudah di-check)
+      // Filter Kode / Transaksi sama namun berbeda tanggal dalam bulan yang sama
       let matchDiffDate = true;
       if (diffDateFilter !== 'all') {
-        if (checkedDiffDateSet.has(sub.id)) {
-          matchDiffDate = false;
-        } else if (diffDateFilter === 'same_code_diff_date') {
+        if (diffDateFilter === 'same_code_diff_date') {
           matchDiffDate = diffDateDetection.sameCodeIds.has(sub.id);
         } else if (diffDateFilter === 'same_tx_diff_date') {
           matchDiffDate = diffDateDetection.sameTxIds.has(sub.id);
@@ -863,7 +974,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
         }
       }
 
-      // Filter by Date, Month, Year (saat mode filter duplikat / beda tanggal aktif, tampilkan lintas bulan/tahun agar pasangan terlihat jelas)
+      // Filter by Date, Month, Year (saat mode filter duplikat / beda tanggal aktif, tampilkan seluruh grup bulan-sama agar pasangan terlihat bersebelahan)
       let matchDate = true;
       if (diffDateFilter !== 'all' || duplicateFilterMode !== 'all') {
         matchDate = !dateFilter || sub.tanggal === dateFilter;
@@ -880,10 +991,12 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
       }
 
       let matchDuplicates = true;
-      if (duplicateFilterMode === 'same_code') {
+      if (duplicateFilterMode === 'exact_same') {
+        matchDuplicates = duplicateInspection.exactSameIds.has(sub.id);
+      } else if (duplicateFilterMode === 'same_month_diff_date') {
+        matchDuplicates = duplicateInspection.sameMonthDiffDateIds.has(sub.id);
+      } else if (duplicateFilterMode === 'same_code') {
         matchDuplicates = duplicateInspection.sameCodeIds.has(sub.id);
-      } else if (duplicateFilterMode === 'same_recipient_nominal') {
-        matchDuplicates = duplicateInspection.sameRecipientNominalIds.has(sub.id);
       } else if (duplicateFilterMode === 'any_duplicate') {
         matchDuplicates = duplicateInspection.allDuplicateIds.has(sub.id);
       }
@@ -1881,8 +1994,13 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                   }
                   onChange={(e) => {
                     const val = e.target.value;
-                    if (val === 'dup_any_duplicate' || val === 'dup_same_code' || val === 'dup_same_recipient_nominal') {
-                      const mode = val.replace('dup_', '') as 'any_duplicate' | 'same_code' | 'same_recipient_nominal';
+                    if (
+                      val === 'dup_any_duplicate' ||
+                      val === 'dup_exact_same' ||
+                      val === 'dup_same_month_diff_date' ||
+                      val === 'dup_same_code'
+                    ) {
+                      const mode = val.replace('dup_', '') as 'any_duplicate' | 'exact_same' | 'same_month_diff_date' | 'same_code';
                       setDuplicateFilterMode(mode);
                       setDiffDateFilter('all');
                       setFirestoreFilter('all');
@@ -1904,29 +2022,32 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                       setShowOnlyUnsynced(false);
                     }
                   }}
-                  title="Saring transaksi duplikat, status Cloud Firestore, atau No-Kode/Transaksi sama beda tanggal"
+                  title="Saring transaksi duplikat ketat (100% sama di bulan sama), beda tanggal di bulan sama, atau status Cloud Firestore"
                 >
                   <option value="all">Semua Data ({submissions.length})</option>
-                  <optgroup label="Filter Transaksi Duplikat (Semua Tanggal)">
+                  <optgroup label="Filter Duplikat Ketat (100% Sama · Bulan Sama)">
                     <option value="dup_any_duplicate">
-                      Semua Transaksi Duplikat ({duplicateInspection.allDuplicateIds.size})
+                      Semua Terfilter Duplikat ({duplicateInspection.allDuplicateIds.size})
+                    </option>
+                    <option value="dup_exact_same">
+                      100% Sama Tgl, Kode, Nominal, Penerima &amp; Jenis ({duplicateInspection.exactSameIds.size})
+                    </option>
+                    <option value="dup_same_month_diff_date">
+                      Bulan Sama &amp; 100% Sama (Kode, Nominal, Penerima, Jenis), Beda Tgl ({duplicateInspection.sameMonthDiffDateIds.size})
                     </option>
                     <option value="dup_same_code">
-                      No-Kode Duplikat ({duplicateInspection.sameCodeIds.size})
-                    </option>
-                    <option value="dup_same_recipient_nominal">
-                      Penerima &amp; Nominal Sama ({duplicateInspection.sameRecipientNominalIds.size})
+                      Kode Transaksi 100% Sama di Bulan Sama ({duplicateInspection.sameCodeIds.size})
                     </option>
                   </optgroup>
-                  <optgroup label="Cek Kode / Transaksi (Beda Tanggal)">
+                  <optgroup label="Cek Kode / Transaksi (Bulan Sama, Beda Tanggal)">
                     <option value="same_any_diff_date">
                       Kode / Transaksi Sama Beda Tgl ({diffDateDetection.uncheckedAnyCount})
                     </option>
                     <option value="same_code_diff_date">
-                      No-Kode Sama Beda Tanggal ({diffDateDetection.uncheckedCodeCount})
+                      Kode Transaksi 100% Sama Beda Tgl ({diffDateDetection.uncheckedCodeCount})
                     </option>
                     <option value="same_tx_diff_date">
-                      Transaksi Sama Beda Tanggal ({diffDateDetection.uncheckedTxCount})
+                      Transaksi &amp; Kode 100% Sama Beda Tgl ({diffDateDetection.uncheckedTxCount})
                     </option>
                   </optgroup>
                   <optgroup label="Status Cloud Firestore">
@@ -1938,7 +2059,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 </select>
               </div>
 
-              {/* Quick One-Click Toggle Button: Filter Transaksi Duplikat */}
+              {/* Quick One-Click Toggle Button: Filter Transaksi Duplikat Ketat */}
               <div className="self-end">
                 <button
                   type="button"
@@ -1952,7 +2073,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                       setShowOnlyUnsynced(false);
                     }
                   }}
-                  title="Tampilkan hanya transaksi yang terindikasi duplikat (No-Kode sama atau Penerima & Nominal sama) lintas tanggal"
+                  title="Tampilkan hanya transaksi yang 100% sama (Tanggal, Kode Transaksi angka/huruf/garis miring, Nominal, Penerima & Jenis Transaksi) serta yang 100% sama di bulan sama namun beda tanggal"
                   className={`px-3 py-2 text-xs font-bold font-mono rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-3xs whitespace-nowrap border ${
                     duplicateFilterMode !== 'all'
                       ? 'bg-rose-600 text-white border-rose-700 shadow-xs'
@@ -1995,7 +2116,24 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
         </div>
       )}
 
-      {/* Active Filter Notification: Transaksi Duplikat */}
+      {/* Toast feedback setelah menandai transaksi sah atau aksi massal */}
+      {bulkActionToast && (
+        <div className="bg-emerald-50 border-2 border-emerald-300 text-emerald-950 rounded-2xl px-4 py-3 text-xs font-bold flex items-center justify-between gap-3 shadow-xs animate-fade-in print:hidden">
+          <div className="flex items-center gap-2">
+            <CheckCircle size={16} className="text-emerald-600 shrink-0" />
+            <span>{bulkActionToast}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setBulkActionToast(null)}
+            className="p-1 rounded-lg hover:bg-emerald-200/70 text-emerald-800 cursor-pointer"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
+      {/* Active Filter Notification: Transaksi Duplikat Ketat */}
       {showOnlyDuplicates && (
         <div className="p-3.5 bg-gradient-to-r from-rose-50 via-amber-50 to-orange-50 border-2 border-rose-300 rounded-2xl flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 text-xs text-stone-900 font-sans shadow-3xs mb-4 animate-fade-in print:hidden">
           <div className="flex items-start sm:items-center gap-2.5">
@@ -2005,10 +2143,10 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
             <div className="space-y-1">
               <div>
                 <span className="font-black text-rose-950 block sm:inline">
-                  Filter Transaksi Duplikat Aktif:
+                  Filter Duplikat Ketat (100% Sama · Bulan Sama) Aktif:
                 </span>{' '}
                 <span>
-                  Menampilkan <strong>{filteredSubmissions.length} voucher</strong> duplikat (dikelompokkan bersebelahan berdasarkan No-Kode atau Penerima &amp; Nominal yang sama, lintas seluruh bulan).
+                  Menampilkan <strong>{filteredSubmissions.length} voucher</strong> yang 100% sama (Tanggal, Kode Transaksi angka/huruf/garis miring, Nominal, Penerima &amp; Jenis Transaksi) atau sama persis di bulan yang sama namun berbeda tanggal. Kode transaksi yang berbeda dianggap transaksi berbeda.
                 </span>
               </div>
               <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
@@ -2021,7 +2159,29 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                       : 'bg-white hover:bg-rose-50 text-stone-700 border-stone-300'
                   }`}
                 >
-                  Semua Duplikat ({duplicateInspection.allDuplicateIds.size})
+                  Semua Terfilter ({duplicateInspection.allDuplicateIds.size})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDuplicateFilterMode('exact_same')}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold font-mono cursor-pointer border transition ${
+                    duplicateFilterMode === 'exact_same'
+                      ? 'bg-rose-600 text-white border-rose-700'
+                      : 'bg-white hover:bg-rose-50 text-stone-700 border-stone-300'
+                  }`}
+                >
+                  100% Sama Semua ({duplicateInspection.exactSameIds.size})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDuplicateFilterMode('same_month_diff_date')}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold font-mono cursor-pointer border transition ${
+                    duplicateFilterMode === 'same_month_diff_date'
+                      ? 'bg-amber-600 text-white border-amber-700'
+                      : 'bg-white hover:bg-amber-50 text-stone-700 border-stone-300'
+                  }`}
+                >
+                  Bulan Sama, Beda Tanggal ({duplicateInspection.sameMonthDiffDateIds.size})
                 </button>
                 <button
                   type="button"
@@ -2032,18 +2192,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                       : 'bg-white hover:bg-rose-50 text-stone-700 border-stone-300'
                   }`}
                 >
-                  No-Kode Sama ({duplicateInspection.sameCodeIds.size})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDuplicateFilterMode('same_recipient_nominal')}
-                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold font-mono cursor-pointer border transition ${
-                    duplicateFilterMode === 'same_recipient_nominal'
-                      ? 'bg-rose-600 text-white border-rose-700'
-                      : 'bg-white hover:bg-rose-50 text-stone-700 border-stone-300'
-                  }`}
-                >
-                  Penerima &amp; Nominal Sama ({duplicateInspection.sameRecipientNominalIds.size})
+                  No-Kode Duplikat ({duplicateInspection.sameCodeIds.size})
                 </button>
               </div>
             </div>
@@ -2072,7 +2221,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
         </div>
       )}
 
-      {/* Active Filter Notification: Kode / Transaksi Sama Beda Tanggal */}
+      {/* Active Filter Notification: Kode / Transaksi Sama Beda Tanggal (Bulan Sama) */}
       {diffDateFilter !== 'all' && (
         <div className="p-3.5 bg-gradient-to-r from-amber-50 to-yellow-50 border-2 border-amber-300 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-amber-950 font-sans shadow-3xs mb-4 animate-fade-in print:hidden">
           <div className="flex items-start sm:items-center gap-2.5">
@@ -2081,15 +2230,10 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
             </div>
             <div>
               <span className="font-black text-amber-950 block sm:inline">
-                Filter {diffDateFilter === 'same_code_diff_date' ? 'No-Kode Sama (Beda Tanggal)' : diffDateFilter === 'same_tx_diff_date' ? 'Transaksi Sama (Beda Tanggal)' : 'No-Kode / Transaksi Sama (Beda Tanggal)'} Aktif:
+                Filter {diffDateFilter === 'same_code_diff_date' ? 'No-Kode Sama (Bulan Sama, Beda Tanggal)' : diffDateFilter === 'same_tx_diff_date' ? 'Transaksi 100% Sama (Bulan Sama, Beda Tanggal)' : 'No-Kode / Transaksi 100% Sama (Bulan Sama, Beda Tanggal)'} Aktif:
               </span>{' '}
               <span>
-                Menampilkan <strong>{filteredSubmissions.length} voucher</strong> yang belum di-check. Centang kolom <strong>Check</strong> agar baris yang sudah dicek tidak muncul lagi.
-                {checkedDiffDateIds.length > 0 && (
-                  <span className="ml-1.5 font-mono text-[11px] text-emerald-800 font-bold">
-                    ({checkedDiffDateIds.length} sudah di-check &amp; disembunyikan)
-                  </span>
-                )}
+                Menampilkan <strong>{filteredSubmissions.length} voucher</strong> yang identik dalam bulan yang sama namun berbeda tanggal. Centang kolom <strong>Check</strong> lalu pilih <strong>Tandai Transaksi Sah</strong> atau <strong>Hapus Transaksi yang Dipilih</strong>.
               </span>
             </div>
           </div>
@@ -2099,9 +2243,9 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 type="button"
                 onClick={handleResetCheckedDiffDate}
                 className="px-3 py-1.5 bg-white hover:bg-rose-50 text-rose-700 font-bold border border-rose-300 rounded-xl text-xs transition cursor-pointer"
-                title="Tampilkan kembali semua voucher yang sebelumnya sudah di-check"
+                title="Deteksi ulang transaksi yang sebelumnya ditandai sah"
               >
-                Reset Check ({checkedDiffDateIds.length})
+                Reset Tanda Sah ({checkedDiffDateIds.length})
               </button>
             )}
             <button
@@ -2115,21 +2259,104 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
         </div>
       )}
 
+      {/* Action Bar saat ada transaksi yang dicentang (Check) */}
+      {layoutMode === 'standard' && selectedCheckedIds.length > 0 && (
+        <div className="sticky top-20 z-[70] p-3.5 sm:px-5 bg-stone-900 text-white border-2 border-amber-400 rounded-2xl shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-3 animate-fade-in print:hidden">
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-amber-400 text-stone-950 font-black text-xs font-mono">
+              <Check size={14} />
+              <span>{selectedCheckedIds.length} Transaksi Dicentang</span>
+            </span>
+            <span className="text-xs text-stone-300">
+              Pilih tindakan untuk transaksi yang Anda centang:
+            </span>
+            <button
+              type="button"
+              onClick={handleClearSelectedChecks}
+              className="text-[11px] font-bold text-stone-400 hover:text-white underline cursor-pointer"
+            >
+              Batal Pilih
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              id="btn-mark-selected-sah"
+              onClick={handleMarkSelectedAsLegitimate}
+              className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-sm transition cursor-pointer"
+              title="Tandai transaksi yang dicentang sebagai transaksi sah agar tidak lagi masuk filter duplikat"
+            >
+              <CheckCircle size={15} />
+              <span>Tandai Transaksi Ini Sebagai Transaksi yang Sah ({selectedCheckedIds.length})</span>
+            </button>
+            <button
+              type="button"
+              id="btn-delete-selected-checked"
+              onClick={() => {
+                setBulkDeleteIncludeDrive(true);
+                setBulkDeleteConfirmOpen(true);
+              }}
+              className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs shadow-sm transition cursor-pointer"
+              title="Hapus semua transaksi yang dicentang secara permanen"
+            >
+              <Trash2 size={15} />
+              <span>Hapus Transaksi yang Dipilih ({selectedCheckedIds.length})</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Main Content Layout Block: Standard List vs Google Sheets Simulator */}
       {layoutMode === 'standard' ? (
         /* Standard Table & Mobile Card View */
         <div className="bg-white rounded-2xl border border-stone-200 shadow-xs print:hidden overflow-hidden">
+          {/* Mobile Select-All Helper Bar */}
+          {filteredSubmissions.length > 0 && (
+            <div className="flex md:hidden items-center justify-between px-3.5 py-2.5 bg-stone-50 border-b border-stone-200 text-xs">
+              <label className="inline-flex items-center gap-2 font-bold text-stone-700 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={filteredSubmissions.length > 0 && filteredSubmissions.every((s) => selectedCheckedSet.has(s.id))}
+                  onChange={() => {
+                    const visibleIds = filteredSubmissions.map((s) => s.id);
+                    const allSelected = visibleIds.every((id) => selectedCheckedSet.has(id));
+                    if (allSelected) {
+                      const visibleSet = new Set(visibleIds);
+                      setSelectedCheckedIds((prev) => prev.filter((id) => !visibleSet.has(id)));
+                    } else {
+                      setSelectedCheckedIds((prev) => Array.from(new Set([...prev, ...visibleIds])));
+                    }
+                  }}
+                  className="w-4 h-4 rounded border-stone-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
+                />
+                <span>Centang Semua ({filteredSubmissions.length})</span>
+              </label>
+              {selectedCheckedIds.length > 0 && (
+                <span className="font-mono text-[11px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md border border-amber-300">
+                  {selectedCheckedIds.length} dipilih
+                </span>
+              )}
+            </div>
+          )}
+
           {/* Mobile Screen Card View (Layar HP) - Responsif, Bebas Terpotong & Melebihi Layar */}
           <div className="block md:hidden divide-y divide-stone-150">
             {filteredSubmissions.length > 0 ? (
               filteredSubmissions.map((sub) => {
                 const subTotal = sub.items.reduce((sum, i) => sum + i.total, 0);
                 const isDuplicateActive = activeDuplicateSubmissionIds.has(sub.id);
+                const isRowChecked = selectedCheckedSet.has(sub.id);
+                const isVerifiedLegit = isSubVerifiedLegit(sub);
                 return (
                   <div
                     key={`mob-${sub.id}`}
                     className={`p-3.5 sm:p-4 transition space-y-2.5 ${
-                      isDuplicateActive ? 'bg-amber-50/40' : 'bg-white hover:bg-stone-50/50'
+                      isRowChecked
+                        ? 'bg-sky-50/70'
+                        : isDuplicateActive
+                        ? 'bg-amber-50/40'
+                        : 'bg-white hover:bg-stone-50/50'
                     }`}
                   >
                     {/* Header bar: Tanggal, Kode & Status */}
@@ -2139,10 +2366,10 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                           <label className="inline-flex items-center gap-1 cursor-pointer select-none">
                             <input
                               type="checkbox"
-                              checked={checkedDiffDateSet.has(sub.id)}
-                              onChange={() => handleToggleCheckedDiffDate(sub.id)}
-                              className="w-4 h-4 rounded border-stone-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
-                              title="Tandai sudah dicek (tidak muncul lagi di filter beda tanggal)"
+                              checked={isRowChecked}
+                              onChange={() => handleToggleSelectCheck(sub.id)}
+                              className="w-4 h-4 rounded border-stone-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
+                              title="Centang transaksi ini untuk ditandai SAH atau dihapus"
                             />
                             <span className="text-[10px] font-mono font-bold text-stone-500">Check</span>
                           </label>
@@ -2155,19 +2382,28 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                           {diffDateFilter !== 'all' && (
                             <span className="font-mono text-[9px] font-black bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded border border-amber-300">
                               {diffDateDetection.sameCodeIds.has(sub.id) && diffDateDetection.sameTxIds.has(sub.id)
-                                ? 'Kode & Transaksi Sama'
+                                ? 'Kode & Transaksi 100% Sama (Beda Tgl)'
                                 : diffDateDetection.sameCodeIds.has(sub.id)
-                                ? 'Kode Sama Beda Tgl'
-                                : 'Transaksi Sama Beda Tgl'}
+                                ? 'Kode Sama Beda Tgl (Bulan Sama)'
+                                : 'Bulan & Transaksi 100% Sama (Beda Tgl)'}
                             </span>
                           )}
                           {duplicateFilterMode !== 'all' && (
-                            <span className="font-mono text-[9px] font-black bg-rose-100 text-rose-900 px-1.5 py-0.5 rounded border border-rose-300">
-                              {duplicateInspection.sameCodeIds.has(sub.id) && duplicateInspection.sameRecipientNominalIds.has(sub.id)
-                                ? `Kode & Nominal Duplikat (${duplicateInspection.groupCountMap.get(sub.id) || 2}x)`
-                                : duplicateInspection.sameCodeIds.has(sub.id)
-                                ? `No-Kode Duplikat (${duplicateInspection.groupCountMap.get(sub.id) || 2}x)`
-                                : `Penerima & Nominal Sama (${duplicateInspection.groupCountMap.get(sub.id) || 2}x)`}
+                            <span className={`font-mono text-[9px] font-black px-1.5 py-0.5 rounded border ${
+                              duplicateInspection.exactSameIds.has(sub.id)
+                                ? 'bg-rose-100 text-rose-900 border-rose-300'
+                                : 'bg-amber-100 text-amber-900 border-amber-300'
+                            }`}>
+                              {duplicateInspection.exactSameIds.has(sub.id)
+                                ? `100% Sama Semua (${duplicateInspection.groupCountMap.get(sub.id) || 2}x)`
+                                : duplicateInspection.sameMonthDiffDateIds.has(sub.id)
+                                ? `Bulan & Transaksi Sama, Beda Tgl (${duplicateInspection.groupCountMap.get(sub.id) || 2}x)`
+                                : `No-Kode Duplikat (${duplicateInspection.groupCountMap.get(sub.id) || 2}x)`}
+                            </span>
+                          )}
+                          {isVerifiedLegit && (
+                            <span className="font-mono text-[9px] font-black bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded border border-emerald-300">
+                              ✓ Sah
                             </span>
                           )}
                           <span className="text-[10px] text-stone-500 font-medium truncate max-w-[130px]">
@@ -2218,7 +2454,8 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                             onClick={(e) => {
                               e.stopPropagation();
                               const total = (sub.items || []).reduce((acc, it) => acc + (Number(it.total) || 0), 0) || (sub as any).nominal || 0;
-                              const key = `${normalizeText(sub.dibayarkanKepada)}_${total}`;
+                              const ym = extractYearMonth(sub.tanggal) || '';
+                              const key = `${ym}|${normalizeText(sub.dibayarkanKepada)}|${normalizeText(sub.jenisPengajuan)}|${total}`;
                               setSelectedClusterKey(key);
                               setDuplicateModalSearch(sub.dibayarkanKepada || '');
                               setIsDuplicateModalOpen(true);
@@ -2457,7 +2694,26 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-stone-50 border-b border-stone-200 text-stone-500 font-display text-[10px] uppercase tracking-widest font-extrabold">
-                  <th className="py-4.5 px-4 text-center w-16">Check</th>
+                  <th className="py-4.5 px-4 text-center w-20">
+                    <label className="inline-flex items-center justify-center gap-1.5 cursor-pointer select-none" title="Centang semua transaksi yang tampil">
+                      <input
+                        type="checkbox"
+                        checked={filteredSubmissions.length > 0 && filteredSubmissions.every((s) => selectedCheckedSet.has(s.id))}
+                        onChange={() => {
+                          const visibleIds = filteredSubmissions.map((s) => s.id);
+                          const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedCheckedSet.has(id));
+                          if (allSelected) {
+                            const visibleSet = new Set(visibleIds);
+                            setSelectedCheckedIds((prev) => prev.filter((id) => !visibleSet.has(id)));
+                          } else {
+                            setSelectedCheckedIds((prev) => Array.from(new Set([...prev, ...visibleIds])));
+                          }
+                        }}
+                        className="w-4 h-4 rounded border-stone-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
+                      />
+                      <span>Check</span>
+                    </label>
+                  </th>
                   <th className="py-4.5 px-6">Tanggal</th>
                   <th className="py-4.5 px-6">Lokasi & Kode</th>
                   <th className="py-4.5 px-6">Jenis Pengajuan</th>
@@ -2470,16 +2726,17 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 {filteredSubmissions.length > 0 ? (
                   filteredSubmissions.map((sub) => {
                     const subTotal = sub.items.reduce((sum, i) => sum + i.total, 0);
-                    const isChecked = checkedDiffDateSet.has(sub.id);
+                    const isChecked = selectedCheckedSet.has(sub.id);
+                    const isVerifiedLegit = isSubVerifiedLegit(sub);
                     return (
-                      <tr key={sub.id} className={`hover:bg-stone-50/50 transition ${openActionMenuId === sub.id ? 'relative z-[60] bg-amber-50/25' : ''}`}>
+                      <tr key={sub.id} className={`transition ${isChecked ? 'bg-sky-50/70' : 'hover:bg-stone-50/50'} ${openActionMenuId === sub.id ? 'relative z-[60] bg-amber-50/25' : ''}`}>
                         <td className="py-4.5 px-4 text-center">
                           <input
                             type="checkbox"
                             checked={isChecked}
-                            onChange={() => handleToggleCheckedDiffDate(sub.id)}
+                            onChange={() => handleToggleSelectCheck(sub.id)}
                             className="w-4 h-4 rounded border-stone-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
-                            title={isChecked ? 'Sudah dicek (klik untuk batalkan check)' : 'Centang jika sudah dicek agar tidak muncul lagi di filter beda tanggal'}
+                            title={isChecked ? 'Batalkan centang transaksi ini' : 'Centang transaksi ini untuk ditandai SAH atau dihapus'}
                           />
                         </td>
                         <td className="py-4.5 px-6 whitespace-nowrap">
@@ -2500,19 +2757,28 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                             {diffDateFilter !== 'all' && (
                               <span className="inline-block font-mono text-[9px] font-black bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded border border-amber-300">
                                 {diffDateDetection.sameCodeIds.has(sub.id) && diffDateDetection.sameTxIds.has(sub.id)
-                                  ? 'Kode & Transaksi Sama'
+                                  ? 'Kode & Transaksi 100% Sama (Beda Tgl)'
                                   : diffDateDetection.sameCodeIds.has(sub.id)
-                                  ? 'Kode Sama Beda Tgl'
-                                  : 'Transaksi Sama Beda Tgl'}
+                                  ? 'Kode Sama Beda Tgl (Bulan Sama)'
+                                  : 'Bulan & Transaksi 100% Sama (Beda Tgl)'}
                               </span>
                             )}
                             {duplicateFilterMode !== 'all' && (
-                              <span className="inline-block font-mono text-[9px] font-black bg-rose-100 text-rose-900 px-1.5 py-0.5 rounded border border-rose-300">
-                                {duplicateInspection.sameCodeIds.has(sub.id) && duplicateInspection.sameRecipientNominalIds.has(sub.id)
-                                  ? `Kode & Nominal Duplikat (${duplicateInspection.groupCountMap.get(sub.id) || 2}x)`
-                                  : duplicateInspection.sameCodeIds.has(sub.id)
-                                  ? `No-Kode Duplikat (${duplicateInspection.groupCountMap.get(sub.id) || 2}x)`
-                                  : `Penerima & Nominal Sama (${duplicateInspection.groupCountMap.get(sub.id) || 2}x)`}
+                              <span className={`inline-block font-mono text-[9px] font-black px-1.5 py-0.5 rounded border ${
+                                duplicateInspection.exactSameIds.has(sub.id)
+                                  ? 'bg-rose-100 text-rose-900 border-rose-300'
+                                  : 'bg-amber-100 text-amber-900 border-amber-300'
+                              }`}>
+                                {duplicateInspection.exactSameIds.has(sub.id)
+                                  ? `100% Sama Semua (${duplicateInspection.groupCountMap.get(sub.id) || 2}x)`
+                                  : duplicateInspection.sameMonthDiffDateIds.has(sub.id)
+                                  ? `Bulan & Transaksi Sama, Beda Tgl (${duplicateInspection.groupCountMap.get(sub.id) || 2}x)`
+                                  : `No-Kode Duplikat (${duplicateInspection.groupCountMap.get(sub.id) || 2}x)`}
+                              </span>
+                            )}
+                            {isVerifiedLegit && (
+                              <span className="inline-block font-mono text-[9px] font-black bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded border border-emerald-300">
+                                ✓ Sah
                               </span>
                             )}
                           </div>
@@ -5293,12 +5559,21 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                           <div className={`p-4 border-b rounded-t-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 ${
                             isClusterAllAcknowledged ? 'bg-emerald-50/60 border-emerald-200' : 'bg-stone-50/80 border-stone-200'
                           }`}>
-                            <div className="flex items-center gap-2.5 flex-wrap">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-mono text-xs font-bold text-stone-500 bg-stone-200 px-2 py-0.5 rounded">
                                 Kelompok #{cIdx + 1}
                               </span>
+                              <span className="text-[10px] font-mono font-bold text-stone-700 bg-white px-2 py-0.5 rounded border border-stone-300">
+                                📅 {cluster.yearMonth}
+                              </span>
+                              <span className="text-[11px] font-mono font-black text-stone-900 bg-stone-100 px-2 py-0.5 rounded border border-stone-300">
+                                #️⃣ {cluster.kode}
+                              </span>
                               <span className="text-sm font-black text-stone-900">
                                 👤 {cluster.recipientName}
+                              </span>
+                              <span className="text-[11px] font-bold text-indigo-900 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
+                                🏷️ {cluster.jenisPengajuan}
                               </span>
                               <span className="text-xs font-bold text-amber-900 bg-amber-100 px-2.5 py-0.5 rounded-full border border-amber-300 font-mono">
                                 💰 Rp {formatRupiah(cluster.nominal)}
@@ -5336,7 +5611,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                           <div className="p-3 sm:p-4 divide-y divide-stone-100">
                             {cluster.submissions.map((sub, sIdx) => {
                               const itemsCount = sub.items?.length || 0;
-                              const isSubAcknowledged = acknowledgedDuplicateIds.includes(sub.id) || (acknowledgedAllHistoryTimestamp > 0 && new Date(sub.createdAt || sub.tanggal || 0).getTime() <= acknowledgedAllHistoryTimestamp);
+                              const isSubAcknowledged = isSubVerifiedLegit(sub);
 
                               return (
                                 <div key={sIdx} className="py-2.5 first:pt-0 last:pb-0 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
@@ -5830,6 +6105,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                   const includeDrive = deleteIncludeDrive;
                   setDeleteConfirmSub(null);
                   setSelectedRowId((prev) => (prev === targetId ? null : prev));
+                  setSelectedCheckedIds((prev) => prev.filter((id) => id !== targetId));
                   onDelete(targetId, { deleteDriveFolder: includeDrive });
                 }}
                 className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition cursor-pointer"
@@ -5840,6 +6116,121 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
             </div>
           </div>
         </div>,
+        document.body
+      )}
+
+      {/* IN-APP BULK DELETE CONFIRMATION MODAL FOR CHECKED ROWS */}
+      {bulkDeleteConfirmOpen && selectedCheckedIds.length > 0 && createPortal(
+        (() => {
+          const selectedSubs = submissions.filter((s) => selectedCheckedSet.has(s.id));
+          const totalSelectedNominal = selectedSubs.reduce(
+            (sum, s) => sum + ((s.items || []).reduce((itSum, it) => itSum + (Number(it.total) || 0), 0)),
+            0
+          );
+          return (
+            <div
+              className="fixed inset-0 z-[10055] bg-stone-950/60 backdrop-blur-xs flex items-center justify-center p-4"
+              onClick={() => setBulkDeleteConfirmOpen(false)}
+            >
+              <div
+                className="w-full max-w-lg bg-white rounded-2xl border border-stone-200 shadow-2xl overflow-hidden animate-fade-in"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="bg-rose-50 border-b border-rose-200 px-5 py-4 flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 bg-rose-100 text-rose-600 rounded-xl">
+                      <Trash2 size={18} />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-black text-stone-900 font-display">
+                        Konfirmasi Hapus {selectedSubs.length} Transaksi Terpilih
+                      </h3>
+                      <p className="text-[11px] font-mono text-rose-700 font-semibold">
+                        Total Nilai: Rp {formatRupiah(totalSelectedNominal)}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setBulkDeleteConfirmOpen(false)}
+                    className="p-1.5 rounded-lg text-stone-500 hover:bg-rose-100 hover:text-stone-800 transition cursor-pointer"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+
+                <div className="p-5 space-y-4 text-xs text-stone-700">
+                  <div className="max-h-48 overflow-y-auto bg-stone-50 border border-stone-200 rounded-xl divide-y divide-stone-200">
+                    {selectedSubs.map((s) => {
+                      const sTotal = (s.items || []).reduce((acc, it) => acc + (Number(it.total) || 0), 0);
+                      return (
+                        <div key={s.id} className="px-3.5 py-2 flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="font-bold text-stone-900 truncate">{s.dibayarkanKepada || '-'}</div>
+                            <div className="text-[10px] font-mono text-stone-500 truncate">
+                              {s.tanggal || '-'} · {s.kode || '-'} · {s.jenisPengajuan || '-'}
+                            </div>
+                          </div>
+                          <div className="font-mono font-bold text-rose-700 shrink-0">
+                            Rp {formatRupiah(sTotal)}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <label className="flex items-start gap-2.5 p-3 bg-sky-50 border border-sky-200 rounded-xl cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={bulkDeleteIncludeDrive}
+                      onChange={(e) => setBulkDeleteIncludeDrive(e.target.checked)}
+                      className="mt-0.5 rounded border-sky-400 text-sky-600 focus:ring-sky-500 cursor-pointer"
+                    />
+                    <div className="space-y-0.5">
+                      <span className="font-bold text-sky-950 block">
+                        Hapus otomatis folder &amp; file lampiran Google Drive dari transaksi yang dipilih
+                      </span>
+                      <span className="text-[11px] text-sky-800 leading-relaxed block">
+                        Seluruh {selectedSubs.length} transaksi terpilih akan dihapus permanen dari aplikasi, server cadangan, dan Cloud Firestore.
+                      </span>
+                    </div>
+                  </label>
+                </div>
+
+                <div className="px-5 py-3.5 bg-stone-50 border-t border-stone-200 flex items-center justify-end gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setBulkDeleteConfirmOpen(false)}
+                    className="px-4 py-2 rounded-xl border border-stone-300 bg-white hover:bg-stone-100 text-stone-700 font-bold text-xs transition cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const idsToDelete = [...selectedCheckedIds];
+                      const includeDrive = bulkDeleteIncludeDrive;
+                      setBulkDeleteConfirmOpen(false);
+                      setSelectedCheckedIds([]);
+                      if (selectedRowId && idsToDelete.includes(selectedRowId)) {
+                        setSelectedRowId(null);
+                      }
+                      if (onBulkDelete) {
+                        onBulkDelete(idsToDelete, { deleteDriveFolder: includeDrive });
+                      } else {
+                        idsToDelete.forEach((id) => onDelete(id, { deleteDriveFolder: includeDrive }));
+                      }
+                    }}
+                    className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition cursor-pointer"
+                  >
+                    <Trash2 size={14} />
+                    <span>Ya, Hapus {selectedSubs.length} Transaksi</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })(),
         document.body
       )}
     </div>

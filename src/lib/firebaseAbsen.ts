@@ -56,6 +56,15 @@ export const auth = getSharedFirebaseAuth()!;
 export const db = getSharedFirestoreDb()!;
 registerFirestoreInstance(db);
 
+export const hasAbsenAuthUser = (): boolean => {
+  try {
+    const activeAuth = getSharedFirebaseAuth() || auth;
+    return Boolean(activeAuth?.currentUser);
+  } catch {
+    return false;
+  }
+};
+
 // Setup Google Auth Provider
 export const provider = new GoogleAuthProvider();
 provider.addScope("https://www.googleapis.com/auth/drive.file");
@@ -209,7 +218,13 @@ export const saveAttendanceToFirestore = async (
   weeklyReportsList?: any[]
 ): Promise<boolean> => {
   const activeDb = getSharedFirestoreDb() || db;
-  if (!activeDb || isFirestoreQuotaExceeded() || isFirestorePermissionDenied() || isFirestoreInternalDegraded()) {
+  if (
+    !activeDb ||
+    !hasAbsenAuthUser() ||
+    isFirestoreQuotaExceeded() ||
+    isFirestorePermissionDenied() ||
+    isFirestoreInternalDegraded()
+  ) {
     return false;
   }
 
@@ -300,7 +315,13 @@ export const loadAttendanceFromFirestore = async (): Promise<{
   latestActiveDate?: string | null;
 } | null> => {
   const activeDb = getSharedFirestoreDb() || db;
-  if (!activeDb || isFirestoreQuotaExceeded() || isFirestorePermissionDenied() || isFirestoreInternalDegraded()) {
+  if (
+    !activeDb ||
+    !hasAbsenAuthUser() ||
+    isFirestoreQuotaExceeded() ||
+    isFirestorePermissionDenied() ||
+    isFirestoreInternalDegraded()
+  ) {
     return null;
   }
   try {
@@ -397,35 +418,39 @@ export const loadAttendanceFromFirestore = async (): Promise<{
     }
 
     // 2. Also check absen_records collection for individual clock-ins / live check-ins
-    try {
-      const snap = await getDocs(collection(db, "absen_records"));
-      if (!snap.empty) {
-        snap.forEach((d) => {
-          const ab = d.data();
-          if (!ab || !ab.workerId || !ab.date) return;
-          const existing = workerMap.get(ab.workerId) || {
-            workerId: ab.workerId,
-            dailyAllowance: 25000,
-            attendance: {},
-            customStatus: {},
-            reasons: {},
-            signatures: {}
-          };
-          if (ab.status === "Hadir" || ab.status === true) {
-            existing.attendance[ab.date] = true;
-          } else if (ab.status && ab.status !== "Absen") {
-            existing.customStatus[ab.date] = ab.status;
-            if (ab.reason) existing.reasons[ab.date] = ab.reason;
-          }
-          if (ab.signature) {
-            existing.signatures[ab.date] = ab.signature;
-          }
-          workerMap.set(ab.workerId, existing);
-        });
-      }
-    } catch (fbErr: any) {
-      if (fbErr?.code !== 'permission-denied' && !fbErr?.message?.includes('insufficient permissions')) {
-        console.warn("Fallback absen_records notice:", fbErr?.message || fbErr);
+    if (!isFirestorePermissionDenied()) {
+      try {
+        const snap = await getDocs(collection(activeDb, "absen_records"));
+        if (!snap.empty) {
+          snap.forEach((d) => {
+            const ab = d.data();
+            if (!ab || !ab.workerId || !ab.date) return;
+            const existing = workerMap.get(ab.workerId) || {
+              workerId: ab.workerId,
+              dailyAllowance: 25000,
+              attendance: {},
+              customStatus: {},
+              reasons: {},
+              signatures: {}
+            };
+            if (ab.status === "Hadir" || ab.status === true) {
+              existing.attendance[ab.date] = true;
+            } else if (ab.status && ab.status !== "Absen") {
+              existing.customStatus[ab.date] = ab.status;
+              if (ab.reason) existing.reasons[ab.date] = ab.reason;
+            }
+            if (ab.signature) {
+              existing.signatures[ab.date] = ab.signature;
+            }
+            workerMap.set(ab.workerId, existing);
+          });
+        }
+      } catch (fbErr: any) {
+        markFirestoreQuotaExceeded(fbErr);
+        markFirestorePermissionDenied(fbErr);
+        if (!isFirestorePermissionError(fbErr)) {
+          console.warn("Fallback absen_records notice:", fbErr?.message || fbErr);
+        }
       }
     }
 
@@ -453,7 +478,11 @@ export const loadAttendanceFromFirestore = async (): Promise<{
       latestActiveDate
     };
   } catch (err: any) {
-    console.warn("Notice: Failed to load attendance from Firestore:", err?.message);
+    markFirestoreQuotaExceeded(err);
+    markFirestorePermissionDenied(err);
+    if (!isFirestorePermissionError(err)) {
+      console.warn("Notice: Failed to load attendance from Firestore:", err?.message);
+    }
     return null;
   }
 };
@@ -468,7 +497,13 @@ export const subscribeToAttendanceFromFirestore = (
   }) => void
 ): (() => void) => {
   const activeDb = getSharedFirestoreDb() || db;
-  if (!activeDb || isFirestoreQuotaExceeded() || isFirestorePermissionDenied() || isFirestoreInternalDegraded()) {
+  if (
+    !activeDb ||
+    !hasAbsenAuthUser() ||
+    isFirestoreQuotaExceeded() ||
+    isFirestorePermissionDenied() ||
+    isFirestoreInternalDegraded()
+  ) {
     return () => {};
   }
   try {
