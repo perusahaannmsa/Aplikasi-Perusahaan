@@ -2,11 +2,11 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { SPPDRecord } from '../components/SppdManager';
 import { consolidateSppdCostItems, terbilangRupiah } from '../components/PrintSppdDocument';
-import { formatDateIndonesian } from '../utils';
+import { formatDateIndonesian, resolveCompanyHeaderMeta, fetchLogoAsDataUrl } from '../utils';
 
 /**
  * Generates an official standalone vector A4 PDF for SPPD (Surat Perintah Perjalanan Dinas)
- * Matches the official PT. Nusantara Mineral Sukses Abadi format with full tables & signatures.
+ * matching the active company letterhead and corporate metadata.
  */
 export async function generateSppdPdfBlob(sppd: SPPDRecord): Promise<Blob> {
   const doc = new jsPDF({
@@ -20,32 +20,51 @@ export async function generateSppdPdfBlob(sppd: SPPDRecord): Promise<Blob> {
   const contentWidth = pageWidth - margin * 2;
   let y = 14;
 
-  // 1. KOP SURAT RESMI PT. NUSANTARA MINERAL SUKSES ABADI
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(13);
-  doc.setTextColor(20, 20, 20);
-  doc.text('PT. NUSANTARA MINERAL SUKSES ABADI', pageWidth / 2, y, { align: 'center' });
-  y += 5;
+  // 1. KOP SURAT RESMI DINAMIS SESUAI PERUSAHAAN AKTIF
+  const companyMeta = resolveCompanyHeaderMeta(sppd);
+  let drewBanner = false;
+  try {
+    const logoInfo = companyMeta.logoUrl ? await fetchLogoAsDataUrl(companyMeta.logoUrl) : null;
+    if (logoInfo?.dataUrl && (logoInfo.aspect || 1) >= 2.0) {
+      const imgH = Math.min(34, Math.round((contentWidth / (logoInfo.aspect || 4.6389)) * 10) / 10);
+      doc.addImage(logoInfo.dataUrl, 'PNG', margin, y - 3, contentWidth, imgH);
+      y += imgH + 2;
+      drewBanner = true;
+    }
+  } catch {}
 
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8.5);
-  doc.setTextColor(60, 60, 60);
-  doc.text('MINING & GENERAL CONTRACTOR - BATUBARA & MINERAL', pageWidth / 2, y, { align: 'center' });
-  y += 4;
+  if (!drewBanner) {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.setTextColor(20, 20, 20);
+    doc.text(companyMeta.name, pageWidth / 2, y, { align: 'center' });
+    y += 5;
 
-  doc.setFontSize(7.5);
-  doc.setTextColor(90, 90, 90);
-  doc.text('Head Office: Gedung Wisma Menara NMSA, Jakarta | Email: corporate@nmsa.co.id', pageWidth / 2, y, { align: 'center' });
-  y += 4;
+    if (companyMeta.subtitle) {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8.5);
+      doc.setTextColor(60, 60, 60);
+      doc.text(companyMeta.subtitle, pageWidth / 2, y, { align: 'center' });
+      y += 4;
+    }
 
-  // Double border line
-  doc.setDrawColor(20, 20, 20);
-  doc.setLineWidth(0.6);
-  doc.line(margin, y, pageWidth - margin, y);
-  y += 1.2;
-  doc.setLineWidth(0.2);
-  doc.line(margin, y, pageWidth - margin, y);
-  y += 6;
+    const addressContact = [companyMeta.address, companyMeta.contact].filter(Boolean).join(' | ');
+    if (addressContact) {
+      doc.setFontSize(7.5);
+      doc.setTextColor(90, 90, 90);
+      doc.text(addressContact, pageWidth / 2, y, { align: 'center' });
+      y += 4;
+    }
+
+    // Double border line
+    doc.setDrawColor(20, 20, 20);
+    doc.setLineWidth(0.6);
+    doc.line(margin, y, pageWidth - margin, y);
+    y += 1.2;
+    doc.setLineWidth(0.2);
+    doc.line(margin, y, pageWidth - margin, y);
+    y += 6;
+  }
 
   // 2. JUDUL DOKUMEN & NOMOR SPPD
   doc.setFont('helvetica', 'bold');
@@ -57,7 +76,7 @@ export async function generateSppdPdfBlob(sppd: SPPDRecord): Promise<Blob> {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9);
   doc.setTextColor(30, 30, 30);
-  doc.text(`Nomor: ${sppd.noSppd || 'SPPD-NMSA/X/2026/001'}`, pageWidth / 2, y, { align: 'center' });
+  doc.text(`Nomor: ${sppd.noSppd || `SPPD-${companyMeta.monogram}/X/2026/001`}`, pageWidth / 2, y, { align: 'center' });
   y += 5;
 
   // 3. TABEL 1: DATA PERINTAH PERJALANAN DINAS (9 Poin Resmi)
@@ -108,7 +127,7 @@ export async function generateSppdPdfBlob(sppd: SPPDRecord): Promise<Blob> {
     [
       '8.',
       'Pembebanan Anggaran / Mata Anggaran',
-      'PT. Nusantara Mineral Sukses Abadi (HO / Proyek Site)\nMata Anggaran: Biaya Perjalanan Dinas & Akomodasi Lapangan'
+      `${companyMeta.name} (HO / Proyek Site)\nMata Anggaran: Biaya Perjalanan Dinas & Akomodasi Lapangan`
     ],
     [
       '9.',

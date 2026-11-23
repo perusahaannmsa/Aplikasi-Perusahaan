@@ -380,7 +380,7 @@ export const FirebaseMigration: React.FC<FirebaseMigrationProps> = ({
     const randomId = Math.random().toString(36).substring(2, 9);
     const mockUser = {
       uid: `migrated_user_${randomId}`,
-      email: targetEmail.trim() || userProfile?.email || 'admin@nmsa.com',
+      email: targetEmail.trim() || userProfile?.email || 'yudiakungaming@gmail.com',
     } as any;
 
     setTargetUser(mockUser);

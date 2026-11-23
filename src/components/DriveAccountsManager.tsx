@@ -5,6 +5,7 @@ import {
   saveConnectedDrives, 
   googleDriveLogin, 
   refreshAllDrivesQuota,
+  loadConnectedDrivesFromFirestore,
   getMasterDriveEmail,
   setMasterDriveEmail,
   getAuthorizedDriveEmails,
@@ -48,6 +49,12 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({
 
   useEffect(() => {
     loadDrives();
+    const hasValidLocal = getConnectedDrives().some((d) => isDriveTokenValid(d) && !d.isExpired);
+    if (!hasValidLocal) {
+      loadConnectedDrivesFromFirestore()
+        .then(() => loadDrives())
+        .catch(() => {});
+    }
     const onDriveUpdated = () => {
       loadDrives();
     };
@@ -111,14 +118,8 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({
     setIsSettingsModalOpen(true);
   };
 
-  const handleRemoveDrive = (emailToRemove: string) => {
-    const list = getConnectedDrives();
-    const updated = list.filter(d => d.email.toLowerCase() !== emailToRemove.toLowerCase());
-    saveConnectedDrives(updated);
-    setDrives(updated);
-    if (onConnectionChange) {
-      onConnectionChange(updated.length > 0);
-    }
+  const handleRemoveDrive = (_emailToRemove: string) => {
+    setErrorText(`Akun Google Drive (${LOCKED_MASTER_DRIVE_EMAIL}) dikunci permanen di aplikasi dan tidak dapat dihapus atau diganti.`);
   };
 
   const handleRefreshQuotas = async () => {
@@ -149,7 +150,7 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({
         <div className="flex items-center gap-2">
           <HardDrive className="text-[#917118]" size={18} />
           <h4 className="text-xs font-bold uppercase tracking-wider text-stone-800">
-            Multi-Google Drive Storage (Auto-Chain)
+            Penyimpanan Google Drive Permanen (Terkunci)
           </h4>
         </div>
 
@@ -157,7 +158,7 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => handleOpenManualTokenModal()}
+              onClick={() => handleOpenManualTokenModal(LOCKED_MASTER_DRIVE_EMAIL)}
               className="inline-flex items-center gap-1.5 bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-300 text-emerald-900 text-xs font-bold px-3 py-1.5 rounded-xl transition cursor-pointer shadow-3xs"
               title="Input token Google Drive manual (bebas muter)"
             >
@@ -169,18 +170,17 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({
               type="button"
               onClick={handleOpenWhitelistModal}
               className="inline-flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100/80 border border-amber-300 text-amber-900 text-xs font-bold px-3 py-1.5 rounded-xl transition cursor-pointer shadow-3xs"
-              title="Buka Pengaturan Master Google Drive & Whitelist"
+              title="Status akun Google Drive permanen"
             >
               <Settings size={13} className="text-amber-700" />
-              <span>Kelola &amp; Tambah Akun (Whitelist)</span>
+              <span>Info Akun Permanen</span>
             </button>
           </div>
         )}
       </div>
 
       <p className="text-[11px] text-stone-500 leading-relaxed">
-        Solusi cerdas penyimpanan tanpa batas: Hubungkan beberapa akun Google Drive gratis 15GB Anda. 
-        Sistem akan **mengisi satu akun terlebih dahulu hingga penuh**, lalu mendeteksi otomatis dan melanjutkan unggahan berkas ke akun cadangan berikutnya secara instan!
+        Penyimpanan aplikasi dikunci secara permanen ke akun <strong className="text-stone-800 font-mono">{LOCKED_MASTER_DRIVE_EMAIL}</strong>. Pergantian perusahaan atau pembaruan aplikasi tidak akan mengubah akun Google Drive ini.
       </p>
 
       {errorText && (
@@ -347,22 +347,13 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({
                                   type="button"
                                   onClick={() => handleOpenManualTokenModal(drive.email)}
                                   className="p-1.5 text-emerald-800 hover:text-emerald-950 rounded-lg bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 flex items-center gap-1 transition cursor-pointer shadow-4xs font-sans"
-                                  title="Input token manual untuk akun ini (bebas muter)"
+                                  title="Input token manual untuk akun permanen ini (bebas muter)"
                                 >
                                   <Key size={11} className="text-emerald-700" />
                                   <span className="text-[10px] font-bold">Input Token</span>
                                 </button>
                               </>
                             )}
-
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveDrive(drive.email)}
-                              className="p-1.5 text-stone-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition cursor-pointer"
-                              title="Putus Hubungan Akun Ini"
-                            >
-                              <Trash2 size={13} />
-                            </button>
                           </div>
                         </>
                       );
@@ -384,14 +375,14 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({
                 {isConnecting ? (
                   <RefreshCw size={11} className="animate-spin" />
                 ) : (
-                  <Plus size={11} />
+                  <RefreshCw size={11} />
                 )}
-                Sertakan Akun Google Drive Cadangan
+                Perbarui Sesi ({LOCKED_MASTER_DRIVE_EMAIL})
               </button>
 
               <button
                 type="button"
-                onClick={() => handleOpenManualTokenModal()}
+                onClick={() => handleOpenManualTokenModal(LOCKED_MASTER_DRIVE_EMAIL)}
                 className="inline-flex items-center gap-1.5 border border-emerald-300 hover:border-emerald-600 text-emerald-800 bg-emerald-50/60 hover:bg-emerald-100 text-[11px] font-bold px-3 py-2 rounded-xl transition cursor-pointer"
               >
                 <Key size={11} className="text-emerald-700" />
@@ -399,8 +390,8 @@ export const DriveAccountsManager: React.FC<DriveAccountsManagerProps> = ({
               </button>
             </div>
             
-            <p className="text-[9px] font-mono text-stone-400 text-right">
-              Total Akun: {drives.length}
+            <p className="text-[9px] font-mono text-amber-800 font-bold text-right">
+              Terkunci Permanen: {LOCKED_MASTER_DRIVE_EMAIL}
             </p>
           </div>
         </div>

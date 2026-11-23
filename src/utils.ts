@@ -16,6 +16,18 @@ export {
   formatTransactionsSummaryNote,
   INDONESIAN_MONTHS
 } from './utils/agendaTaxSync';
+import {
+  resolveF1SignersForSubmission,
+  resolveF2SignersForSubmission,
+  resolveSignatureStyleForSubmission,
+  resolveF2ApprovedByForSubmission,
+} from './utils/companySigners';
+export {
+  resolveF1SignersForSubmission,
+  resolveF2SignersForSubmission,
+  resolveSignatureStyleForSubmission,
+  resolveF2ApprovedByForSubmission,
+};
 
 export interface PdfInputSource {
   bytes: Uint8Array;
@@ -107,38 +119,352 @@ export function cleanSingleLine(text: string | null | undefined): string {
   return sanitizeString(flattened);
 }
 
-let cachedCorporateLogoBytes: Uint8Array | null = null;
+export interface ResolvedCompanyHeaderMeta {
+  companyId: string;
+  name: string;
+  subtitle: string;
+  address: string;
+  contact: string;
+  logoUrl: string;
+  monogram: string;
+  isNmsa: boolean;
+  isNh: boolean;
+}
 
-export async function getCorporateLogoPngBytes(): Promise<Uint8Array | null> {
-  if (cachedCorporateLogoBytes) return cachedCorporateLogoBytes;
-  try {
-    if (typeof window !== 'undefined' && typeof window.fetch === 'function') {
-      const res = await window.fetch('/kop-surat-nmsa-full.png');
-      if (res.ok) {
-        const arr = await res.arrayBuffer();
-        cachedCorporateLogoBytes = new Uint8Array(arr);
-        return cachedCorporateLogoBytes;
+const DEFAULT_NH_LOGO_URL = 'https://i.ibb.co.com/gFHNJ1JD/LOGO-NH.png';
+const DEFAULT_NMSA_KOP_URL = '/kop-surat-nmsa-full.png';
+
+export function resolveCompanyHeaderMeta(submissionOrCompany?: any): ResolvedCompanyHeaderMeta {
+  let activeProfile: any = null;
+  let savedCompanies: any[] = [];
+  let activeIdStorage = '';
+  let activeNameStorage = '';
+  let activeLogoStorage = '';
+
+  if (typeof window !== 'undefined') {
+    try {
+      const rawActive = localStorage.getItem('NUSANTARA_ACTIVE_COMPANY_PROFILE');
+      if (rawActive) activeProfile = JSON.parse(rawActive);
+    } catch {}
+    try {
+      const rawSaved = localStorage.getItem('NUSANTARA_SAVED_COMPANIES');
+      if (rawSaved) {
+        const parsed = JSON.parse(rawSaved);
+        if (Array.isArray(parsed)) savedCompanies = parsed;
       }
-    }
-  } catch (err) {
-    console.warn('Failed to fetch corporate logo in browser:', err);
+    } catch {}
+    try {
+      activeIdStorage = (localStorage.getItem('NUSANTARA_ACTIVE_COMPANY_ID') || '').trim().toLowerCase();
+      activeNameStorage = (localStorage.getItem('NUSANTARA_ACTIVE_COMPANY_NAME') || '').trim();
+      activeLogoStorage = (localStorage.getItem('NUSANTARA_ACTIVE_COMPANY_LOGO_URL') || '').trim();
+    } catch {}
   }
 
-  // Node.js SSR / Background task fallback
-  if (typeof window === 'undefined' && typeof process !== 'undefined' && process.cwd) {
+  const subId = (submissionOrCompany?.companyId || submissionOrCompany?.id && submissionOrCompany?.code ? (submissionOrCompany.companyId || submissionOrCompany.id) : submissionOrCompany?.companyId || '')
+    .toString()
+    .toLowerCase()
+    .trim();
+  const subName = (submissionOrCompany?.companyName || submissionOrCompany?.fullName || submissionOrCompany?.name || '')
+    .toString()
+    .trim();
+  const subCodeHint = (
+    submissionOrCompany?.kode ||
+    submissionOrCompany?.nomorMemo ||
+    submissionOrCompany?.nomorPinjaman ||
+    submissionOrCompany?.noSppd ||
+    ''
+  )
+    .toString()
+    .toUpperCase();
+
+  let resolvedId = subId || activeIdStorage;
+  if (!resolvedId && subCodeHint) {
+    if (subCodeHint.includes('/NH/') || subCodeHint.includes('-NH') || subCodeHint.includes('NH-')) {
+      resolvedId = 'nh';
+    } else if (subCodeHint.includes('IM-ANH') || subCodeHint.includes('/ANH/')) {
+      resolvedId = 'anh';
+    }
+  }
+  if (!resolvedId) {
+    resolvedId = 'nmsa';
+  }
+
+  const matchedSaved = savedCompanies.find((c: any) => {
+    const cid = (c?.id || c?.code || '').toString().toLowerCase().trim();
+    const cname = (c?.name || c?.fullName || '').toString().toLowerCase().trim();
+    return (cid && cid === resolvedId) || (subName && cname && cname === subName.toLowerCase());
+  });
+
+  const activeMatchesTarget =
+    activeProfile &&
+    ((activeProfile.id || activeProfile.code || '').toString().toLowerCase().trim() === resolvedId || !subId);
+
+  const effectiveName = (
+    subName ||
+    matchedSaved?.fullName ||
+    matchedSaved?.name ||
+    (activeMatchesTarget ? (activeProfile?.fullName || activeProfile?.name) : '') ||
+    (resolvedId === activeIdStorage ? activeNameStorage : '') ||
+    ''
+  ).trim();
+
+  const lowerId = resolvedId.toLowerCase();
+  const lowerName = effectiveName.toLowerCase();
+
+  const isNh =
+    lowerId === 'nh' ||
+    (lowerId.includes('halid') && !lowerId.includes('agro')) ||
+    (lowerName.includes('nusantara halid') && !lowerName.includes('agro'));
+
+  const isAnh =
+    lowerId === 'anh' ||
+    lowerName.includes('agro nusantara halid');
+
+  const isNmsa =
+    !isNh &&
+    !isAnh &&
+    (lowerId === 'nmsa' ||
+      lowerName.includes('mineral sukses abadi') ||
+      (!lowerId && !lowerName));
+
+  const explicitLogo = (
+    submissionOrCompany?.companyLogoUrl ||
+    submissionOrCompany?.companyHeaderUrl ||
+    submissionOrCompany?.logoUrl ||
+    ''
+  )
+    .toString()
+    .trim();
+
+  let resolvedLogo = explicitLogo;
+  if (!resolvedLogo) {
+    if (matchedSaved?.logoUrl) {
+      resolvedLogo = String(matchedSaved.logoUrl).trim();
+    } else if (activeMatchesTarget && activeProfile?.logoUrl) {
+      resolvedLogo = String(activeProfile.logoUrl).trim();
+    } else if (resolvedId === activeIdStorage && activeLogoStorage) {
+      resolvedLogo = activeLogoStorage;
+    }
+  }
+
+  // Never let legacy NMSA kop surat leak onto non-NMSA companies
+  if (!isNmsa && resolvedLogo === DEFAULT_NMSA_KOP_URL) {
+    resolvedLogo = '';
+  }
+
+  if (!resolvedLogo) {
+    if (isNh) {
+      resolvedLogo = DEFAULT_NH_LOGO_URL;
+    } else if (isNmsa) {
+      resolvedLogo = DEFAULT_NMSA_KOP_URL;
+    }
+  }
+
+  if (isNh) {
+    const displayName = effectiveName && effectiveName.toUpperCase().includes('PT')
+      ? effectiveName.toUpperCase()
+      : 'PT. NUSANTARA HALID';
+    return {
+      companyId: resolvedId,
+      name: displayName,
+      subtitle: 'Wisma NH Building Lt. 1',
+      address: 'Jl. Raya Pasar Minggu No. 2 B/C Pancoran, Jakarta Selatan',
+      contact: 'Email: ptnusantarahalid77@gmail.com | Telp: 021.79182832',
+      logoUrl: resolvedLogo,
+      monogram: 'NH',
+      isNmsa: false,
+      isNh: true,
+    };
+  }
+
+  if (isAnh) {
+    const displayName = effectiveName && effectiveName.toUpperCase().includes('PT')
+      ? effectiveName.toUpperCase()
+      : 'PT. AGRO NUSANTARA HALID';
+    return {
+      companyId: resolvedId,
+      name: displayName,
+      subtitle: 'AGROINDUSTRY & PLANTATION CONTRACTOR',
+      address: 'Wisma NH Building Lt. 1, Jl. Raya Pasar Minggu No. 2 B/C, Jakarta Selatan',
+      contact: 'Jakarta Selatan, DKI Jakarta 12780',
+      logoUrl: resolvedLogo,
+      monogram: 'ANH',
+      isNmsa: false,
+      isNh: false,
+    };
+  }
+
+  if (isNmsa) {
+    return {
+      companyId: 'nmsa',
+      name: 'PT. NUSANTARA MINERAL SUKSES ABADI',
+      subtitle: 'MINING & GENERAL CONTRACTOR - BATUBARA & MINERAL',
+      address: 'Wisma NH Building No. 2B - C Lt. 1, Jl. Raya Pasar Minggu, Jakarta Selatan 12780',
+      contact: 'Email: nusantaramineralsuksesabadi@gmail.com | Phone: 021.27533169',
+      logoUrl: resolvedLogo || DEFAULT_NMSA_KOP_URL,
+      monogram: 'N',
+      isNmsa: true,
+      isNh: false,
+    };
+  }
+
+  const finalName = (effectiveName || resolvedId.toUpperCase()).toUpperCase();
+  const words = finalName.replace(/^PT\.?\s+/i, '').split(/\s+/).filter(Boolean);
+  const monogram = words.slice(0, 2).map((w: string) => w[0]).join('').toUpperCase() || resolvedId.slice(0, 2).toUpperCase();
+
+  return {
+    companyId: resolvedId,
+    name: finalName.startsWith('PT') ? finalName : `PT. ${finalName}`,
+    subtitle: (matchedSaved?.defaultJenis || 'GENERAL CONTRACTOR & SUPPLIER').toString().toUpperCase(),
+    address: (matchedSaved?.defaultLokasi ? `Kantor: ${matchedSaved.defaultLokasi}` : 'Jakarta Selatan, DKI Jakarta'),
+    contact: '',
+    logoUrl: resolvedLogo,
+    monogram,
+    isNmsa: false,
+    isNh: false,
+  };
+}
+
+const cachedCorporateLogoBytesMap = new Map<string, Uint8Array>();
+const cachedCorporateLogoDataUrlMap = new Map<string, string>();
+
+async function blobToNormalizedPngBytes(blob: Blob): Promise<Uint8Array | null> {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    const ab = await blob.arrayBuffer();
+    return ab.byteLength > 0 ? new Uint8Array(ab) : null;
+  }
+
+  // Convert PNG/JPG/WebP/SVG cleanly to PNG via offscreen canvas so pdf-lib & jsPDF always succeed
+  try {
+    const objectUrl = URL.createObjectURL(blob);
+    try {
+      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = (err) => reject(err);
+        image.src = objectUrl;
+      });
+      const width = img.naturalWidth || img.width;
+      const height = img.naturalHeight || img.height;
+      if (width > 0 && height > 0) {
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          const pngBlob = await new Promise<Blob | null>((resolve) =>
+            canvas.toBlob((b) => resolve(b), 'image/png')
+          );
+          if (pngBlob) {
+            const arr = await pngBlob.arrayBuffer();
+            if (arr.byteLength > 0) return new Uint8Array(arr);
+          }
+        }
+      }
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  } catch (convErr) {
+    console.warn('Canvas PNG normalization warning, falling back to raw bytes:', convErr);
+  }
+
+  const rawAb = await blob.arrayBuffer();
+  return rawAb.byteLength > 0 ? new Uint8Array(rawAb) : null;
+}
+
+export async function fetchLogoAsPngBytes(logoUrl: string): Promise<Uint8Array | null> {
+  const cleanUrl = (logoUrl || '').trim();
+  if (!cleanUrl) return null;
+
+  const cached = cachedCorporateLogoBytesMap.get(cleanUrl);
+  if (cached) return cached;
+
+  // Browser environment
+  if (typeof window !== 'undefined' && typeof window.fetch === 'function') {
+    const candidateUrls = /^https?:\/\//i.test(cleanUrl)
+      ? [`/api/image-proxy?url=${encodeURIComponent(cleanUrl)}`, cleanUrl]
+      : [cleanUrl];
+
+    for (const candidate of candidateUrls) {
+      try {
+        const res = await window.fetch(candidate);
+        if (!res.ok) continue;
+        const blob = await res.blob();
+        if (!blob || blob.size === 0) continue;
+        const pngBytes = await blobToNormalizedPngBytes(blob);
+        if (pngBytes && pngBytes.byteLength > 0) {
+          cachedCorporateLogoBytesMap.set(cleanUrl, pngBytes);
+          return pngBytes;
+        }
+      } catch (err) {
+        console.warn(`Logo fetch attempt failed (${candidate}):`, err);
+      }
+    }
+  }
+
+  // Node.js SSR / Background task fallback for local /public assets
+  if (typeof window === 'undefined' && typeof process !== 'undefined' && process.cwd && cleanUrl.startsWith('/')) {
     try {
       const fsPkg = 'fs';
       const pathPkg = 'path';
       const fs = await import(/* @vite-ignore */ fsPkg);
       const path = await import(/* @vite-ignore */ pathPkg);
-      const fullPath = path.join(process.cwd(), 'public', 'kop-surat-nmsa-full.png');
+      const fullPath = path.join(process.cwd(), 'public', cleanUrl.replace(/^\/+/, ''));
       if (fs.existsSync(fullPath)) {
-        cachedCorporateLogoBytes = new Uint8Array(fs.readFileSync(fullPath));
-        return cachedCorporateLogoBytes;
+        const bytes = new Uint8Array(fs.readFileSync(fullPath));
+        cachedCorporateLogoBytesMap.set(cleanUrl, bytes);
+        return bytes;
       }
     } catch {}
   }
+
   return null;
+}
+
+export async function fetchLogoAsDataUrl(logoUrl: string): Promise<{ dataUrl: string; aspect: number } | null> {
+  const cleanUrl = (logoUrl || '').trim();
+  if (!cleanUrl) return null;
+
+  const pngBytes = await fetchLogoAsPngBytes(cleanUrl);
+  if (!pngBytes) return null;
+
+  let dataUrl = cachedCorporateLogoDataUrlMap.get(cleanUrl) || '';
+  if (!dataUrl) {
+    const blob = new Blob([pngBytes], { type: 'image/png' });
+    dataUrl = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+      reader.onerror = () => resolve('');
+      reader.readAsDataURL(blob);
+    });
+    if (dataUrl) {
+      cachedCorporateLogoDataUrlMap.set(cleanUrl, dataUrl);
+    }
+  }
+  if (!dataUrl) return null;
+
+  let aspect = 4.6389;
+  if (typeof window !== 'undefined') {
+    try {
+      aspect = await new Promise<number>((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          resolve(img.naturalWidth > 0 && img.naturalHeight > 0 ? img.naturalWidth / img.naturalHeight : 4.6389);
+        };
+        img.onerror = () => resolve(4.6389);
+        img.src = dataUrl;
+      });
+    } catch {}
+  }
+
+  return { dataUrl, aspect };
+}
+
+export async function getCorporateLogoPngBytes(submissionOrCompany?: any): Promise<Uint8Array | null> {
+  const meta = resolveCompanyHeaderMeta(submissionOrCompany);
+  if (!meta.logoUrl) return null;
+  return fetchLogoAsPngBytes(meta.logoUrl);
 }
 
 export async function getQrCodePngBytes(url: string, size = 160): Promise<Uint8Array | null> {
@@ -203,66 +529,144 @@ async function drawCorporateHeader(
   fontRegular: any,
   x: number,
   y: number,
-  maxW: number = 240
+  maxW: number = 240,
+  submissionOrCompany?: any
 ): Promise<void> {
-  const logoBytes = await getCorporateLogoPngBytes();
+  const meta = resolveCompanyHeaderMeta(submissionOrCompany);
+  const logoBytes = meta.logoUrl ? await fetchLogoAsPngBytes(meta.logoUrl) : null;
+
   if (logoBytes) {
     try {
-      const logoImg = await pdfDoc.embedPng(logoBytes);
-      const aspect = logoImg.width / logoImg.height; // ~ 1002 / 216 = 4.64
-      const targetW = Math.min(maxW, 230);
-      const targetH = targetW / aspect;
-      page.drawImage(logoImg, {
-        x,
-        y: y - targetH + 12,
-        width: targetW,
-        height: targetH,
-      });
-      return;
+      let logoImg: any = null;
+      try {
+        logoImg = await pdfDoc.embedPng(logoBytes);
+      } catch {
+        logoImg = await pdfDoc.embedJpg(logoBytes);
+      }
+
+      if (logoImg) {
+        const aspect = logoImg.width / Math.max(1, logoImg.height);
+        const maxBoxH = 50;
+        let targetW = Math.min(maxW, 240);
+        let targetH = targetW / aspect;
+        if (targetH > maxBoxH) {
+          targetH = maxBoxH;
+          targetW = targetH * aspect;
+        }
+
+        // If the uploaded image is a wide kop-surat banner (e.g. NMSA or LOGO-NH banner), render banner cleanly
+        if (aspect >= 2.0) {
+          page.drawImage(logoImg, {
+            x,
+            y: y + 10 - targetH,
+            width: targetW,
+            height: targetH,
+          });
+          return;
+        }
+
+        // If the logo is a compact/square emblem, draw logo on left + company typography beside it
+        const iconH = Math.min(38, targetH);
+        const iconW = iconH * aspect;
+        page.drawImage(logoImg, {
+          x,
+          y: y - iconH + 2,
+          width: iconW,
+          height: iconH,
+        });
+
+        const textX = x + iconW + 8;
+        page.drawText(cleanSingleLine(meta.name), {
+          x: textX,
+          y: y - 10,
+          size: 11,
+          font: fontBold,
+          color: rgb(15 / 255, 23 / 255, 42 / 255),
+        });
+        if (meta.subtitle) {
+          page.drawText(cleanSingleLine(meta.subtitle), {
+            x: textX,
+            y: y - 21,
+            size: 7.2,
+            font: fontBold,
+            color: rgb(71 / 255, 85 / 255, 105 / 255),
+          });
+        }
+        if (meta.address) {
+          page.drawText(cleanSingleLine(meta.address), {
+            x: textX,
+            y: y - 31,
+            size: 6.5,
+            font: fontRegular,
+            color: rgb(100 / 255, 116 / 255, 139 / 255),
+          });
+        }
+        return;
+      }
     } catch (e) {
-      console.warn('Embedding logo PNG failed, drawing vector logo:', e);
+      console.warn('Embedding company logo failed, drawing vector header:', e);
     }
   }
 
-  // Graceful Corporate Vector Emblem & Brand Header
+  // Graceful Corporate Vector Emblem & Brand Header matched dynamically to the active/submission company
+  const badgeBorder = meta.isNh ? rgb(22 / 255, 163 / 255, 74 / 255) : rgb(180 / 255, 83 / 255, 9 / 255);
+  const badgeBg = meta.isNh ? rgb(220 / 255, 252 / 255, 231 / 255) : rgb(254 / 255, 243 / 255, 199 / 255);
+  const badgeText = meta.isNh ? rgb(21 / 255, 128 / 255, 61 / 255) : rgb(180 / 255, 83 / 255, 9 / 255);
+
   page.drawRectangle({
     x,
     y: y - 36,
     width: 36,
     height: 36,
-    borderColor: rgb(180 / 255, 83 / 255, 9 / 255),
+    borderColor: badgeBorder,
     borderWidth: 1.5,
-    color: rgb(254 / 255, 243 / 255, 199 / 255),
+    color: badgeBg,
   });
-  page.drawText('N', {
-    x: x + 11,
-    y: y - 28,
-    size: 22,
+  const monoText = cleanSingleLine(meta.monogram).slice(0, 3);
+  const monoSize = monoText.length > 1 ? 14 : 20;
+  const monoW = fontBold.widthOfTextAtSize(monoText, monoSize);
+  page.drawText(monoText, {
+    x: x + (36 - monoW) / 2,
+    y: y - (monoText.length > 1 ? 23 : 26),
+    size: monoSize,
     font: fontBold,
-    color: rgb(180 / 255, 83 / 255, 9 / 255),
+    color: badgeText,
   });
 
-  page.drawText('PT. NUSANTARA MINERAL SUKSES ABADI', {
+  page.drawText(cleanSingleLine(meta.name), {
     x: x + 44,
-    y: y - 14,
-    size: 11.5,
+    y: y - 12,
+    size: 11.2,
     font: fontBold,
     color: rgb(15 / 255, 23 / 255, 42 / 255),
   });
-  page.drawText('MINING & GENERAL CONTRACTOR - BATUBARA & MINERAL', {
-    x: x + 44,
-    y: y - 27,
-    size: 7.2,
-    font: fontBold,
-    color: rgb(71 / 255, 85 / 255, 105 / 255),
-  });
-  page.drawText('Head Office: Gedung Wisma Menara NMSA, Jakarta', {
-    x: x + 44,
-    y: y - 37,
-    size: 6.8,
-    font: fontRegular,
-    color: rgb(100 / 255, 116 / 255, 139 / 255),
-  });
+  if (meta.subtitle) {
+    page.drawText(cleanSingleLine(meta.subtitle), {
+      x: x + 44,
+      y: y - 22,
+      size: 7.2,
+      font: fontBold,
+      color: rgb(71 / 255, 85 / 255, 105 / 255),
+    });
+  }
+  if (meta.address) {
+    page.drawText(cleanSingleLine(meta.address), {
+      x: x + 44,
+      y: y - 31,
+      size: 6.4,
+      font: fontRegular,
+      color: rgb(100 / 255, 116 / 255, 139 / 255),
+    });
+  }
+  if (meta.contact) {
+    page.drawText(cleanSingleLine(meta.contact), {
+      x: x + 44,
+      y: y - 39,
+      size: 6.2,
+      font: fontRegular,
+      color: rgb(100 / 255, 116 / 255, 139 / 255),
+    });
+  }
 }
 
 export async function generateF1PdfBytes(
@@ -286,8 +690,8 @@ export async function generateF1PdfBytes(
   // ================= 1. HEADER BLOCK (LOGO + CODE + TANGGAL + QR CODE) =================
   const headerTopY = 805;
 
-  // 1a. Draw Official Logo on Top Left
-  await drawCorporateHeader(pdfDoc, page, fontBold, fontRegular, margin, headerTopY, 230);
+  // 1a. Draw Official Logo on Top Left (Dynamic per company)
+  await drawCorporateHeader(pdfDoc, page, fontBold, fontRegular, margin, headerTopY, 240, submission);
 
   // 1b. Right Header: Voucher Code Box, Date & QR Code
   const qrSize = 48;
@@ -710,173 +1114,179 @@ export async function generateF1PdfBytes(
 
   curTableY = terbilangY - terbilangH - 12;
 
-  // ================= 6. SIGNATURES BLOCK (4 SIGNERS: DIAJUKAN, DIVERIFIKASI, DIVERIFIKASI, DISETUJUI) =================
-  // ================= 6. SIGNATURES BLOCK (DYNAMIC 1 TO 8 SIGNERS) =================
-  let signers = customSigners;
-  if (!signers && typeof window !== 'undefined' && window.localStorage) {
-    try {
-      const saved = localStorage.getItem('nmsa_custom_f1_signers_config');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length >= 1) {
-          signers = parsed.filter((s: any) => s.enabled !== false);
-        }
-      }
-    } catch (_) {}
-  }
+  // ================= 6. SIGNATURES BLOCK (DYNAMIC 1 TO 8 SIGNERS, PER-COMPANY ISOLATED) =================
+  const resolvedF1Raw = resolveF1SignersForSubmission(submission, {
+    customSigners: customSigners as any,
+  });
+  let signers = resolvedF1Raw
+    .filter((s: any) => s.enabled !== false)
+    .map((s: any) => ({
+      title: cleanSingleLine(s.title).toUpperCase(),
+      name: cleanSingleLine(s.name).toUpperCase(),
+      role: cleanSingleLine(s.role).toUpperCase(),
+    }));
 
-  if (!signers || signers.length === 0) {
-    const applicantName = cleanSingleLine(
-      (submission.diajukanOleh && submission.diajukanOleh !== 'Sri Ekowati')
-        ? submission.diajukanOleh
-        : 'Andi Dhiya Salsabila'
-    );
-    const applicantRole = cleanSingleLine(submission.diajukanJabatan || 'Staff Keuangan');
-
-    const verifier1Name = 'Sri Ekowati';
-    const verifier1Role = 'Manager Keuangan';
-
-    const verifierRaw = submission.diverifikasiOleh;
-    const isVerifierNursyam = verifierRaw?.toLowerCase().includes('nursyam') || submission.disetujuiOleh2?.toLowerCase().includes('nursyam');
-    const verifier2Name = cleanSingleLine(
-      isVerifierNursyam
-        ? 'Andi Nursyam Halid'
-        : (verifierRaw && verifierRaw !== 'Andi Dhiya Salsabila' && verifierRaw !== 'Sri Ekowati'
-          ? verifierRaw
-          : 'Andi Muhammad Rifki')
-    );
-    const verifier2Role = cleanSingleLine(
-      isVerifierNursyam
-        ? 'Direktur Utama'
-        : (submission.diverifikasiJabatan && submission.diverifikasiJabatan !== 'Keuangan'
-          ? submission.diverifikasiJabatan
-          : 'Direktur')
-    );
-
-    const rawApprover2 = submission.disetujuiOleh2;
-    const isNursyam = rawApprover2 && rawApprover2.toLowerCase().includes('nursyam');
-    const approverName = cleanSingleLine(isNursyam || !rawApprover2 ? 'Harijon' : rawApprover2);
-    const approverRole = cleanSingleLine(isNursyam || !submission.disetujuiJabatan2 ? 'Direktur Keuangan' : submission.disetujuiJabatan2);
-
-    signers = [
-      { title: 'Diajukan', name: applicantName, role: applicantRole },
-      { title: 'Diverifikasi', name: verifier1Name, role: verifier1Role },
-      { title: 'Diverifikasi', name: verifier2Name, role: verifier2Role },
-      { title: 'Disetujui', name: approverName, role: approverRole },
-    ];
-  } else {
-    signers = signers.map((s: any) => ({
-      title: cleanSingleLine(s.title),
-      name: cleanSingleLine(s.name),
-      role: cleanSingleLine(s.role),
+  if (signers.length === 0) {
+    signers = resolvedF1Raw.map((s: any) => ({
+      title: cleanSingleLine(s.title).toUpperCase(),
+      name: cleanSingleLine(s.name).toUpperCase(),
+      role: cleanSingleLine(s.role).toUpperCase(),
     }));
   }
 
+  const sigStyle = resolveSignatureStyleForSubmission(submission);
   const isMultiRow = signers.length > 4;
   const row1 = isMultiRow ? signers.slice(0, 4) : signers;
   const row2 = isMultiRow ? signers.slice(4, 8) : [];
 
-  // Each standard signature box is strictly 25% of content width (contentWidth / 4)
-  const blockW = contentWidth / 4;
-  let currentSigY = curTableY;
+  const drawF1SignerRow = (rowSigners: Array<{ title: string; name: string; role: string }>, topY: number, isTableMode: boolean): number => {
+    const rCount = Math.max(1, rowSigners.length);
+    const colW = isMultiRow ? contentWidth / 4 : contentWidth / rCount;
+    const totalRowW = colW * rCount;
+    const startX = margin + (contentWidth - totalRowW) / 2;
 
-  // Render Row 1 (up to 4 signers)
-  const sigBoxH1 = isMultiRow ? 58 : 68;
-  const r1Count = row1.length;
-  const r1StartX = margin + (contentWidth - r1Count * blockW) / 2;
+    const fitTextSize = (txt: string, font: any, maxSize: number, minSize: number, maxW: number): number => {
+      let sz = maxSize;
+      while (sz > minSize && font.widthOfTextAtSize(txt, sz) > maxW) {
+        sz -= 0.4;
+      }
+      return sz;
+    };
 
-  row1.forEach((s: any, idx: number) => {
-    const colX = r1StartX + idx * blockW;
+    if (isTableMode) {
+      const hdrH = 18;
+      const spaceH = isMultiRow ? 46 : 54;
+      const footerH = 34;
+      const boxH = hdrH + spaceH + footerH;
 
-    const titleW = fontBold.widthOfTextAtSize(s.title, 8.5);
-    page.drawText(s.title, {
-      x: colX + (blockW - titleW) / 2,
-      y: currentSigY,
-      size: 8.5,
-      font: fontBold,
-      color: rgb(0, 0, 0),
-    });
+      // Outer border
+      page.drawRectangle({
+        x: startX,
+        y: topY - boxH,
+        width: totalRowW,
+        height: boxH,
+        borderColor: rgb(0, 0, 0),
+        borderWidth: 1.5,
+        color: rgb(1, 1, 1),
+      });
 
-    const sigLineY = currentSigY - sigBoxH1;
+      // Header bottom border
+      page.drawLine({
+        start: { x: startX, y: topY - hdrH },
+        end: { x: startX + totalRowW, y: topY - hdrH },
+        thickness: 1.3,
+        color: rgb(0, 0, 0),
+      });
 
-    const nameFontSize = 9.0;
-    const nameW = fontBold.widthOfTextAtSize(s.name, nameFontSize);
-    page.drawText(s.name, {
-      x: colX + (blockW - nameW) / 2,
-      y: sigLineY + 3,
-      size: nameFontSize,
-      font: fontBold,
-      color: rgb(0, 0, 0),
-    });
+      // Signature space bottom border
+      page.drawLine({
+        start: { x: startX, y: topY - hdrH - spaceH },
+        end: { x: startX + totalRowW, y: topY - hdrH - spaceH },
+        thickness: 1.3,
+        color: rgb(0, 0, 0),
+      });
 
-    page.drawLine({
-      start: { x: colX + 12, y: sigLineY },
-      end: { x: colX + blockW - 12, y: sigLineY },
-      thickness: 1.0,
-      color: rgb(0, 0, 0),
-    });
+      rowSigners.forEach((s, idx) => {
+        const colX = startX + idx * colW;
+        if (idx > 0) {
+          page.drawLine({
+            start: { x: colX, y: topY },
+            end: { x: colX, y: topY - boxH },
+            thickness: 1.3,
+            color: rgb(0, 0, 0),
+          });
+        }
 
-    const roleW = fontRegular.widthOfTextAtSize(s.role, 7.5);
-    page.drawText(s.role, {
-      x: colX + (blockW - roleW) / 2,
-      y: sigLineY - 11,
-      size: 7.5,
-      font: fontRegular,
-      color: rgb(0, 0, 0),
-    });
-  });
+        const titleSz = fitTextSize(s.title, fontBold, 8.2, 6.0, colW - 8);
+        const titleW = fontBold.widthOfTextAtSize(s.title, titleSz);
+        page.drawText(s.title, {
+          x: colX + (colW - titleW) / 2,
+          y: topY - 12.5,
+          size: titleSz,
+          font: fontBold,
+          color: rgb(0, 0, 0),
+        });
 
-  currentSigY = currentSigY - sigBoxH1 - 22;
+        const nameSz = fitTextSize(s.name, fontBold, 8.5, 5.8, colW - 10);
+        const nameW = fontBold.widthOfTextAtSize(s.name, nameSz);
+        page.drawText(s.name, {
+          x: colX + (colW - nameW) / 2,
+          y: topY - hdrH - spaceH - 12,
+          size: nameSz,
+          font: fontBold,
+          color: rgb(0, 0, 0),
+        });
 
-  // Render Row 2 if exists (Signers 5 - 8, with equal 25% box width and identical height as Row 1)
-  if (row2.length > 0) {
-    const r2Count = row2.length;
-    // Centered horizontally if 1, 2, or 3 signers, and each box has the EXACT SAME 25% width and identical height
-    const r2StartX = margin + (contentWidth - r2Count * blockW) / 2;
-    const sigBoxH2 = sigBoxH1; // Identical height to Row 1
+        page.drawLine({
+          start: { x: colX + 10, y: topY - hdrH - spaceH - 15 },
+          end: { x: colX + colW - 10, y: topY - hdrH - spaceH - 15 },
+          thickness: 0.8,
+          color: rgb(0, 0, 0),
+        });
 
-    row2.forEach((s: any, idx: number) => {
-      const colX = r2StartX + idx * blockW;
+        const roleSz = fitTextSize(s.role, fontBold, 7.0, 5.2, colW - 10);
+        const roleW = fontBold.widthOfTextAtSize(s.role, roleSz);
+        page.drawText(s.role, {
+          x: colX + (colW - roleW) / 2,
+          y: topY - hdrH - spaceH - 25,
+          size: roleSz,
+          font: fontBold,
+          color: rgb(0, 0, 0),
+        });
+      });
 
-      const titleW = fontBold.widthOfTextAtSize(s.title, 8.5);
+      return topY - boxH - 14;
+    }
+
+    // Line style
+    const sigBoxH = isMultiRow ? 54 : 64;
+    rowSigners.forEach((s, idx) => {
+      const colX = startX + idx * colW;
+      const titleSz = fitTextSize(s.title, fontBold, 8.5, 6.2, colW - 8);
+      const titleW = fontBold.widthOfTextAtSize(s.title, titleSz);
       page.drawText(s.title, {
-        x: colX + (blockW - titleW) / 2,
-        y: currentSigY,
-        size: 8.5,
+        x: colX + (colW - titleW) / 2,
+        y: topY,
+        size: titleSz,
         font: fontBold,
         color: rgb(0, 0, 0),
       });
 
-      const sigLineY = currentSigY - sigBoxH2;
-
-      const nameFontSize = 9.0;
-      const nameW = fontBold.widthOfTextAtSize(s.name, nameFontSize);
+      const sigLineY = topY - sigBoxH;
+      const nameSz = fitTextSize(s.name, fontBold, 9.0, 6.0, colW - 10);
+      const nameW = fontBold.widthOfTextAtSize(s.name, nameSz);
       page.drawText(s.name, {
-        x: colX + (blockW - nameW) / 2,
+        x: colX + (colW - nameW) / 2,
         y: sigLineY + 3,
-        size: nameFontSize,
+        size: nameSz,
         font: fontBold,
         color: rgb(0, 0, 0),
       });
 
       page.drawLine({
         start: { x: colX + 12, y: sigLineY },
-        end: { x: colX + blockW - 12, y: sigLineY },
+        end: { x: colX + colW - 12, y: sigLineY },
         thickness: 1.0,
         color: rgb(0, 0, 0),
       });
 
-      const roleW = fontRegular.widthOfTextAtSize(s.role, 7.5);
+      const roleSz = fitTextSize(s.role, fontRegular, 7.5, 5.5, colW - 10);
+      const roleW = fontRegular.widthOfTextAtSize(s.role, roleSz);
       page.drawText(s.role, {
-        x: colX + (blockW - roleW) / 2,
+        x: colX + (colW - roleW) / 2,
         y: sigLineY - 11,
-        size: 7.5,
+        size: roleSz,
         font: fontRegular,
         color: rgb(0, 0, 0),
       });
     });
 
-    currentSigY = currentSigY - sigBoxH2 - 18;
+    return topY - sigBoxH - 22;
+  };
+
+  let currentSigY = drawF1SignerRow(row1, curTableY, sigStyle === 'table');
+  if (row2.length > 0) {
+    currentSigY = drawF1SignerRow(row2, currentSigY, sigStyle === 'table');
   }
 
   // ================= 7. NOTES BLOCK =================
@@ -927,8 +1337,8 @@ export async function generateF1PdfBytes(
     // 2. Add Page 2: LEMBAR RINCIAN PEMBAYARAN BERTAHAP / CICILAN
     const page2 = pdfDoc.addPage([595.27, 841.89]);
     
-    // Header
-    await drawCorporateHeader(pdfDoc, page2, fontBold, fontRegular, margin, headerTopY, 230);
+    // Header (Dynamic per company)
+    await drawCorporateHeader(pdfDoc, page2, fontBold, fontRegular, margin, headerTopY, 240, submission);
 
     // QR & Code Box
     if (qrBytes) {
@@ -1352,8 +1762,8 @@ export async function generateF2PdfBytes(
   // ================= 1. HEADER BLOCK (LOGO + CODE + TANGGAL + QR CODE) =================
   const headerTopY = 805;
 
-  // 1a. Draw Official Logo on Top Left
-  await drawCorporateHeader(pdfDoc, page, fontBold, fontRegular, margin, headerTopY, 230);
+  // 1a. Draw Official Logo on Top Left (Dynamic per company)
+  await drawCorporateHeader(pdfDoc, page, fontBold, fontRegular, margin, headerTopY, 240, submission);
 
   // 1b. Right Header: Voucher Code Box & Date (Barcode / QR removed for clean F2 appearance)
   const codeBoxW = 140;
@@ -1688,67 +2098,24 @@ export async function generateF2PdfBytes(
 
   curTableY -= totalRowH;
 
-  // ================= 5. SIGNATURES BLOCK (TABLE STYLE MATCHING F2SignaturesBlock) =================
-  let f2Signers: any[] = customSigners || [];
-  if ((!f2Signers || f2Signers.length === 0) && typeof window !== 'undefined' && window.localStorage) {
-    try {
-      const saved = localStorage.getItem('nmsa_custom_f2_signers_config');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length >= 1) f2Signers = parsed;
-      }
-    } catch (_) {}
-  }
-
-  // Retrieve F1 signers so F2 automatically matches the voucher in the application
-  let f1SignersList: any[] = [];
-  if (typeof window !== 'undefined' && window.localStorage) {
-    try {
-      const savedF1 = localStorage.getItem('nmsa_custom_f1_signers_config');
-      if (savedF1) {
-        const parsedF1 = JSON.parse(savedF1);
-        if (Array.isArray(parsedF1) && parsedF1.length >= 1) f1SignersList = parsedF1;
-      }
-    } catch (_) {}
-  }
-
-  const applicantF1 = f1SignersList[0] || {
-    title: 'Diajukan',
-    name: (submission.diajukanOleh && submission.diajukanOleh !== 'Sri Ekowati') ? submission.diajukanOleh : (submission.dibuatOleh || 'Andi Dhiya Salsabila'),
-    role: submission.diajukanJabatan || 'Staff Keuangan',
-    enabled: true
-  };
-  const verifierF1 = f1SignersList[1] || {
-    title: 'Diverifikasi',
-    name: 'Sri Ekowati',
-    role: 'Manager Keuangan',
-    enabled: true
-  };
-
-  if (!f2Signers || f2Signers.length === 0) {
-    // Default F2: Matches voucher F1 signers with 2nd signer disabled
-    f2Signers = [
-      { title: applicantF1.title || 'Diajukan', name: applicantF1.name, role: applicantF1.role, enabled: true },
-      { title: verifierF1.title || 'Diverifikasi', name: verifierF1.name, role: verifierF1.role, enabled: false }
-    ];
-  } else {
-    // If F2 had legacy hardcoded Nur Wahyudi while voucher applicant is different, update to match voucher!
-    if (f2Signers[0] && f2Signers[0].name === 'Nur Wahyudi' && submission.diajukanOleh && submission.diajukanOleh !== 'Nur Wahyudi') {
-      f2Signers[0].name = submission.diajukanOleh;
-      if (submission.diajukanJabatan) f2Signers[0].role = submission.diajukanJabatan;
-    }
-  }
+  // ================= 5. SIGNATURES BLOCK (PER-COMPANY ISOLATED, MATCHING F2SignaturesBlock) =================
+  const f2Signers = resolveF2SignersForSubmission(submission, {
+    customSigners: customSigners as any,
+  });
+  const f2SigStyle = resolveSignatureStyleForSubmission(submission);
+  const f2ApprovedMode = resolveF2ApprovedByForSubmission(submission);
 
   const isSigner1Active = f2Signers[0] ? f2Signers[0].enabled !== false : true;
   const isSigner2Active = f2Signers[1] ? f2Signers[1].enabled !== false : false;
 
-  const s1Title = cleanSingleLine(f2Signers[0]?.title || applicantF1.title || 'Diajukan');
-  const s1Name = cleanSingleLine(f2Signers[0]?.name || applicantF1.name);
-  const s1Role = cleanSingleLine(f2Signers[0]?.role || applicantF1.role);
+  const primarySigner = isSigner1Active ? f2Signers[0] : (isSigner2Active ? f2Signers[1] : f2Signers[0]);
+  const s1Title = cleanSingleLine(primarySigner?.title || 'Diajukan').toUpperCase();
+  const s1Name = cleanSingleLine(primarySigner?.name || '').toUpperCase();
+  const s1Role = cleanSingleLine(primarySigner?.role || '').toUpperCase();
 
-  const s2Title = cleanSingleLine(f2Signers[1]?.title || verifierF1.title || 'Diverifikasi');
-  const s2Name = cleanSingleLine(f2Signers[1]?.name || verifierF1.name);
-  const s2Role = cleanSingleLine(f2Signers[1]?.role || verifierF1.role);
+  const s2Title = cleanSingleLine(f2Signers[1]?.title || 'Diverifikasi').toUpperCase();
+  const s2Name = cleanSingleLine(f2Signers[1]?.name || '').toUpperCase();
+  const s2Role = cleanSingleLine(f2Signers[1]?.role || '').toUpperCase();
 
   const sigTopY = curTableY - (scale < 0.75 ? 12 : 18);
   const sigTableW = Math.min(380, contentWidth - 40);
@@ -1758,29 +2125,30 @@ export async function generateF2PdfBytes(
   const sigFooterH = 34;
   const sigTotalH = sigHdrH + sigSpaceH + sigFooterH;
 
-  // By default in the application: submission.f2ApprovedBy is 'none' / showApproved is false
-  const isDualSigners = showApproved && submission.f2ApprovedBy !== 'none' && isSigner2Active;
+  const effectiveShowApproved = showApproved || f2ApprovedMode !== 'none';
+  const isDualSigners = effectiveShowApproved && f2ApprovedMode !== 'none' && isSigner1Active && isSigner2Active;
 
   if (!isSigner1Active && !isSigner2Active) {
     // No signers active
     curTableY = sigTopY - 12;
   } else if (!isDualSigners) {
-    // 1 Signer Centered Box (2nd signer removed to match the voucher in the application)
+    // 1 Signer Centered
     const singleW = 200;
     const singleX = margin + (contentWidth - singleW) / 2;
 
-    // Outer table border
-    page.drawRectangle({
-      x: singleX,
-      y: sigTopY - sigTotalH,
-      width: singleW,
-      height: sigTotalH,
-      borderColor: rgb(0, 0, 0),
-      borderWidth: 1.5,
-      color: rgb(1, 1, 1),
-    });
+    if (f2SigStyle === 'table') {
+      // Outer table border
+      page.drawRectangle({
+        x: singleX,
+        y: sigTopY - sigTotalH,
+        width: singleW,
+        height: sigTotalH,
+        borderColor: rgb(0, 0, 0),
+        borderWidth: 1.5,
+        color: rgb(1, 1, 1),
+      });
 
-    // Header divider
+      // Header divider
     page.drawLine({
       start: { x: singleX, y: sigTopY - sigHdrH },
       end: { x: singleX + singleW, y: sigTopY - sigHdrH },
@@ -1795,6 +2163,7 @@ export async function generateF2PdfBytes(
       thickness: 1.0,
       color: rgb(0, 0, 0),
     });
+    }
 
     // Title
     const titleW = fontBold.widthOfTextAtSize(s1Title, 8.5);
@@ -1833,43 +2202,45 @@ export async function generateF2PdfBytes(
 
     curTableY = sigTopY - sigTotalH - 12;
   } else {
-    // 2 Signers Table (Dibuat Oleh & Diajukan)
+    // 2 Signers Table or Line
     const colHalfW = sigTableW / 2;
 
-    // Outer table border
-    page.drawRectangle({
-      x: sigTableX,
-      y: sigTopY - sigTotalH,
-      width: sigTableW,
-      height: sigTotalH,
-      borderColor: rgb(0, 0, 0),
-      borderWidth: 1.5,
-      color: rgb(1, 1, 1),
-    });
+    if (f2SigStyle === 'table') {
+      // Outer table border
+      page.drawRectangle({
+        x: sigTableX,
+        y: sigTopY - sigTotalH,
+        width: sigTableW,
+        height: sigTotalH,
+        borderColor: rgb(0, 0, 0),
+        borderWidth: 1.5,
+        color: rgb(1, 1, 1),
+      });
 
-    // Vertical center divider
-    page.drawLine({
-      start: { x: sigTableX + colHalfW, y: sigTopY },
-      end: { x: sigTableX + colHalfW, y: sigTopY - sigTotalH },
-      thickness: 1.2,
-      color: rgb(0, 0, 0),
-    });
+      // Vertical center divider
+      page.drawLine({
+        start: { x: sigTableX + colHalfW, y: sigTopY },
+        end: { x: sigTableX + colHalfW, y: sigTopY - sigTotalH },
+        thickness: 1.2,
+        color: rgb(0, 0, 0),
+      });
 
-    // Header horizontal line
-    page.drawLine({
-      start: { x: sigTableX, y: sigTopY - sigHdrH },
-      end: { x: sigTableX + sigTableW, y: sigTopY - sigHdrH },
-      thickness: 1.2,
-      color: rgb(0, 0, 0),
-    });
+      // Header horizontal line
+      page.drawLine({
+        start: { x: sigTableX, y: sigTopY - sigHdrH },
+        end: { x: sigTableX + sigTableW, y: sigTopY - sigHdrH },
+        thickness: 1.2,
+        color: rgb(0, 0, 0),
+      });
 
-    // Space horizontal line
-    page.drawLine({
-      start: { x: sigTableX, y: sigTopY - sigHdrH - sigSpaceH },
-      end: { x: sigTableX + sigTableW, y: sigTopY - sigHdrH - sigSpaceH },
-      thickness: 1.0,
-      color: rgb(0, 0, 0),
-    });
+      // Space horizontal line
+      page.drawLine({
+        start: { x: sigTableX, y: sigTopY - sigHdrH - sigSpaceH },
+        end: { x: sigTableX + sigTableW, y: sigTopY - sigHdrH - sigSpaceH },
+        thickness: 1.0,
+        color: rgb(0, 0, 0),
+      });
+    }
 
     // --- Signer 1 (Left Col) ---
     const t1W = fontBold.widthOfTextAtSize(s1Title, 8.5);

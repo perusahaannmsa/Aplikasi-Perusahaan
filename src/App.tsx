@@ -58,6 +58,11 @@ import { getSynchronizedAttendanceWorkers, getSavedEmployeeLoans, saveEmployeeLo
 import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, syncInvoiceSubmissionToAgenda, formatDateIndonesian } from './utils';
 import { areNamesSimilar, toTitleCase } from './utils/nameConsolidation';
 import { deleteSubmissionDriveFolder } from './utils/googleDriveCleaner';
+import {
+  hydrateCompanySignersFromServerSettings,
+  resolveCompanySignerBundle,
+  normalizeSignerCompanyId,
+} from './utils/companySigners';
 import { 
   isFirebaseConfigured, 
   saveSubmissionToFirestore, 
@@ -96,6 +101,8 @@ import {
   getStoredGoogleDriveToken,
   getMasterDriveEmail,
   getActiveGoogleDriveAccount,
+  isAuthorizedPortalFirebaseEmail,
+  LOCKED_FIREBASE_AUTH_EMAIL,
   subscribeToCompanySettingsFromFirestore,
   saveCompanySettingsToFirestore,
   switchUserCompany,
@@ -566,6 +573,9 @@ export default function App() {
             if (!fbRes.ok) throw new Error(`HTTP ${fbRes.status}`);
             const fbData = await fbRes.json();
             if (fbData) {
+              if (fbData.companySettings) {
+                hydrateCompanySignersFromServerSettings(fbData.companySettings);
+              }
               if (fbData.workers && Array.isArray(fbData.workers) && fbData.workers.length > 0) {
                 try {
                   const existingRaw = localStorage.getItem('karyawan_uang_makan') || localStorage.getItem('workers_v1');
@@ -658,6 +668,30 @@ export default function App() {
 
           const data = await res.json();
           if (data && data.success) {
+            if (data.companySettings) {
+              hydrateCompanySignersFromServerSettings(data.companySettings);
+              if (data.companySettings.companyProfiles && typeof data.companySettings.companyProfiles === 'object') {
+                try {
+                  const savedRaw = localStorage.getItem('NUSANTARA_SAVED_COMPANIES');
+                  const list: any[] = savedRaw ? JSON.parse(savedRaw) : [];
+                  const map = new Map<string, any>();
+                  if (Array.isArray(list)) {
+                    list.forEach((c: any) => {
+                      const cId = normalizeSignerCompanyId(c?.id || c?.code);
+                      if (cId) map.set(cId, c);
+                    });
+                  }
+                  Object.entries(data.companySettings.companyProfiles).forEach(([k, prof]: [string, any]) => {
+                    if (prof && typeof prof === 'object') {
+                      const cId = normalizeSignerCompanyId(k, prof?.id || prof?.code);
+                      const existing = map.get(cId) || {};
+                      map.set(cId, { ...existing, ...prof, id: cId });
+                    }
+                  });
+                  localStorage.setItem('NUSANTARA_SAVED_COMPANIES', JSON.stringify(Array.from(map.values())));
+                } catch (_) {}
+              }
+            }
             const raw = data.raw || {};
             if (raw.workers && Array.isArray(raw.workers) && raw.workers.length > 0) {
               try {
@@ -1585,8 +1619,9 @@ export default function App() {
     } catch (e) {}
 
     try {
-      // 1. Fetch company profile details from Firestore
+      // 1. Fetch company profile details from Firestore / local cache
       let compDetails = await getCompanyProfileFromFirestore(cleanId);
+      const compBundle = resolveCompanySignerBundle(cleanId, compDetails);
       if (!compDetails) {
         compDetails = {
           id: cleanId,
@@ -1598,34 +1633,45 @@ export default function App() {
           defaultKode: `BKK-${cleanId.toUpperCase()}/V/2026/10001`,
           defaultLokasi: 'Lt. 1',
           no_invoice_prefix: `BKK-${cleanId.toUpperCase()}`,
-          sigAccounting: 'Sri Ekowati',
-          sigAccountingJabatan: 'Manager Keuangan',
-          sigDibuat: userProfile?.fullName || 'Nur Wahyudi',
+          sigAccounting: compBundle.bookkeeperName || 'Sri Ekowati',
+          sigAccountingJabatan: compBundle.bookkeeperJabatan || 'Manager Keuangan',
+          sigDibuat: compBundle.creatorName || userProfile?.fullName || 'Nur Wahyudi',
           sigDibuatJabatan: 'Staff Operasional',
-          sigDirKeuangan: 'Harijon',
-          sigDirektur: 'H. Andi Nursyam Halid',
-          sigDirekturJabatan: 'Direktur Utama',
-          sigDisetujui: 'Harijon',
+          sigDirKeuangan: compBundle.approverName || 'Harijon',
+          sigDirektur: compBundle.approver2Name || 'H. Andi Nursyam Halid',
+          sigDirekturJabatan: compBundle.approver2Jabatan || 'Direktur Utama',
+          sigDisetujui: compBundle.approverName || 'Harijon',
           sigDisetujuiJabatan: 'Direktur Keuangan',
-          sigDiverifikasi: 'Andi Muhammad Rifki',
-          sigDiverifikasiJabatan: 'Direktur',
+          sigDiverifikasi: compBundle.verifierName || 'Andi Muhammad Rifki',
+          sigDiverifikasiJabatan: compBundle.verifierJabatan || 'Direktur',
           sigMengetahui: 'ABDUL AZIZ HALID',
           sigMengetahuiJabatan: 'Direktur Operasional',
-          sigKeuangan: 'Sri Ekowati',
+          sigKeuangan: compBundle.bookkeeperName || 'Sri Ekowati',
+          f1Signers: compBundle.f1Signers,
+          f2Signers: compBundle.f2Signers,
+          signatureStyle: compBundle.signatureStyle,
+          f2ApprovedBy: compBundle.f2ApprovedBy,
           icon: '🏢',
           isActive: true
         };
       }
 
-      // 2. Update user profile state
+      // 2. Update user profile state (never inherit previous company's logoUrl)
+      const resolvedLogoUrl = compDetails?.logoUrl || '';
       const updatedProfile = {
         ...(userProfile || {}),
         companyId: cleanId,
         companyName: newCompanyName,
-        companyLogoUrl: compDetails?.logoUrl || userProfile?.companyLogoUrl || '',
+        companyLogoUrl: resolvedLogoUrl,
         companyDetails: compDetails
       };
       setUserProfile(updatedProfile);
+      try {
+        localStorage.setItem('NUSANTARA_ACTIVE_COMPANY_ID', cleanId);
+        localStorage.setItem('NUSANTARA_ACTIVE_COMPANY_NAME', newCompanyName);
+        localStorage.setItem('NUSANTARA_ACTIVE_COMPANY_LOGO_URL', resolvedLogoUrl);
+        localStorage.setItem('NUSANTARA_ACTIVE_COMPANY_PROFILE', JSON.stringify({ ...compDetails, id: cleanId }));
+      } catch {}
 
       // 3. Persist to active user document in Firestore if logged in
       if (authUser?.uid) {
@@ -2052,10 +2098,11 @@ export default function App() {
           // Fetch user & company profiles with timeout protection
           let profile = await getUserProfileFromFirestore(user.uid).catch(() => null);
           if (!profile) {
+            const isPortalAdmin = isAuthorizedPortalFirebaseEmail(user.email) || user.email === 'admin@nmsa.com';
             profile = {
-              fullName: user.email === 'admin@nmsa.com' ? 'Nur Wahyudi' : (user.email?.split('@')[0] || 'User'),
-              role: user.email === 'admin@nmsa.com' ? 'Accounting' : 'User',
-              email: user.email,
+              fullName: isPortalAdmin ? 'Nur Wahyudi' : (user.email?.split('@')[0] || 'User'),
+              role: isPortalAdmin ? 'Accounting' : 'User',
+              email: user.email || LOCKED_FIREBASE_AUTH_EMAIL,
               companyId: companyId,
               companyName: 'PT Nusantara Mineral Sukses Abadi'
             };
@@ -2065,6 +2112,7 @@ export default function App() {
           setActiveCompanyId(companyId);
 
           let companyDetails = await getCompanyProfileFromFirestore(companyId).catch(() => null);
+          const bootBundle = resolveCompanySignerBundle(companyId, companyDetails);
           if (!companyDetails) {
             companyDetails = {
               id: companyId,
@@ -2078,24 +2126,40 @@ export default function App() {
               icon: '🏢',
               isActive: true,
               no_invoice_prefix: `BKK-${companyId.toUpperCase()}`,
-              sigAccounting: 'Sri Ekowati',
-              sigDibuat: 'Nur Wahyudi',
-              sigDirKeuangan: 'Harijon',
-              sigDirektur: 'Andi Nursyam Halid',
-              sigDisetujui: 'Harijon',
-              sigKeuangan: 'Andi Dhiya Salsabila'
+              sigAccounting: bootBundle.bookkeeperName || 'Sri Ekowati',
+              sigAccountingJabatan: bootBundle.bookkeeperJabatan || 'Manager Keuangan',
+              sigDibuat: bootBundle.creatorName || 'Nur Wahyudi',
+              sigDirKeuangan: bootBundle.approverName || 'Harijon',
+              sigDirektur: bootBundle.approver2Name || 'H. Andi Nursyam Halid',
+              sigDirekturJabatan: bootBundle.approver2Jabatan || 'Direktur Utama',
+              sigDisetujui: bootBundle.approverName || 'Harijon',
+              sigDiverifikasi: bootBundle.verifierName || 'Andi Muhammad Rifki',
+              sigDiverifikasiJabatan: bootBundle.verifierJabatan || 'Direktur',
+              sigKeuangan: bootBundle.bookkeeperName || 'Andi Dhiya Salsabila',
+              f1Signers: bootBundle.f1Signers,
+              f2Signers: bootBundle.f2Signers,
+              signatureStyle: bootBundle.signatureStyle,
+              f2ApprovedBy: bootBundle.f2ApprovedBy,
             };
           }
 
           if (isDisposed) return;
+          const resolvedCompName = companyDetails.name || companyDetails.fullName || 'PT Nusantara Mineral Sukses Abadi';
+          const resolvedCompLogo = companyDetails?.logoUrl || '';
           const combinedProfile = {
             ...profile,
             companyId,
-            companyName: companyDetails.name || companyDetails.fullName || 'PT Nusantara Mineral Sukses Abadi',
-            companyLogoUrl: companyDetails?.logoUrl || profile?.companyLogoUrl || '',
+            companyName: resolvedCompName,
+            companyLogoUrl: resolvedCompLogo,
             companyDetails
           };
           setUserProfile(combinedProfile);
+          try {
+            localStorage.setItem('NUSANTARA_ACTIVE_COMPANY_ID', companyId);
+            localStorage.setItem('NUSANTARA_ACTIVE_COMPANY_NAME', resolvedCompName);
+            localStorage.setItem('NUSANTARA_ACTIVE_COMPANY_LOGO_URL', resolvedCompLogo);
+            localStorage.setItem('NUSANTARA_ACTIVE_COMPANY_PROFILE', JSON.stringify({ ...companyDetails, id: companyId }));
+          } catch {}
 
           // Load submissions safely from Cloud Firestore with timeout & server/local backup preservation
           try {
@@ -2823,10 +2887,14 @@ export default function App() {
 
   // Save/Update from form submission
   const handleSaveSubmission = async (savedSub: Submission) => {
+    const resolvedCompId = (savedSub.companyId || userProfile?.companyId || activeCompForSync || 'nmsa').toLowerCase().trim();
+    const resolvedCompName = savedSub.companyName || userProfile?.companyName || activeCompNameForSync;
+    const resolvedCompLogo = savedSub.companyLogoUrl || userProfile?.companyDetails?.logoUrl || userProfile?.companyLogoUrl || '';
     const stampedSub: Submission = {
       ...savedSub,
-      companyId: (savedSub.companyId || userProfile?.companyId || activeCompForSync || 'nmsa').toLowerCase().trim(),
-      companyName: savedSub.companyName || userProfile?.companyName || activeCompNameForSync,
+      companyId: resolvedCompId,
+      companyName: resolvedCompName,
+      companyLogoUrl: resolvedCompLogo || undefined,
       updatedAt: new Date().toISOString(),
     };
 

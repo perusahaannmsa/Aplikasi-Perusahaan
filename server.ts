@@ -1249,6 +1249,76 @@ app.get("/api/drive-token", async (req, res) => {
   }
 });
 
+// SSRF-safe image proxy for external company logos/kop surat (ImgBB, etc.) so PDF generators avoid browser CORS errors
+app.get("/api/image-proxy", async (req, res) => {
+  try {
+    const rawUrl = String(req.query.url || "").trim();
+    if (!rawUrl) {
+      return res.status(400).json({ error: "Missing url parameter" });
+    }
+
+    let parsed: URL;
+    try {
+      parsed = new URL(rawUrl);
+    } catch {
+      return res.status(400).json({ error: "Invalid URL" });
+    }
+
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return res.status(400).json({ error: "Unsupported URL protocol" });
+    }
+
+    const hostname = parsed.hostname.toLowerCase();
+    const isPrivateOrLocal =
+      hostname === "localhost" ||
+      hostname === "0.0.0.0" ||
+      hostname === "::1" ||
+      hostname.endsWith(".local") ||
+      hostname.endsWith(".internal") ||
+      /^127\./.test(hostname) ||
+      /^10\./.test(hostname) ||
+      /^192\.168\./.test(hostname) ||
+      /^169\.254\./.test(hostname) ||
+      /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname) ||
+      /^fc00:/i.test(hostname) ||
+      /^fe80:/i.test(hostname);
+
+    if (isPrivateOrLocal) {
+      return res.status(403).json({ error: "Blocked internal or private host" });
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    try {
+      const upstream = await fetch(parsed.toString(), {
+        signal: controller.signal,
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          Accept: "image/*,*/*;q=0.8",
+        },
+      });
+      if (!upstream.ok) {
+        return res.status(upstream.status).json({ error: `Upstream returned ${upstream.status}` });
+      }
+      const contentType = upstream.headers.get("content-type") || "image/png";
+      if (!contentType.toLowerCase().startsWith("image/") && !contentType.toLowerCase().includes("octet-stream")) {
+        return res.status(415).json({ error: "Upstream did not return an image" });
+      }
+      const ab = await upstream.arrayBuffer();
+      if (!ab || ab.byteLength === 0) {
+        return res.status(404).json({ error: "Empty image response" });
+      }
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Cache-Control", "public, max-age=3600");
+      return res.send(Buffer.from(ab));
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (err: any) {
+    return res.status(502).json({ error: err?.message || "Image proxy fetch failed" });
+  }
+});
+
 app.get("/api/drive-proxy", async (req, res) => {
   const rawId = req.query.id as string;
   if (!rawId) return res.status(400).json({ error: "Missing id parameter." });
@@ -2305,7 +2375,20 @@ app.post("/api/shared-state", (req, res) => {
       accurateAccounts: accurateAccounts !== undefined ? accurateAccounts : currentState.accurateAccounts,
       accurateMappedReports: accurateMappedReports !== undefined ? accurateMappedReports : currentState.accurateMappedReports,
       auditLogs: auditLogs !== undefined ? auditLogs : currentState.auditLogs,
-      companySettings: companySettings !== undefined ? companySettings : currentState.companySettings,
+      companySettings: companySettings !== undefined
+        ? {
+            ...(currentState.companySettings || {}),
+            ...companySettings,
+            companySignersByCompany: {
+              ...((currentState.companySettings || {}).companySignersByCompany || {}),
+              ...(companySettings?.companySignersByCompany || {}),
+            },
+            companyProfiles: {
+              ...((currentState.companySettings || {}).companyProfiles || {}),
+              ...(companySettings?.companyProfiles || {}),
+            },
+          }
+        : currentState.companySettings,
       waSecuritySettings: waSecuritySettings !== undefined ? waSecuritySettings : currentState.waSecuritySettings,
       waMethod: waMethod !== undefined ? waMethod : currentState.waMethod,
       masterAutoSendEnabled: masterAutoSendEnabled !== undefined ? masterAutoSendEnabled : currentState.masterAutoSendEnabled,
@@ -2462,7 +2545,10 @@ app.get("/api/unified-storage", (req, res) => {
       menu_pinjaman_karyawan: {
         employeeLoans: state.employeeLoans || []
       },
-      googleDrives: state.googleDrives || [],
+      googleDrives: (state.googleDrives || []).filter((d: any) =>
+        String(d?.email || '').trim().toLowerCase() === 'akuncoding211@gmail.com'
+      ),
+      masterDriveEmail: 'akuncoding211@gmail.com',
       riwayat_audit_log: state.auditLogs || [],
       companySettings: state.companySettings || {},
       raw: state
@@ -2523,13 +2609,34 @@ app.post("/api/unified-storage", (req, res) => {
     if (incoming.accurateAccounts !== undefined) state.accurateAccounts = incoming.accurateAccounts;
     if (incoming.accurateMappedReports !== undefined) state.accurateMappedReports = incoming.accurateMappedReports;
     if (incoming.auditLogs !== undefined) state.auditLogs = incoming.auditLogs;
-    if (incoming.companySettings !== undefined) state.companySettings = incoming.companySettings;
+    if (incoming.companySettings !== undefined) {
+      state.companySettings = {
+        ...(state.companySettings || {}),
+        ...incoming.companySettings,
+        companySignersByCompany: {
+          ...((state.companySettings || {}).companySignersByCompany || {}),
+          ...(incoming.companySettings?.companySignersByCompany || {}),
+        },
+        companyProfiles: {
+          ...((state.companySettings || {}).companyProfiles || {}),
+          ...(incoming.companySettings?.companyProfiles || {}),
+        },
+      };
+    }
     if (incoming.employeeLoans !== undefined) state.employeeLoans = incoming.employeeLoans;
     if (incoming.googleDrives !== undefined && Array.isArray(incoming.googleDrives)) {
-      state.googleDrives = incoming.googleDrives.filter((d: any) => {
-        const em = String(d?.email || '').trim().toLowerCase();
-        return Boolean(em);
-      });
+      const LOCKED_DRIVE_EMAIL = 'akuncoding211@gmail.com';
+      const lockedIncoming = incoming.googleDrives
+        .filter((d: any) => String(d?.email || '').trim().toLowerCase() === LOCKED_DRIVE_EMAIL)
+        .map((d: any) => ({ ...d, email: LOCKED_DRIVE_EMAIL }));
+      if (lockedIncoming.length > 0) {
+        state.googleDrives = lockedIncoming;
+      } else {
+        // Keep existing locked drive entries and strip any non-locked accounts
+        state.googleDrives = (state.googleDrives || []).filter(
+          (d: any) => String(d?.email || '').trim().toLowerCase() === LOCKED_DRIVE_EMAIL
+        );
+      }
     }
 
     writeState(state);

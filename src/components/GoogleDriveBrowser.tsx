@@ -9,7 +9,7 @@ import {
   googleDriveLogin,
   isDriveTokenValid,
   isStrictlyAuthorizedDriveEmail,
-  setMasterDriveEmail,
+  LOCKED_MASTER_DRIVE_EMAIL,
   ConnectedDrive,
   maskLockedAccountLabel,
 } from '../firebase';
@@ -101,9 +101,6 @@ export const GoogleDriveBrowser: React.FC<GoogleDriveBrowserProps> = ({
     return authList[0]?.toLowerCase() || '';
   });
 
-  // Add new registered account inline
-  const [showAddAccount, setShowAddAccount] = useState(false);
-  const [newEmailInput, setNewEmailInput] = useState('');
   const [accountFeedback, setAccountFeedback] = useState<{
     type: 'success' | 'error';
     text: string;
@@ -323,45 +320,6 @@ export const GoogleDriveBrowser: React.FC<GoogleDriveBrowserProps> = ({
     }
   };
 
-  const handleAddAccountSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAccountFeedback(null);
-    const clean = newEmailInput.trim().toLowerCase();
-    if (!clean || !clean.includes('@') || !clean.includes('.')) {
-      setAccountFeedback({
-        type: 'error',
-        text: 'Masukkan alamat email Google yang valid (contoh: nama@gmail.com).',
-      });
-      return;
-    }
-    try {
-      const updated = await addAuthorizedDriveEmail(clean);
-      setRegisteredEmails(updated);
-      setNewEmailInput('');
-      setShowAddAccount(false);
-      setSelectedEmail(clean);
-      setAccountFeedback({
-        type: 'success',
-        text: `Akun '${clean}' berhasil didaftarkan. Klik "Sambungkan Akun" untuk membuka Google Drive-nya.`,
-      });
-    } catch (err: any) {
-      setAccountFeedback({
-        type: 'error',
-        text: err?.message || 'Gagal mendaftarkan akun baru.',
-      });
-    }
-  };
-
-  const handleSetSelectedAsMaster = async () => {
-    if (!selectedEmail) return;
-    await setMasterDriveEmail(selectedEmail);
-    setMasterEmailState(selectedEmail);
-    setAccountFeedback({
-      type: 'success',
-      text: `Akun '${selectedEmail}' dijadikan Master Google Drive aktif.`,
-    });
-  };
-
   const selectedDriveRecord = useMemo(() => {
     return connectedDrives.find(
       (d) => d.email.trim().toLowerCase() === selectedEmail.trim().toLowerCase()
@@ -534,55 +492,17 @@ export const GoogleDriveBrowser: React.FC<GoogleDriveBrowserProps> = ({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h3 className="text-xs font-mono font-bold text-stone-500 uppercase tracking-wider">
-              Akun Google Drive Terdaftar ({registeredEmails.length} Akun)
+              Akun Google Drive Permanen (Terkunci)
             </h3>
             <p className="text-xs text-stone-500 mt-0.5">
-              Hanya akun dalam daftar ini yang Google Drive-nya diizinkan untuk dibaca oleh aplikasi.
+              Penyimpanan Google Drive dikunci permanen khusus untuk akun <strong className="font-mono text-stone-800">{LOCKED_MASTER_DRIVE_EMAIL}</strong> di seluruh perusahaan dan update aplikasi.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => setShowAddAccount((v) => !v)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-900 text-xs font-bold transition cursor-pointer self-start sm:self-auto"
-          >
-            <Plus size={14} />
-            <span>Daftarkan Akun Baru</span>
-          </button>
+          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs font-bold self-start sm:self-auto">
+            <Lock size={13} />
+            <span>Terkunci Permanen</span>
+          </span>
         </div>
-
-        {showAddAccount && (
-          <form
-            onSubmit={handleAddAccountSubmit}
-            className="p-3.5 rounded-xl bg-stone-50 border border-stone-200 flex flex-col sm:flex-row gap-2"
-          >
-            <div className="relative flex-1">
-              <Mail size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
-              <input
-                type="email"
-                value={newEmailInput}
-                onChange={(e) => setNewEmailInput(e.target.value)}
-                placeholder="Masukkan email Google yang akan didaftarkan (contoh: finance@gmail.com)..."
-                className="w-full pl-9 pr-3 py-2 rounded-xl border border-stone-300 bg-white focus:border-amber-500 outline-none text-xs font-mono"
-                required
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="submit"
-                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition cursor-pointer"
-              >
-                Simpan Akun
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowAddAccount(false)}
-                className="px-3 py-2 rounded-xl bg-stone-200 hover:bg-stone-300 text-stone-700 text-xs font-bold transition cursor-pointer"
-              >
-                Batal
-              </button>
-            </div>
-          </form>
-        )}
 
         {/* Registered Account Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
@@ -666,15 +586,6 @@ export const GoogleDriveBrowser: React.FC<GoogleDriveBrowserProps> = ({
             </div>
 
             <div className="flex items-center gap-2 shrink-0 flex-wrap">
-              {selectedEmail.toLowerCase() !== masterEmail.toLowerCase() && (
-                <button
-                  type="button"
-                  onClick={handleSetSelectedAsMaster}
-                  className="px-3 py-1.5 rounded-xl bg-white hover:bg-amber-50 border border-amber-300 text-amber-900 text-xs font-bold transition cursor-pointer"
-                >
-                  Jadikan Master
-                </button>
-              )}
               <button
                 type="button"
                 onClick={handleConnectSelectedAccount}

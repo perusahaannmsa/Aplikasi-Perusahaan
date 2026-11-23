@@ -21,6 +21,13 @@ import {
   saveCompanyProfileToFirestore, 
   getCompanyProfileFromFirestore 
 } from '../firebase';
+import { SignerSettingsModal, SignerConfigItem } from './SignerSettingsModal';
+import {
+  resolveCompanySignerBundle,
+  saveCompanySignerBundle,
+  resetCompanySignerBundle,
+  normalizeSignerCompanyId,
+} from '../utils/companySigners';
 
 interface CompanySwitcherModalProps {
   isOpen: boolean;
@@ -43,6 +50,7 @@ export const CompanySwitcherModal: React.FC<CompanySwitcherModalProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [switchingId, setSwitchingId] = useState<string | null>(null);
   const [feedbackMsg, setFeedbackMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [editingSignersCompany, setEditingSignersCompany] = useState<CompanyProfile | null>(null);
 
   // Form State for creating a new company
   const [newCode, setNewCode] = useState('');
@@ -166,6 +174,47 @@ export const CompanySwitcherModal: React.FC<CompanySwitcherModalProps> = ({
     setIsSaving(true);
     setFeedbackMsg(null);
 
+    const initialF1Signers: SignerConfigItem[] = [
+      {
+        title: 'Diajukan',
+        name: sigDibuat.trim() || currentUserName || 'Nur Wahyudi',
+        role: sigDibuatJabatan.trim() || 'Staff Keuangan',
+        enabled: true,
+      },
+      {
+        title: 'Diverifikasi',
+        name: sigAccounting.trim() || 'Sri Ekowati',
+        role: sigAccountingJabatan.trim() || 'Manager Keuangan',
+        enabled: true,
+      },
+      {
+        title: 'Diverifikasi',
+        name: sigDiverifikasi.trim() || 'Andi Muhammad Rifki',
+        role: sigDiverifikasiJabatan.trim() || 'Direktur',
+        enabled: true,
+      },
+      {
+        title: 'Disetujui',
+        name: sigDisetujui.trim() || 'Harijon',
+        role: sigDisetujuiJabatan.trim() || 'Direktur Keuangan',
+        enabled: true,
+      },
+    ];
+    const initialF2Signers: SignerConfigItem[] = [
+      {
+        title: 'Diajukan',
+        name: sigDibuat.trim() || currentUserName || 'Nur Wahyudi',
+        role: sigDibuatJabatan.trim() || 'Staff Keuangan',
+        enabled: true,
+      },
+      {
+        title: 'Diverifikasi',
+        name: sigAccounting.trim() || 'Sri Ekowati',
+        role: sigAccountingJabatan.trim() || 'Manager Keuangan',
+        enabled: false,
+      },
+    ];
+
     const payload: Partial<CompanyProfile> = {
       id: cleanId,
       code: newCode.toUpperCase(),
@@ -191,16 +240,34 @@ export const CompanySwitcherModal: React.FC<CompanySwitcherModalProps> = ({
       sigDirekturJabatan: sigDirekturJabatan.trim() || 'Direktur Utama',
       sigDirKeuangan: sigDisetujui.trim() || 'Harijon',
       sigKeuangan: sigAccounting.trim() || 'Sri Ekowati',
+      f1Signers: initialF1Signers,
+      f2Signers: initialF2Signers,
+      signatureStyle: 'table',
+      f2ApprovedBy: 'none',
       icon: '🏢',
       isActive: true,
       createdAt: new Date().toISOString()
     };
 
     try {
+      saveCompanySignerBundle(cleanId, {
+        f1Signers: initialF1Signers,
+        f2Signers: initialF2Signers,
+        signatureStyle: 'table',
+        f2ApprovedBy: 'none',
+        creatorName: payload.sigDibuat,
+        bookkeeperName: payload.sigAccounting,
+        bookkeeperJabatan: payload.sigAccountingJabatan,
+        verifierName: payload.sigDiverifikasi,
+        verifierJabatan: payload.sigDiverifikasiJabatan,
+        approverName: payload.sigDisetujui,
+        approver2Name: payload.sigDirektur,
+        approver2Jabatan: payload.sigDirekturJabatan,
+      });
       await saveCompanyProfileToFirestore(payload);
       setFeedbackMsg({ 
         type: 'success', 
-        text: `Perusahaan "${newName}" berhasil ditambahkan & diaktifkan!` 
+        text: `Perusahaan "${newName}" berhasil ditambahkan & diaktifkan dengan penanda tangan terpisah!` 
       });
 
       // Reset form
@@ -387,9 +454,12 @@ export const CompanySwitcherModal: React.FC<CompanySwitcherModalProps> = ({
             ) : (
               <div className="space-y-2.5">
                 {companies.map((comp) => {
-                  const compId = (comp.id || comp.code || '').toLowerCase().trim();
+                  const compId = normalizeSignerCompanyId(comp.id || comp.code);
                   const isActive = compId === activeCompLower;
                   const isSwitching = switchingId === compId;
+                  const compBundle = resolveCompanySignerBundle(compId, comp);
+                  const activeSignerCount = compBundle.f1Signers.filter((s) => s.enabled !== false).length;
+                  const lastSignerName = compBundle.f1Signers[activeSignerCount - 1]?.name || comp.sigDisetujui || 'Harijon';
 
                   return (
                     <div
@@ -447,15 +517,24 @@ export const CompanySwitcherModal: React.FC<CompanySwitcherModalProps> = ({
                                 Lokasi: <span className="text-stone-700">{comp.defaultLokasi || 'Lt. 1'}</span>
                               </span>
                               <span className="flex items-center gap-1">
-                                <PenTool size={11} className="text-stone-400" />
-                                Disetujui: <span className="text-stone-700">{comp.sigDisetujui || 'Harijon'}</span>
+                                <PenTool size={11} className="text-amber-600" />
+                                TTD ({activeSignerCount} Kolom): <span className="text-stone-800 font-semibold">{lastSignerName}</span>
                               </span>
                             </div>
                           </div>
                         </div>
 
-                        {/* Action Button */}
-                        <div className="flex items-center gap-2 sm:self-center shrink-0">
+                        {/* Action Buttons */}
+                        <div className="flex items-center gap-2 sm:self-center shrink-0 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => setEditingSignersCompany(comp)}
+                            className="inline-flex items-center justify-center gap-1 px-3 py-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-sans font-bold text-xs rounded-xl transition cursor-pointer"
+                            title={`Atur penanda tangan khusus perusahaan ${comp.code || compId.toUpperCase()}`}
+                          >
+                            <PenTool size={12} />
+                            <span>Atur TTD</span>
+                          </button>
                           {isActive ? (
                             <span className="text-xs font-bold text-amber-800 bg-amber-100/70 border border-amber-300 px-3 py-1.5 rounded-xl flex items-center gap-1">
                               <Check size={14} className="text-amber-700" />
@@ -852,6 +931,57 @@ export const CompanySwitcherModal: React.FC<CompanySwitcherModalProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Per-Company Signer Settings Editor */}
+      {editingSignersCompany && (() => {
+        const targetId = normalizeSignerCompanyId(editingSignersCompany.id || editingSignersCompany.code);
+        const targetBundle = resolveCompanySignerBundle(targetId, editingSignersCompany);
+        return (
+          <SignerSettingsModal
+            isOpen={!!editingSignersCompany}
+            onClose={() => setEditingSignersCompany(null)}
+            companyId={targetId}
+            companyName={editingSignersCompany.name || editingSignersCompany.fullName}
+            f1Signers={targetBundle.f1Signers}
+            f2Signers={targetBundle.f2Signers}
+            signatureStyle={targetBundle.signatureStyle}
+            onSave={(newF1, newF2, newStyle) => {
+              const saved = saveCompanySignerBundle(targetId, {
+                f1Signers: newF1,
+                f2Signers: newF2,
+                signatureStyle: newStyle,
+              });
+              saveCompanyProfileToFirestore({
+                ...editingSignersCompany,
+                id: targetId,
+                f1Signers: saved.f1Signers,
+                f2Signers: saved.f2Signers,
+                signatureStyle: saved.signatureStyle,
+                f2ApprovedBy: saved.f2ApprovedBy,
+                sigDibuat: saved.creatorName,
+                sigAccounting: saved.bookkeeperName,
+                sigAccountingJabatan: saved.bookkeeperJabatan,
+                sigDiverifikasi: saved.verifierName,
+                sigDiverifikasiJabatan: saved.verifierJabatan,
+                sigDisetujui: saved.approverName,
+                sigDirektur: saved.approver2Name,
+                sigDirekturJabatan: saved.approver2Jabatan,
+              }).then(() => fetchCompanies()).catch(() => {});
+              setFeedbackMsg({
+                type: 'success',
+                text: `Penanda tangan khusus untuk "${editingSignersCompany.name || targetId.toUpperCase()}" berhasil disimpan & dipisahkan dari perusahaan lain.`,
+              });
+            }}
+            onReset={() => {
+              resetCompanySignerBundle(targetId, editingSignersCompany);
+              setFeedbackMsg({
+                type: 'success',
+                text: `Penanda tangan "${editingSignersCompany.name || targetId.toUpperCase()}" dikembalikan ke standar awal perusahaan tersebut.`,
+              });
+            }}
+          />
+        );
+      })()}
     </div>
   );
 };

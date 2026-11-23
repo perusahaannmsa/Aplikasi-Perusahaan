@@ -39,6 +39,7 @@ import {
 import { Submission, SubmissionItem, ActivityLog, NpwpRecord, CompanyProfile, InternalMemo, Worker, MonthlyRecurringTransaction, EmployeeLoan } from './types';
 import { INITIAL_WORKERS } from './constantsAbsen';
 import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission } from './utils';
+import { hydrateCompanySignersFromServerSettings } from './utils/companySigners';
 import { apiFetch } from './utils/backendApi';
 
 export enum OperationType {
@@ -327,6 +328,9 @@ export const mapFirestoreToSubmission = (docId: string, data: any): Submission =
     recurringMonth: data.recurringMonth || undefined,
     showF2: data.showF2,
     f2ApprovedBy: data.f2ApprovedBy,
+    f1Signers: Array.isArray(data.f1Signers) ? data.f1Signers : undefined,
+    f2Signers: Array.isArray(data.f2Signers) ? data.f2Signers : undefined,
+    signatureStyle: (data.signatureStyle === 'table' || data.signatureStyle === 'line') ? data.signatureStyle : undefined,
 
     items: mappedItems,
     createdAt: createdAtStr,
@@ -453,7 +457,7 @@ export const mapSubmissionToFirestore = (
     createdAt: parsedCreatedAt,
     created_at: parsedCreatedAt,
     createdBy: userId || 'pwsDJv3bKHQamy89PDaAeCoZQcU2',
-    createdByEmail: userEmail || 'admin@nmsa.com',
+    createdByEmail: userEmail || LOCKED_FIREBASE_AUTH_EMAIL,
     dibayarkanKepada: sub.dibayarkanKepada || '',
     dibayarkan_kepada: sub.dibayarkanKepada || '',
     dibayarkanDengan: sub.dibayarkanDengan || 'Tunai',
@@ -562,6 +566,9 @@ export const mapSubmissionToFirestore = (
     recurringMonth: sub.recurringMonth || null,
     showF2: typeof sub.showF2 === 'boolean' ? sub.showF2 : null,
     f2ApprovedBy: sub.f2ApprovedBy || null,
+    f1Signers: Array.isArray(sub.f1Signers) ? sub.f1Signers : null,
+    f2Signers: Array.isArray(sub.f2Signers) ? sub.f2Signers : null,
+    signatureStyle: (sub.signatureStyle === 'table' || sub.signatureStyle === 'line') ? sub.signatureStyle : null,
     deletedPageIds: sub.deletedPageIds || []
   };
 };
@@ -596,26 +603,65 @@ export const getCompanyProfileFromFirestore = async (companyId: string): Promise
   setActiveCompanyId(cleanId);
   
   // Try fetching from Firestore
-  if (isFirebaseConfigured() && firestoreDb && !isFirestoreQuotaExceeded() && !isFirestoreInternalDegraded()) {
+  if (isFirebaseConfigured() && firestoreDb && hasAuthenticatedFirebaseUser() && !isFirestoreQuotaExceeded() && !isFirestorePermissionDenied() && !isFirestoreInternalDegraded()) {
     try {
       const docRef = doc(firestoreDb, 'companies', cleanId);
       const snap = await withTimeout(getDoc(docRef), 8000, 'Baca profil perusahaan');
       if (snap.exists()) {
         const data = snap.data();
-        // Auto-load shared Google Drive settings from Firestore to achieve zero-friction default connection!
+        // Auto-load shared Google Drive settings from Firestore strictly for the locked Drive account
         if (Array.isArray(data.googleDrives) && data.googleDrives.length > 0) {
           console.log('🔄 Auto-loaded company-shared Google Drive settings from Firestore:', data.googleDrives.length, 'drives');
-          const mergedDrives = mergeDrivesWithLocal(data.googleDrives);
+          const mergedDrives = mergeDrivesWithLocal(data.googleDrives).filter(
+            (d: any) => (d?.email || '').trim().toLowerCase() === LOCKED_MASTER_DRIVE_EMAIL
+          );
           localStorage.setItem('NUSANTARA_CONNECTED_DRIVES', JSON.stringify(mergedDrives));
           const activeDrive = mergedDrives.find((d: any) => isDriveTokenValid(d) && (d.quotaLimit - d.quotaUsed > 10 * 1024 * 1024));
           const bestToken = activeDrive ? activeDrive.accessToken : (mergedDrives[0]?.accessToken || null);
           if (bestToken) {
-            localStorage.setItem('NUSANTARA_GOOGLE_DRIVE_TOKEN', bestToken);
+            setGoogleDriveToken(bestToken);
           }
         }
+        // Cache fetched company profile & logoUrl for PDF / document generators
+        try {
+          const cachedComp = { ...data, id: cleanId };
+          localStorage.setItem('NUSANTARA_ACTIVE_COMPANY_PROFILE', JSON.stringify(cachedComp));
+          localStorage.setItem('NUSANTARA_ACTIVE_COMPANY_LOGO_URL', data.logoUrl || '');
+          const savedRaw = localStorage.getItem('NUSANTARA_SAVED_COMPANIES');
+          const list: any[] = savedRaw ? JSON.parse(savedRaw) : [];
+          if (Array.isArray(list)) {
+            const idx = list.findIndex((c: any) => (c.id || c.code || '').toLowerCase().trim() === cleanId);
+            if (idx >= 0) list[idx] = { ...list[idx], ...cachedComp };
+            else list.push(cachedComp);
+            localStorage.setItem('NUSANTARA_SAVED_COMPANIES', JSON.stringify(list));
+          }
+          if (Array.isArray(data.f1Signers) || Array.isArray(data.f2Signers) || data.signatureStyle || data.f2ApprovedBy) {
+            hydrateCompanySignersFromServerSettings({
+              companySignersByCompany: {
+                [cleanId]: {
+                  companyId: cleanId,
+                  f1Signers: Array.isArray(data.f1Signers) ? data.f1Signers : undefined,
+                  f2Signers: Array.isArray(data.f2Signers) ? data.f2Signers : undefined,
+                  signatureStyle: data.signatureStyle,
+                  f2ApprovedBy: data.f2ApprovedBy,
+                  creatorName: data.sigDibuat,
+                  bookkeeperName: data.sigAccounting,
+                  bookkeeperJabatan: data.sigAccountingJabatan,
+                  verifierName: data.sigDiverifikasi,
+                  verifierJabatan: data.sigDiverifikasiJabatan,
+                  approverName: data.sigDisetujui,
+                  approver2Name: data.sigDirektur,
+                  approver2Jabatan: data.sigDirekturJabatan,
+                  updatedAt: data.updatedAt,
+                },
+              },
+            });
+          }
+        } catch {}
         return data;
       }
     } catch (err) {
+      markFirestorePermissionDenied(err);
       markFirestoreInternalAssertion(err);
       console.warn('Silent read rejection - failed to fetch company profile from Firestore:', err);
     }
@@ -682,7 +728,7 @@ export const saveCompanyProfileToFirestore = async (company: Partial<CompanyProf
   const cleanCode = rawCode.toUpperCase().trim();
   const companyName = (company.name || company.fullName || cleanCode).trim();
   
-  const payload = {
+  const payload: any = {
     id: cleanId,
     code: cleanCode,
     name: companyName,
@@ -706,6 +752,10 @@ export const saveCompanyProfileToFirestore = async (company: Partial<CompanyProf
     sigDirekturJabatan: company.sigDirekturJabatan || 'Direktur Utama',
     sigDirKeuangan: company.sigDirKeuangan || 'Harijon',
     sigKeuangan: company.sigKeuangan || 'Sri Ekowati',
+    ...(Array.isArray(company.f1Signers) ? { f1Signers: company.f1Signers } : {}),
+    ...(Array.isArray(company.f2Signers) ? { f2Signers: company.f2Signers } : {}),
+    ...(company.signatureStyle ? { signatureStyle: company.signatureStyle } : {}),
+    ...(company.f2ApprovedBy ? { f2ApprovedBy: company.f2ApprovedBy } : {}),
     icon: company.icon || '🏢',
     logoUrl: company.logoUrl || '',
     isActive: company.isActive ?? true,
@@ -727,13 +777,37 @@ export const saveCompanyProfileToFirestore = async (company: Partial<CompanyProf
       list.push(payload);
     }
     localStorage.setItem('NUSANTARA_SAVED_COMPANIES', JSON.stringify(list));
+    localStorage.setItem('NUSANTARA_ACTIVE_COMPANY_PROFILE', JSON.stringify(payload));
+    localStorage.setItem('NUSANTARA_ACTIVE_COMPANY_LOGO_URL', payload.logoUrl || '');
   } catch (e) {
     console.warn('Local storage company backup warning:', e);
   }
 
   setActiveCompanyId(cleanId);
 
-  // Stored locally to conserve daily Firestore quota
+  // Sync company profile & isolated signers to server unified-storage
+  if (typeof fetch === 'function') {
+    fetch('/api/unified-storage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        companySettings: {
+          companyProfiles: {
+            [cleanId]: payload,
+          },
+        },
+      }),
+    }).catch(() => {});
+  }
+
+  // Also persist best-effort to Firestore companies/{cleanId}
+  if (isFirebaseConfigured() && firestoreDb && hasAuthenticatedFirebaseUser() && !isFirestoreQuotaExceeded() && !isFirestorePermissionDenied() && !isFirestoreInternalDegraded()) {
+    try {
+      await withTimeout(setDoc(doc(firestoreDb, 'companies', cleanId), cleanUndefined(payload), { merge: true }), 8000, 'Simpan profil perusahaan');
+    } catch (err) {
+      console.warn('Non-fatal saving company profile to Firestore:', err);
+    }
+  }
 };
 
 // Switch active user company and store locally
@@ -1455,10 +1529,10 @@ export const mergeDrivesWithLocal = (remoteDrives: ConnectedDrive[]): ConnectedD
   } catch (e) {}
 
   const cleanRemote = (Array.isArray(remoteDrives) ? remoteDrives : []).filter(
-    d => d && d.email && !isBlockedLegacyDriveEmail(d.email)
+    d => d && d.email && d.email.trim().toLowerCase() === LOCKED_MASTER_DRIVE_EMAIL
   );
   const cleanLocal = (Array.isArray(localDrives) ? localDrives : []).filter(
-    d => d && d.email && !isBlockedLegacyDriveEmail(d.email)
+    d => d && d.email && d.email.trim().toLowerCase() === LOCKED_MASTER_DRIVE_EMAIL
   );
 
   if (cleanRemote.length === 0) return cleanLocal;
@@ -1557,169 +1631,97 @@ export const getIsolatedDriveAuth = (): Auth => {
   return driveOAuthAuth;
 };
 
-// Embed permanent default accounts: Firebase = yudiakungaming@gmail.com, Google Drive = akuncoding211@gmail.com
+// Enforce permanent lock of Google Drive to akuncoding211@gmail.com on every boot
 if (typeof window !== 'undefined') {
   try {
-    const syncFlag = localStorage.getItem('NMSA_DEFAULT_DUAL_ACCOUNTS_V2');
-    const existingMaster = (localStorage.getItem('NUSANTARA_MASTER_DRIVE_EMAIL') || '').trim().toLowerCase();
-    if (!syncFlag || !existingMaster) {
-      localStorage.setItem('NUSANTARA_MASTER_DRIVE_EMAIL', PRIMARY_MASTER_DRIVE_EMAIL);
-      localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', PRIMARY_MASTER_DRIVE_EMAIL);
-      localStorage.setItem('g_user_email', PRIMARY_MASTER_DRIVE_EMAIL);
-      localStorage.setItem('NMSA_DEFAULT_DUAL_ACCOUNTS_V2', 'true');
-    }
+    localStorage.setItem('NUSANTARA_MASTER_DRIVE_EMAIL', LOCKED_MASTER_DRIVE_EMAIL);
+    localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', LOCKED_MASTER_DRIVE_EMAIL);
+    localStorage.setItem('g_user_email', LOCKED_MASTER_DRIVE_EMAIL);
+    localStorage.setItem('NUSANTARA_AUTHORIZED_DRIVES', JSON.stringify([LOCKED_MASTER_DRIVE_EMAIL]));
+    localStorage.setItem('NUSANTARA_DRIVE_FLEXIBLE_MODE', 'false');
+    localStorage.setItem('NMSA_DEFAULT_DUAL_ACCOUNTS_V2', 'true');
 
-    const rawAuth = localStorage.getItem('NUSANTARA_AUTHORIZED_DRIVES');
-    if (rawAuth) {
+    // Strip any non-locked Google Drive records persisted in localStorage
+    const rawDrives = localStorage.getItem('NUSANTARA_CONNECTED_DRIVES');
+    if (rawDrives) {
       try {
-        const parsed = JSON.parse(rawAuth);
-        if (Array.isArray(parsed)) {
-          const cleaned = Array.from(new Set([
-            PRIMARY_MASTER_DRIVE_EMAIL,
-            ...parsed.map(e => String(e).trim().toLowerCase()).filter(Boolean)
-          ]));
-          localStorage.setItem('NUSANTARA_AUTHORIZED_DRIVES', JSON.stringify(cleaned));
+        const parsedDrives = JSON.parse(rawDrives);
+        if (Array.isArray(parsedDrives)) {
+          const onlyLocked = parsedDrives
+            .filter((d: any) => (d?.email || '').trim().toLowerCase() === LOCKED_MASTER_DRIVE_EMAIL)
+            .map((d: any) => ({ ...d, email: LOCKED_MASTER_DRIVE_EMAIL }));
+          if (onlyLocked.length !== parsedDrives.length) {
+            localStorage.setItem('NUSANTARA_CONNECTED_DRIVES', JSON.stringify(onlyLocked));
+          }
         }
-      } catch (e) {}
-    } else {
-      localStorage.setItem('NUSANTARA_AUTHORIZED_DRIVES', JSON.stringify(DEFAULT_AUTHORIZED_DRIVE_EMAILS));
+      } catch {}
     }
   } catch (e) {}
 }
 
 /**
- * Flexible mode allows any Google account to be linked.
- * Default is FALSE so ONLY accounts registered/input by the user in the app are authorized & readable.
+ * Flexible mode is permanently disabled: Google Drive is permanently locked to akuncoding211@gmail.com.
  */
 export const isDriveFlexibleMode = (): boolean => {
-  try {
-    const raw = localStorage.getItem('NUSANTARA_DRIVE_FLEXIBLE_MODE');
-    if (raw !== null) {
-      return raw === 'true';
-    }
-  } catch (e) {}
   return false;
 };
 
-export const setDriveFlexibleMode = async (enabled: boolean): Promise<void> => {
+export const setDriveFlexibleMode = async (_enabled: boolean): Promise<void> => {
   try {
-    localStorage.setItem('NUSANTARA_DRIVE_FLEXIBLE_MODE', String(enabled));
+    localStorage.setItem('NUSANTARA_DRIVE_FLEXIBLE_MODE', 'false');
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('nusantara-drive-updated', {
-        detail: { flexibleMode: enabled }
+        detail: { flexibleMode: false, masterEmail: LOCKED_MASTER_DRIVE_EMAIL }
       }));
     }
   } catch (e) {
-    console.warn('Failed to save flexible mode state:', e);
+    console.warn('Drive flexible mode permanently locked:', e);
   }
 };
 
 export const getAuthorizedDriveEmails = (): string[] => {
-  try {
-    const raw = localStorage.getItem('NUSANTARA_AUTHORIZED_DRIVES');
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        const set = new Set([
-          LOCKED_MASTER_DRIVE_EMAIL,
-          ...parsed
-            .map(e => String(e).trim().toLowerCase())
-            .filter(e => e && !isBlockedLegacyDriveEmail(e))
-        ]);
-        return Array.from(set);
-      }
-    }
-  } catch (e) {}
-  return [...DEFAULT_AUTHORIZED_DRIVE_EMAILS];
+  return [LOCKED_MASTER_DRIVE_EMAIL];
 };
 
-export const saveAuthorizedDriveEmails = async (emails: string[]): Promise<void> => {
+export const saveAuthorizedDriveEmails = async (_emails: string[]): Promise<void> => {
   try {
-    const cleanList = Array.from(new Set([
-      LOCKED_MASTER_DRIVE_EMAIL,
-      ...emails
-        .map(e => (e || '').trim().toLowerCase())
-        .filter(e => e && !isBlockedLegacyDriveEmail(e))
-    ]));
-    localStorage.setItem('NUSANTARA_AUTHORIZED_DRIVES', JSON.stringify(cleanList));
+    localStorage.setItem('NUSANTARA_AUTHORIZED_DRIVES', JSON.stringify([LOCKED_MASTER_DRIVE_EMAIL]));
   } catch (e) {
-    console.error('Failed to save authorized drive emails:', e);
+    console.error('Failed to persist locked drive email:', e);
   }
 };
 
 export const addAuthorizedDriveEmail = async (email: string): Promise<string[]> => {
   const clean = (email || '').trim().toLowerCase();
-  if (!clean || !clean.includes('@') || !clean.includes('.')) {
-    throw new Error('Alamat email Google tidak valid (contoh: akun@gmail.com).');
+  if (clean !== LOCKED_MASTER_DRIVE_EMAIL) {
+    throw new Error(`Penyimpanan Google Drive dikunci permanen hanya ke akun ${LOCKED_MASTER_DRIVE_EMAIL}. Akun lain tidak dapat ditambahkan.`);
   }
-  const current = getAuthorizedDriveEmails();
-  if (!current.includes(clean)) {
-    current.push(clean);
-    await saveAuthorizedDriveEmails(current);
-  }
-  return current;
+  await saveAuthorizedDriveEmails([LOCKED_MASTER_DRIVE_EMAIL]);
+  return [LOCKED_MASTER_DRIVE_EMAIL];
 };
 
-export const updateAuthorizedDriveEmail = async (oldEmail: string, newEmail: string): Promise<string[]> => {
-  const cleanOld = (oldEmail || '').trim().toLowerCase();
+export const updateAuthorizedDriveEmail = async (_oldEmail: string, newEmail: string): Promise<string[]> => {
   const cleanNew = (newEmail || '').trim().toLowerCase();
-  if (!cleanNew || !cleanNew.includes('@') || !cleanNew.includes('.')) {
-    throw new Error('Alamat email Google baru tidak valid (contoh: akun@gmail.com).');
+  if (cleanNew !== LOCKED_MASTER_DRIVE_EMAIL) {
+    throw new Error(`Akun Google Drive dikunci permanen ke ${LOCKED_MASTER_DRIVE_EMAIL} dan tidak dapat diubah ke akun lain.`);
   }
-  const current = getAuthorizedDriveEmails();
-  const index = current.findIndex(e => e.toLowerCase() === cleanOld);
-  if (index !== -1) {
-    current[index] = cleanNew;
-  } else if (!current.includes(cleanNew)) {
-    current.push(cleanNew);
-  }
-  await saveAuthorizedDriveEmails(current);
-
-  if (getMasterDriveEmail().toLowerCase() === cleanOld) {
-    await setMasterDriveEmail(cleanNew);
-  }
-
-  // Remove old token if email changed so another account's token isn't reused
-  const drives = getConnectedDrives();
-  const filteredDrives = drives.filter(d => d.email.toLowerCase() !== cleanOld);
-  if (filteredDrives.length !== drives.length) {
-    await saveConnectedDrives(filteredDrives);
-  }
-
-  return current;
+  await saveAuthorizedDriveEmails([LOCKED_MASTER_DRIVE_EMAIL]);
+  return [LOCKED_MASTER_DRIVE_EMAIL];
 };
 
-export const removeAuthorizedDriveEmail = async (emailToRemove: string): Promise<string[]> => {
-  const clean = (emailToRemove || '').trim().toLowerCase();
-  const current = getAuthorizedDriveEmails();
-  const updated = current.filter(e => e.toLowerCase() !== clean);
-  await saveAuthorizedDriveEmails(updated);
-  const drives = getConnectedDrives();
-  const remainingDrives = drives.filter(d => d.email.toLowerCase() !== clean);
-  if (remainingDrives.length !== drives.length) {
-    await saveConnectedDrives(remainingDrives);
-  }
-  if (getMasterDriveEmail().toLowerCase() === clean && updated.length > 0) {
-    await setMasterDriveEmail(updated[0]);
-  }
-  return updated;
+export const removeAuthorizedDriveEmail = async (_emailToRemove: string): Promise<string[]> => {
+  throw new Error(`Akun Google Drive utama (${LOCKED_MASTER_DRIVE_EMAIL}) dikunci permanen di aplikasi dan tidak dapat dihapus.`);
 };
 
 /**
- * Strict check: verifies the email exists explicitly in the app's registered accounts list.
- * Never bypassed by flexible mode.
+ * Strict check: ONLY allows the permanently locked Google Drive account (akuncoding211@gmail.com).
  */
 export const isStrictlyAuthorizedDriveEmail = (email?: string | null): boolean => {
   if (!email) return false;
-  const clean = email.trim().toLowerCase();
-  if (!clean || isBlockedLegacyDriveEmail(clean)) return false;
-  const list = getAuthorizedDriveEmails().map(e => e.trim().toLowerCase());
-  return list.includes(clean);
+  return email.trim().toLowerCase() === LOCKED_MASTER_DRIVE_EMAIL;
 };
 
 export const isDriveEmailAuthorized = (email?: string | null): boolean => {
-  if (!email) return false;
-  if (isDriveFlexibleMode()) return email.includes('@');
   return isStrictlyAuthorizedDriveEmail(email);
 };
 
@@ -1735,31 +1737,25 @@ export const getTokenForRegisteredDriveEmail = (email?: string | null): string |
 };
 
 export const getMasterDriveEmail = (): string => {
-  try {
-    const stored = localStorage.getItem('NUSANTARA_MASTER_DRIVE_EMAIL');
-    if (stored && stored.trim()) {
-      return stored.trim().toLowerCase();
-    }
-  } catch (e) {}
-  return PRIMARY_MASTER_DRIVE_EMAIL;
+  return LOCKED_MASTER_DRIVE_EMAIL;
 };
 
-export const setMasterDriveEmail = async (email: string): Promise<void> => {
+export const setMasterDriveEmail = async (_email: string): Promise<void> => {
   try {
-    const clean = email.trim().toLowerCase();
-    localStorage.setItem('NUSANTARA_MASTER_DRIVE_EMAIL', clean);
-    localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', clean);
+    localStorage.setItem('NUSANTARA_MASTER_DRIVE_EMAIL', LOCKED_MASTER_DRIVE_EMAIL);
+    localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', LOCKED_MASTER_DRIVE_EMAIL);
+    localStorage.setItem('g_user_email', LOCKED_MASTER_DRIVE_EMAIL);
 
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('nusantara-drive-updated', {
         detail: {
           activeAccount: getActiveGoogleDriveAccount(),
-          masterEmail: clean
+          masterEmail: LOCKED_MASTER_DRIVE_EMAIL
         }
       }));
     }
   } catch (e) {
-    console.error('Failed to set master drive email:', e);
+    console.error('Failed to enforce master drive email:', e);
   }
 };
 
@@ -1884,8 +1880,9 @@ export const getConnectedDrives = (): ConnectedDrive[] => {
 };
 
 let lastServerDriveHydrateTime = 0;
+let lastFirestoreDriveSyncSignature = '';
 
-export const loadConnectedDrivesFromFirestore = async (_companyId: string = 'nmsa'): Promise<ConnectedDrive[]> => {
+export const loadConnectedDrivesFromFirestore = async (companyId: string = ''): Promise<ConnectedDrive[]> => {
   const localDrives = getConnectedDrives();
   const hasValidLocal = localDrives.some((d) => isDriveTokenValid(d) && d.accessToken);
   if (hasValidLocal) {
@@ -1898,6 +1895,9 @@ export const loadConnectedDrivesFromFirestore = async (_companyId: string = 'nms
   }
   lastServerDriveHydrateTime = now;
 
+  let bestMerged: ConnectedDrive[] = localDrives;
+
+  // 1. Check backend unified storage first
   try {
     const res = await fetch('/api/unified-storage');
     if (res.ok) {
@@ -1905,51 +1905,106 @@ export const loadConnectedDrivesFromFirestore = async (_companyId: string = 'nms
       const serverDrives: ConnectedDrive[] = Array.isArray(data?.googleDrives) ? data.googleDrives : [];
       if (serverDrives.length > 0) {
         const merged = mergeDrivesWithLocal(serverDrives);
-        const validMerged = merged.filter((d) => d && d.email && !isBlockedLegacyDriveEmail(d.email));
+        const validMerged = merged.filter((d) => (d?.email || '').trim().toLowerCase() === LOCKED_MASTER_DRIVE_EMAIL);
         if (validMerged.length > 0) {
+          bestMerged = validMerged;
           localStorage.setItem('NUSANTARA_CONNECTED_DRIVES', JSON.stringify(validMerged));
           const activeDrive = validMerged.find((d) => isDriveTokenValid(d) && d.accessToken);
           if (activeDrive?.accessToken) {
             setGoogleDriveToken(activeDrive.accessToken);
             localStorage.setItem('g_access_token', activeDrive.accessToken);
             localStorage.setItem('g_access_token_time', String(Date.now()));
+            return validMerged;
           }
-          return validMerged;
         }
       }
     }
   } catch (_) {}
 
-  return localDrives;
+  // 2. Check Firestore company documents (active company + 'nmsa' shared fallback) when authenticated
+  if (
+    isFirebaseConfigured() &&
+    firestoreDb &&
+    hasAuthenticatedFirebaseUser() &&
+    !isFirestoreQuotaExceeded() &&
+    !isFirestorePermissionDenied() &&
+    !isFirestoreInternalDegraded()
+  ) {
+    const targetIds = Array.from(
+      new Set([(companyId || activeCompanyId || 'nmsa').toLowerCase().trim(), 'nmsa'].filter(Boolean))
+    );
+    for (const compId of targetIds) {
+      try {
+        const snap = await withTimeout(getDoc(doc(firestoreDb, 'companies', compId)), 6000, 'Baca token Drive perusahaan');
+        if (snap.exists()) {
+          const data = snap.data();
+          const cloudDrives: ConnectedDrive[] = Array.isArray(data?.googleDrives) ? data.googleDrives : [];
+          if (cloudDrives.length > 0) {
+            const merged = mergeDrivesWithLocal(cloudDrives);
+            const validMerged = merged.filter((d) => (d?.email || '').trim().toLowerCase() === LOCKED_MASTER_DRIVE_EMAIL);
+            if (validMerged.length > 0) {
+              bestMerged = validMerged;
+              localStorage.setItem('NUSANTARA_CONNECTED_DRIVES', JSON.stringify(validMerged));
+              const activeDrive = validMerged.find((d) => isDriveTokenValid(d) && d.accessToken);
+              if (activeDrive?.accessToken) {
+                setGoogleDriveToken(activeDrive.accessToken);
+                localStorage.setItem('g_access_token', activeDrive.accessToken);
+                localStorage.setItem('g_access_token_time', String(Date.now()));
+                if (typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('nusantara-drive-updated', {
+                    detail: {
+                      drives: validMerged,
+                      activeAccount: getActiveGoogleDriveAccount(),
+                      accessToken: activeDrive.accessToken,
+                      hasToken: true
+                    }
+                  }));
+                }
+                return validMerged;
+              }
+            }
+          }
+        }
+      } catch (err) {
+        markFirestorePermissionDenied(err);
+        markFirestoreInternalAssertion(err);
+        if (isFirestorePermissionError(err)) break;
+      }
+    }
+  }
+
+  return bestMerged;
 };
 
 export const getActiveGoogleDriveAccount = (): { email: string; displayName?: string; photoURL?: string } | null => {
   const drives = getConnectedDrives();
-  if (drives.length > 0) {
-    const active = drives.find(d => !d.isExpired) || drives[0];
+  const lockedDrive = drives.find(d => d.email?.trim().toLowerCase() === LOCKED_MASTER_DRIVE_EMAIL);
+  if (lockedDrive) {
     return {
-      email: active.email,
-      displayName: active.displayName,
-      photoURL: active.photoURL
+      email: LOCKED_MASTER_DRIVE_EMAIL,
+      displayName: lockedDrive.displayName,
+      photoURL: lockedDrive.photoURL
     };
   }
-  return { email: LOCKED_MASTER_DRIVE_EMAIL, displayName: 'Master Drive NMSA' };
+  return { email: LOCKED_MASTER_DRIVE_EMAIL, displayName: 'Master Drive Permanen' };
 };
 
 export const saveConnectedDrives = async (drives: ConnectedDrive[]) => {
   try {
-    const cleanDrives = drives.filter(d => d && d.email && !isBlockedLegacyDriveEmail(d.email));
+    const cleanDrives = (Array.isArray(drives) ? drives : [])
+      .filter(d => d && d.email && d.email.trim().toLowerCase() === LOCKED_MASTER_DRIVE_EMAIL)
+      .map(d => ({ ...d, email: LOCKED_MASTER_DRIVE_EMAIL }));
     localStorage.setItem('NUSANTARA_CONNECTED_DRIVES', JSON.stringify(cleanDrives));
     // Synced with legacy single token to maintain maximum compatibility with existing code
     const activeDrive = cleanDrives.find(d => !d.isExpired && (d.quotaLimit - d.quotaUsed > 10 * 1024 * 1024));
     const bestToken = activeDrive ? activeDrive.accessToken : (cleanDrives[0]?.accessToken || null);
     setGoogleDriveToken(bestToken);
 
-    if (activeDrive) {
-      localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', activeDrive.email);
-    }
+    localStorage.setItem('NUSANTARA_MASTER_DRIVE_EMAIL', LOCKED_MASTER_DRIVE_EMAIL);
+    localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', LOCKED_MASTER_DRIVE_EMAIL);
+    localStorage.setItem('g_user_email', LOCKED_MASTER_DRIVE_EMAIL);
 
-    // Backup to server unified storage without calling Firestore
+    // Backup to server unified storage
     try {
       fetch('/api/unified-storage', {
         method: 'POST',
@@ -1957,6 +2012,36 @@ export const saveConnectedDrives = async (drives: ConnectedDrive[]) => {
         body: JSON.stringify({ googleDrives: cleanDrives })
       }).catch(() => {});
     } catch (_) {}
+
+    // Sync valid active tokens to Firestore companies so other devices & PT (NMSA <-> NH) auto-connect silently
+    const hasFreshToken = cleanDrives.some((d) => isDriveTokenValid(d) && Boolean(d.accessToken));
+    const signature = cleanDrives.map((d) => `${d.email}:${d.issuedAt || 0}:${d.isExpired ? 1 : 0}`).join('|');
+    if (
+      hasFreshToken &&
+      signature &&
+      signature !== lastFirestoreDriveSyncSignature &&
+      isFirebaseConfigured() &&
+      firestoreDb &&
+      hasAuthenticatedFirebaseUser() &&
+      !isFirestoreQuotaExceeded() &&
+      !isFirestorePermissionDenied() &&
+      !isFirestoreInternalDegraded()
+    ) {
+      lastFirestoreDriveSyncSignature = signature;
+      const targetIds = Array.from(new Set([activeCompanyId || 'nmsa', 'nmsa'].filter(Boolean)));
+      const payload = {
+        googleDrives: cleanDrives,
+        masterDriveEmail: getMasterDriveEmail(),
+        updatedAt: new Date().toISOString(),
+      };
+      Promise.all(
+        targetIds.map((compId) =>
+          setDoc(doc(firestoreDb!, 'companies', compId), payload, { merge: true }).catch((err) => {
+            markFirestorePermissionDenied(err);
+          })
+        )
+      ).catch(() => {});
+    }
 
     // Notify all active application components about the updated Drive account
     if (typeof window !== 'undefined') {
@@ -2052,10 +2137,42 @@ export const connectDriveWithManualToken = async (
     throw new Error('Kode token Google Drive tidak boleh kosong.');
   }
 
-  // 1. Validate token with Google Drive API
-  let meta: any = null;
+  // 1. Validate token directly with Google Drive API / userinfo (without silent email fallback masking wrong accounts)
+  let verifiedEmail = '';
+  let displayName = 'Google Drive';
+  let photoURL = '';
+  let quotaUsed = 0;
+  let quotaLimit = 15 * 1024 * 1024 * 1024;
+
   try {
-    meta = await fetchDriveQuotaMetadata(cleanToken);
+    const aboutRes = await fetch('https://www.googleapis.com/drive/v3/about?fields=user,storageQuota', {
+      headers: { Authorization: `Bearer ${cleanToken}` }
+    });
+    if (aboutRes.status === 401) {
+      throw new Error('UNAUTHORIZED_401');
+    }
+    if (aboutRes.ok) {
+      const data = await aboutRes.json();
+      verifiedEmail = (data.user?.emailAddress || '').trim().toLowerCase();
+      displayName = data.user?.displayName || 'Google Drive';
+      photoURL = data.user?.photoLink || '';
+      quotaUsed = parseInt(data.storageQuota?.usage || '0', 10);
+      quotaLimit = parseInt(data.storageQuota?.limit || '16106127360', 10);
+    }
+    if (!verifiedEmail) {
+      const uRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: { Authorization: `Bearer ${cleanToken}` }
+      });
+      if (uRes.status === 401) {
+        throw new Error('UNAUTHORIZED_401');
+      }
+      if (uRes.ok) {
+        const uData = await uRes.json();
+        verifiedEmail = (uData.email || '').trim().toLowerCase();
+        displayName = uData.name || displayName;
+        photoURL = uData.picture || photoURL;
+      }
+    }
   } catch (err: any) {
     console.error('Manual token validation error:', err);
     throw new Error(
@@ -2064,48 +2181,35 @@ export const connectDriveWithManualToken = async (
     );
   }
 
-  const email = (meta.email || targetEmailHint || '').trim().toLowerCase();
-  if (!email || !isStrictlyAuthorizedDriveEmail(email)) {
+  const email = (verifiedEmail || targetEmailHint || '').trim().toLowerCase();
+  if (email !== LOCKED_MASTER_DRIVE_EMAIL) {
     throw new Error(
-      `Akses Ditolak: Akun Google '${email || '(tidak diketahui)'}' belum terdaftar di aplikasi.\n` +
-      `Silakan daftarkan/input alamat email tersebut di daftar Akun Terdaftar terlebih dahulu sebelum menghubungkan Google Drive-nya.`
+      `Akses Ditolak: Token berasal dari '${email || '(tidak diketahui)'}'.\n` +
+      `Penyimpanan Google Drive aplikasi ini dikunci permanen HANYA untuk akun ${LOCKED_MASTER_DRIVE_EMAIL}.`
     );
   }
 
   const now = Date.now();
   const newDrive: ConnectedDrive = {
-    email: email,
+    email: LOCKED_MASTER_DRIVE_EMAIL,
     accessToken: cleanToken,
-    displayName: meta.displayName || `Google Drive (${email})`,
-    photoURL: meta.photoURL || '',
-    quotaUsed: meta.quotaUsed || 0,
-    quotaLimit: meta.quotaLimit || 15 * 1024 * 1024 * 1024,
+    displayName: displayName || `Google Drive (${LOCKED_MASTER_DRIVE_EMAIL})`,
+    photoURL,
+    quotaUsed,
+    quotaLimit,
     lastChecked: new Date().toISOString(),
     isExpired: false,
     issuedAt: now,
     expiresAt: now + TOKEN_LIFESPAN_MS
   };
 
-  // 3. Update connected drives list
-  const currentDrives = getConnectedDrives();
-  const idx = currentDrives.findIndex(d => d.email.toLowerCase() === email.toLowerCase());
-  if (idx !== -1) {
-    currentDrives[idx] = newDrive;
-  } else {
-    currentDrives.push(newDrive);
-  }
-
-  await saveConnectedDrives(currentDrives);
+  await saveConnectedDrives([newDrive]);
+  await saveAuthorizedDriveEmails([LOCKED_MASTER_DRIVE_EMAIL]);
+  await setMasterDriveEmail(LOCKED_MASTER_DRIVE_EMAIL);
   localStorage.setItem('g_access_token', cleanToken);
   localStorage.setItem('g_access_token_time', Date.now().toString());
-  localStorage.setItem('g_user_email', email);
-  localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', email);
-
-  // If no master exists, set this as master
-  const currentMaster = getMasterDriveEmail();
-  if (!currentMaster) {
-    await setMasterDriveEmail(email);
-  }
+  localStorage.setItem('g_user_email', LOCKED_MASTER_DRIVE_EMAIL);
+  localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', LOCKED_MASTER_DRIVE_EMAIL);
 
   return newDrive;
 };
@@ -2343,11 +2447,11 @@ export const saveCompanySettingsToFirestore = async (
     localStorage.setItem('sppd_monthly_counters', JSON.stringify(partialSettings.sppdMonthlyCounters));
   }
   if (partialSettings.authorizedDriveEmails) {
-    localStorage.setItem('NUSANTARA_AUTHORIZED_DRIVES', JSON.stringify(partialSettings.authorizedDriveEmails));
+    localStorage.setItem('NUSANTARA_AUTHORIZED_DRIVES', JSON.stringify([LOCKED_MASTER_DRIVE_EMAIL]));
   }
   if (partialSettings.masterDriveEmail) {
-    localStorage.setItem('NUSANTARA_MASTER_DRIVE_EMAIL', partialSettings.masterDriveEmail);
-    localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', partialSettings.masterDriveEmail);
+    localStorage.setItem('NUSANTARA_MASTER_DRIVE_EMAIL', LOCKED_MASTER_DRIVE_EMAIL);
+    localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', LOCKED_MASTER_DRIVE_EMAIL);
   }
   if (partialSettings.pettyCashHolders) {
     localStorage.setItem('petty_cash_holders_v2', JSON.stringify(partialSettings.pettyCashHolders));
@@ -2769,20 +2873,11 @@ export const googleDriveLogin = async (
     if (sc && typeof sc === 'string') provider.addScope(sc);
   }
 
-  // Seamless automatic hint to active Master Drive email (penyimpanandrivenmsa2@gmail.com)
-  // without forcing account-picker unless explicitly requested by user
-  const cleanedHint = (loginHint || '').trim().toLowerCase();
-  const effectiveHint = cleanedHint || getMasterDriveEmail() || PRIMARY_MASTER_DRIVE_EMAIL;
-
-  if (_forceSelectAccount) {
-    provider.setCustomParameters({
-      prompt: 'select_account'
-    });
-  } else {
-    provider.setCustomParameters({
-      login_hint: effectiveHint
-    });
-  }
+  // Permanently locked to akuncoding211@gmail.com regardless of passed loginHint or _forceSelectAccount
+  const effectiveHint = LOCKED_MASTER_DRIVE_EMAIL;
+  provider.setCustomParameters({
+    login_hint: LOCKED_MASTER_DRIVE_EMAIL
+  });
 
   // Set timeout protection (45 seconds) so it NEVER spins indefinitely!
   const TIMEOUT_MS = 45000;
@@ -2814,44 +2909,58 @@ export const googleDriveLogin = async (
     }
 
     // Fetch detailed metadata from Drive API for accurate storage & user matching
-    let driveDetails = null;
+    let driveDetails: any = null;
     try {
-      driveDetails = await fetchDriveQuotaMetadata(credential.accessToken);
+      const aboutRes = await fetch('https://www.googleapis.com/drive/v3/about?fields=user,storageQuota', {
+        headers: { Authorization: `Bearer ${credential.accessToken}` }
+      });
+      if (aboutRes.ok) {
+        const data = await aboutRes.json();
+        driveDetails = {
+          email: data.user?.emailAddress || result.user.email || '',
+          displayName: data.user?.displayName || result.user.displayName || 'Google Drive',
+          photoURL: data.user?.photoLink || result.user.photoURL || '',
+          quotaUsed: parseInt(data.storageQuota?.usage || '0', 10),
+          quotaLimit: parseInt(data.storageQuota?.limit || '16106127360', 10)
+        };
+      }
     } catch (apiErr) {
-      console.warn('Failed to fetch Drive metadata, using fallback details', apiErr);
-      const fallbackEmail = result.user.email || effectiveHint || LOCKED_MASTER_DRIVE_EMAIL;
+      console.warn('Failed to fetch Drive metadata, checking auth user email', apiErr);
+    }
+
+    const userEmail = (driveDetails?.email || result.user.email || '').trim().toLowerCase();
+    if (!userEmail) {
+      await signOut(targetAuth).catch(() => {});
+      throw new Error('Gagal membaca alamat email akun Google Drive yang dipilih.');
+    }
+
+    if (userEmail !== LOCKED_MASTER_DRIVE_EMAIL) {
+      await signOut(targetAuth).catch(() => {});
+      throw new Error(
+        `Akses Ditolak: Anda masuk sebagai '${userEmail}'.\n` +
+        `Penyimpanan Google Drive aplikasi ini dikunci permanen HANYA ke akun ${LOCKED_MASTER_DRIVE_EMAIL}. Silakan pilih akun ${LOCKED_MASTER_DRIVE_EMAIL} saat otorisasi.`
+      );
+    }
+
+    if (!driveDetails) {
       driveDetails = {
-        email: fallbackEmail,
-        displayName: result.user.displayName || fallbackEmail,
+        email: LOCKED_MASTER_DRIVE_EMAIL,
+        displayName: result.user.displayName || LOCKED_MASTER_DRIVE_EMAIL,
         photoURL: result.user.photoURL || '',
         quotaUsed: 0,
         quotaLimit: 15 * 1024 * 1024 * 1024
       };
     }
 
-    const userEmail = (driveDetails.email || result.user.email || '').trim().toLowerCase();
-    if (!userEmail) {
-      throw new Error('Gagal membaca alamat email akun Google Drive yang dipilih.');
-    }
+    await saveAuthorizedDriveEmails([LOCKED_MASTER_DRIVE_EMAIL]);
+    await setMasterDriveEmail(LOCKED_MASTER_DRIVE_EMAIL);
+    localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', LOCKED_MASTER_DRIVE_EMAIL);
 
-    // Automatically authorize and set the authenticated Google account as active Master Drive
-    // so uploads immediately succeed to the exact Google Drive account the user just signed into!
-    const currentAuthorized = getAuthorizedDriveEmails();
-    if (!currentAuthorized.includes(userEmail)) {
-      await saveAuthorizedDriveEmails([...currentAuthorized, userEmail]);
-    }
-    await setMasterDriveEmail(userEmail);
-
-    // Store as last active email
-    localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', userEmail);
-
-    // Load existing connected drives list
-    const currentDrives = getConnectedDrives();
     const now = Date.now();
     const newDrive: ConnectedDrive = {
-      email: userEmail,
+      email: LOCKED_MASTER_DRIVE_EMAIL,
       accessToken: credential.accessToken,
-      displayName: driveDetails.displayName || userEmail,
+      displayName: driveDetails.displayName || LOCKED_MASTER_DRIVE_EMAIL,
       photoURL: driveDetails.photoURL,
       quotaUsed: driveDetails.quotaUsed,
       quotaLimit: driveDetails.quotaLimit,
@@ -2861,16 +2970,12 @@ export const googleDriveLogin = async (
       expiresAt: now + TOKEN_LIFESPAN_MS
     };
 
-    // Place the newly connected account first so it is immediately prioritized for all uploads
-    const otherDrives = currentDrives.filter(d => d.email.toLowerCase() !== userEmail);
-    const updatedDrives = [newDrive, ...otherDrives];
-
-    await saveConnectedDrives(updatedDrives);
+    await saveConnectedDrives([newDrive]);
     localStorage.setItem('g_access_token', credential.accessToken);
     localStorage.setItem('g_access_token_time', Date.now().toString());
-    localStorage.setItem('g_user_email', userEmail);
+    localStorage.setItem('g_user_email', LOCKED_MASTER_DRIVE_EMAIL);
 
-    return { user: result.user, accessToken: credential.accessToken, driveDetails: { ...driveDetails, email: userEmail } };
+    return { user: result.user, accessToken: credential.accessToken, driveDetails: { ...driveDetails, email: LOCKED_MASTER_DRIVE_EMAIL } };
   } catch (error: any) {
     if (timeoutTimer) clearTimeout(timeoutTimer);
 
@@ -3656,7 +3761,7 @@ export const saveSubmissionToFirestore = async (
   const path = 'submissions';
   const fPayload = mapSubmissionToFirestore(
     stampedSubmission, 
-    currentUser?.email || 'admin@nmsa.com', 
+    currentUser?.email || LOCKED_FIREBASE_AUTH_EMAIL, 
     currentUser?.uid || 'pwsDJv3bKHQamy89PDaAeCoZQcU2',
     cleanComp,
     userCompanyName
@@ -3744,7 +3849,7 @@ export const saveSubmissionsBatchToFirestore = async (
     for (const sub of chunk) {
       const fPayload = mapSubmissionToFirestore(
         sub,
-        currentUser?.email || 'admin@nmsa.com',
+        currentUser?.email || LOCKED_FIREBASE_AUTH_EMAIL,
         currentUser?.uid || 'pwsDJv3bKHQamy89PDaAeCoZQcU2',
         normalizeCompanyKey(sub.companyId || cleanComp),
         sub.companyName || userCompanyName
@@ -3778,7 +3883,7 @@ export const saveSubmissionsBatchToFirestore = async (
         const payload = cleanUndefined(
           mapSubmissionToFirestore(
             sub,
-            currentUser?.email || 'admin@nmsa.com',
+            currentUser?.email || LOCKED_FIREBASE_AUTH_EMAIL,
             currentUser?.uid || 'pwsDJv3bKHQamy89PDaAeCoZQcU2',
             normalizeCompanyKey(sub.companyId || cleanComp),
             sub.companyName || userCompanyName

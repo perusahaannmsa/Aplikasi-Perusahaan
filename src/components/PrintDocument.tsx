@@ -20,69 +20,16 @@ import { SignerSettingsModal, SignerConfigItem } from './SignerSettingsModal';
 import { F1SignaturesBlock } from './F1SignaturesBlock';
 import { F2SignaturesBlock } from './F2SignaturesBlock';
 import { SlidersHorizontal, UserCheck, ChevronDown, ChevronRight, Layout, Settings } from 'lucide-react';
-
-const STORAGE_KEY_F1_SIGNERS = 'nmsa_custom_f1_signers_config';
-const STORAGE_KEY_F2_SIGNERS = 'nmsa_custom_f2_signers_config';
-const STORAGE_KEY_SIGNATURE_STYLE = 'NMSA_SIGNATURE_STYLE';
-
-const getInitialF1Signers = (sub: Submission, verifier: 'rifki' | 'nursyam'): SignerConfigItem[] => {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY_F1_SIGNERS);
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      if (Array.isArray(parsed) && parsed.length >= 1) return parsed;
-    }
-  } catch (e) {
-    console.warn('Failed to parse saved F1 signers', e);
-  }
-  const col1Name = (sub.diajukanOleh && sub.diajukanOleh !== 'Sri Ekowati') ? sub.diajukanOleh : 'Andi Dhiya Salsabila';
-  const col1Role = sub.diajukanJabatan || 'Staff Keuangan';
-  const col2Name = 'Sri Ekowati';
-  const col2Role = 'Manager Keuangan';
-  const isNursyam = verifier === 'nursyam' || (sub.diverifikasiOleh && sub.diverifikasiOleh.toLowerCase().includes('nursyam'));
-  const col3Name = isNursyam ? 'H. Andi Nursyam Halid' : ((sub.diverifikasiOleh && sub.diverifikasiOleh !== 'Andi Dhiya Salsabila' && sub.diverifikasiOleh !== 'Sri Ekowati') ? sub.diverifikasiOleh : 'Andi Muhammad Rifki');
-  const col3Role = isNursyam ? 'Direktur Utama' : ((sub.diverifikasiJabatan && sub.diverifikasiJabatan !== 'Keuangan') ? sub.diverifikasiJabatan : 'Direktur');
-  const rawApprover = sub.disetujuiOleh2;
-  const col4Name = (rawApprover && !rawApprover.toLowerCase().includes('nursyam')) ? rawApprover : 'Harijon';
-  const col4Role = (rawApprover && !rawApprover.toLowerCase().includes('nursyam')) ? (sub.disetujuiJabatan2 || 'Direktur Keuangan') : 'Direktur Keuangan';
-
-  return [
-    { title: 'Diajukan', name: col1Name, role: col1Role },
-    { title: 'Diverifikasi', name: col2Name, role: col2Role },
-    { title: 'Diverifikasi', name: col3Name, role: col3Role },
-    { title: 'Disetujui', name: col4Name, role: col4Role },
-  ];
-};
-
-const getInitialF2Signers = (sub: Submission): SignerConfigItem[] => {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY_F2_SIGNERS);
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      if (Array.isArray(parsed) && parsed.length >= 1) {
-        // Self-heal: If saved F2 had hardcoded Nur Wahyudi and sub has diajukanOleh, prefer sub.diajukanOleh!
-        return parsed.map((item, idx) => {
-          if (idx === 0 && item.name === 'Nur Wahyudi' && sub.diajukanOleh && sub.diajukanOleh !== 'Nur Wahyudi') {
-            return { ...item, name: sub.diajukanOleh, role: sub.diajukanJabatan || item.role };
-          }
-          return item;
-        });
-      }
-    }
-  } catch (e) {
-    console.warn('Failed to parse saved F2 signers', e);
-  }
-
-  // Derive directly from F1 signers so F2 dynamically matches the voucher in the application
-  const f1List = getInitialF1Signers(sub, 'rifki');
-  const applicant = f1List[0] || { title: 'Diajukan', name: sub.diajukanOleh || 'Andi Dhiya Salsabila', role: sub.diajukanJabatan || 'Staff Keuangan', enabled: true };
-  const verifier = f1List[1] || { title: 'Diverifikasi', name: 'Sri Ekowati', role: 'Manager Keuangan', enabled: false };
-
-  return [
-    { title: applicant.title || 'Diajukan', name: applicant.name, role: applicant.role, enabled: true },
-    { title: verifier.title || 'Diverifikasi', name: verifier.name, role: verifier.role, enabled: false }, // 2nd signer removed by default
-  ];
-};
+import {
+  normalizeSignerCompanyId,
+  resolveF1SignersForSubmission,
+  resolveF2SignersForSubmission,
+  resolveSignatureStyleForSubmission,
+  resolveF2ApprovedByForSubmission,
+  saveCompanySignerBundle,
+  resetCompanySignerBundle,
+  COMPANY_SIGNERS_UPDATED_EVENT,
+} from '../utils/companySigners';
 
 /**
  * QR Code component for immediate digital verification and online access of the voucher
@@ -1099,17 +1046,17 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
     };
   }, [submission, isSppdSubmission]);
 
-  // Dynamic company logo URL: prefers voucher level, then active company profile, fallback to default
+  // Dynamic company identity & logo URL: prefers voucher level, then active company profile
+  const activeCompanyId = useMemo(
+    () => normalizeSignerCompanyId(submission.companyId, userProfile?.companyId),
+    [submission.companyId, userProfile?.companyId]
+  );
   const effectiveLogoUrl = submission.companyLogoUrl || userProfile?.companyDetails?.logoUrl || userProfile?.companyLogoUrl;
 
   const [printLayoutMode, setPrintLayoutMode] = useState<'standard' | 'compact_70' | 'eco_1page'>('standard');
-  const [signatureTableStyle, setSignatureTableStyle] = useState<'table' | 'line'>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_SIGNATURE_STYLE);
-      if (saved === 'line' || saved === 'table') return saved;
-    } catch (e) {}
-    return 'table';
-  });
+  const [signatureTableStyle, setSignatureTableStyle] = useState<'table' | 'line'>(() =>
+    resolveSignatureStyleForSubmission(submission, { companyId: activeCompanyId, userProfile })
+  );
   const [showF2, setShowF2] = useState<boolean>(() => {
     if (submission.showF2 !== undefined) return !!submission.showF2;
     try {
@@ -1122,13 +1069,55 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
     if (submission.diverifikasiOleh?.toLowerCase().includes('nursyam')) return 'nursyam';
     return 'rifki';
   });
-  // Default Penanda Tangan F2: Tanpa Disetujui (1 orang: Dibuat Oleh saja) sesuai permintaan pengguna
-  const [f2ApprovedBy, setF2ApprovedBy] = useState<'harijon' | 'nursyam' | 'none'>('none');
+  // Default Penanda Tangan F2 per perusahaan
+  const [f2ApprovedBy, setF2ApprovedBy] = useState<'harijon' | 'nursyam' | 'none'>(() =>
+    resolveF2ApprovedByForSubmission(submission, { companyId: activeCompanyId, userProfile })
+  );
 
-  // Manual & Persistent Signers State (F1 4 columns & F2 2 columns)
-  const [f1Signers, setF1Signers] = useState<SignerConfigItem[]>(() => getInitialF1Signers(submission, f1Verifier));
-  const [f2Signers, setF2Signers] = useState<SignerConfigItem[]>(() => getInitialF2Signers(submission));
+  // Manual & Persistent Per-Company Signers State (F1 & F2)
+  const [f1Signers, setF1Signers] = useState<SignerConfigItem[]>(() =>
+    resolveF1SignersForSubmission(submission, {
+      companyId: activeCompanyId,
+      userProfile,
+      verifierOverride: submission.diverifikasiOleh?.toLowerCase().includes('nursyam') ? 'nursyam' : undefined,
+    })
+  );
+  const [f2Signers, setF2Signers] = useState<SignerConfigItem[]>(() =>
+    resolveF2SignersForSubmission(submission, { companyId: activeCompanyId, userProfile })
+  );
   const [isSignerModalOpen, setIsSignerModalOpen] = useState(false);
+
+  // Sync signer states whenever submission or active company changes or company signers are updated elsewhere
+  useEffect(() => {
+    const syncFromCompany = () => {
+      setSignatureTableStyle(
+        resolveSignatureStyleForSubmission(submission, { companyId: activeCompanyId, userProfile })
+      );
+      setF2ApprovedBy(
+        resolveF2ApprovedByForSubmission(submission, { companyId: activeCompanyId, userProfile })
+      );
+      setF1Signers(
+        resolveF1SignersForSubmission(submission, { companyId: activeCompanyId, userProfile })
+      );
+      setF2Signers(
+        resolveF2SignersForSubmission(submission, { companyId: activeCompanyId, userProfile })
+      );
+    };
+    syncFromCompany();
+    if (typeof window !== 'undefined') {
+      window.addEventListener(COMPANY_SIGNERS_UPDATED_EVENT, syncFromCompany);
+      return () => window.removeEventListener(COMPANY_SIGNERS_UPDATED_EVENT, syncFromCompany);
+    }
+  }, [
+    submission.id,
+    submission.companyId,
+    submission.f1Signers,
+    submission.f2Signers,
+    submission.signatureStyle,
+    submission.f2ApprovedBy,
+    activeCompanyId,
+    userProfile,
+  ]);
 
   const handleSaveSigners = (
     newF1: SignerConfigItem[],
@@ -1140,17 +1129,67 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
     setF2Signers(newF2);
     setSignatureTableStyle(newStyle);
     if (saveAsDefault) {
-      localStorage.setItem(STORAGE_KEY_F1_SIGNERS, JSON.stringify(newF1));
-      localStorage.setItem(STORAGE_KEY_F2_SIGNERS, JSON.stringify(newF2));
-      localStorage.setItem(STORAGE_KEY_SIGNATURE_STYLE, newStyle);
+      saveCompanySignerBundle(activeCompanyId, {
+        f1Signers: newF1,
+        f2Signers: newF2,
+        signatureStyle: newStyle,
+        f2ApprovedBy,
+      });
+      if (submission.f1Signers || submission.f2Signers || submission.signatureStyle) {
+        const cleanedSub: Submission = {
+          ...submission,
+          f1Signers: undefined,
+          f2Signers: undefined,
+          signatureStyle: undefined,
+        };
+        if (onUpdateSubmission) onUpdateSubmission(cleanedSub);
+        saveSubmissionToFirestore(
+          cleanedSub,
+          activeCompanyId,
+          submission.companyName || userProfile?.companyName || 'PT Nusantara Mineral Sukses Abadi'
+        ).catch(() => {});
+      }
+    } else {
+      const updatedSub: Submission = {
+        ...submission,
+        f1Signers: newF1,
+        f2Signers: newF2,
+        signatureStyle: newStyle,
+      };
+      if (onUpdateSubmission) onUpdateSubmission(updatedSub);
+      saveSubmissionToFirestore(
+        updatedSub,
+        activeCompanyId,
+        submission.companyName || userProfile?.companyName || 'PT Nusantara Mineral Sukses Abadi'
+      ).catch(() => {});
     }
   };
 
   const handleResetSigners = () => {
-    localStorage.removeItem(STORAGE_KEY_F1_SIGNERS);
-    localStorage.removeItem(STORAGE_KEY_F2_SIGNERS);
-    setF1Signers(getInitialF1Signers(submission, 'rifki'));
-    setF2Signers(getInitialF2Signers(submission));
+    const freshBundle = resetCompanySignerBundle(activeCompanyId, userProfile);
+    setF1Signers(freshBundle.f1Signers);
+    setF2Signers(freshBundle.f2Signers);
+    setSignatureTableStyle(freshBundle.signatureStyle);
+    setF2ApprovedBy(freshBundle.f2ApprovedBy);
+    if (submission.f1Signers || submission.f2Signers || submission.signatureStyle) {
+      const cleanedSub: Submission = {
+        ...submission,
+        f1Signers: undefined,
+        f2Signers: undefined,
+        signatureStyle: undefined,
+      };
+      if (onUpdateSubmission) onUpdateSubmission(cleanedSub);
+    }
+  };
+
+  const handleChangeSignatureStyle = (newStyle: 'table' | 'line') => {
+    setSignatureTableStyle(newStyle);
+    saveCompanySignerBundle(activeCompanyId, { signatureStyle: newStyle });
+  };
+
+  const handleChangeF2ApprovedBy = (mode: 'harijon' | 'nursyam' | 'none') => {
+    setF2ApprovedBy(mode);
+    saveCompanySignerBundle(activeCompanyId, { f2ApprovedBy: mode });
   };
 
   const handleSelectF1Verifier = (v: 'rifki' | 'nursyam') => {
@@ -1158,10 +1197,11 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
     setF1Signers((prev) => {
       const updated = [...prev];
       if (v === 'nursyam') {
-        updated[2] = { title: updated[2]?.title || 'Diverifikasi', name: 'H. Andi Nursyam Halid', role: 'Direktur Utama' };
+        updated[2] = { title: updated[2]?.title || 'Diverifikasi', name: 'H. Andi Nursyam Halid', role: 'Direktur Utama', enabled: true };
       } else {
-        updated[2] = { title: updated[2]?.title || 'Diverifikasi', name: 'Andi Muhammad Rifki', role: 'Direktur' };
+        updated[2] = { title: updated[2]?.title || 'Diverifikasi', name: 'Andi Muhammad Rifki', role: 'Direktur', enabled: true };
       }
+      saveCompanySignerBundle(activeCompanyId, { f1Signers: updated });
       return updated;
     });
   };
@@ -2770,7 +2810,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
                                 <div className="space-y-1">
                                   <button
                                     type="button"
-                                    onClick={() => setSignatureTableStyle('table')}
+                                    onClick={() => handleChangeSignatureStyle('table')}
                                     className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs text-left transition cursor-pointer ${
                                       signatureTableStyle === 'table' ? 'bg-amber-600 text-white font-bold shadow-3xs' : 'text-stone-700 hover:bg-stone-50'
                                     }`}
@@ -2786,7 +2826,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
 
                                   <button
                                     type="button"
-                                    onClick={() => setSignatureTableStyle('line')}
+                                    onClick={() => handleChangeSignatureStyle('line')}
                                     className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs text-left transition cursor-pointer ${
                                       signatureTableStyle === 'line' ? 'bg-amber-600 text-white font-bold shadow-3xs' : 'text-stone-700 hover:bg-stone-50'
                                     }`}
@@ -2916,7 +2956,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
                                 <div className="space-y-1">
                                   <button
                                     type="button"
-                                    onClick={() => setF2ApprovedBy('harijon')}
+                                    onClick={() => handleChangeF2ApprovedBy('harijon')}
                                     className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs text-left transition cursor-pointer ${
                                       f2ApprovedBy === 'harijon' ? 'bg-amber-600 text-white font-bold shadow-3xs' : 'text-stone-700 hover:bg-stone-50'
                                     }`}
@@ -2932,7 +2972,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
 
                                   <button
                                     type="button"
-                                    onClick={() => setF2ApprovedBy('nursyam')}
+                                    onClick={() => handleChangeF2ApprovedBy('nursyam')}
                                     className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs text-left transition cursor-pointer ${
                                       f2ApprovedBy === 'nursyam' ? 'bg-amber-600 text-white font-bold shadow-3xs' : 'text-stone-700 hover:bg-stone-50'
                                     }`}
@@ -2948,7 +2988,7 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
 
                                   <button
                                     type="button"
-                                    onClick={() => setF2ApprovedBy('none')}
+                                    onClick={() => handleChangeF2ApprovedBy('none')}
                                     className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs text-left transition cursor-pointer ${
                                       f2ApprovedBy === 'none' ? 'bg-amber-600 text-white font-bold shadow-3xs' : 'text-stone-700 hover:bg-stone-50'
                                     }`}
@@ -3508,10 +3548,12 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
         );
       })()}
 
-      {/* Signer Settings Modal */}
+      {/* Signer Settings Modal (Isolated per Company) */}
       <SignerSettingsModal
         isOpen={isSignerModalOpen}
         onClose={() => setIsSignerModalOpen(false)}
+        companyId={activeCompanyId}
+        companyName={submission.companyName || userProfile?.companyName}
         f1Signers={f1Signers}
         f2Signers={f2Signers}
         signatureStyle={signatureTableStyle}

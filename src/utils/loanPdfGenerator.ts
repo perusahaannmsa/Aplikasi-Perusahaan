@@ -2,25 +2,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { EmployeeLoan, LoanSigner } from '../types';
 import { formatRupiah, terbilang, formatTanggalIndo } from './loanUtils';
-
-/**
- * Mengambil gambar Kop Surat resmi PT. NMSA dan mengubahnya menjadi Data URL untuk jsPDF
- */
-async function getKopSuratImageDataUrl(): Promise<string | null> {
-  try {
-    const res = await fetch('/kop-surat-nmsa-full.png');
-    if (!res.ok) return null;
-    const blob = await res.blob();
-    return await new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(typeof reader.result === 'string' ? reader.result : null);
-      reader.onerror = () => resolve(null);
-      reader.readAsDataURL(blob);
-    });
-  } catch {
-    return null;
-  }
-}
+import { resolveCompanyHeaderMeta, fetchLogoAsDataUrl } from '../utils';
 
 /**
  * Menggambar isi kotak tanda tangan (Paraf/TTD, garis pemisah horizontal, Nama, dan Jabatan tanpa tanggal)
@@ -80,8 +62,7 @@ function drawSignatureBoxContent(
 }
 
 /**
- * Menghasilkan file PDF resmi Formulir Pinjaman Karyawan PT. NMSA (Format Vektor A4)
- * Persis sama tampilan & formatnya dengan EmployeeLoanDocument di website
+ * Menghasilkan file PDF resmi Formulir Pinjaman Karyawan (Format Vektor A4) sesuai Kop Surat Perusahaan Aktif
  */
 export async function generateEmployeeLoanPdfBlob(loan: EmployeeLoan): Promise<Blob> {
   const doc = new jsPDF({
@@ -96,17 +77,42 @@ export async function generateEmployeeLoanPdfBlob(loan: EmployeeLoan): Promise<B
   const contentWidth = pageWidth - margin * 2; // 182mm
   let y = 11;
 
-  // 1. KOP SURAT RESMI PT. NUSANTARA MINERAL SUKSES ABADI (/kop-surat-nmsa-full.png)
+  // 1. KOP SURAT RESMI DINAMIS SESUAI PERUSAHAAN AKTIF / DOKUMEN
+  const companyMeta = resolveCompanyHeaderMeta(loan);
   let drewImageHeader = false;
   try {
-    const kopDataUrl = await getKopSuratImageDataUrl();
-    if (kopDataUrl) {
-      // Rasio asli gambar kop surat: 1002 x 216 (aspect ratio = 4.638889)
-      const imgWidth = contentWidth;
-      const imgHeight = Math.round((imgWidth / (1002 / 216)) * 10) / 10; // ~39.2mm
-      doc.addImage(kopDataUrl, 'PNG', margin, y, imgWidth, imgHeight);
-      y += imgHeight + 4;
-      drewImageHeader = true;
+    const logoInfo = companyMeta.logoUrl ? await fetchLogoAsDataUrl(companyMeta.logoUrl) : null;
+    if (logoInfo?.dataUrl) {
+      const aspect = logoInfo.aspect || (1002 / 216);
+      if (aspect >= 2.0) {
+        const imgWidth = contentWidth;
+        const imgHeight = Math.min(42, Math.round((imgWidth / aspect) * 10) / 10);
+        doc.addImage(logoInfo.dataUrl, 'PNG', margin, y, imgWidth, imgHeight);
+        y += imgHeight + 4;
+        drewImageHeader = true;
+      } else {
+        const iconH = 18;
+        const iconW = Math.min(40, iconH * aspect);
+        doc.addImage(logoInfo.dataUrl, 'PNG', margin, y, iconW, iconH);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(13.5);
+        doc.setTextColor(0, 0, 0);
+        doc.text(companyMeta.name, pageWidth - margin, y + 5, { align: 'right' });
+        doc.setFontSize(9);
+        doc.text(companyMeta.subtitle || '', pageWidth - margin, y + 9.5, { align: 'right' });
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(8);
+        doc.text(companyMeta.address || '', pageWidth - margin, y + 13.5, { align: 'right' });
+        if (companyMeta.contact) {
+          doc.text(companyMeta.contact, pageWidth - margin, y + 17.5, { align: 'right' });
+        }
+        y += 21;
+        doc.setDrawColor(0, 0, 0);
+        doc.setLineWidth(0.6);
+        doc.line(margin, y, pageWidth - margin, y);
+        y += 5;
+        drewImageHeader = true;
+      }
     }
   } catch (err) {
     console.warn('Gagal memuat gambar kop surat untuk PDF, memakai fallback vektor:', err);
@@ -116,25 +122,31 @@ export async function generateEmployeeLoanPdfBlob(loan: EmployeeLoan): Promise<B
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(14);
     doc.setTextColor(0, 0, 0);
-    doc.text('PT. NUSANTARA MINERAL SUKSES ABADI', pageWidth / 2, y + 4, { align: 'center' });
+    doc.text(companyMeta.name, pageWidth / 2, y + 4, { align: 'center' });
     y += 9;
 
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(9.5);
-    doc.setTextColor(20, 20, 20);
-    doc.text('WISMA NH BUILDING No.. 2B – C LT. 1', pageWidth / 2, y, { align: 'center' });
-    y += 4.2;
+    if (companyMeta.subtitle) {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9.5);
+      doc.setTextColor(20, 20, 20);
+      doc.text(companyMeta.subtitle, pageWidth / 2, y, { align: 'center' });
+      y += 4.2;
+    }
 
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8.5);
-    doc.setTextColor(40, 40, 40);
-    doc.text('JL. RAYA PASAR MINGGU, JAKARTA SELATAN, DKI Jakarta 12780', pageWidth / 2, y, { align: 'center' });
-    y += 3.8;
+    if (companyMeta.address) {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8.5);
+      doc.setTextColor(40, 40, 40);
+      doc.text(companyMeta.address, pageWidth / 2, y, { align: 'center' });
+      y += 3.8;
+    }
 
-    doc.setFontSize(8);
-    doc.setTextColor(60, 60, 60);
-    doc.text('Email : nusantaramineralsuksesabadi@gmail.com | Phone : 021.27533169', pageWidth / 2, y, { align: 'center' });
-    y += 4;
+    if (companyMeta.contact) {
+      doc.setFontSize(8);
+      doc.setTextColor(60, 60, 60);
+      doc.text(companyMeta.contact, pageWidth / 2, y, { align: 'center' });
+      y += 4;
+    }
 
     doc.setDrawColor(0, 0, 0);
     doc.setLineWidth(0.6);

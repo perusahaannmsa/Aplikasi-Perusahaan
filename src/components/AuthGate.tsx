@@ -382,7 +382,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
                     required
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
-                    placeholder="nama@nmsa.com"
+                    placeholder="yudiakungaming@gmail.com"
                     disabled={isLoading}
                     className="w-full pl-10 pr-4 py-2.5 bg-stone-900/90 border border-stone-800 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 text-stone-100 placeholder:text-stone-600 transition"
                   />

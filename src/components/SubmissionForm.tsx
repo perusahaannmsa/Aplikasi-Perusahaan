@@ -29,6 +29,10 @@ import {
   DuplicateSubmissionMatch,
   normalizeText 
 } from '../utils/duplicateDetector';
+import {
+  normalizeSignerCompanyId,
+  resolveCompanySignerBundle,
+} from '../utils/companySigners';
 
 interface SubmissionFormProps {
   initialSubmission?: Submission | null;
@@ -592,15 +596,17 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
     const isInv = jenisLower.includes('invoice') || jenisLower.includes('tagihan') || kodeLower.includes('inv');
     setIsInvoice(isInv);
   }, [jenisPengajuan, kode, custodiansConfig, effectiveHolders]);
-  // Signatures
-  const [dibuatOleh, setDibuatOleh] = useState(() => localStorage.getItem('NUSANTARA_DEFAULT_CREATOR_NAME') || 'Nur Wahyudi');
-  const [disetujuiOleh, setDisetujuiOleh] = useState(() => localStorage.getItem('NUSANTARA_DEFAULT_APPROVER_NAME') || '');
-  const [diverifikasiOleh, setDiverifikasiOleh] = useState(() => localStorage.getItem('NUSANTARA_DEFAULT_VERIFIER_NAME') || 'Andi Muhammad Rifki');
-  const [diverifikasiJabatan, setDiverifikasiJabatan] = useState(() => localStorage.getItem('NUSANTARA_DEFAULT_VERIFIER_JABATAN') || 'Direktur');
-  const [disetujuiOleh2, setDisetujuiOleh2] = useState(() => localStorage.getItem('NUSANTARA_DEFAULT_APPROVER2_NAME') || 'Harijon');
-  const [disetujuiJabatan2, setDisetujuiJabatan2] = useState(() => localStorage.getItem('NUSANTARA_DEFAULT_APPROVER2_JABATAN') || 'Direktur Keuangan');
-  const [dibukukanOleh, setDibukukanOleh] = useState(() => localStorage.getItem('NUSANTARA_DEFAULT_BOOKKEEPER_NAME') || 'Sri Ekowati');
-  const [dibukukanJabatan, setDibukukanJabatan] = useState(() => localStorage.getItem('NUSANTARA_DEFAULT_BOOKKEEPER_JABATAN') || 'Manager Keuangan');
+  // Signatures (strictly scoped to active companyId)
+  const activeSignerCompanyId = normalizeSignerCompanyId(initialSubmission?.companyId, userProfile?.companyId);
+  const initialCompanyBundle = resolveCompanySignerBundle(activeSignerCompanyId, userProfile);
+  const [dibuatOleh, setDibuatOleh] = useState(() => initialCompanyBundle.creatorName || 'Nur Wahyudi');
+  const [disetujuiOleh, setDisetujuiOleh] = useState(() => initialCompanyBundle.approverName || 'Harijon');
+  const [diverifikasiOleh, setDiverifikasiOleh] = useState(() => initialCompanyBundle.verifierName || 'Andi Muhammad Rifki');
+  const [diverifikasiJabatan, setDiverifikasiJabatan] = useState(() => initialCompanyBundle.verifierJabatan || 'Direktur');
+  const [disetujuiOleh2, setDisetujuiOleh2] = useState(() => initialCompanyBundle.approver2Name || 'H. Andi Nursyam Halid');
+  const [disetujuiJabatan2, setDisetujuiJabatan2] = useState(() => initialCompanyBundle.approver2Jabatan || 'Direktur Utama');
+  const [dibukukanOleh, setDibukukanOleh] = useState(() => initialCompanyBundle.bookkeeperName || 'Sri Ekowati');
+  const [dibukukanJabatan, setDibukukanJabatan] = useState(() => initialCompanyBundle.bookkeeperJabatan || 'Manager Keuangan');
 
   // Salary details state
   const [namaKaryawanSalary, setNamaKaryawanSalary] = useState('');
@@ -1375,23 +1381,19 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
       setPettyCashCustodian('');
       setPettyCashLocalFile(null);
       setPettyCashDriveFile(null);
-      const storedDefaultCreator = localStorage.getItem('NUSANTARA_DEFAULT_CREATOR_NAME');
-      const storedDefaultApprover = localStorage.getItem('NUSANTARA_DEFAULT_APPROVER_NAME');
-      const storedDefaultVerifier = localStorage.getItem('NUSANTARA_DEFAULT_VERIFIER_NAME');
-      const storedDefaultVerifierJabatan = localStorage.getItem('NUSANTARA_DEFAULT_VERIFIER_JABATAN');
-      const storedDefaultApprover2 = localStorage.getItem('NUSANTARA_DEFAULT_APPROVER2_NAME');
-      const storedDefaultApprover2Jabatan = localStorage.getItem('NUSANTARA_DEFAULT_APPROVER2_JABATAN');
-      const storedDefaultBookkeeper = localStorage.getItem('NUSANTARA_DEFAULT_BOOKKEEPER_NAME');
-      const storedDefaultBookkeeperJabatan = localStorage.getItem('NUSANTARA_DEFAULT_BOOKKEEPER_JABATAN');
+      const compSignerBundle = resolveCompanySignerBundle(
+        normalizeSignerCompanyId(userProfile?.companyId),
+        userProfile
+      );
 
-      setDibuatOleh(storedDefaultCreator || details?.sigDibuat || userProfile?.fullName || 'Nur Wahyudi');
-      setDisetujuiOleh(storedDefaultApprover || details?.sigDisetujui || 'Harijon');
-      setDiverifikasiOleh(storedDefaultVerifier || details?.sigDiverifikasi || details?.sigKeuangan || 'Andi Muhammad Rifki');
-      setDiverifikasiJabatan(storedDefaultVerifierJabatan || details?.sigDiverifikasiJabatan || 'Direktur');
-      setDisetujuiOleh2(storedDefaultApprover2 || details?.sigDirektur || 'H. Andi Nursyam Halid');
-      setDisetujuiJabatan2(storedDefaultApprover2Jabatan || details?.sigDirekturJabatan || 'Direktur Utama');
-      setDibukukanOleh(storedDefaultBookkeeper || details?.sigAccounting || 'Sri Ekowati');
-      setDibukukanJabatan(storedDefaultBookkeeperJabatan || details?.sigAccountingJabatan || 'Manager Keuangan');
+      setDibuatOleh(compSignerBundle.creatorName || details?.sigDibuat || userProfile?.fullName || 'Nur Wahyudi');
+      setDisetujuiOleh(compSignerBundle.approverName || details?.sigDisetujui || 'Harijon');
+      setDiverifikasiOleh(compSignerBundle.verifierName || details?.sigDiverifikasi || details?.sigKeuangan || 'Andi Muhammad Rifki');
+      setDiverifikasiJabatan(compSignerBundle.verifierJabatan || details?.sigDiverifikasiJabatan || 'Direktur');
+      setDisetujuiOleh2(compSignerBundle.approver2Name || details?.sigDirektur || 'H. Andi Nursyam Halid');
+      setDisetujuiJabatan2(compSignerBundle.approver2Jabatan || details?.sigDirekturJabatan || 'Direktur Utama');
+      setDibukukanOleh(compSignerBundle.bookkeeperName || details?.sigAccounting || 'Sri Ekowati');
+      setDibukukanJabatan(compSignerBundle.bookkeeperJabatan || details?.sigAccountingJabatan || 'Manager Keuangan');
 
       setItems([
         { id: Math.random().toString(), no: 1, item: '', jumlahVolume: '', total: 0, keterangan: '' }
@@ -1989,8 +1991,30 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
           }, { actionName: `upload ${fileName}` });
         };
 
-        // Create a temporary object representation for PDF drawing
-        const tempSubmissionForPdf = {
+        // Create a temporary object representation for PDF drawing (including active company identity & kop surat)
+        const resolvedPdfCompanyId = (
+          initialSubmission?.companyId ||
+          userProfile?.companyId ||
+          (typeof window !== 'undefined' ? localStorage.getItem('NUSANTARA_ACTIVE_COMPANY_ID') : '') ||
+          'nmsa'
+        ).toLowerCase().trim();
+        const resolvedPdfCompanyName =
+          initialSubmission?.companyName ||
+          userProfile?.companyName ||
+          userProfile?.companyDetails?.fullName ||
+          (typeof window !== 'undefined' ? localStorage.getItem('NUSANTARA_ACTIVE_COMPANY_NAME') : '') ||
+          '';
+        const resolvedPdfCompanyLogoUrl =
+          initialSubmission?.companyLogoUrl ||
+          userProfile?.companyDetails?.logoUrl ||
+          userProfile?.companyLogoUrl ||
+          (typeof window !== 'undefined' ? localStorage.getItem('NUSANTARA_ACTIVE_COMPANY_LOGO_URL') : '') ||
+          '';
+
+        const tempSubmissionForPdf: Partial<Submission> = {
+          companyId: resolvedPdfCompanyId,
+          companyName: resolvedPdfCompanyName,
+          companyLogoUrl: resolvedPdfCompanyLogoUrl,
           lokasi,
           tanggal,
           jenisPengajuan,
@@ -2006,6 +2030,10 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
           disetujuiJabatan2,
           dibukukanOleh,
           dibukukanJabatan,
+          f1Signers: initialSubmission?.f1Signers,
+          f2Signers: initialSubmission?.f2Signers,
+          signatureStyle: initialSubmission?.signatureStyle,
+          f2ApprovedBy: initialSubmission?.f2ApprovedBy,
           items: items.map(item => ({
             ...item,
             total: Number(item.total) || 0
@@ -2429,6 +2457,9 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
 
       const payload: Submission = {
         id: id || `sub-${Date.now()}`,
+        companyId: (initialSubmission?.companyId || userProfile?.companyId || localStorage.getItem('NUSANTARA_ACTIVE_COMPANY_ID') || 'nmsa').toLowerCase().trim(),
+        companyName: initialSubmission?.companyName || userProfile?.companyName || localStorage.getItem('NUSANTARA_ACTIVE_COMPANY_NAME') || undefined,
+        companyLogoUrl: initialSubmission?.companyLogoUrl || userProfile?.companyDetails?.logoUrl || userProfile?.companyLogoUrl || localStorage.getItem('NUSANTARA_ACTIVE_COMPANY_LOGO_URL') || undefined,
         lokasi,
         tanggal,
         jenisPengajuan,
@@ -2496,6 +2527,10 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         disetujuiJabatan2,
         dibukukanOleh,
         dibukukanJabatan,
+        ...(initialSubmission?.f1Signers ? { f1Signers: initialSubmission.f1Signers } : {}),
+        ...(initialSubmission?.f2Signers ? { f2Signers: initialSubmission.f2Signers } : {}),
+        ...(initialSubmission?.signatureStyle ? { signatureStyle: initialSubmission.signatureStyle } : {}),
+        ...(initialSubmission?.f2ApprovedBy ? { f2ApprovedBy: initialSubmission.f2ApprovedBy } : {}),
 
         // Project & RAB link (Accurate Online Proyek Integration)
         projectId: projectId || undefined,

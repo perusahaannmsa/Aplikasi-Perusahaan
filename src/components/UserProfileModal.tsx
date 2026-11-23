@@ -19,6 +19,12 @@ import {
 } from 'lucide-react';
 import { DriveAccountsManager } from './DriveAccountsManager';
 import { getConnectedDrives, saveConnectedDrives } from '../firebase';
+import {
+  normalizeSignerCompanyId,
+  resolveCompanySignerBundle,
+  saveCompanySignerBundle,
+  resetCompanySignerBundle,
+} from '../utils/companySigners';
 
 interface UserProfileModalProps {
   isOpen: boolean;
@@ -52,16 +58,19 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   const [isSaved, setIsSaved] = useState(false);
   const [isResetDone, setIsResetDone] = useState(false);
 
-  // Load settings on mount / open
+  const activeCompanyId = normalizeSignerCompanyId(userProfile?.companyId);
+
+  // Load settings strictly for the active company
   const loadAllSettings = () => {
-    setCreatorName(localStorage.getItem('NUSANTARA_DEFAULT_CREATOR_NAME') || userProfile?.fullName || 'Nur Wahyudi');
-    setApproverName(localStorage.getItem('NUSANTARA_DEFAULT_APPROVER_NAME') || 'Harijon');
-    setVerifierName(localStorage.getItem('NUSANTARA_DEFAULT_VERIFIER_NAME') || 'Andi Muhammad Rifki');
-    setVerifierJabatan(localStorage.getItem('NUSANTARA_DEFAULT_VERIFIER_JABATAN') || 'Direktur');
-    setApprover2Name(localStorage.getItem('NUSANTARA_DEFAULT_APPROVER2_NAME') || 'H. Andi Nursyam Halid');
-    setApprover2Jabatan(localStorage.getItem('NUSANTARA_DEFAULT_APPROVER2_JABATAN') || 'Direktur Utama');
-    setBookkeeperName(localStorage.getItem('NUSANTARA_DEFAULT_BOOKKEEPER_NAME') || 'Sri Ekowati');
-    setBookkeeperJabatan(localStorage.getItem('NUSANTARA_DEFAULT_BOOKKEEPER_JABATAN') || 'Manager Keuangan');
+    const bundle = resolveCompanySignerBundle(activeCompanyId, userProfile);
+    setCreatorName(bundle.creatorName || userProfile?.fullName || 'Nur Wahyudi');
+    setApproverName(bundle.approverName || 'Harijon');
+    setVerifierName(bundle.verifierName || 'Andi Muhammad Rifki');
+    setVerifierJabatan(bundle.verifierJabatan || 'Direktur');
+    setApprover2Name(bundle.approver2Name || 'H. Andi Nursyam Halid');
+    setApprover2Jabatan(bundle.approver2Jabatan || 'Direktur Utama');
+    setBookkeeperName(bundle.bookkeeperName || 'Sri Ekowati');
+    setBookkeeperJabatan(bundle.bookkeeperJabatan || 'Manager Keuangan');
 
     const list = getConnectedDrives();
     setDrives(list);
@@ -71,21 +80,36 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     if (isOpen) {
       loadAllSettings();
     }
-  }, [userProfile, isOpen]);
+  }, [userProfile, activeCompanyId, isOpen]);
 
   if (!isOpen) return null;
 
-  // Save all custom defaults to local storage
+  // Save all custom defaults strictly to active company's isolated signer bundle
   const handleSaveAllSettings = (e: React.FormEvent) => {
     e.preventDefault();
-    localStorage.setItem('NUSANTARA_DEFAULT_CREATOR_NAME', creatorName.trim());
-    localStorage.setItem('NUSANTARA_DEFAULT_APPROVER_NAME', approverName.trim());
-    localStorage.setItem('NUSANTARA_DEFAULT_VERIFIER_NAME', verifierName.trim());
-    localStorage.setItem('NUSANTARA_DEFAULT_VERIFIER_JABATAN', verifierJabatan.trim());
-    localStorage.setItem('NUSANTARA_DEFAULT_APPROVER2_NAME', approver2Name.trim());
-    localStorage.setItem('NUSANTARA_DEFAULT_APPROVER2_JABATAN', approver2Jabatan.trim());
-    localStorage.setItem('NUSANTARA_DEFAULT_BOOKKEEPER_NAME', bookkeeperName.trim());
-    localStorage.setItem('NUSANTARA_DEFAULT_BOOKKEEPER_JABATAN', bookkeeperJabatan.trim());
+    const existing = resolveCompanySignerBundle(activeCompanyId, userProfile);
+    const updatedF1 = [...existing.f1Signers];
+    if (updatedF1[0]) updatedF1[0] = { ...updatedF1[0], name: creatorName.trim() || updatedF1[0].name };
+    if (updatedF1[1]) updatedF1[1] = { ...updatedF1[1], name: bookkeeperName.trim() || updatedF1[1].name, role: bookkeeperJabatan.trim() || updatedF1[1].role };
+    if (updatedF1[2]) updatedF1[2] = { ...updatedF1[2], name: verifierName.trim() || updatedF1[2].name, role: verifierJabatan.trim() || updatedF1[2].role };
+    if (updatedF1[3]) updatedF1[3] = { ...updatedF1[3], name: approverName.trim() || updatedF1[3].name };
+
+    const updatedF2 = [...existing.f2Signers];
+    if (updatedF2[0]) updatedF2[0] = { ...updatedF2[0], name: creatorName.trim() || updatedF2[0].name };
+    if (updatedF2[1]) updatedF2[1] = { ...updatedF2[1], name: bookkeeperName.trim() || updatedF2[1].name, role: bookkeeperJabatan.trim() || updatedF2[1].role };
+
+    saveCompanySignerBundle(activeCompanyId, {
+      f1Signers: updatedF1,
+      f2Signers: updatedF2,
+      creatorName: creatorName.trim(),
+      approverName: approverName.trim(),
+      verifierName: verifierName.trim(),
+      verifierJabatan: verifierJabatan.trim(),
+      approver2Name: approver2Name.trim(),
+      approver2Jabatan: approver2Jabatan.trim(),
+      bookkeeperName: bookkeeperName.trim(),
+      bookkeeperJabatan: bookkeeperJabatan.trim(),
+    });
 
     setIsSaved(true);
     setTimeout(() => {
@@ -93,18 +117,10 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     }, 3000);
   };
 
-  // Factory reset method to restore default configurations
+  // Factory reset method scoped to current company signers + Drive token cache
   const handleFactoryReset = () => {
-    if (window.confirm('Apakah Anda yakin ingin mengembalikan seluruh parameter tanda tangan & memutuskan hubungan Google Drive ke setingan bawaan pabrik?')) {
-      // Clear specific local storage keys
-      localStorage.removeItem('NUSANTARA_DEFAULT_CREATOR_NAME');
-      localStorage.removeItem('NUSANTARA_DEFAULT_APPROVER_NAME');
-      localStorage.removeItem('NUSANTARA_DEFAULT_VERIFIER_NAME');
-      localStorage.removeItem('NUSANTARA_DEFAULT_VERIFIER_JABATAN');
-      localStorage.removeItem('NUSANTARA_DEFAULT_APPROVER2_NAME');
-      localStorage.removeItem('NUSANTARA_DEFAULT_APPROVER2_JABATAN');
-      localStorage.removeItem('NUSANTARA_DEFAULT_BOOKKEEPER_NAME');
-      localStorage.removeItem('NUSANTARA_DEFAULT_BOOKKEEPER_JABATAN');
+    if (window.confirm(`Apakah Anda yakin ingin mengembalikan parameter tanda tangan perusahaan ${activeCompanyId.toUpperCase()} & cache sesi Drive ke setingan standar?`)) {
+      resetCompanySignerBundle(activeCompanyId, userProfile);
 
       // Clear token & drive storage
       localStorage.removeItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
@@ -330,17 +346,19 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
           {/* Section 2: Signature Default Management Form */}
           <form onSubmit={handleSaveAllSettings} className="bg-white border border-stone-200 rounded-2xl p-5 space-y-4 shadow-3xs">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
               <div>
                 <h4 className="text-xs font-bold uppercase tracking-wider text-stone-700 flex items-center gap-2">
                   <Settings size={14} className="text-[#917118]" />
-                  Konfigurasi Default Penandatangan (Formulir F1 & F2)
+                  Konfigurasi Default Penandatangan ({activeCompanyId.toUpperCase()})
                 </h4>
                 <p className="text-[10px] text-stone-400 mt-1">
-                  Atur default penandatangan yang kerap berulang di Unit Bisnis Anda agar otomatis terisi di dokumen voucher pdf yang diunduh.
+                  Tersimpan terpisah khusus untuk <strong>{companyName}</strong> dan tidak memengaruhi perusahaan lain.
                 </p>
               </div>
-              <span className="text-[9px] font-mono text-stone-400">Auto-Apply</span>
+              <span className="text-[9px] font-mono font-bold bg-amber-100 text-amber-900 px-2 py-0.5 rounded-full">
+                Terpisah: {activeCompanyId.toUpperCase()}
+              </span>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

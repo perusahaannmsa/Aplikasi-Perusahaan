@@ -1,5 +1,6 @@
 import { BankAccountMaster, InternalMemo, Submission, SavedKopSuratLink } from '../types';
 import { OFFICIAL_KOP_SURAT_BASE64 } from './kopSuratBase64';
+import { resolveCompanyHeaderMeta, fetchLogoAsDataUrl } from '../utils';
 
 export const OFFICIAL_KOP_SURAT_IMAGE_URL = '/kop-surat-nmsa-full.png';
 
@@ -1129,33 +1130,62 @@ export async function generateInternalMemoPdfBlob(
   const isKopSuratEnabled = memo.showKopSurat !== false;
 
   if (isKopSuratEnabled) {
-    // 1. Draw official Kop Surat banner image with exact aspect ratio (1002 x 216 -> 4.6389)
+    const companyMeta = resolveCompanyHeaderMeta(memo);
+    // 1. Draw company Kop Surat banner image dynamically
     let drewImageHeader = false;
     try {
-      const imgDataUrl = await getKopSuratImageDataUrl();
-      if (imgDataUrl) {
-        const imgWidth = contentWidth; // 170mm
-        const imgHeight = Math.round((contentWidth / 4.6389) * 10) / 10; // ~ 36.6mm
-        pdf.addImage(imgDataUrl, 'PNG', margin, yPos, imgWidth, imgHeight);
-        yPos += imgHeight + 6;
-        drewImageHeader = true;
+      const logoInfo = await getKopSuratImageDataUrl(memo);
+      if (logoInfo?.dataUrl) {
+        const aspect = logoInfo.aspect || 4.6389;
+        if (aspect >= 2.0) {
+          const imgWidth = contentWidth; // 170mm
+          const imgHeight = Math.min(42, Math.round((contentWidth / aspect) * 10) / 10);
+          pdf.addImage(logoInfo.dataUrl, 'PNG', margin, yPos, imgWidth, imgHeight);
+          yPos += imgHeight + 6;
+          drewImageHeader = true;
+        } else {
+          const iconH = 18;
+          const iconW = Math.min(38, iconH * aspect);
+          pdf.addImage(logoInfo.dataUrl, 'PNG', margin, yPos, iconW, iconH);
+          pdf.setFont('helvetica', 'bold');
+          pdf.setFontSize(13);
+          pdf.setTextColor(0, 0, 0);
+          pdf.text(companyMeta.name, pageWidth - margin, yPos + 5, { align: 'right' });
+          pdf.setFontSize(8.5);
+          pdf.text(companyMeta.subtitle || '', pageWidth - margin, yPos + 9.5, { align: 'right' });
+          pdf.setFont('helvetica', 'normal');
+          pdf.setFontSize(8);
+          pdf.text(companyMeta.address || '', pageWidth - margin, yPos + 13.5, { align: 'right' });
+          yPos += 21;
+          pdf.setLineWidth(0.8);
+          pdf.setDrawColor(0, 0, 0);
+          pdf.line(margin, yPos, pageWidth - margin, yPos);
+          yPos += 6;
+          drewImageHeader = true;
+        }
       }
     } catch (imgErr) {
       console.warn('Could not render kop surat image, using vector typography header:', imgErr);
     }
 
     if (!drewImageHeader) {
-      // Official typography letterhead fallback
+      // Official typography letterhead fallback matching active/memo company
       pdf.setFont('helvetica', 'bold');
       pdf.setFontSize(14.5);
       pdf.setTextColor(0, 0, 0);
-      pdf.text('PT. NUSANTARA MINERAL SUKSES ABADI', pageWidth / 2, yPos + 6, { align: 'center' });
-      yPos += 12;
+      pdf.text(companyMeta.name, pageWidth / 2, yPos + 6, { align: 'center' });
+      yPos += 11;
 
       pdf.setFont('helvetica', 'normal');
       pdf.setFontSize(8.5);
-      pdf.text('MINING & GENERAL CONTRACTOR - BATUBARA & MINERAL', pageWidth / 2, yPos, { align: 'center' });
-      yPos += 5;
+      pdf.text(companyMeta.subtitle || 'GENERAL CONTRACTOR & TRADING', pageWidth / 2, yPos, { align: 'center' });
+      yPos += 4.5;
+
+      if (companyMeta.address) {
+        pdf.setFontSize(7.8);
+        pdf.text(companyMeta.address, pageWidth / 2, yPos, { align: 'center' });
+        yPos += 4;
+      }
 
       // Double rule line
       pdf.setLineWidth(0.8);
@@ -1396,19 +1426,14 @@ export async function generateInternalMemoPdfBlob(
 }
 
 /**
- * Helper to fetch kop surat image and convert to data URL for jsPDF
+ * Helper to fetch company-matched kop surat image and convert to data URL for jsPDF
  */
-async function getKopSuratImageDataUrl(): Promise<string | null> {
+async function getKopSuratImageDataUrl(memo?: InternalMemo): Promise<{ dataUrl: string; aspect: number } | null> {
   try {
-    const res = await fetch('/kop-surat-nmsa-full.png');
-    if (!res.ok) return null;
-    const blob = await res.blob();
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.onerror = () => resolve(null);
-      reader.readAsDataURL(blob);
-    });
+    const companyMeta = resolveCompanyHeaderMeta(memo);
+    const targetUrl = companyMeta.logoUrl || (!companyMeta.isNmsa ? '' : OFFICIAL_KOP_SURAT_IMAGE_URL);
+    if (!targetUrl) return null;
+    return await fetchLogoAsDataUrl(targetUrl);
   } catch {
     return null;
   }

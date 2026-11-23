@@ -11,6 +11,8 @@ export interface SignerConfigItem {
 export interface SignerSettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
+  companyId?: string;
+  companyName?: string;
   f1Signers: SignerConfigItem[];
   f2Signers: SignerConfigItem[];
   signatureStyle?: 'table' | 'line';
@@ -37,12 +39,16 @@ export const DEFAULT_SIGNER_POOL: SignerConfigItem[] = [
 export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
   isOpen,
   onClose,
+  companyId,
+  companyName,
   f1Signers,
   f2Signers,
   signatureStyle = 'table',
   onSave,
   onReset,
 }) => {
+  const companyCode = (companyId || 'NMSA').toUpperCase().trim();
+  const displayCompanyLabel = companyName ? `${companyCode} • ${companyName}` : companyCode;
   const [localF1, setLocalF1] = useState<SignerConfigItem[]>(f1Signers);
   const [localF2, setLocalF2] = useState<SignerConfigItem[]>(f2Signers);
   const [localStyle, setLocalStyle] = useState<'table' | 'line'>(signatureStyle);
@@ -292,9 +298,14 @@ export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
               <UserCheck size={18} />
             </div>
             <div>
-              <h3 className="text-sm font-bold tracking-tight">Atur Nama, Jabatan & Penanda Tangan (2 - 8 Kolom)</h3>
-              <p className="text-[11px] text-stone-400">
-                Tambah hingga 8 penanda tangan. Kolom 5-8 otomatis diposisikan simetris di baris bawah dengan ukuran kotak sama persis.
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-sm font-bold tracking-tight">Atur Nama, Jabatan &amp; Penanda Tangan (2 - 8 Kolom)</h3>
+                <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-400/40">
+                  Khusus Perusahaan: {displayCompanyLabel}
+                </span>
+              </div>
+              <p className="text-[11px] text-stone-400 mt-0.5">
+                Penyimpanan penanda tangan ini terpisah khusus untuk {companyCode} dan tidak memengaruhi perusahaan lain.
               </p>
             </div>
           </div>
@@ -799,7 +810,7 @@ export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
               className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 border-stone-300 cursor-pointer"
             />
             <label htmlFor="saveAsDefaultCheck" className="text-xs font-bold text-stone-800 cursor-pointer">
-              Simpan sebagai Default Aplikasi (Format & Pilihan Nama Tersimpan)
+              Simpan sebagai Default Perusahaan ({companyCode}) — Tidak memengaruhi perusahaan lain
             </label>
           </div>
 

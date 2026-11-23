@@ -157,6 +157,9 @@ export interface Submission {
   deletedPageIds?: string[];
   showF2?: boolean; // Penanda lembar F2 aktif atau non-aktif
   f2ApprovedBy?: 'harijon' | 'nursyam' | 'none'; // Penyetuju F2 (default: 'none' / tanpa disetujui)
+  f1Signers?: Array<{ title: string; name: string; role: string; enabled?: boolean }>;
+  f2Signers?: Array<{ title: string; name: string; role: string; enabled?: boolean }>;
+  signatureStyle?: 'table' | 'line';
 }
 
 export interface ActivityLog {
@@ -509,6 +512,10 @@ export interface CompanyProfile {
   sigMengetahui?: string;
   sigMengetahuiJabatan?: string;
   sigKeuangan?: string;
+  f1Signers?: Array<{ title: string; name: string; role: string; enabled?: boolean }>;
+  f2Signers?: Array<{ title: string; name: string; role: string; enabled?: boolean }>;
+  signatureStyle?: 'table' | 'line';
+  f2ApprovedBy?: 'harijon' | 'nursyam' | 'none';
   isActive?: boolean;
   googleDrives?: any[];
   createdAt?: string;

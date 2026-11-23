@@ -1,6 +1,7 @@
 import React from 'react';
 import { EmployeeLoan } from '../types';
 import { formatRupiah, terbilang, formatTanggalIndo, calculateLoanSummary } from '../utils/loanUtils';
+import { resolveCompanyHeaderMeta } from '../utils';
 import { NusantaraLogo } from './NusantaraLogo';
 
 interface EmployeeLoanDocumentProps {
@@ -20,9 +21,10 @@ export const EmployeeLoanDocument: React.FC<EmployeeLoanDocumentProps> = ({
 }) => {
   const summary = calculateLoanSummary(loan);
   const payments = Array.isArray(loan.payments) ? loan.payments : [];
+  const companyMeta = resolveCompanyHeaderMeta(loan);
 
-  // Kop Surat Banner Gambar Resmi PT. NMSA (Full Width, sama persis dengan Internal Memo)
-  const headerImageUrl = '/kop-surat-nmsa-full.png';
+  // Kop Surat Banner dinamis mengikuti perusahaan aktif / data pinjaman
+  const headerImageUrl = companyMeta.logoUrl;
 
   return (
     <div
@@ -36,48 +38,64 @@ export const EmployeeLoanDocument: React.FC<EmployeeLoanDocumentProps> = ({
       }}
     >
       <div>
-        {/* 1. KOP SURAT RESMI PT. NMSA (DISAMAKAN DENGAN KOP SURAT INTERNAL MEMO) */}
+        {/* 1. KOP SURAT RESMI DINAMIS */}
         {showKopSurat ? (
           <div className="w-full pb-1 -mt-2 print:mt-0 print:pb-1">
-            <img
-              src={headerImageUrl}
-              alt="Kop Surat PT. Nusantara Mineral Sukses Abadi"
-              className="w-full h-auto block"
-              style={{
-                width: '100%',
-                maxWidth: '100%',
-                height: 'auto',
-                display: 'block',
-                imageRendering: '-webkit-optimize-contrast',
-              }}
-              onError={(e) => {
-                // Fallback jika gambar kop surat tidak terload
-                const target = e.currentTarget;
-                target.style.display = 'none';
-                const fallback = document.getElementById('employee-loan-vector-kop');
-                if (fallback) fallback.style.display = 'block';
-              }}
-              referrerPolicy="no-referrer"
-            />
-            {/* Fallback Header jika offline */}
-            <div id="employee-loan-vector-kop" style={{ display: 'none' }} className="w-full pb-3 border-b-2 border-black">
+            {headerImageUrl ? (
+              <img
+                src={headerImageUrl}
+                alt={`Kop Surat ${companyMeta.name}`}
+                className="w-full h-auto max-h-36 object-contain object-left block"
+                style={{
+                  width: '100%',
+                  maxWidth: '100%',
+                  height: 'auto',
+                  display: 'block',
+                  imageRendering: '-webkit-optimize-contrast',
+                }}
+                onError={(e) => {
+                  const target = e.currentTarget;
+                  target.style.display = 'none';
+                  const fallback = document.getElementById('employee-loan-vector-kop');
+                  if (fallback) fallback.style.display = 'block';
+                }}
+                referrerPolicy="no-referrer"
+              />
+            ) : null}
+            {/* Fallback Header jika gambar tidak tersedia / offline */}
+            <div
+              id="employee-loan-vector-kop"
+              style={{ display: headerImageUrl ? 'none' : 'block' }}
+              className="w-full pb-3 border-b-2 border-black"
+            >
               <div className="flex items-center justify-between">
                 <div className="w-1/3 flex items-center justify-start">
-                  <NusantaraLogo size="lg" className="h-16 w-auto object-contain" />
+                  <NusantaraLogo
+                    size="lg"
+                    companyName={companyMeta.name}
+                    logoUrl={companyMeta.logoUrl}
+                    className="h-16 w-auto object-contain"
+                  />
                 </div>
                 <div className="w-2/3 text-right">
                   <h1 className="text-base font-black tracking-tight text-black uppercase">
-                    PT. NUSANTARA MINERAL SUKSES ABADI
+                    {companyMeta.name}
                   </h1>
-                  <p className="text-[10pt] font-bold text-black mt-0.5">
-                    WISMA NH BUILDING No.. 2B – C LT. 1
-                  </p>
-                  <p className="text-[9pt] text-stone-800">
-                    JL. RAYA PASAR MINGGU, JAKARTA SELATAN, DKI Jakarta 12780
-                  </p>
-                  <p className="text-[9pt] text-stone-800">
-                    Email : nusantaramineralsuksesabadi@gmail.com | Phone : 021.27533169
-                  </p>
+                  {companyMeta.subtitle && (
+                    <p className="text-[10pt] font-bold text-black mt-0.5">
+                      {companyMeta.subtitle}
+                    </p>
+                  )}
+                  {companyMeta.address && (
+                    <p className="text-[9pt] text-stone-800">
+                      {companyMeta.address}
+                    </p>
+                  )}
+                  {companyMeta.contact && (
+                    <p className="text-[9pt] text-stone-800">
+                      {companyMeta.contact}
+                    </p>
+                  )}
                 </div>
               </div>
             </div>

@@ -98,15 +98,10 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
 
     const list = getConnectedDrives();
     setDrives(list);
-    const authList = getAuthorizedDriveEmails();
-    setAuthorizedEmails(authList);
-    const currentMaster = getMasterDriveEmail();
-    setMasterEmail(currentMaster);
-    setFlexibleModeState(isDriveFlexibleMode());
-
-    if (!manualTokenEmail && authList.length > 0) {
-      setManualTokenEmail(currentMaster || authList[0]);
-    }
+    setAuthorizedEmails([LOCKED_MASTER_DRIVE_EMAIL]);
+    setMasterEmail(LOCKED_MASTER_DRIVE_EMAIL);
+    setFlexibleModeState(false);
+    setManualTokenEmail(LOCKED_MASTER_DRIVE_EMAIL);
   };
 
   useEffect(() => {
@@ -138,14 +133,11 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
   };
 
   const handleToggleFlexibleMode = async () => {
-    const next = !flexibleMode;
-    setFlexibleModeState(next);
-    await setDriveFlexibleMode(next);
+    setFlexibleModeState(false);
+    await setDriveFlexibleMode(false);
     showFeedback(
-      'success', 
-      next 
-        ? 'Mode Fleksibel Aktif: Semua akun Google Drive sekarang diizinkan terhubung tanpa batasan whitelist!' 
-        : 'Mode Whitelist Aktif: Hanya akun yang terdaftar dalam daftar di bawah yang diizinkan menautkan Google Drive.'
+      'info',
+      `Penyimpanan Google Drive dikunci permanen khusus ke akun ${LOCKED_MASTER_DRIVE_EMAIL} dan tidak dapat diubah ke akun lain.`
     );
   };
 
@@ -321,7 +313,7 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
                 </span>
               </div>
               <p className="text-xs text-stone-300 font-mono mt-0.5">
-                PT Nusantara Mineral Sukses Abadi • Bebas Tambah &amp; Ganti Akun Google Tanpa Hambatan
+                Penyimpanan Permanen Terkunci • Eksklusif Akun {LOCKED_MASTER_DRIVE_EMAIL}
               </p>
             </div>
           </div>
@@ -347,10 +339,10 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
                   : 'text-stone-500 hover:text-stone-800 border-transparent'
               }`}
             >
-              <Users size={14} className={activeTab === 'whitelist' ? 'text-amber-600' : ''} />
-              <span>Daftar Akun Terdaftar (Whitelist)</span>
-              <span className="bg-stone-200 text-stone-700 text-[10px] px-1.5 py-0.2 rounded-full font-mono">
-                {authorizedEmails.length}
+              <Lock size={14} className={activeTab === 'whitelist' ? 'text-amber-600' : ''} />
+              <span>Akun Drive Permanen</span>
+              <span className="bg-amber-100 text-amber-800 text-[10px] px-1.5 py-0.2 rounded-full font-mono">
+                Terkunci
               </span>
             </button>
 
@@ -432,230 +424,112 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
         {/* Scrollable Content */}
         <div className="p-5 overflow-y-auto space-y-5 flex-1 bg-stone-50/50">
           
-          {/* TAB 1: WHITELIST & ACCOUNT MANAGEMENT */}
+          {/* TAB 1: PERMANENT LOCKED GOOGLE DRIVE ACCOUNT */}
           {activeTab === 'whitelist' && (
             <div className="space-y-5">
               
-              {/* Flexible Mode Switch Banner */}
-              <div className="bg-white border border-stone-250 rounded-2xl p-4 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              {/* Permanent Lock Status Banner */}
+              <div className="bg-gradient-to-r from-amber-50 via-white to-emerald-50 border border-amber-300 rounded-2xl p-4 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold uppercase tracking-wider text-stone-800">
-                      Pengaturan Otorisasi Akun Google
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Lock size={15} className="text-amber-700 shrink-0" />
+                    <span className="text-xs font-black uppercase tracking-wider text-stone-900">
+                      Penyimpanan Google Drive Terkunci Permanen
                     </span>
-                    <span className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded-full ${
-                      flexibleMode ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                    }`}>
-                      {flexibleMode ? 'MODE FLEKSIBEL (SEMUA AKUN)' : 'MODE TERBATAS (WHITELIST)'}
+                    <span className="text-[9px] font-mono font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
+                      LOCKED PERMANEN
                     </span>
                   </div>
-                  <p className="text-[11px] text-stone-500 leading-relaxed">
-                    {flexibleMode 
-                      ? 'Semua akun Google (perusahaan maupun pribadi) diizinkan menghubungkan Google Drive tanpa hambatan penolakan.'
-                      : 'Hanya akun-akun yang terdaftar dalam daftar di bawah ini yang boleh menghubungkan Google Drive ke aplikasi ini.'}
+                  <p className="text-[11px] text-stone-600 leading-relaxed">
+                    Seluruh arsip aplikasi (Voucher, Absen, Internal Memo, SPPD, Pinjaman &amp; PPh) dikunci permanen ke akun Google Drive{' '}
+                    <strong className="font-mono text-stone-900">{LOCKED_MASTER_DRIVE_EMAIL}</strong>. Akun ini tidak dapat diubah, diganti, maupun dihapus saat ganti perusahaan atau update aplikasi.
                   </p>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={handleToggleFlexibleMode}
-                  className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer shadow-3xs shrink-0 ${
-                    flexibleMode
-                      ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                      : 'bg-stone-800 hover:bg-stone-900 text-stone-200'
-                  }`}
-                >
-                  {flexibleMode ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}
-                  <span>{flexibleMode ? 'Mode Fleksibel Aktif' : 'Aktifkan Mode Fleksibel'}</span>
-                </button>
               </div>
 
-              {/* Form Tambah Akun Google Baru */}
-              <div className="bg-white border border-stone-250 rounded-2xl p-4 shadow-xs space-y-3">
-                <div className="flex items-center gap-2">
-                  <Plus size={15} className="text-emerald-700" />
-                  <h4 className="text-xs font-bold text-stone-900 uppercase tracking-wider">
-                    Tambah Akun Google Baru yang Diizinkan
-                  </h4>
-                </div>
-                <form onSubmit={handleAddAuthorizedEmail} className="flex flex-col sm:flex-row gap-2">
-                  <div className="relative flex-1">
-                    <Mail size={14} className="absolute left-3 top-3 text-stone-400" />
-                    <input
-                      type="email"
-                      value={newEmailInput}
-                      onChange={(e) => setNewEmailInput(e.target.value)}
-                      placeholder="Masukkan alamat email Google..."
-                      className="w-full bg-stone-50 border border-stone-300 focus:border-amber-500 focus:bg-white rounded-xl pl-9 pr-3 py-2 text-xs font-mono focus:outline-none transition"
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-4 py-2 rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-3xs shrink-0"
-                  >
-                    <Plus size={14} />
-                    <span>Daftarkan Akun</span>
-                  </button>
-                </form>
-              </div>
-
-              {/* Daftar Akun Terdaftar (With Edit & Action Buttons) */}
+              {/* Akun Permanen Terkunci */}
               <div className="bg-white border border-stone-250 rounded-2xl p-4 shadow-xs space-y-3">
                 <div className="flex items-center justify-between border-b border-stone-150 pb-2.5">
                   <div className="flex items-center gap-2">
-                    <Users size={15} className="text-amber-700" />
+                    <ShieldCheck size={15} className="text-emerald-700" />
                     <h4 className="text-xs font-bold text-stone-900 uppercase tracking-wider">
-                      Daftar Akun Google Drive Terdaftar ({authorizedEmails.length} Akun)
+                      Akun Google Drive Utama (Permanen)
                     </h4>
                   </div>
-                  <span className="text-[10px] text-stone-400 font-mono">
-                    Klik "Edit" untuk mengubah alamat email akun
+                  <span className="text-[10px] text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-lg font-mono font-bold">
+                    Hanya {LOCKED_MASTER_DRIVE_EMAIL}
                   </span>
                 </div>
 
                 <div className="divide-y divide-stone-100 border border-stone-200 rounded-xl overflow-hidden">
-                  {authorizedEmails.map((email, idx) => {
-                    const isMaster = email.toLowerCase() === masterEmail.toLowerCase();
+                  {[LOCKED_MASTER_DRIVE_EMAIL].map((email, idx) => {
                     const matchedDrive = drives.find(d => d.email.toLowerCase() === email.toLowerCase());
-                    const isEditing = editingEmail?.toLowerCase() === email.toLowerCase();
                     const isValidToken = matchedDrive ? isDriveTokenValid(matchedDrive) : false;
                     const remainingMins = matchedDrive ? getDriveRemainingMinutes(matchedDrive) : 0;
                     const isConnectingThis = isConnecting && connectingEmail?.toLowerCase() === email.toLowerCase();
 
                     return (
                       <div key={email} className="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-stone-50/50 transition">
-                        
-                        {/* Account Info or Edit Form */}
                         <div className="flex items-center gap-3 min-w-0 flex-1">
-                          <div className={`w-7 h-7 rounded-xl flex items-center justify-center text-xs font-bold shrink-0 ${
-                            isMaster ? 'bg-amber-100 text-amber-800 border border-amber-300' : 'bg-stone-100 text-stone-600 border border-stone-200'
-                          }`}>
-                            {idx + 1}
+                          <div className="w-7 h-7 rounded-xl flex items-center justify-center text-xs font-bold shrink-0 bg-amber-100 text-amber-800 border border-amber-300">
+                            <Lock size={13} />
                           </div>
 
-                          {isEditing ? (
-                            <div className="flex items-center gap-2 flex-1 max-w-md">
-                              <input
-                                type="email"
-                                value={editingValue}
-                                onChange={(e) => setEditingValue(e.target.value)}
-                                className="bg-stone-50 border border-amber-500 rounded-lg px-2.5 py-1 text-xs font-mono w-full focus:outline-none"
-                                autoFocus
-                              />
-                              <button
-                                type="button"
-                                onClick={() => handleSaveEdit(email)}
-                                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold cursor-pointer"
-                              >
-                                Simpan
-                              </button>
-                              <button
-                                type="button"
-                                onClick={handleCancelEdit}
-                                className="px-2.5 py-1 bg-stone-200 hover:bg-stone-300 text-stone-700 rounded-lg text-[10px] font-bold cursor-pointer"
-                              >
-                                Batal
-                              </button>
-                            </div>
-                          ) : (
-                            <div className="min-w-0 space-y-0.5">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className="text-xs font-mono font-bold text-stone-900 truncate">
-                                  {maskLockedAccountLabel(email, 'Akun Master Google Drive (Terkunci)')}
-                                </span>
-                                {isMaster && (
-                                  <span className="bg-amber-100 border border-amber-300 text-amber-900 text-[9px] font-black font-mono px-2 py-0.5 rounded-md uppercase tracking-wider flex items-center gap-1">
-                                    <Star size={10} className="fill-amber-500 text-amber-600" />
-                                    MASTER AKTIF
+                          <div className="min-w-0 space-y-0.5">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs font-mono font-bold text-stone-900 truncate">
+                                {LOCKED_MASTER_DRIVE_EMAIL}
+                              </span>
+                              <span className="bg-amber-100 border border-amber-300 text-amber-900 text-[9px] font-black font-mono px-2 py-0.5 rounded-md uppercase tracking-wider flex items-center gap-1">
+                                <Star size={10} className="fill-amber-500 text-amber-600" />
+                                MASTER PERMANEN
+                              </span>
+                              {matchedDrive && (
+                                isValidToken ? (
+                                  <span className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-[9px] font-bold font-mono px-1.5 py-0.2 rounded flex items-center gap-1">
+                                    <ShieldCheck size={10} className="text-emerald-600" />
+                                    Aktif {remainingMins > 0 ? `(~${remainingMins}m)` : ''}
                                   </span>
-                                )}
-                                {matchedDrive && (
-                                  isValidToken ? (
-                                    <span className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-[9px] font-bold font-mono px-1.5 py-0.2 rounded flex items-center gap-1">
-                                      <ShieldCheck size={10} className="text-emerald-600" />
-                                      Aktif {remainingMins > 0 ? `(~${remainingMins}m)` : ''}
-                                    </span>
-                                  ) : (
-                                    <span className="bg-rose-50 border border-rose-200 text-rose-700 text-[9px] font-bold font-mono px-1.5 py-0.2 rounded">
-                                      Kedaluwarsa
-                                    </span>
-                                  )
-                                )}
-                              </div>
-                              {matchedDrive && matchedDrive.quotaLimit > 0 && (
-                                <div className="text-[10px] font-mono text-stone-500">
-                                  Terpakai: {formatBytes(matchedDrive.quotaUsed)} dari {formatBytes(matchedDrive.quotaLimit)}
-                                </div>
+                                ) : (
+                                  <span className="bg-rose-50 border border-rose-200 text-rose-700 text-[9px] font-bold font-mono px-1.5 py-0.2 rounded">
+                                    Kedaluwarsa
+                                  </span>
+                                )
                               )}
                             </div>
-                          )}
+                            {matchedDrive && matchedDrive.quotaLimit > 0 && (
+                              <div className="text-[10px] font-mono text-stone-500">
+                                Terpakai: {formatBytes(matchedDrive.quotaUsed)} dari {formatBytes(matchedDrive.quotaLimit)}
+                              </div>
+                            )}
+                          </div>
                         </div>
 
-                        {/* Action Buttons */}
-                        {!isEditing && (
-                          <div className="flex items-center gap-1.5 self-end sm:self-auto shrink-0 flex-wrap">
-                            
-                            {/* Connect / Reconnect Popup Button */}
-                            <button
-                              type="button"
-                              onClick={() => handleConnectDriveAccount(email)}
-                              disabled={isConnecting}
-                              className="bg-stone-900 hover:bg-stone-800 text-white text-[11px] font-bold px-2.5 py-1.5 rounded-xl transition cursor-pointer flex items-center gap-1 shadow-3xs disabled:opacity-50"
-                              title="Hubungkan akun via pop-up Google"
-                            >
-                              <Cloud size={11} className={isConnectingThis ? 'animate-spin text-amber-400' : 'text-amber-400'} />
-                              <span>{isConnectingThis ? 'Menghubungkan...' : 'Sambungkan'}</span>
-                            </button>
+                        <div className="flex items-center gap-1.5 self-end sm:self-auto shrink-0 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => handleConnectDriveAccount(LOCKED_MASTER_DRIVE_EMAIL)}
+                            disabled={isConnecting}
+                            className="bg-stone-900 hover:bg-stone-800 text-white text-[11px] font-bold px-2.5 py-1.5 rounded-xl transition cursor-pointer flex items-center gap-1 shadow-3xs disabled:opacity-50"
+                            title="Hubungkan akun permanen via pop-up Google"
+                          >
+                            <Cloud size={11} className={isConnectingThis ? 'animate-spin text-amber-400' : 'text-amber-400'} />
+                            <span>{isConnectingThis ? 'Menghubungkan...' : 'Sambungkan'}</span>
+                          </button>
 
-                            {/* Input Token Manual for this account */}
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setManualTokenEmail(email);
-                                setActiveTab('manual-token');
-                              }}
-                              className="bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-300 text-emerald-900 text-[11px] font-bold px-2.5 py-1.5 rounded-xl transition cursor-pointer flex items-center gap-1 shadow-4xs"
-                              title="Input token Google Drive manual untuk akun ini (bebas muter)"
-                            >
-                              <Key size={11} className="text-emerald-700" />
-                              <span>Input Token</span>
-                            </button>
-
-                            {/* Edit Button */}
-                            <button
-                              type="button"
-                              onClick={() => handleStartEdit(email)}
-                              className="p-1.5 text-stone-500 hover:text-stone-800 hover:bg-stone-100 rounded-lg transition cursor-pointer"
-                              title="Edit alamat email akun ini"
-                            >
-                              <Edit2 size={13} />
-                            </button>
-
-                            {/* Set as Master Button */}
-                            {!isMaster && (
-                              <button
-                                type="button"
-                                onClick={() => handleSetMasterAccount(email)}
-                                className="bg-white hover:bg-amber-50 border border-amber-300 text-amber-900 text-[11px] font-bold px-2.5 py-1.5 rounded-xl transition cursor-pointer flex items-center gap-1 shadow-4xs"
-                                title="Jadikan akun ini sebagai Master Google Drive aktif"
-                              >
-                                <Star size={11} className="text-amber-600" />
-                                <span>Master</span>
-                              </button>
-                            )}
-
-                            {/* Delete Button */}
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveAuthorizedEmail(email)}
-                              disabled={authorizedEmails.length <= 1}
-                              className="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                              title="Hapus akun dari daftar"
-                            >
-                              <Trash2 size={13} />
-                            </button>
-                          </div>
-                        )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setManualTokenEmail(LOCKED_MASTER_DRIVE_EMAIL);
+                              setActiveTab('manual-token');
+                            }}
+                            className="bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-300 text-emerald-900 text-[11px] font-bold px-2.5 py-1.5 rounded-xl transition cursor-pointer flex items-center gap-1 shadow-4xs"
+                            title="Input token Google Drive manual untuk akun permanen ini"
+                          >
+                            <Key size={11} className="text-emerald-700" />
+                            <span>Input Token</span>
+                          </button>
+                        </div>
                       </div>
                     );
                   })}
@@ -679,7 +553,7 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
                       Input / Tempel Token Akses Google Drive Secara Langsung
                     </h4>
                     <p className="text-[11px] text-stone-600 font-mono mt-0.5">
-                      Solusi paling ampuh jika jendela pop-up Google terblokir oleh browser atau terus berputar (muter-muter).
+                      Khusus akun Google Drive permanen: <strong>{LOCKED_MASTER_DRIVE_EMAIL}</strong>
                     </p>
                   </div>
                 </div>
@@ -687,27 +561,12 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
                 <form onSubmit={handleManualTokenSubmit} className="space-y-3 pt-2">
                   <div className="space-y-1">
                     <label className="block text-[10px] font-mono font-bold text-stone-600 uppercase tracking-wider">
-                      1. Pilih Akun Google yang Dihubungkan:
+                      1. Akun Google Drive Terkunci Permanen:
                     </label>
-                    <div className="flex gap-2">
-                      <select
-                        value={manualTokenEmail}
-                        onChange={(e) => setManualTokenEmail(e.target.value)}
-                        className="bg-white border border-stone-300 rounded-xl px-3 py-2 text-xs font-mono text-stone-800 focus:outline-none focus:border-emerald-600 flex-1"
-                      >
-                        {authorizedEmails.map(e => (
-                          <option key={e} value={e}>
-                            {maskLockedAccountLabel(e, 'Akun Master Google Drive (Terkunci)')} {e.toLowerCase() === masterEmail.toLowerCase() ? '(Master)' : ''}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        onClick={() => setActiveTab('whitelist')}
-                        className="px-3 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold rounded-xl text-xs transition cursor-pointer"
-                      >
-                        + Tambah Akun Lain
-                      </button>
+                    <div className="flex items-center gap-2 bg-amber-50/80 border border-amber-300 rounded-xl px-3 py-2 text-xs font-mono font-bold text-stone-900">
+                      <Lock size={13} className="text-amber-700 shrink-0" />
+                      <span>{LOCKED_MASTER_DRIVE_EMAIL}</span>
+                      <span className="ml-auto text-[10px] text-amber-800 uppercase">Permanen</span>
                     </div>
                   </div>
 
