@@ -9,8 +9,7 @@ import {
   getUserProfileFromFirestore,
   switchToProductionDatabase,
   switchToAppletDatabase,
-  getActiveFirebaseProjectId,
-  LOCKED_FIREBASE_AUTH_EMAIL
+  getActiveFirebaseProjectId
 } from '../firebase';
 import { Submission } from '../types';
 import { NusantaraLogo } from './NusantaraLogo';
@@ -28,8 +27,8 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
   const [activeProjectId, setActiveProjectId] = useState<string>(() => getActiveFirebaseProjectId());
   const [isOperationNotAllowed, setIsOperationNotAllowed] = useState(false);
 
-  // Form Fields - Login (otomatis terisi akun Firebase default: yudiakungaming@gmail.com)
-  const [loginEmail, setLoginEmail] = useState<string>(LOCKED_FIREBASE_AUTH_EMAIL);
+  // Form Fields - Login (kosong secara default agar tidak menampilkan alamat email secara terbuka)
+  const [loginEmail, setLoginEmail] = useState<string>('');
   const [loginPassword, setLoginPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
@@ -189,7 +188,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
       
       setStatusMsg({
         type: 'success',
-        text: `Sukses! Selamat datang kembali, ${profile?.fullName || user.email}.`
+        text: `Sukses! Selamat datang kembali, ${profile?.fullName || 'Administrator HO'}.`
       });
       
       setTimeout(() => {
@@ -379,10 +378,12 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onLoginSuccess }) => {
                   </span>
                   <input
                     type="email"
+                    name="login-email-ho"
+                    autoComplete="off"
                     required
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
-                    placeholder="yudiakungaming@gmail.com"
+                    placeholder=""
                     disabled={isLoading}
                     className="w-full pl-10 pr-4 py-2.5 bg-stone-900/90 border border-stone-800 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 text-stone-100 placeholder:text-stone-600 transition"
                   />

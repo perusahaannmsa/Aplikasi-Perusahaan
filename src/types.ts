@@ -56,6 +56,8 @@ export interface Submission {
   dpAmount?: number; // Nominal DP atau Cicilan yang sudah dibayarkan
   cicilanNotes?: string; // Catatan termin / cicilan (contoh: "DP 50%", "Termin 1")
   riwayatCicilan?: CicilanPaymentRecord[]; // Riwayat seluruh pembayaran bertahap/cicilan
+  paymentPriority?: 'next' | null; // Penanda sorotan transaksi yang diprioritaskan untuk dibayar selanjutnya
+  paymentPriorityAt?: string; // Timestamp ISO saat ditandai prioritas pembayaran
   driveArchived?: boolean; // Penanda pengarsipan Google Drive selesai
   notes: string;
   

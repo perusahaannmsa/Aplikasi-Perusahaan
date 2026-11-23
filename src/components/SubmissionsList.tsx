@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Submission, ActivityLog } from '../types';
 import { formatRupiah, formatDateIndonesian, isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, sortSubmissionsDescending } from '../utils';
 import { getVoucherShareLink } from '../utils/appLinks';
-import { Search, Eye, Edit2, Trash2, Calendar, MapPin, DollarSign, Plus, Copy, RefreshCw, Cloud, CloudUpload, FileText, Database, History, FileSpreadsheet, CheckCircle, AlertCircle, Printer, Check, ExternalLink, Coins, User, Bell, ChevronDown, Sparkles, Share2, Send, MoreVertical, Receipt, Building2, X, AlertTriangle, Info, Layers, Filter, CreditCard } from 'lucide-react';
+import { Search, Eye, Edit2, Trash2, Calendar, MapPin, DollarSign, Plus, Copy, RefreshCw, Cloud, CloudUpload, FileText, Database, History, FileSpreadsheet, CheckCircle, AlertCircle, Printer, Check, ExternalLink, Coins, User, Bell, ChevronDown, Sparkles, Share2, Send, MoreVertical, Receipt, Building2, X, AlertTriangle, Info, Layers, Filter, CreditCard, Star, Download, RotateCcw } from 'lucide-react';
 import { loadActivityLogsFromFirestore, isFirebaseConfigured, triggerGoogleDriveAutoRefresh } from '../firebase';
 import { LiveClock } from './LiveClock';
 import { normalizeText, extractYearMonth, normalizeExactTransactionCode } from '../utils/duplicateDetector';
@@ -22,6 +22,7 @@ interface SubmissionsListProps {
   onOpenBuktiTransfer?: (submission?: Submission) => void;
   userProfile?: any;
   onMarkAsPaid?: (id: string) => void;
+  onBulkUpdateSubmissions?: (updatedSubs: Submission[], customNotice?: string) => Promise<void> | void;
   layoutMode?: 'standard' | 'spreadsheet' | 'audit_logs' | 'invoice_recap' | 'unpaid_outstanding' | 'petty_cash_recap';
   onLayoutModeChange?: (mode: 'standard' | 'spreadsheet' | 'audit_logs' | 'invoice_recap' | 'unpaid_outstanding' | 'petty_cash_recap') => void;
   pettyCashHolders?: string[];
@@ -32,6 +33,7 @@ interface SubmissionsListProps {
   onForceCloudSync?: () => void;
   onRestoreBackupToFirestore?: () => void;
   onUploadSingleToFirestore?: (submission: Submission) => void;
+  onUploadSelectedToFirestore?: (submissions: Submission[]) => void;
   onUploadUnsyncedToFirestore?: () => void;
   unsyncedSubmissionIds?: Set<string>;
   cloudSyncedIds?: Set<string>;
@@ -57,6 +59,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   onOpenBuktiTransfer,
   userProfile,
   onMarkAsPaid,
+  onBulkUpdateSubmissions,
   layoutMode: propLayoutMode,
   onLayoutModeChange,
   pettyCashHolders = [],
@@ -67,6 +70,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   onForceCloudSync,
   onRestoreBackupToFirestore,
   onUploadSingleToFirestore,
+  onUploadSelectedToFirestore,
   onUploadUnsyncedToFirestore,
   unsyncedSubmissionIds,
   cloudSyncedIds,
@@ -189,12 +193,45 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
     }
   });
 
-  // Centang (Check) aktif untuk pilihan baris massal -> Tandai Sah atau Hapus Terpilih
+  // Centang (Check) aktif untuk pilihan baris massal -> Pilihan menu tindakan lengkap, Prioritas Bayar, Sah, atau Hapus Terpilih
   const [selectedCheckedIds, setSelectedCheckedIds] = useState<string[]>([]);
   const selectedCheckedSet = useMemo(() => new Set(selectedCheckedIds), [selectedCheckedIds]);
+  const showCheckColumn = selectedCheckedIds.length > 0;
   const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
   const [bulkDeleteIncludeDrive, setBulkDeleteIncludeDrive] = useState(true);
+  const [bulkMarkPaidConfirmOpen, setBulkMarkPaidConfirmOpen] = useState(false);
   const [bulkActionToast, setBulkActionToast] = useState<string | null>(null);
+
+  // Dropdown pilihan untuk kolom CHECK (Pilih Semua, Belum Lunas, Prioritas Bayar, Belum Firestore, dll.)
+  const [isCheckMenuOpen, setIsCheckMenuOpen] = useState(false);
+  const [checkMenuPosition, setCheckMenuPosition] = useState<{ top: number; left: number } | null>(null);
+
+  // Filter & sorotan transaksi yang diprioritaskan untuk dibayar selanjutnya
+  const [priorityFilter, setPriorityFilter] = useState<boolean>(() => {
+    try { return sessionStorage.getItem('sublist_priorityFilter') === 'true'; } catch { return false; }
+  });
+  const [pinPriorityTop, setPinPriorityTop] = useState<boolean>(() => {
+    try { return sessionStorage.getItem('sublist_pinPriorityTop') !== 'false'; } catch { return true; }
+  });
+  const [localPriorityIds, setLocalPriorityIds] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem('nmsa_payment_priority_ids');
+      const parsed = stored ? JSON.parse(stored) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+  const localPrioritySet = useMemo(() => new Set(localPriorityIds), [localPriorityIds]);
+
+  const isSubPriorityPayNext = useMemo(() => {
+    return (sub: Submission): boolean => {
+      if (!sub?.id) return false;
+      if (sub.paymentPriority === 'next') return true;
+      if (sub.paymentPriority === null) return false;
+      return localPrioritySet.has(sub.id);
+    };
+  }, [localPrioritySet]);
 
   useEffect(() => {
     const existingSet = new Set((submissions || []).map((s) => s.id));
@@ -214,6 +251,59 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
 
   const handleClearSelectedChecks = () => {
     setSelectedCheckedIds([]);
+  };
+
+  const handleSetPaymentPriority = async (targetSubs: Submission[], enable: boolean) => {
+    const validTargets = (targetSubs || []).filter((s) => s && s.id);
+    if (validTargets.length === 0) return;
+    const targetIds = validTargets.map((s) => s.id);
+    const targetIdSet = new Set(targetIds);
+
+    setLocalPriorityIds((prev) => {
+      const next = enable
+        ? Array.from(new Set([...prev, ...targetIds]))
+        : prev.filter((id) => !targetIdSet.has(id));
+      try {
+        localStorage.setItem('nmsa_payment_priority_ids', JSON.stringify(next));
+      } catch (_) {}
+      return next;
+    });
+
+    if (onBulkUpdateSubmissions) {
+      const nowIso = new Date().toISOString();
+      const updatedSubs: Submission[] = validTargets.map((s) => ({
+        ...s,
+        paymentPriority: enable ? 'next' : null,
+        paymentPriorityAt: enable ? nowIso : undefined,
+      }));
+      await onBulkUpdateSubmissions(updatedSubs);
+    }
+
+    setBulkActionToast(
+      enable
+        ? `⭐ ${validTargets.length} transaksi disorot & diprioritaskan untuk dibayar selanjutnya.`
+        : `✓ Sorotan prioritas pembayaran dihapus dari ${validTargets.length} transaksi.`
+    );
+    setTimeout(() => setBulkActionToast(null), 5000);
+  };
+
+  const handleResetAllFilters = () => {
+    setSearchTerm('');
+    setSearchCategory('all');
+    setMethodFilter('All');
+    setStatusFilter('All');
+    setDateFilter('');
+    setMonthFilter('All');
+    setYearFilter('All');
+    setDiffDateFilter('all');
+    setDuplicateFilterMode('all');
+    setFirestoreFilter('all');
+    setShowOnlyUnsynced(false);
+    setPriorityFilter(false);
+    try {
+      sessionStorage.setItem('sublist_hasCustomPeriodFilter', 'true');
+      sessionStorage.setItem('sublist_priorityFilter', 'false');
+    } catch (_) {}
   };
 
   const handleToggleAcknowledgeDuplicate = (submissionId: string) => {
@@ -290,6 +380,23 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
     setSelectedCheckedIds([]);
     setBulkActionToast(`✓ ${count} transaksi berhasil ditandai sebagai transaksi yang SAH dan tidak lagi terdeteksi sebagai duplikat.`);
     setTimeout(() => setBulkActionToast(null), 5000);
+  };
+
+  const handleUnmarkSelectedAsLegitimate = () => {
+    if (selectedCheckedIds.length === 0) return;
+    const checkedSet = new Set(selectedCheckedIds);
+    setAcknowledgedDuplicateIds((prev) => {
+      const next = prev.filter((id) => !checkedSet.has(id));
+      try { localStorage.setItem('acknowledged_double_submission_ids', JSON.stringify(next)); } catch (_) {}
+      return next;
+    });
+    setCheckedDiffDateIds((prev) => {
+      const next = prev.filter((id) => !checkedSet.has(id));
+      try { localStorage.setItem('nmsa_checked_diff_date_ids', JSON.stringify(next)); } catch (_) {}
+      return next;
+    });
+    setBulkActionToast(`✓ Tanda Sah dibatalkan untuk ${selectedCheckedIds.length} transaksi.`);
+    setTimeout(() => setBulkActionToast(null), 4000);
   };
 
   const isSubVerifiedLegit = useMemo(() => {
@@ -581,11 +688,15 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
         setOpenActionMenuId(null);
         setActionMenuPosition(null);
       }
+      if (!target?.closest('.check-menu-dropdown-root')) {
+        setIsCheckMenuOpen(false);
+      }
     }
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
         setOpenActionMenuId(null);
         setActionMenuPosition(null);
+        setIsCheckMenuOpen(false);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
@@ -677,12 +788,14 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
       sessionStorage.setItem('sublist_invoiceMonthFilter', invoiceMonthFilter);
       sessionStorage.setItem('sublist_invoiceSearchQuery', invoiceSearchQuery);
       sessionStorage.setItem('sublist_invoiceStatusFilter', invoiceStatusFilter);
+      sessionStorage.setItem('sublist_priorityFilter', String(priorityFilter));
+      sessionStorage.setItem('sublist_pinPriorityTop', String(pinPriorityTop));
     } catch (e) {}
   }, [
     searchTerm, searchCategory, methodFilter, statusFilter, yearFilter, monthFilter,
     dateFilter, layoutMode, pettyCashSearchQuery, pettyCashCustodianFilter,
     pettyCashMonthFilter, unpaidSearchTerm, unpaidLocationFilter,
-    invoiceMonthFilter, invoiceSearchQuery, invoiceStatusFilter
+    invoiceMonthFilter, invoiceSearchQuery, invoiceStatusFilter, priorityFilter, pinPriorityTop
   ]);
 
   // Track and restore window scroll position automatically
@@ -974,9 +1087,9 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
         }
       }
 
-      // Filter by Date, Month, Year (saat mode filter duplikat / beda tanggal aktif, tampilkan seluruh grup bulan-sama agar pasangan terlihat bersebelahan)
+      // Filter by Date, Month, Year (saat mode filter duplikat / beda tanggal / prioritas bayar aktif, abaikan batas bulan agar seluruh data terkait terlihat)
       let matchDate = true;
-      if (diffDateFilter !== 'all' || duplicateFilterMode !== 'all') {
+      if (diffDateFilter !== 'all' || duplicateFilterMode !== 'all' || priorityFilter) {
         matchDate = !dateFilter || sub.tanggal === dateFilter;
       } else if (sub.tanggal) {
         const [y, m] = sub.tanggal.split('-'); // Format "YYYY-MM-DD"
@@ -1008,11 +1121,12 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
         firestoreFilter === 'all' ||
         (firestoreFilter === 'unsynced' && isRowUnsynced) ||
         (firestoreFilter === 'synced' && isRowSynced);
+      const matchPriority = !priorityFilter || isSubPriorityPayNext(sub);
 
-      return matchSearch && matchMethod && matchStatus && matchDate && matchDuplicates && matchUnsynced && matchFirestoreFilter && matchDiffDate;
+      return matchSearch && matchMethod && matchStatus && matchDate && matchDuplicates && matchUnsynced && matchFirestoreFilter && matchDiffDate && matchPriority;
     });
 
-    // Sort descending by tanggal (latest date first), or group matching pairs together when duplicate / diffDate filter is active
+    // Sort descending by tanggal (latest date first), or pin priority-to-pay rows at top, or group matching pairs together
     return list.sort((a, b) => {
       if (diffDateFilter !== 'all') {
         const keyA = diffDateDetection.groupSortKeyMap.get(a.id) || '';
@@ -1025,6 +1139,12 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
         const keyB = duplicateInspection.groupSortKeyMap.get(b.id) || '';
         if (keyA !== keyB) {
           return keyA.localeCompare(keyB);
+        }
+      } else if (pinPriorityTop) {
+        const prioA = isSubPriorityPayNext(a) ? 1 : 0;
+        const prioB = isSubPriorityPayNext(b) ? 1 : 0;
+        if (prioA !== prioB) {
+          return prioB - prioA;
         }
       }
 
@@ -1052,7 +1172,288 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
       // 4. Fallback to ID
       return b.id.localeCompare(a.id);
     });
-  }, [submissions, searchTerm, searchCategory, methodFilter, statusFilter, yearFilter, monthFilter, dateFilter, duplicateFilterMode, duplicateInspection, showOnlyUnsynced, firestoreFilter, diffDateFilter, diffDateDetection, checkedDiffDateSet, unsyncedSubmissionIds, hasCloudInventory, cloudSyncedIds]);
+  }, [submissions, searchTerm, searchCategory, methodFilter, statusFilter, yearFilter, monthFilter, dateFilter, duplicateFilterMode, duplicateInspection, showOnlyUnsynced, firestoreFilter, diffDateFilter, diffDateDetection, checkedDiffDateSet, unsyncedSubmissionIds, hasCloudInventory, cloudSyncedIds, priorityFilter, pinPriorityTop, isSubPriorityPayNext]);
+
+  // Ringkasan transaksi yang disorot untuk dibayar selanjutnya (Prioritas Pembayaran)
+  const priorityPaySummary = useMemo(() => {
+    const list = (submissions || []).filter((s) => isSubPriorityPayNext(s));
+    const totalNominal = list.reduce(
+      (sum, s) => sum + ((s.items || []).reduce((acc, it) => acc + (Number(it.total) || 0), 0)),
+      0
+    );
+    const unpaidCount = list.filter((s) => getSubStatus(s) !== 'Lunas').length;
+    return {
+      list,
+      count: list.length,
+      unpaidCount,
+      totalNominal,
+    };
+  }, [submissions, isSubPriorityPayNext]);
+
+  // Ringkasan filter aktif agar pengguna selalu tahu filter apa yang sedang membatasi tampilan
+  const activeFilterDescriptors = useMemo(() => {
+    const items: Array<{ key: string; label: string; onClear: () => void }> = [];
+    if (searchTerm.trim()) {
+      items.push({
+        key: 'search',
+        label: `Kata kunci: "${searchTerm.trim()}"`,
+        onClear: () => setSearchTerm(''),
+      });
+    }
+    if (duplicateFilterMode !== 'all') {
+      const dupLabel =
+        duplicateFilterMode === 'exact_same'
+          ? '100% Sama Semua'
+          : duplicateFilterMode === 'same_month_diff_date'
+          ? 'Bulan Sama, Beda Tanggal'
+          : duplicateFilterMode === 'same_code'
+          ? 'No-Kode Duplikat'
+          : 'Semua Terfilter Duplikat';
+      items.push({
+        key: 'dup',
+        label: `Filter Duplikat: ${dupLabel}`,
+        onClear: () => setDuplicateFilterMode('all'),
+      });
+    }
+    if (diffDateFilter !== 'all') {
+      items.push({
+        key: 'diffdate',
+        label: 'Filter Kode/Transaksi Sama Beda Tgl',
+        onClear: () => setDiffDateFilter('all'),
+      });
+    }
+    if (priorityFilter) {
+      items.push({
+        key: 'priority',
+        label: 'Prioritas Dibayar Selanjutnya',
+        onClear: () => setPriorityFilter(false),
+      });
+    }
+    if (firestoreFilter !== 'all' || showOnlyUnsynced) {
+      items.push({
+        key: 'firestore',
+        label: firestoreFilter === 'synced' ? 'Status: Sudah di Firestore' : 'Status: Belum di Firestore',
+        onClear: () => {
+          setFirestoreFilter('all');
+          setShowOnlyUnsynced(false);
+        },
+      });
+    }
+    if (statusFilter !== 'All') {
+      items.push({
+        key: 'status',
+        label: `Status Bayar: ${statusFilter}`,
+        onClear: () => setStatusFilter('All'),
+      });
+    }
+    if (methodFilter !== 'All') {
+      items.push({
+        key: 'method',
+        label: `Metode: ${methodFilter}`,
+        onClear: () => setMethodFilter('All'),
+      });
+    }
+    if (dateFilter) {
+      items.push({
+        key: 'date',
+        label: `Tanggal: ${dateFilter}`,
+        onClear: () => setDateFilter(''),
+      });
+    } else {
+      if (yearFilter !== 'All' && duplicateFilterMode === 'all' && diffDateFilter === 'all' && !priorityFilter) {
+        items.push({
+          key: 'year',
+          label: `Tahun: ${yearFilter}`,
+          onClear: () => {
+            setYearFilter('All');
+            try { sessionStorage.setItem('sublist_hasCustomPeriodFilter', 'true'); } catch (_) {}
+          },
+        });
+      }
+      if (monthFilter !== 'All' && duplicateFilterMode === 'all' && diffDateFilter === 'all' && !priorityFilter) {
+        const mName = MONTHS_LIST.find((m) => m.value === monthFilter)?.label || monthFilter;
+        items.push({
+          key: 'month',
+          label: `Bulan: ${mName}`,
+          onClear: () => {
+            setMonthFilter('All');
+            try { sessionStorage.setItem('sublist_hasCustomPeriodFilter', 'true'); } catch (_) {}
+          },
+        });
+      }
+    }
+    return items;
+  }, [searchTerm, duplicateFilterMode, diffDateFilter, priorityFilter, firestoreFilter, showOnlyUnsynced, statusFilter, methodFilter, dateFilter, yearFilter, monthFilter]);
+
+  const checkedSelectionGroups = useMemo(() => {
+    const visibleUnpaidIds = filteredSubmissions
+      .filter((s) => getSubStatus(s) !== 'Lunas')
+      .map((s) => s.id);
+    const visibleLunasIds = filteredSubmissions
+      .filter((s) => getSubStatus(s) === 'Lunas')
+      .map((s) => s.id);
+    const visiblePriorityIds = filteredSubmissions
+      .filter((s) => isSubPriorityPayNext(s))
+      .map((s) => s.id);
+    const visibleUnsyncedIds = filteredSubmissions
+      .filter((s) => s?.id && Boolean(unsyncedSubmissionIds?.has(String(s.id).toLowerCase().trim())))
+      .map((s) => s.id);
+    const visibleDuplicateIds = filteredSubmissions
+      .filter((s) => activeDuplicateSubmissionIds.has(s.id))
+      .map((s) => s.id);
+
+    const selectedSubs = submissions.filter((s) => selectedCheckedSet.has(s.id));
+    const selectedTotalNominal = selectedSubs.reduce(
+      (sum, s) => sum + ((s.items || []).reduce((acc, it) => acc + (Number(it.total) || 0), 0)),
+      0
+    );
+    const selectedUnpaidSubs = selectedSubs.filter((s) => getSubStatus(s) !== 'Lunas');
+    const selectedPrioritySubs = selectedSubs.filter((s) => isSubPriorityPayNext(s));
+    const selectedNonPrioritySubs = selectedSubs.filter((s) => !isSubPriorityPayNext(s));
+    const selectedLegitSubs = selectedSubs.filter((s) => isSubVerifiedLegit(s));
+    const selectedUnsyncedSubs = selectedSubs.filter(
+      (s) => s?.id && Boolean(unsyncedSubmissionIds?.has(String(s.id).toLowerCase().trim()))
+    );
+
+    return {
+      visibleUnpaidIds,
+      visibleLunasIds,
+      visiblePriorityIds,
+      visibleUnsyncedIds,
+      visibleDuplicateIds,
+      selectedSubs,
+      selectedTotalNominal,
+      selectedUnpaidSubs,
+      selectedPrioritySubs,
+      selectedNonPrioritySubs,
+      selectedLegitSubs,
+      selectedUnsyncedSubs,
+    };
+  }, [filteredSubmissions, submissions, selectedCheckedSet, isSubPriorityPayNext, unsyncedSubmissionIds, activeDuplicateSubmissionIds, isSubVerifiedLegit]);
+
+  const handleApplyCheckSelection = (ids: string[], mode: 'replace' | 'invert' | 'clear') => {
+    setIsCheckMenuOpen(false);
+    if (mode === 'clear') {
+      setSelectedCheckedIds([]);
+      return;
+    }
+    if (mode === 'invert') {
+      const visibleIds = filteredSubmissions.map((s) => s.id);
+      const visibleSet = new Set(visibleIds);
+      const invertedVisible = visibleIds.filter((id) => !selectedCheckedSet.has(id));
+      setSelectedCheckedIds((prev) => [
+        ...prev.filter((id) => !visibleSet.has(id)),
+        ...invertedVisible,
+      ]);
+      return;
+    }
+    setSelectedCheckedIds(Array.from(new Set(ids)));
+  };
+
+  const openCheckOptionsPopover = (triggerEl: HTMLElement | null) => {
+    if (isCheckMenuOpen) {
+      setIsCheckMenuOpen(false);
+      return;
+    }
+    if (triggerEl) {
+      const rect = triggerEl.getBoundingClientRect();
+      const menuW = 272;
+      let left = rect.left;
+      if (left + menuW > window.innerWidth - 12) {
+        left = Math.max(12, window.innerWidth - menuW - 12);
+      }
+      setCheckMenuPosition({
+        top: Math.min(window.innerHeight - 260, rect.bottom + 6),
+        left: Math.max(12, left),
+      });
+    }
+    setIsCheckMenuOpen(true);
+  };
+
+  const handleBulkMarkCheckedAsPaid = async () => {
+    const unpaidTargets = checkedSelectionGroups.selectedUnpaidSubs;
+    if (unpaidTargets.length === 0) return;
+
+    if (onBulkUpdateSubmissions) {
+      const updatedSubs: Submission[] = unpaidTargets.map((s) => ({
+        ...s,
+        status: 'Lunas' as const,
+        paymentPriority: null,
+        paymentPriorityAt: undefined,
+      }));
+      await onBulkUpdateSubmissions(
+        updatedSubs,
+        `✓ ${updatedSubs.length} transaksi berhasil ditandai SUDAH DIBAYAR (Lunas).`
+      );
+    } else if (onMarkAsPaid) {
+      for (const s of unpaidTargets) {
+        await onMarkAsPaid(s.id);
+      }
+    }
+
+    setLocalPriorityIds((prev) => {
+      const paidSet = new Set(unpaidTargets.map((s) => s.id));
+      const next = prev.filter((id) => !paidSet.has(id));
+      try { localStorage.setItem('nmsa_payment_priority_ids', JSON.stringify(next)); } catch (_) {}
+      return next;
+    });
+    setBulkMarkPaidConfirmOpen(false);
+    setBulkActionToast(`✓ ${unpaidTargets.length} transaksi terpilih berhasil ditandai sebagai LUNAS.`);
+    setTimeout(() => setBulkActionToast(null), 5000);
+  };
+
+  const handleDownloadSelectedCSV = (targetSubs: Submission[]) => {
+    if (!targetSubs || targetSubs.length === 0) {
+      setBulkActionToast('Pilih minimal 1 transaksi untuk diunduh ke CSV.');
+      setTimeout(() => setBulkActionToast(null), 4000);
+      return;
+    }
+    const headers = [
+      'No',
+      'Tanggal',
+      'No Voucher / Kode',
+      'Lokasi',
+      'Jenis Pengajuan',
+      'Penerima',
+      'Metode Pembayaran',
+      'Status',
+      'Prioritas Bayar',
+      'Items Pengeluaran',
+      'Keterangan Items',
+      'Nominal (IDR)',
+    ];
+    const rows = targetSubs.map((sub, idx) => {
+      const subTotal = (sub.items || []).reduce((sum, item) => sum + (Number(item.total) || 0), 0);
+      const itemsStr = (sub.items || []).map((item) => item.item).join(' | ');
+      const specStr = (sub.items || []).map((item) => item.keterangan || '').filter(Boolean).join(' | ');
+      return [
+        String(idx + 1),
+        sub.tanggal || '',
+        sub.kode || '',
+        `"${(sub.lokasi || '').replace(/"/g, '""')}"`,
+        `"${(sub.jenisPengajuan || '').replace(/"/g, '""')}"`,
+        `"${(sub.dibayarkanKepada || '').replace(/"/g, '""')}"`,
+        sub.dibayarkanDengan || '',
+        getSubStatus(sub),
+        isSubPriorityPayNext(sub) ? 'PRIORITAS BAYAR SELANJUTNYA' : '-',
+        `"${itemsStr.replace(/"/g, '""')}"`,
+        `"${specStr.replace(/"/g, '""')}"`,
+        String(subTotal),
+      ];
+    });
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `Transaksi_Terpilih_${targetSubs.length}_Voucher.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setBulkActionToast(`✓ ${targetSubs.length} transaksi terpilih berhasil diekspor ke file CSV.`);
+    setTimeout(() => setBulkActionToast(null), 4000);
+  };
 
   const unsyncedCount = useMemo(() => {
     if (!unsyncedSubmissionIds || unsyncedSubmissionIds.size === 0) return 0;
@@ -1972,13 +2373,15 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 </div>
               </div>
 
-              {/* Unified Filter: Transaksi Duplikat + Status Firestore + Cek Kode / Transaksi Sama Beda Tanggal */}
+              {/* Unified Filter: Transaksi Duplikat + Prioritas Bayar + Status Firestore + Cek Kode / Transaksi Sama Beda Tanggal */}
               <div className="flex flex-col gap-1.5 w-full sm:w-auto">
                 <span className="text-[10px] font-bold text-stone-400 uppercase tracking-wider font-mono">Filter &amp; Cek Data</span>
                 <select
                   className={`w-full sm:w-auto px-3 py-2 rounded-xl text-xs focus:ring-2 focus:outline-none sm:min-w-[205px] transition ${
                     duplicateFilterMode !== 'all'
                       ? 'bg-rose-50 border-2 border-rose-400 text-rose-950 font-bold focus:ring-rose-400'
+                      : priorityFilter
+                      ? 'bg-amber-50 border-2 border-amber-500 text-amber-950 font-bold focus:ring-amber-400'
                       : diffDateFilter !== 'all'
                       ? 'bg-amber-50 border-2 border-amber-400 text-amber-950 font-bold focus:ring-amber-400'
                       : firestoreFilter !== 'all'
@@ -1988,13 +2391,21 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                   value={
                     duplicateFilterMode !== 'all'
                       ? `dup_${duplicateFilterMode}`
+                      : priorityFilter
+                      ? 'priority_next'
                       : diffDateFilter !== 'all'
                       ? diffDateFilter
                       : firestoreFilter
                   }
                   onChange={(e) => {
                     const val = e.target.value;
-                    if (
+                    if (val === 'priority_next') {
+                      setPriorityFilter(true);
+                      setDuplicateFilterMode('all');
+                      setDiffDateFilter('all');
+                      setFirestoreFilter('all');
+                      setShowOnlyUnsynced(false);
+                    } else if (
                       val === 'dup_any_duplicate' ||
                       val === 'dup_exact_same' ||
                       val === 'dup_same_month_diff_date' ||
@@ -2002,29 +2413,38 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                     ) {
                       const mode = val.replace('dup_', '') as 'any_duplicate' | 'exact_same' | 'same_month_diff_date' | 'same_code';
                       setDuplicateFilterMode(mode);
+                      setPriorityFilter(false);
                       setDiffDateFilter('all');
                       setFirestoreFilter('all');
                       setShowOnlyUnsynced(false);
                     } else if (val === 'same_any_diff_date' || val === 'same_code_diff_date' || val === 'same_tx_diff_date') {
                       setDiffDateFilter(val);
+                      setPriorityFilter(false);
                       setDuplicateFilterMode('all');
                       setFirestoreFilter('all');
                       setShowOnlyUnsynced(false);
                     } else if (val === 'synced' || val === 'unsynced') {
+                      setPriorityFilter(false);
                       setDiffDateFilter('all');
                       setDuplicateFilterMode('all');
                       setFirestoreFilter(val);
                       setShowOnlyUnsynced(val === 'unsynced');
                     } else {
+                      setPriorityFilter(false);
                       setDiffDateFilter('all');
                       setDuplicateFilterMode('all');
                       setFirestoreFilter('all');
                       setShowOnlyUnsynced(false);
                     }
                   }}
-                  title="Saring transaksi duplikat ketat (100% sama di bulan sama), beda tanggal di bulan sama, atau status Cloud Firestore"
+                  title="Saring transaksi prioritas dibayar selanjutnya, duplikat ketat, beda tanggal di bulan sama, atau status Cloud Firestore"
                 >
                   <option value="all">Semua Data ({submissions.length})</option>
+                  <optgroup label="Prioritas Pembayaran">
+                    <option value="priority_next">
+                      ⭐ Prioritas Dibayar Selanjutnya ({priorityPaySummary.count})
+                    </option>
+                  </optgroup>
                   <optgroup label="Filter Duplikat Ketat (100% Sama · Bulan Sama)">
                     <option value="dup_any_duplicate">
                       Semua Terfilter Duplikat ({duplicateInspection.allDuplicateIds.size})
@@ -2113,12 +2533,110 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
               </button>
             </div>
           </div>
+
+          {/* Active Filter Summary Strip: Menjelaskan secara transparan filter/pencarian apa yang sedang aktif */}
+          {activeFilterDescriptors.length > 0 && (
+            <div className="px-3.5 sm:px-5 py-2.5 bg-stone-50/80 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold uppercase tracking-wider text-stone-500 mr-1">
+                  <Filter size={11} />
+                  <span>Filter Aktif:</span>
+                </span>
+                {activeFilterDescriptors.map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={item.onClear}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white hover:bg-rose-50 border border-stone-300 hover:border-rose-300 text-stone-800 hover:text-rose-800 text-[11px] font-semibold transition cursor-pointer"
+                    title={`Klik untuk menghapus filter: ${item.label}`}
+                  >
+                    <span>{item.label}</span>
+                    <X size={11} className="text-stone-400" />
+                  </button>
+                ))}
+                <span className="text-[11px] font-mono text-stone-500 ml-1 tabular-nums">
+                  ({filteredSubmissions.length} hasil)
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleResetAllFilters}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-stone-900 hover:bg-stone-800 text-white text-[11px] font-bold transition cursor-pointer shrink-0 whitespace-nowrap"
+              >
+                <RotateCcw size={11} />
+                <span>Reset Semua Filter</span>
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Sorotan Prioritas Pembayaran Selanjutnya */}
+      {layoutMode === 'standard' && priorityPaySummary.count > 0 && (
+        <div className="bg-amber-50/90 border border-amber-300 rounded-2xl px-4 py-3 flex flex-col lg:flex-row lg:items-center justify-between gap-3 text-xs shadow-3xs print:hidden">
+          <div className="flex items-start sm:items-center gap-3 min-w-0">
+            <div className="p-2 bg-amber-500 text-stone-950 rounded-xl shrink-0">
+              <Star size={16} className="fill-stone-950" />
+            </div>
+            <div className="min-w-0">
+              <div className="font-black text-amber-950 flex flex-wrap items-center gap-2">
+                <span>Prioritas Dibayar Selanjutnya:</span>
+                <span className="font-mono tabular-nums px-2 py-0.5 rounded-md bg-amber-200/80 text-stone-950 text-[11px]">
+                  {priorityPaySummary.count} Transaksi ({priorityPaySummary.unpaidCount} Belum Lunas)
+                </span>
+                <span className="font-mono tabular-nums font-black text-amber-900">
+                  Rp {formatRupiah(priorityPaySummary.totalNominal)}
+                </span>
+              </div>
+              <p className="text-[11px] text-amber-900/90 mt-0.5">
+                Transaksi yang disorot ditandai warna emas pada daftar agar mudah diprioritaskan saat pembayaran berikutnya.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setPinPriorityTop((v) => !v)}
+              className={`px-3 py-1.5 rounded-xl text-[11px] font-bold border transition cursor-pointer whitespace-nowrap ${
+                pinPriorityTop
+                  ? 'bg-amber-500 text-stone-950 border-amber-600'
+                  : 'bg-white hover:bg-amber-100 text-amber-950 border-amber-300'
+              }`}
+              title="Tempatkan transaksi prioritas di urutan paling atas tabel"
+            >
+              {pinPriorityTop ? '✓ Prioritas di Atas' : 'Urutkan Prioritas di Atas'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPriorityFilter((v) => !v);
+                setDuplicateFilterMode('all');
+                setDiffDateFilter('all');
+              }}
+              className={`px-3 py-1.5 rounded-xl text-[11px] font-bold border transition cursor-pointer whitespace-nowrap ${
+                priorityFilter
+                  ? 'bg-stone-900 text-white border-stone-950'
+                  : 'bg-white hover:bg-amber-100 text-amber-950 border-amber-300'
+              }`}
+            >
+              {priorityFilter ? 'Tampilkan Semua Data' : `Lihat Prioritas (${priorityPaySummary.count})`}
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedCheckedIds(priorityPaySummary.list.map((s) => s.id))}
+              className="px-3 py-1.5 rounded-xl bg-white hover:bg-amber-100 text-amber-950 border border-amber-300 text-[11px] font-bold transition cursor-pointer whitespace-nowrap"
+              title="Centang seluruh transaksi prioritas untuk tindakan massal"
+            >
+              Centang Prioritas ({priorityPaySummary.count})
+            </button>
+          </div>
         </div>
       )}
 
       {/* Toast feedback setelah menandai transaksi sah atau aksi massal */}
       {bulkActionToast && (
-        <div className="bg-emerald-50 border-2 border-emerald-300 text-emerald-950 rounded-2xl px-4 py-3 text-xs font-bold flex items-center justify-between gap-3 shadow-xs animate-fade-in print:hidden">
+        <div className="bg-emerald-50 border border-emerald-300 text-emerald-950 rounded-2xl px-4 py-3 text-xs font-bold flex items-center justify-between gap-3 shadow-xs animate-fade-in print:hidden">
           <div className="flex items-center gap-2">
             <CheckCircle size={16} className="text-emerald-600 shrink-0" />
             <span>{bulkActionToast}</span>
@@ -2135,7 +2653,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
 
       {/* Active Filter Notification: Transaksi Duplikat Ketat */}
       {showOnlyDuplicates && (
-        <div className="p-3.5 bg-gradient-to-r from-rose-50 via-amber-50 to-orange-50 border-2 border-rose-300 rounded-2xl flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 text-xs text-stone-900 font-sans shadow-3xs mb-4 animate-fade-in print:hidden">
+        <div className="p-3.5 bg-gradient-to-r from-rose-50 via-amber-50 to-orange-50 border border-rose-300 rounded-2xl flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 text-xs text-stone-900 font-sans shadow-3xs mb-4 animate-fade-in print:hidden">
           <div className="flex items-start sm:items-center gap-2.5">
             <div className="p-1.5 bg-rose-100 text-rose-700 rounded-xl shrink-0 border border-rose-300">
               <AlertTriangle size={18} />
@@ -2146,9 +2664,24 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                   Filter Duplikat Ketat (100% Sama · Bulan Sama) Aktif:
                 </span>{' '}
                 <span>
-                  Menampilkan <strong>{filteredSubmissions.length} voucher</strong> yang 100% sama (Tanggal, Kode Transaksi angka/huruf/garis miring, Nominal, Penerima &amp; Jenis Transaksi) atau sama persis di bulan yang sama namun berbeda tanggal. Kode transaksi yang berbeda dianggap transaksi berbeda.
+                  Menampilkan <strong>{filteredSubmissions.length} voucher</strong>
+                  {searchTerm.trim() ? ` (disaring kata kunci "${searchTerm.trim()}" dari ${duplicateInspection.allDuplicateIds.size} duplikat)` : ''} yang 100% sama (Tanggal, Kode Transaksi angka/huruf/garis miring, Nominal, Penerima &amp; Jenis Transaksi) atau sama persis di bulan yang sama namun berbeda tanggal.
                 </span>
               </div>
+              {searchTerm.trim() && filteredSubmissions.length === 0 && duplicateInspection.allDuplicateIds.size > 0 && (
+                <div className="p-2 bg-white/90 border border-rose-300 rounded-xl flex flex-wrap items-center justify-between gap-2 text-[11px] text-rose-900 font-semibold">
+                  <span>
+                    Kata kunci pencarian <strong>"{searchTerm.trim()}"</strong> sedang aktif dan menyembunyikan <strong>{duplicateInspection.allDuplicateIds.size}</strong> transaksi duplikat.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSearchTerm('')}
+                    className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold cursor-pointer whitespace-nowrap"
+                  >
+                    Hapus Pencarian "{searchTerm.trim()}"
+                  </button>
+                </div>
+              )}
               <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
                 <button
                   type="button"
@@ -2205,15 +2738,15 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 setDuplicateModalSearch('');
                 setIsDuplicateModalOpen(true);
               }}
-              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-stone-950 font-black rounded-xl text-xs shadow-3xs transition cursor-pointer flex items-center gap-1.5"
+              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-stone-950 font-black rounded-xl text-xs shadow-3xs transition cursor-pointer flex items-center gap-1.5 whitespace-nowrap"
             >
               <Layers size={13} />
               <span>Lihat Rekap Kelompok Dobel</span>
             </button>
             <button
               type="button"
-              onClick={() => setDuplicateFilterMode('all')}
-              className="px-3 py-1.5 bg-white hover:bg-stone-100 text-stone-700 font-bold border border-stone-300 rounded-xl text-xs transition cursor-pointer"
+              onClick={handleResetAllFilters}
+              className="px-3 py-1.5 bg-white hover:bg-stone-100 text-stone-700 font-bold border border-stone-300 rounded-xl text-xs transition cursor-pointer whitespace-nowrap"
             >
               Tampilkan Semua
             </button>
@@ -2223,7 +2756,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
 
       {/* Active Filter Notification: Kode / Transaksi Sama Beda Tanggal (Bulan Sama) */}
       {diffDateFilter !== 'all' && (
-        <div className="p-3.5 bg-gradient-to-r from-amber-50 to-yellow-50 border-2 border-amber-300 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-amber-950 font-sans shadow-3xs mb-4 animate-fade-in print:hidden">
+        <div className="p-3.5 bg-gradient-to-r from-amber-50 to-yellow-50 border border-amber-300 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-amber-950 font-sans shadow-3xs mb-4 animate-fade-in print:hidden">
           <div className="flex items-start sm:items-center gap-2.5">
             <div className="p-1.5 bg-amber-200 text-amber-900 rounded-xl shrink-0 border border-amber-300">
               <AlertTriangle size={18} />
@@ -2233,7 +2766,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 Filter {diffDateFilter === 'same_code_diff_date' ? 'No-Kode Sama (Bulan Sama, Beda Tanggal)' : diffDateFilter === 'same_tx_diff_date' ? 'Transaksi 100% Sama (Bulan Sama, Beda Tanggal)' : 'No-Kode / Transaksi 100% Sama (Bulan Sama, Beda Tanggal)'} Aktif:
               </span>{' '}
               <span>
-                Menampilkan <strong>{filteredSubmissions.length} voucher</strong> yang identik dalam bulan yang sama namun berbeda tanggal. Centang kolom <strong>Check</strong> lalu pilih <strong>Tandai Transaksi Sah</strong> atau <strong>Hapus Transaksi yang Dipilih</strong>.
+                Menampilkan <strong>{filteredSubmissions.length} voucher</strong> yang identik dalam bulan yang sama namun berbeda tanggal. Centang kolom <strong>Check</strong> lalu pilih tindakan yang diinginkan.
               </span>
             </div>
           </div>
@@ -2250,7 +2783,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
             )}
             <button
               type="button"
-              onClick={() => setDiffDateFilter('all')}
+              onClick={handleResetAllFilters}
               className="px-3 py-1.5 bg-stone-900 hover:bg-stone-800 text-white font-bold rounded-xl text-xs transition cursor-pointer"
             >
               Tampilkan Semua
@@ -2259,62 +2792,251 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
         </div>
       )}
 
-      {/* Action Bar saat ada transaksi yang dicentang (Check) */}
-      {layoutMode === 'standard' && selectedCheckedIds.length > 0 && (
-        <div className="sticky top-20 z-[70] p-3.5 sm:px-5 bg-stone-900 text-white border-2 border-amber-400 rounded-2xl shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-3 animate-fade-in print:hidden">
-          <div className="flex items-center gap-3 flex-wrap">
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-amber-400 text-stone-950 font-black text-xs font-mono">
-              <Check size={14} />
-              <span>{selectedCheckedIds.length} Transaksi Dicentang</span>
-            </span>
-            <span className="text-xs text-stone-300">
-              Pilih tindakan untuk transaksi yang Anda centang:
-            </span>
-            <button
-              type="button"
-              onClick={handleClearSelectedChecks}
-              className="text-[11px] font-bold text-stone-400 hover:text-white underline cursor-pointer"
-            >
-              Batal Pilih
-            </button>
-          </div>
+      {/* Action Bar Lengkap saat ada transaksi yang dicentang (Check) - mencakup pilihan menu Tindakan + Sorotan Prioritas Bayar */}
+      {layoutMode === 'standard' && selectedCheckedIds.length > 0 && (() => {
+        const selectedSubs = checkedSelectionGroups.selectedSubs;
+        const singleSelectedSub = selectedSubs.length === 1 ? selectedSubs[0] : null;
+        const unpaidSelectedCount = checkedSelectionGroups.selectedUnpaidSubs.length;
+        const prioritySelectedCount = checkedSelectionGroups.selectedPrioritySubs.length;
+        const nonPrioritySelectedCount = checkedSelectionGroups.selectedNonPrioritySubs.length;
+        const legitSelectedCount = checkedSelectionGroups.selectedLegitSubs.length;
+        const unsyncedSelectedSubs = checkedSelectionGroups.selectedUnsyncedSubs;
 
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
-            <button
-              type="button"
-              id="btn-mark-selected-sah"
-              onClick={handleMarkSelectedAsLegitimate}
-              className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-sm transition cursor-pointer"
-              title="Tandai transaksi yang dicentang sebagai transaksi sah agar tidak lagi masuk filter duplikat"
-            >
-              <CheckCircle size={15} />
-              <span>Tandai Transaksi Ini Sebagai Transaksi yang Sah ({selectedCheckedIds.length})</span>
-            </button>
-            <button
-              type="button"
-              id="btn-delete-selected-checked"
-              onClick={() => {
-                setBulkDeleteIncludeDrive(true);
-                setBulkDeleteConfirmOpen(true);
-              }}
-              className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs shadow-sm transition cursor-pointer"
-              title="Hapus semua transaksi yang dicentang secara permanen"
-            >
-              <Trash2 size={15} />
-              <span>Hapus Transaksi yang Dipilih ({selectedCheckedIds.length})</span>
-            </button>
+        return (
+          <div className="sticky top-20 z-[70] p-3.5 sm:px-5 bg-stone-900 text-white border border-amber-400/80 rounded-2xl shadow-xl space-y-3 animate-fade-in print:hidden">
+            {/* Header ringkasan pilihan */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-stone-800">
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-amber-400 text-stone-950 font-black text-xs font-mono tabular-nums">
+                  <Check size={14} />
+                  <span>{selectedCheckedIds.length} Transaksi Dipilih</span>
+                </span>
+                <span className="text-xs font-mono font-bold text-amber-300 tabular-nums">
+                  Total: Rp {formatRupiah(checkedSelectionGroups.selectedTotalNominal)}
+                </span>
+                {singleSelectedSub && (
+                  <span className="text-[11px] text-stone-300 truncate max-w-[260px]">
+                    · {singleSelectedSub.kode || 'Tanpa Kode'} — {singleSelectedSub.dibayarkanKepada}
+                  </span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={handleClearSelectedChecks}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-white text-[11px] font-bold transition cursor-pointer whitespace-nowrap"
+              >
+                <X size={12} />
+                <span>Batal Pilih</span>
+              </button>
+            </div>
+
+            {/* Daftar tombol tindakan lengkap */}
+            <div className="flex flex-wrap items-center gap-2">
+              {/* 1. Soroti / Prioritaskan untuk Dibayar Selanjutnya */}
+              {nonPrioritySelectedCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => handleSetPaymentPriority(selectedSubs, true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-xs transition cursor-pointer whitespace-nowrap"
+                  title="Soroti transaksi terpilih agar diprioritaskan untuk dibayar selanjutnya"
+                >
+                  <Star size={14} className="fill-stone-950" />
+                  <span>Soroti Prioritas Bayar ({selectedSubs.length})</span>
+                </button>
+              )}
+              {prioritySelectedCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => handleSetPaymentPriority(checkedSelectionGroups.selectedPrioritySubs, false)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-amber-300 border border-amber-500/40 font-bold text-xs transition cursor-pointer whitespace-nowrap"
+                  title="Hapus sorotan prioritas bayar dari transaksi yang sudah ditandai"
+                >
+                  <X size={13} />
+                  <span>Hapus Sorotan Prioritas ({prioritySelectedCount})</span>
+                </button>
+              )}
+
+              {/* 2. Input Bukti Bayar (jika 1 transaksi) & Tandai Lunas */}
+              {singleSelectedSub && onOpenBuktiTransfer && (
+                <button
+                  type="button"
+                  onClick={() => onOpenBuktiTransfer(singleSelectedSub)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs transition cursor-pointer whitespace-nowrap"
+                  title="Input atau unggah bukti transfer/pembayaran untuk transaksi ini"
+                >
+                  <Receipt size={14} />
+                  <span>Input Bukti Bayar</span>
+                </button>
+              )}
+              {unpaidSelectedCount > 0 && (onBulkUpdateSubmissions || onMarkAsPaid) && (
+                <button
+                  type="button"
+                  onClick={() => setBulkMarkPaidConfirmOpen(true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition cursor-pointer whitespace-nowrap"
+                  title="Tandai transaksi belum lunas yang dipilih sebagai SUDAH DIBAYAR (Lunas)"
+                >
+                  <CheckCircle size={14} />
+                  <span>Tandai Lunas ({unpaidSelectedCount})</span>
+                </button>
+              )}
+
+              {/* 3. Upload ke Firestore */}
+              {(onUploadSelectedToFirestore || onUploadSingleToFirestore) && (
+                <button
+                  type="button"
+                  disabled={isCloudSyncing}
+                  onClick={async () => {
+                    const targets = unsyncedSelectedSubs.length > 0 ? unsyncedSelectedSubs : selectedSubs;
+                    if (onUploadSelectedToFirestore) {
+                      await onUploadSelectedToFirestore(targets);
+                    } else if (onUploadSingleToFirestore) {
+                      for (const s of targets) {
+                        await onUploadSingleToFirestore(s);
+                      }
+                    }
+                  }}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold text-xs transition cursor-pointer whitespace-nowrap disabled:opacity-60 ${
+                    unsyncedSelectedSubs.length > 0
+                      ? 'bg-orange-600 hover:bg-orange-500 text-white'
+                      : 'bg-sky-700 hover:bg-sky-600 text-white'
+                  }`}
+                  title="Upload atau sinkronkan ulang transaksi terpilih ke Firebase Firestore"
+                >
+                  <CloudUpload size={14} />
+                  <span>
+                    {unsyncedSelectedSubs.length > 0
+                      ? `Upload ke Firestore (${unsyncedSelectedSubs.length})`
+                      : `Sync Firestore (${selectedSubs.length})`}
+                  </span>
+                </button>
+              )}
+
+              {/* 4. Tindakan Dokumen (mirror menu Tindakan saat 1 transaksi dicentang) */}
+              {singleSelectedSub && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      triggerGoogleDriveAutoRefresh('check-lihat-voucher', false, false).catch(() => {});
+                      onSelect(singleSelectedSub);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-amber-300 border border-stone-700 font-bold text-xs transition cursor-pointer whitespace-nowrap"
+                  >
+                    <Eye size={14} />
+                    <span>Lihat Voucher</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onEdit(singleSelectedSub)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-sky-300 border border-stone-700 font-bold text-xs transition cursor-pointer whitespace-nowrap"
+                  >
+                    <Edit2 size={14} />
+                    <span>Edit</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDuplicate(singleSelectedSub)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 border border-stone-700 font-bold text-xs transition cursor-pointer whitespace-nowrap"
+                  >
+                    <Copy size={14} />
+                    <span>Salin</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShareModalSub(singleSelectedSub);
+                      setIsCopiedShare(false);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-emerald-300 border border-stone-700 font-bold text-xs transition cursor-pointer whitespace-nowrap"
+                  >
+                    <Share2 size={14} />
+                    <span>Bagikan Link</span>
+                  </button>
+                  {onCreateMemo && (
+                    <button
+                      type="button"
+                      onClick={() => onCreateMemo(singleSelectedSub)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-amber-200 border border-stone-700 font-bold text-xs transition cursor-pointer whitespace-nowrap"
+                    >
+                      <FileText size={14} />
+                      <span>Buat Memo</span>
+                    </button>
+                  )}
+                  {((singleSelectedSub.jenisPengajuan || '').toLowerCase().includes('perjalanan dinas') ||
+                    (singleSelectedSub.jenisPengajuan || '').toLowerCase().includes('sppd')) &&
+                    onOpenSppdEditor && (
+                      <button
+                        type="button"
+                        onClick={() => onOpenSppdEditor(singleSelectedSub)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-amber-200 border border-stone-700 font-bold text-xs transition cursor-pointer whitespace-nowrap"
+                      >
+                        <FileText size={14} />
+                        <span>Form SPPD</span>
+                      </button>
+                    )}
+                </>
+              )}
+
+              {/* 5. Export CSV Terpilih */}
+              <button
+                type="button"
+                onClick={() => handleDownloadSelectedCSV(selectedSubs)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-100 border border-stone-700 font-bold text-xs transition cursor-pointer whitespace-nowrap"
+                title="Unduh transaksi terpilih dalam format Excel/CSV"
+              >
+                <Download size={14} />
+                <span>Export CSV ({selectedSubs.length})</span>
+              </button>
+
+              {/* 6. Tandai Transaksi Sah / Batalkan Tanda Sah */}
+              <button
+                type="button"
+                id="btn-mark-selected-sah"
+                onClick={handleMarkSelectedAsLegitimate}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs transition cursor-pointer whitespace-nowrap"
+                title="Tandai transaksi yang dicentang sebagai transaksi sah agar tidak lagi masuk filter duplikat"
+              >
+                <CheckCircle size={14} />
+                <span>Tandai Transaksi Sah ({selectedCheckedIds.length})</span>
+              </button>
+              {legitSelectedCount > 0 && (
+                <button
+                  type="button"
+                  onClick={handleUnmarkSelectedAsLegitimate}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 border border-stone-700 font-bold text-xs transition cursor-pointer whitespace-nowrap"
+                >
+                  <RotateCcw size={13} />
+                  <span>Batalkan Sah ({legitSelectedCount})</span>
+                </button>
+              )}
+
+              {/* 7. Hapus Terpilih */}
+              <button
+                type="button"
+                id="btn-delete-selected-checked"
+                onClick={() => {
+                  setBulkDeleteIncludeDrive(true);
+                  setBulkDeleteConfirmOpen(true);
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs transition cursor-pointer whitespace-nowrap ml-auto"
+                title="Hapus semua transaksi yang dicentang secara permanen"
+              >
+                <Trash2 size={14} />
+                <span>Hapus ({selectedCheckedIds.length})</span>
+              </button>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Main Content Layout Block: Standard List vs Google Sheets Simulator */}
       {layoutMode === 'standard' ? (
         /* Standard Table & Mobile Card View */
         <div className="bg-white rounded-2xl border border-stone-200 shadow-xs print:hidden overflow-hidden">
-          {/* Mobile Select-All Helper Bar */}
-          {filteredSubmissions.length > 0 && (
-            <div className="flex md:hidden items-center justify-between px-3.5 py-2.5 bg-stone-50 border-b border-stone-200 text-xs">
-              <label className="inline-flex items-center gap-2 font-bold text-stone-700 cursor-pointer select-none">
+          {/* Mobile Select-All + Pilihan Menu Check Bar (Muncul otomatis saat ada transaksi dipilih) */}
+          {showCheckColumn && filteredSubmissions.length > 0 && (
+            <div className="flex md:hidden items-center justify-between px-3.5 py-2.5 bg-stone-50 border-b border-stone-200 text-xs gap-2">
+              <div className="flex items-center gap-1.5 check-menu-dropdown-root">
                 <input
                   type="checkbox"
                   checked={filteredSubmissions.length > 0 && filteredSubmissions.every((s) => selectedCheckedSet.has(s.id))}
@@ -2329,14 +3051,21 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                     }
                   }}
                   className="w-4 h-4 rounded border-stone-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
+                  aria-label="Centang semua transaksi yang tampil"
                 />
-                <span>Centang Semua ({filteredSubmissions.length})</span>
-              </label>
-              {selectedCheckedIds.length > 0 && (
-                <span className="font-mono text-[11px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md border border-amber-300">
-                  {selectedCheckedIds.length} dipilih
-                </span>
-              )}
+                <button
+                  type="button"
+                  onClick={(e) => openCheckOptionsPopover(e.currentTarget)}
+                  className="inline-flex items-center justify-center p-1 rounded-md bg-white border border-stone-300 text-stone-700 cursor-pointer"
+                  title="Buka menu pilihan centang"
+                  aria-label="Buka menu pilihan centang"
+                >
+                  <ChevronDown size={13} />
+                </button>
+              </div>
+              <span className="font-mono text-[11px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md border border-amber-300 tabular-nums">
+                {selectedCheckedIds.length} dipilih
+              </span>
             </div>
           )}
 
@@ -2348,12 +3077,15 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 const isDuplicateActive = activeDuplicateSubmissionIds.has(sub.id);
                 const isRowChecked = selectedCheckedSet.has(sub.id);
                 const isVerifiedLegit = isSubVerifiedLegit(sub);
+                const isPriorityPay = isSubPriorityPayNext(sub);
                 return (
                   <div
                     key={`mob-${sub.id}`}
                     className={`p-3.5 sm:p-4 transition space-y-2.5 ${
                       isRowChecked
-                        ? 'bg-sky-50/70'
+                        ? 'bg-sky-50/75 ring-1 ring-inset ring-sky-300/70'
+                        : isPriorityPay
+                        ? 'bg-amber-50/90 ring-1 ring-inset ring-amber-300/80'
                         : isDuplicateActive
                         ? 'bg-amber-50/40'
                         : 'bg-white hover:bg-stone-50/50'
@@ -2363,22 +3095,28 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="font-extrabold text-stone-900 text-xs flex items-center gap-2 flex-wrap">
-                          <label className="inline-flex items-center gap-1 cursor-pointer select-none">
+                          {showCheckColumn && (
                             <input
                               type="checkbox"
                               checked={isRowChecked}
                               onChange={() => handleToggleSelectCheck(sub.id)}
                               className="w-4 h-4 rounded border-stone-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
-                              title="Centang transaksi ini untuk ditandai SAH atau dihapus"
+                              title={isRowChecked ? 'Batalkan centang transaksi ini' : 'Centang transaksi ini untuk tindakan massal'}
+                              aria-label="Pilih transaksi"
                             />
-                            <span className="text-[10px] font-mono font-bold text-stone-500">Check</span>
-                          </label>
-                          <span>📅 {formatDateIndonesian(sub.tanggal)}</span>
+                          )}
+                          <span>{formatDateIndonesian(sub.tanggal)}</span>
                         </div>
                         <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                           <span className="font-mono text-[10px] font-bold bg-stone-100 text-stone-700 px-2 py-0.5 rounded border border-stone-200">
                             Kode: {sub.kode || '-'}
                           </span>
+                          {isPriorityPay && (
+                            <span className="inline-flex items-center gap-1 font-mono text-[9px] font-black bg-amber-400 text-stone-950 px-2 py-0.5 rounded border border-amber-500">
+                              <Star size={10} className="fill-stone-950" />
+                              <span>PRIORITAS BAYAR SELANJUTNYA</span>
+                            </span>
+                          )}
                           {diffDateFilter !== 'all' && (
                             <span className="font-mono text-[9px] font-black bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded border border-amber-300">
                               {diffDateDetection.sameCodeIds.has(sub.id) && diffDateDetection.sameTxIds.has(sub.id)
@@ -2648,27 +3386,30 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                 <FileText size={36} className="mx-auto text-stone-300" />
                 <div>
                   <p className="text-sm font-bold text-stone-700">
-                    {submissions.length > 0 ? 'Tidak ada data pada filter bulan/kriteria ini' : 'Tidak ada data transaksi'}
+                    {submissions.length > 0 ? 'Tidak ada data yang cocok dengan filter aktif' : 'Tidak ada data transaksi'}
                   </p>
                   <p className="text-xs text-stone-500 mt-1">
-                    {submissions.length > 0
+                    {activeFilterDescriptors.length > 0
+                      ? `Filter aktif: ${activeFilterDescriptors.map((f) => f.label).join(' · ')}. Tersedia ${submissions.length} total transaksi.`
+                      : submissions.length > 0
                       ? `Tersedia ${submissions.length} total transaksi di sistem. Reset filter untuk menampilkan semua.`
                       : 'Coba muat ulang sinkronisasi cloud & server cadangan.'}
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center justify-center gap-2">
+                  {searchTerm.trim() && submissions.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchTerm('')}
+                      className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs transition cursor-pointer"
+                    >
+                      Hapus Pencarian "{searchTerm.trim()}"
+                    </button>
+                  )}
                   {submissions.length > 0 && (
                     <button
                       type="button"
-                      onClick={() => {
-                        setSearchTerm('');
-                        setMethodFilter('All');
-                        setStatusFilter('All');
-                        setDateFilter('');
-                        setMonthFilter('All');
-                        setYearFilter('All');
-                        try { sessionStorage.setItem('sublist_hasCustomPeriodFilter', 'true'); } catch (_) {}
-                      }}
+                      onClick={handleResetAllFilters}
                       className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-stone-950 font-bold text-xs transition cursor-pointer"
                     >
                       Tampilkan Semua ({submissions.length} Transaksi)
@@ -2681,7 +3422,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                       disabled={isCloudSyncing}
                       className="px-4 py-2 rounded-xl bg-stone-900 hover:bg-stone-800 text-white font-bold text-xs transition cursor-pointer disabled:opacity-50"
                     >
-                      🔄 Pulihkan &amp; Sinkron Data
+                      Pulihkan &amp; Sinkron Data
                     </button>
                   )}
                 </div>
@@ -2694,26 +3435,46 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-stone-50 border-b border-stone-200 text-stone-500 font-display text-[10px] uppercase tracking-widest font-extrabold">
-                  <th className="py-4.5 px-4 text-center w-20">
-                    <label className="inline-flex items-center justify-center gap-1.5 cursor-pointer select-none" title="Centang semua transaksi yang tampil">
-                      <input
-                        type="checkbox"
-                        checked={filteredSubmissions.length > 0 && filteredSubmissions.every((s) => selectedCheckedSet.has(s.id))}
-                        onChange={() => {
-                          const visibleIds = filteredSubmissions.map((s) => s.id);
-                          const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedCheckedSet.has(id));
-                          if (allSelected) {
-                            const visibleSet = new Set(visibleIds);
-                            setSelectedCheckedIds((prev) => prev.filter((id) => !visibleSet.has(id)));
-                          } else {
-                            setSelectedCheckedIds((prev) => Array.from(new Set([...prev, ...visibleIds])));
-                          }
-                        }}
-                        className="w-4 h-4 rounded border-stone-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
-                      />
-                      <span>Check</span>
-                    </label>
-                  </th>
+                  {showCheckColumn && (
+                    <th className="py-4.5 px-3 text-center w-20 check-menu-dropdown-root">
+                      <div className="inline-flex items-center justify-center gap-1">
+                        <input
+                          type="checkbox"
+                          checked={filteredSubmissions.length > 0 && filteredSubmissions.every((s) => selectedCheckedSet.has(s.id))}
+                          onChange={() => {
+                            const visibleIds = filteredSubmissions.map((s) => s.id);
+                            const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedCheckedSet.has(id));
+                            if (allSelected) {
+                              const visibleSet = new Set(visibleIds);
+                              setSelectedCheckedIds((prev) => prev.filter((id) => !visibleSet.has(id)));
+                            } else {
+                              setSelectedCheckedIds((prev) => Array.from(new Set([...prev, ...visibleIds])));
+                            }
+                          }}
+                          className="w-4 h-4 rounded border-stone-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
+                          title="Centang / batalkan semua yang tampil"
+                          aria-label="Centang semua yang tampil"
+                        />
+                        <button
+                          type="button"
+                          id="btn-check-options-trigger"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openCheckOptionsPopover(e.currentTarget);
+                          }}
+                          className={`p-1 rounded-md border transition cursor-pointer ${
+                            isCheckMenuOpen
+                              ? 'bg-stone-900 text-white border-stone-950'
+                              : 'bg-white hover:bg-stone-200 text-stone-600 border-stone-300'
+                          }`}
+                          title="Buka pilihan cepat untuk mencentang transaksi"
+                          aria-label="Buka menu pilihan centang"
+                        >
+                          <ChevronDown size={12} />
+                        </button>
+                      </div>
+                    </th>
+                  )}
                   <th className="py-4.5 px-6">Tanggal</th>
                   <th className="py-4.5 px-6">Lokasi & Kode</th>
                   <th className="py-4.5 px-6">Jenis Pengajuan</th>
@@ -2728,17 +3489,37 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                     const subTotal = sub.items.reduce((sum, i) => sum + i.total, 0);
                     const isChecked = selectedCheckedSet.has(sub.id);
                     const isVerifiedLegit = isSubVerifiedLegit(sub);
+                    const isPriorityPay = isSubPriorityPayNext(sub);
                     return (
-                      <tr key={sub.id} className={`transition ${isChecked ? 'bg-sky-50/70' : 'hover:bg-stone-50/50'} ${openActionMenuId === sub.id ? 'relative z-[60] bg-amber-50/25' : ''}`}>
-                        <td className="py-4.5 px-4 text-center">
-                          <input
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={() => handleToggleSelectCheck(sub.id)}
-                            className="w-4 h-4 rounded border-stone-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
-                            title={isChecked ? 'Batalkan centang transaksi ini' : 'Centang transaksi ini untuk ditandai SAH atau dihapus'}
-                          />
-                        </td>
+                      <tr
+                        key={sub.id}
+                        className={`transition ${
+                          isChecked
+                            ? 'bg-sky-50/75 ring-1 ring-inset ring-sky-300/70'
+                            : isPriorityPay
+                            ? 'bg-amber-50/90 hover:bg-amber-100/75 ring-1 ring-inset ring-amber-300/80'
+                            : 'hover:bg-stone-50/50'
+                        } ${openActionMenuId === sub.id ? 'relative z-[60]' : ''}`}
+                      >
+                        {showCheckColumn && (
+                          <td className="py-4.5 px-3 text-center">
+                            <div className="inline-flex flex-col items-center gap-1">
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() => handleToggleSelectCheck(sub.id)}
+                                className="w-4 h-4 rounded border-stone-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
+                                title={isChecked ? 'Batalkan centang transaksi ini' : 'Centang transaksi ini untuk memilih tindakan'}
+                                aria-label="Pilih transaksi"
+                              />
+                              {isPriorityPay && (
+                                <span title="Diprioritaskan untuk dibayar selanjutnya" className="inline-flex">
+                                  <Star size={12} className="text-amber-600 fill-amber-500" />
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                        )}
                         <td className="py-4.5 px-6 whitespace-nowrap">
                           <div className="font-extrabold text-stone-900">
                             {formatDateIndonesian(sub.tanggal)}
@@ -2754,6 +3535,20 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                             <span className="inline-block font-mono text-[10px] font-bold bg-stone-100 text-stone-600 px-2 py-0.5 rounded-sm border border-stone-200">
                               Kode: {sub.kode}
                             </span>
+                            {isPriorityPay && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleSetPaymentPriority([sub], false);
+                                }}
+                                className="inline-flex items-center gap-1 font-mono text-[9px] font-black bg-amber-400 hover:bg-amber-300 text-stone-950 px-2 py-0.5 rounded border border-amber-500 cursor-pointer"
+                                title="Transaksi disorot untuk dibayar selanjutnya. Klik untuk melepas sorotan."
+                              >
+                                <Star size={9} className="fill-stone-950" />
+                                <span>PRIORITAS BAYAR</span>
+                              </button>
+                            )}
                             {diffDateFilter !== 'all' && (
                               <span className="inline-block font-mono text-[9px] font-black bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded border border-amber-300">
                                 {diffDateDetection.sameCodeIds.has(sub.id) && diffDateDetection.sameTxIds.has(sub.id)
@@ -2968,34 +3763,40 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                   })
                 ) : (
                   <tr>
-                    <td colSpan={7} className="py-12 px-4 text-center">
-                      <div className="space-y-3">
-                        <p className="text-sm font-bold text-stone-600">
-                          {duplicateFilterMode !== 'all'
-                            ? 'Tidak ada transaksi duplikat pada filter yang dipilih.'
+                    <td colSpan={showCheckColumn ? 7 : 6} className="py-12 px-4 text-center">
+                      <div className="space-y-3 max-w-xl mx-auto">
+                        <p className="text-sm font-bold text-stone-700">
+                          {priorityFilter
+                            ? 'Tidak ada transaksi yang ditandai Prioritas Dibayar Selanjutnya pada kriteria ini.'
+                            : duplicateFilterMode !== 'all'
+                            ? searchTerm.trim()
+                              ? `Tidak ada transaksi duplikat yang cocok dengan pencarian "${searchTerm.trim()}".`
+                              : 'Tidak ada transaksi duplikat pada filter yang dipilih.'
                             : diffDateFilter !== 'all'
                             ? 'Semua transaksi dengan No-Kode / Transaksi sama (beda tanggal) sudah di-check atau tidak ditemukan.'
                             : submissions.length > 0
-                            ? `Tidak ada transaksi pada periode ${monthFilter === 'All' ? 'Semua Bulan' : MONTHS_LIST.find(m => m.value === monthFilter)?.label || monthFilter} ${yearFilter === 'All' ? 'Semua Tahun' : yearFilter}.`
+                            ? 'Tidak ada data yang cocok dengan filter atau pencarian saat ini.'
                             : 'Tidak ditemukan data transaksi yang dimuat.'}
                         </p>
+                        {activeFilterDescriptors.length > 0 && (
+                          <p className="text-xs text-stone-500">
+                            Filter aktif saat ini: <strong>{activeFilterDescriptors.map((f) => f.label).join(' · ')}</strong>
+                          </p>
+                        )}
                         <div className="flex flex-wrap items-center justify-center gap-2">
+                          {searchTerm.trim() && submissions.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setSearchTerm('')}
+                              className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs transition cursor-pointer"
+                            >
+                              Hapus Pencarian "{searchTerm.trim()}"
+                            </button>
+                          )}
                           {submissions.length > 0 && (
                             <button
                               type="button"
-                              onClick={() => {
-                                setSearchTerm('');
-                                setMethodFilter('All');
-                                setStatusFilter('All');
-                                setDateFilter('');
-                                setMonthFilter('All');
-                                setYearFilter('All');
-                                setDiffDateFilter('all');
-                                setDuplicateFilterMode('all');
-                                setFirestoreFilter('all');
-                                setShowOnlyUnsynced(false);
-                                try { sessionStorage.setItem('sublist_hasCustomPeriodFilter', 'true'); } catch (_) {}
-                              }}
+                              onClick={handleResetAllFilters}
                               className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-stone-950 font-bold text-xs transition cursor-pointer"
                             >
                               Tampilkan Semua ({submissions.length} Transaksi)
@@ -3008,7 +3809,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                               disabled={isCloudSyncing}
                               className="px-4 py-2 rounded-xl bg-stone-900 hover:bg-stone-800 text-white font-bold text-xs transition cursor-pointer disabled:opacity-50"
                             >
-                              🔄 Pulihkan &amp; Sinkron Data
+                              Pulihkan &amp; Sinkron Data
                             </button>
                           )}
                         </div>
@@ -5776,6 +6577,56 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
           </div>
 
           <div className="py-1">
+            {/* Pilih Transaksi (Munculkan kolom check & tandai transaksi ini) */}
+            {(() => {
+              const isAlreadyChecked = selectedCheckedSet.has(activeActionSub.id);
+              return (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const targetId = activeActionSub.id;
+                    setOpenActionMenuId(null);
+                    setActionMenuPosition(null);
+                    handleToggleSelectCheck(targetId);
+                  }}
+                  className={`w-full px-3.5 py-2 text-xs font-bold flex items-center gap-2.5 transition text-left cursor-pointer ${
+                    isAlreadyChecked
+                      ? 'bg-sky-100 text-sky-950 hover:bg-sky-200 border-b border-sky-200'
+                      : 'text-emerald-800 hover:bg-emerald-50 border-b border-stone-100'
+                  }`}
+                  title={isAlreadyChecked ? 'Hapus centang transaksi ini (kolom check otomatis hilang jika tidak ada yang dipilih)' : 'Munculkan kotak check dan pilih transaksi ini'}
+                >
+                  <Check size={15} className={isAlreadyChecked ? 'text-sky-700 shrink-0' : 'text-emerald-600 shrink-0'} />
+                  <span>{isAlreadyChecked ? 'Batalkan Pilih Transaksi' : 'Pilih Transaksi'}</span>
+                </button>
+              );
+            })()}
+
+            {/* 0a. Soroti / Prioritaskan untuk Dibayar Selanjutnya */}
+            {(() => {
+              const isPrio = isSubPriorityPayNext(activeActionSub);
+              return (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = activeActionSub;
+                    setOpenActionMenuId(null);
+                    setActionMenuPosition(null);
+                    handleSetPaymentPriority([target], !isPrio);
+                  }}
+                  className={`w-full px-3.5 py-2 text-xs font-bold flex items-center gap-2.5 transition text-left cursor-pointer ${
+                    isPrio
+                      ? 'bg-amber-100 text-amber-950 hover:bg-amber-200 border-b border-amber-200'
+                      : 'text-amber-800 hover:bg-amber-50'
+                  }`}
+                  title={isPrio ? 'Hapus sorotan prioritas pembayaran pada transaksi ini' : 'Soroti transaksi ini untuk diprioritaskan dibayar selanjutnya'}
+                >
+                  <Star size={15} className={isPrio ? 'text-amber-600 fill-amber-500 shrink-0' : 'text-amber-500 shrink-0'} />
+                  <span>{isPrio ? 'Hapus Prioritas Bayar' : 'Prioritaskan Bayar Selanjutnya'}</span>
+                </button>
+              );
+            })()}
+
             {/* 0. Upload ke Firebase Firestore */}
             {onUploadSingleToFirestore && (() => {
               const idLow = String(activeActionSub.id || '').toLowerCase().trim();
@@ -6207,7 +7058,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
+                    onClick={async () => {
                       const idsToDelete = [...selectedCheckedIds];
                       const includeDrive = bulkDeleteIncludeDrive;
                       setBulkDeleteConfirmOpen(false);
@@ -6225,6 +7076,206 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                   >
                     <Trash2 size={14} />
                     <span>Ya, Hapus {selectedSubs.length} Transaksi</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })(),
+        document.body
+      )}
+
+      {/* CHECK SELECTION OPTIONS PORTAL DROPDOWN (Never clipped by table overflow) */}
+      {isCheckMenuOpen && checkMenuPosition && createPortal(
+        <div
+          id="portal-check-options-menu"
+          style={{
+            position: 'fixed',
+            top: `${checkMenuPosition.top}px`,
+            left: `${checkMenuPosition.left}px`,
+            width: '272px',
+            zIndex: 9999999,
+          }}
+          className="check-menu-dropdown-root bg-white rounded-2xl shadow-2xl border border-stone-200 py-1.5 divide-y divide-stone-100 text-left select-none ring-1 ring-black/5"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="px-3.5 py-2 bg-stone-50">
+            <div className="text-[10px] font-mono font-bold uppercase tracking-wider text-stone-500">
+              Pilihan Centang (Check)
+            </div>
+            <div className="text-[11px] text-stone-600 mt-0.5">
+              Pilih kelompok transaksi untuk tindakan cepat
+            </div>
+          </div>
+          <div className="py-1 text-xs">
+            <button
+              type="button"
+              onClick={() => handleApplyCheckSelection(submissions.map((s) => s.id), 'replace')}
+              disabled={submissions.length === 0}
+              className="w-full px-3.5 py-2 hover:bg-emerald-50 font-bold text-emerald-900 flex items-center justify-between cursor-pointer disabled:opacity-40"
+            >
+              <span>Check All (Semua Transaksi)</span>
+              <span className="font-mono text-[11px] text-emerald-700 tabular-nums">{submissions.length}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleApplyCheckSelection(filteredSubmissions.map((s) => s.id), 'replace')}
+              disabled={filteredSubmissions.length === 0}
+              className="w-full px-3.5 py-2 hover:bg-stone-50 font-semibold text-stone-800 flex items-center justify-between cursor-pointer disabled:opacity-40"
+            >
+              <span>Pilih Semua yang Tampil</span>
+              <span className="font-mono text-[11px] text-stone-500 tabular-nums">{filteredSubmissions.length}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleApplyCheckSelection(checkedSelectionGroups.visibleUnpaidIds, 'replace')}
+              disabled={checkedSelectionGroups.visibleUnpaidIds.length === 0}
+              className="w-full px-3.5 py-2 hover:bg-rose-50 font-semibold text-rose-800 flex items-center justify-between cursor-pointer disabled:opacity-40"
+            >
+              <span>Pilih Belum Lunas / DP</span>
+              <span className="font-mono text-[11px] text-rose-600 tabular-nums">{checkedSelectionGroups.visibleUnpaidIds.length}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleApplyCheckSelection(checkedSelectionGroups.visiblePriorityIds, 'replace')}
+              disabled={checkedSelectionGroups.visiblePriorityIds.length === 0}
+              className="w-full px-3.5 py-2 hover:bg-amber-50 font-semibold text-amber-900 flex items-center justify-between cursor-pointer disabled:opacity-40"
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <Star size={12} className="text-amber-500 fill-amber-400" />
+                <span>Pilih Prioritas Bayar</span>
+              </span>
+              <span className="font-mono text-[11px] text-amber-700 tabular-nums">{checkedSelectionGroups.visiblePriorityIds.length}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleApplyCheckSelection(checkedSelectionGroups.visibleUnsyncedIds, 'replace')}
+              disabled={checkedSelectionGroups.visibleUnsyncedIds.length === 0}
+              className="w-full px-3.5 py-2 hover:bg-orange-50 font-semibold text-orange-900 flex items-center justify-between cursor-pointer disabled:opacity-40"
+            >
+              <span>Pilih Belum di Firestore</span>
+              <span className="font-mono text-[11px] text-orange-700 tabular-nums">{checkedSelectionGroups.visibleUnsyncedIds.length}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleApplyCheckSelection(checkedSelectionGroups.visibleLunasIds, 'replace')}
+              disabled={checkedSelectionGroups.visibleLunasIds.length === 0}
+              className="w-full px-3.5 py-2 hover:bg-teal-50 font-semibold text-teal-800 flex items-center justify-between cursor-pointer disabled:opacity-40"
+            >
+              <span>Pilih Sudah Lunas</span>
+              <span className="font-mono text-[11px] text-teal-600 tabular-nums">{checkedSelectionGroups.visibleLunasIds.length}</span>
+            </button>
+            {checkedSelectionGroups.visibleDuplicateIds.length > 0 && (
+              <button
+                type="button"
+                onClick={() => handleApplyCheckSelection(checkedSelectionGroups.visibleDuplicateIds, 'replace')}
+                className="w-full px-3.5 py-2 hover:bg-amber-50 font-semibold text-amber-900 flex items-center justify-between cursor-pointer"
+              >
+                <span>Pilih Potensi Duplikat</span>
+                <span className="font-mono text-[11px] text-amber-700 tabular-nums">{checkedSelectionGroups.visibleDuplicateIds.length}</span>
+              </button>
+            )}
+          </div>
+          <div className="py-1 text-xs">
+            <button
+              type="button"
+              onClick={() => handleApplyCheckSelection([], 'invert')}
+              className="w-full px-3.5 py-2 hover:bg-stone-50 font-semibold text-stone-700 text-left cursor-pointer"
+            >
+              Balikkan Pilihan Saat Ini
+            </button>
+            <button
+              type="button"
+              onClick={() => handleApplyCheckSelection([], 'clear')}
+              disabled={selectedCheckedIds.length === 0}
+              className="w-full px-3.5 py-2 hover:bg-rose-50 font-semibold text-rose-700 text-left cursor-pointer disabled:opacity-40"
+            >
+              Batalkan Semua Pilihan
+            </button>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* IN-APP BULK MARK AS PAID CONFIRMATION MODAL */}
+      {bulkMarkPaidConfirmOpen && checkedSelectionGroups.selectedUnpaidSubs.length > 0 && createPortal(
+        (() => {
+          const targets = checkedSelectionGroups.selectedUnpaidSubs;
+          const totalUnpaidNominal = targets.reduce(
+            (sum, s) => sum + ((s.items || []).reduce((acc, it) => acc + (Number(it.total) || 0), 0)),
+            0
+          );
+          return (
+            <div
+              className="fixed inset-0 z-[10060] bg-stone-950/60 backdrop-blur-xs flex items-center justify-center p-4"
+              onClick={() => setBulkMarkPaidConfirmOpen(false)}
+            >
+              <div
+                className="w-full max-w-md bg-white rounded-2xl border border-stone-200 shadow-2xl overflow-hidden animate-fade-in"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="bg-emerald-50 border-b border-emerald-200 px-5 py-4 flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 bg-emerald-100 text-emerald-700 rounded-xl">
+                      <CheckCircle size={18} />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-black text-stone-900 font-display">
+                        Tandai {targets.length} Transaksi Lunas
+                      </h3>
+                      <p className="text-[11px] font-mono text-emerald-800 font-semibold tabular-nums">
+                        Total Nilai: Rp {formatRupiah(totalUnpaidNominal)}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setBulkMarkPaidConfirmOpen(false)}
+                    className="p-1.5 rounded-lg text-stone-500 hover:bg-emerald-100 hover:text-stone-800 transition cursor-pointer"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+
+                <div className="p-5 space-y-3 text-xs text-stone-700">
+                  <p>
+                    Status transaksi di bawah ini akan diubah menjadi <strong>Lunas</strong> dan sorotan prioritas pembayarannya otomatis diselesaikan:
+                  </p>
+                  <div className="max-h-44 overflow-y-auto bg-stone-50 border border-stone-200 rounded-xl divide-y divide-stone-200">
+                    {targets.map((s) => {
+                      const sTotal = (s.items || []).reduce((acc, it) => acc + (Number(it.total) || 0), 0);
+                      return (
+                        <div key={s.id} className="px-3.5 py-2 flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="font-bold text-stone-900 truncate">{s.dibayarkanKepada || '-'}</div>
+                            <div className="text-[10px] font-mono text-stone-500 truncate">
+                              {s.tanggal || '-'} · {s.kode || '-'}
+                            </div>
+                          </div>
+                          <div className="font-mono font-bold text-emerald-700 shrink-0 tabular-nums">
+                            Rp {formatRupiah(sTotal)}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="px-5 py-3.5 bg-stone-50 border-t border-stone-200 flex items-center justify-end gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setBulkMarkPaidConfirmOpen(false)}
+                    className="px-4 py-2 rounded-xl border border-stone-300 bg-white hover:bg-stone-100 text-stone-700 font-bold text-xs transition cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleBulkMarkCheckedAsPaid}
+                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition cursor-pointer"
+                  >
+                    <CheckCircle size={14} />
+                    <span>Ya, Tandai Lunas ({targets.length})</span>
                   </button>
                 </div>
               </div>

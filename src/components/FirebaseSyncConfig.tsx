@@ -9,8 +9,7 @@ import {
   deleteSubmissionFromFirestore,
   loginToFirebase,
   logoutFromFirebase,
-  registerAuthChangeListener,
-  LOCKED_FIREBASE_AUTH_EMAIL
+  registerAuthChangeListener
 } from '../firebase';
 import { Submission } from '../types';
 import { Cloud, CloudOff, RefreshCw, Key, Check, Info, Trash2, Database, AlertCircle, LogIn, LogOut, ShieldCheck, UserCheck } from 'lucide-react';
@@ -32,9 +31,9 @@ export const FirebaseSyncConfig: React.FC<FirebaseSyncConfigProps> = ({ onSyncDa
   const [messagingSenderId, setMessagingSenderId] = useState('');
   const [appId, setAppId] = useState('');
   
-  // Auth states (otomatis terisi akun Firebase default: yudiakungaming@gmail.com)
+  // Auth states (email dikosongkan demi privasi)
   const [authUser, setAuthUser] = useState<User | null>(null);
-  const [loginEmail, setLoginEmail] = useState<string>(LOCKED_FIREBASE_AUTH_EMAIL);
+  const [loginEmail, setLoginEmail] = useState<string>('');
   const [loginPassword, setLoginPassword] = useState('');
   const [showLoginPanel, setShowLoginPanel] = useState(false);
   
@@ -370,10 +369,12 @@ export const FirebaseSyncConfig: React.FC<FirebaseSyncConfigProps> = ({ onSyncDa
               </label>
               <input
                 type="email"
+                name="firebase-sync-email"
+                autoComplete="off"
                 required
                 value={loginEmail}
                 onChange={(e) => setLoginEmail(e.target.value)}
-                placeholder="nama@nmsa.com"
+                placeholder=""
                 className="w-full p-2 bg-white border border-stone-250 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-amber-500 text-stone-800"
               />
             </div>

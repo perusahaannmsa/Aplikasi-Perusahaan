@@ -257,6 +257,8 @@ export const mapFirestoreToSubmission = (docId: string, data: any): Submission =
     dpAmount: parsedDpAmount,
     cicilanNotes: rawCicilanNotes,
     riwayatCicilan: rawRiwayatCicilan,
+    paymentPriority: data.paymentPriority === 'next' ? 'next' : (data.paymentPriority === null ? null : undefined),
+    paymentPriorityAt: data.paymentPriorityAt || undefined,
     rekeningTujuan: rawRekeningTujuan,
     notes: data.notes || data.catatan || data.catatan_tambahan || data.catatanTambahan || '',
     
@@ -497,6 +499,8 @@ export const mapSubmissionToFirestore = (
     cicilan_notes: sub.cicilanNotes || null,
     riwayatCicilan: Array.isArray(sub.riwayatCicilan) ? sub.riwayatCicilan : null,
     riwayat_cicilan: Array.isArray(sub.riwayatCicilan) ? sub.riwayatCicilan : null,
+    paymentPriority: sub.paymentPriority === 'next' ? 'next' : null,
+    paymentPriorityAt: sub.paymentPriority === 'next' ? (sub.paymentPriorityAt || new Date().toISOString()) : null,
     rekeningTujuan: sub.rekeningTujuan || null,
     rekening_tujuan: sub.rekeningTujuan || null,
     noRekeningTujuan: sub.noRekeningTujuan || null,
@@ -583,7 +587,11 @@ export const getUserProfileFromFirestore = async (uid: string): Promise<any> => 
       if (data?.companyId) {
         setActiveCompanyId(data.companyId);
       }
-      return data;
+      const rawName = String(data?.fullName || '').trim();
+      const sanitizedName = !rawName || rawName.toLowerCase().includes('yudiakungaming') || rawName.includes('@')
+        ? 'Nur Wahyudi'
+        : rawName;
+      return { ...data, fullName: sanitizedName };
     }
   } catch (err) {
     markFirestoreInternalAssertion(err);
@@ -1414,10 +1422,13 @@ export const ensureUserProfile = async (
   setActiveCompanyId(companyId);
 
   try {
+    const cleanName = user.displayName && !user.displayName.toLowerCase().includes('yudiakungaming') && !user.displayName.includes('@')
+      ? user.displayName
+      : 'Nur Wahyudi';
     const cachedProfile = {
       uid: user.uid,
       email: user.email,
-      fullName: user.displayName || user.email?.split('@')[0] || 'User',
+      fullName: cleanName,
       role: 'Divisi Keuangan',
       companyId: companyId,
       companyName: companyName,

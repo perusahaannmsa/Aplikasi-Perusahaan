@@ -150,8 +150,11 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
   };
 
-  const userDisplayName = userProfile?.fullName || 'Nur Wahyudi';
-  const userEmailAddress = authUser?.email || 'Terotentikasi via Cloud';
+  const rawDisplayName = String(userProfile?.fullName || '').trim();
+  const userDisplayName = !rawDisplayName || rawDisplayName.toLowerCase().includes('yudiakungaming') || rawDisplayName.includes('@')
+    ? 'Nur Wahyudi'
+    : rawDisplayName;
+  const userEmailAddress = 'Terotentikasi via Cloud';
   const userRole = userProfile?.role || 'Admin HO / Staff';
   const companyName = userProfile?.companyName || 'PT. Nusantara Mineral Sukses Abadi';
 

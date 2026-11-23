@@ -2100,12 +2100,17 @@ export default function App() {
           if (!profile) {
             const isPortalAdmin = isAuthorizedPortalFirebaseEmail(user.email) || user.email === 'admin@nmsa.com';
             profile = {
-              fullName: isPortalAdmin ? 'Nur Wahyudi' : (user.email?.split('@')[0] || 'User'),
+              fullName: isPortalAdmin ? 'Nur Wahyudi' : 'Administrator HO',
               role: isPortalAdmin ? 'Accounting' : 'User',
               email: user.email || LOCKED_FIREBASE_AUTH_EMAIL,
               companyId: companyId,
               companyName: 'PT Nusantara Mineral Sukses Abadi'
             };
+          } else if (
+            typeof profile.fullName === 'string' &&
+            (profile.fullName.toLowerCase().includes('yudiakungaming') || profile.fullName.includes('@'))
+          ) {
+            profile = { ...profile, fullName: 'Nur Wahyudi' };
           }
 
           companyId = (storedActiveCompId || profile.companyId || 'nmsa').toLowerCase().trim();
@@ -2348,6 +2353,103 @@ export default function App() {
         idLows.forEach((id) => next.delete(id));
         return next;
       });
+    }
+  };
+
+  const handleUploadSelectedToFirestore = async (subsToUpload: Submission[]) => {
+    const validTargets = (subsToUpload || []).filter((s) => s && s.id);
+    if (validTargets.length === 0) return;
+
+    const idLows = validTargets.map((s) => normalizeSubId(s.id));
+    setIsCloudSyncing(true);
+    setUploadingSubIds((prev) => {
+      const next = new Set(prev);
+      idLows.forEach((id) => next.add(id));
+      return next;
+    });
+    setCloudSyncNotice(`☁️ Mengupload ${validTargets.length} transaksi terpilih ke Firebase Firestore (${getActiveFirebaseProjectId()})...`);
+
+    try {
+      await resetFirestoreQuotaCooldown().catch(() => {});
+      const res = await restoreSubmissionsToFirestore(validTargets, activeCompForSync, activeCompNameForSync);
+      if (res.successCount > 0) {
+        const uploadedIds = validTargets.slice(0, res.successCount).map((s) => s.id);
+        addCloudSyncedIds(uploadedIds);
+        clearPendingFirestoreIds(uploadedIds);
+        setSyncListenerEpoch((n) => n + 1);
+        setCloudSyncNotice(`✅ Berhasil mengupload ${res.successCount}/${res.total} transaksi terpilih ke Firebase Firestore.`);
+        setTimeout(() => setCloudSyncNotice(null), 5000);
+      } else {
+        markPendingFirestoreIds(validTargets.map((s) => s.id));
+        setCloudSyncNotice(`❌ Gagal upload transaksi terpilih ke Firestore: ${res.error || 'Periksa Rules atau koneksi Firebase.'}`);
+      }
+    } catch (err: any) {
+      markPendingFirestoreIds(validTargets.map((s) => s.id));
+      setCloudSyncNotice(`❌ Gagal upload transaksi terpilih ke Firestore: ${err?.message || err}`);
+    } finally {
+      setIsCloudSyncing(false);
+      setUploadingSubIds((prev) => {
+        const next = new Set(prev);
+        idLows.forEach((id) => next.delete(id));
+        return next;
+      });
+    }
+  };
+
+  const handleBulkUpdateSubmissions = async (updatedSubs: Submission[], customNotice?: string) => {
+    const validUpdated = (updatedSubs || []).filter((s) => s && s.id);
+    if (validUpdated.length === 0) return;
+
+    const nowIso = new Date().toISOString();
+    const stampedMap = new Map<string, Submission>();
+    validUpdated.forEach((s) => {
+      const stamped: Submission = {
+        ...s,
+        companyId: (s.companyId || userProfile?.companyId || activeCompForSync || 'nmsa').toLowerCase().trim(),
+        companyName: s.companyName || userProfile?.companyName || activeCompNameForSync,
+        updatedAt: nowIso,
+      };
+      stampedMap.set(normalizeSubId(stamped.id), stamped);
+    });
+
+    const nextList = submissions.map((existing) => {
+      const hit = stampedMap.get(normalizeSubId(existing.id));
+      return hit ? hit : existing;
+    });
+    saveSubmissionsToStorage(nextList);
+
+    const stampedArray = Array.from(stampedMap.values());
+    stampedArray.forEach((stamped) => {
+      try {
+        fetch('/api/sync-submissions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ submission: stamped }),
+        }).catch(() => {});
+      } catch (_) {}
+    });
+
+    if (isFirebaseConfigured()) {
+      try {
+        const res = await saveSubmissionsBatchToFirestore(stampedArray, activeCompForSync, activeCompNameForSync);
+        if (res.success && res.count > 0) {
+          const savedIds = stampedArray.slice(0, res.count).map((s) => s.id);
+          addCloudSyncedIds(savedIds);
+          clearPendingFirestoreIds(savedIds);
+        } else {
+          markPendingFirestoreIds(stampedArray.map((s) => s.id));
+        }
+      } catch (err) {
+        markPendingFirestoreIds(stampedArray.map((s) => s.id));
+        console.warn('Silent fallback: batch submission update cloud sync warning', err);
+      }
+    } else {
+      markPendingFirestoreIds(stampedArray.map((s) => s.id));
+    }
+
+    if (customNotice) {
+      setCloudSyncNotice(customNotice);
+      setTimeout(() => setCloudSyncNotice(null), 5000);
     }
   };
 
@@ -3900,11 +4002,11 @@ export default function App() {
                   title="Buka Halaman Pengaturan Akun, Tema & Cloud"
                 >
                   <div className="w-7 h-7 rounded-full bg-emerald-100 border border-emerald-300 flex items-center justify-center text-emerald-800 font-bold text-xs">
-                    {(userProfile?.fullName || 'Nur Wahyudi').substring(0, 2).toUpperCase()}
+                    {((userProfile?.fullName && !String(userProfile.fullName).toLowerCase().includes('yudiakungaming') && !String(userProfile.fullName).includes('@')) ? userProfile.fullName : 'Nur Wahyudi').substring(0, 2).toUpperCase()}
                   </div>
                   <div className="hidden sm:flex flex-col items-start text-left">
                     <span className="text-xs font-sans font-black text-stone-900 leading-tight truncate max-w-[120px] sm:max-w-[160px]">
-                      {userProfile?.fullName || 'Nur Wahyudi'}
+                      {(userProfile?.fullName && !String(userProfile.fullName).toLowerCase().includes('yudiakungaming') && !String(userProfile.fullName).includes('@')) ? userProfile.fullName : 'Nur Wahyudi'}
                     </span>
                     <span className="text-[10px] text-stone-500 font-mono leading-tight flex items-center gap-1">
                       <Settings size={10} />
@@ -4046,11 +4148,11 @@ export default function App() {
                 title="Buka Tampilan Pengaturan (Profil, Perusahaan, Tema, Drive, Firebase & Logout)"
               >
                 <div className="w-7 h-7 rounded-full bg-emerald-100 border border-emerald-300 flex items-center justify-center text-emerald-800 font-bold text-xs shrink-0">
-                  {(userProfile?.fullName || 'Nur Wahyudi').substring(0, 2).toUpperCase()}
+                  {((userProfile?.fullName && !String(userProfile.fullName).toLowerCase().includes('yudiakungaming') && !String(userProfile.fullName).includes('@')) ? userProfile.fullName : 'Nur Wahyudi').substring(0, 2).toUpperCase()}
                 </div>
                 <div className="hidden sm:flex flex-col items-start text-left">
                   <span className="text-xs font-sans font-black leading-tight truncate max-w-[120px] sm:max-w-[160px]">
-                    {userProfile?.fullName || 'Nur Wahyudi'}
+                    {(userProfile?.fullName && !String(userProfile.fullName).toLowerCase().includes('yudiakungaming') && !String(userProfile.fullName).includes('@')) ? userProfile.fullName : 'Nur Wahyudi'}
                   </span>
                   <span className={`text-[10px] font-mono leading-tight flex items-center gap-1 ${view === 'pengaturan' ? 'text-stone-900 font-bold' : 'text-stone-500'}`}>
                     <Settings size={10} />
@@ -4180,7 +4282,9 @@ export default function App() {
             onForceCloudSync={() => handleForceCloudSync(false)}
             onRestoreBackupToFirestore={handleRestoreBackupToFirestore}
             onUploadSingleToFirestore={handleUploadSingleToFirestore}
+            onUploadSelectedToFirestore={handleUploadSelectedToFirestore}
             onUploadUnsyncedToFirestore={handleUploadUnsyncedToFirestore}
+            onBulkUpdateSubmissions={handleBulkUpdateSubmissions}
             unsyncedSubmissionIds={unsyncedSubmissionIds}
             cloudSyncedIds={cloudSyncedIds}
             uploadingSubmissionIds={uploadingSubIds}

@@ -84,9 +84,12 @@ export const PengaturanView: React.FC<PengaturanViewProps> = ({
   isCloudSyncing = false,
   submissionCount,
 }) => {
-  const fullName = userProfile?.fullName || 'Nur Wahyudi';
+  const rawFullName = String(userProfile?.fullName || '').trim();
+  const fullName = !rawFullName || rawFullName.toLowerCase().includes('yudiakungaming') || rawFullName.includes('@')
+    ? 'Nur Wahyudi'
+    : rawFullName;
   const roleLabel = userProfile?.role || 'Divisi Keuangan HO';
-  const email = authUser?.email || 'Terotentikasi via Cloud';
+  const email = 'Terotentikasi via Cloud';
   const companyCode =
     userProfile?.companyDetails?.code || userProfile?.companyId?.toUpperCase() || 'NMSA';
   const companyName =
