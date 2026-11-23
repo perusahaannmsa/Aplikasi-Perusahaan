@@ -495,7 +495,7 @@ export const GoogleDriveBrowser: React.FC<GoogleDriveBrowserProps> = ({
               Akun Google Drive Permanen (Terkunci)
             </h3>
             <p className="text-xs text-stone-500 mt-0.5">
-              Penyimpanan Google Drive dikunci permanen khusus untuk akun <strong className="font-mono text-stone-800">{LOCKED_MASTER_DRIVE_EMAIL}</strong> di seluruh perusahaan dan update aplikasi.
+              Penyimpanan Google Drive terhubung ke akun <strong className="font-mono text-stone-800">{masterEmail || LOCKED_MASTER_DRIVE_EMAIL}</strong> di seluruh perusahaan dan menu (dapat diganti hanya melalui Pengaturan).
             </p>
           </div>
           <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs font-bold self-start sm:self-auto">

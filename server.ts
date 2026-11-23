@@ -2546,9 +2546,9 @@ app.get("/api/unified-storage", (req, res) => {
         employeeLoans: state.employeeLoans || []
       },
       googleDrives: (state.googleDrives || []).filter((d: any) =>
-        String(d?.email || '').trim().toLowerCase() === 'akuncoding211@gmail.com'
+        String(d?.email || '').trim().toLowerCase() === (String(state.masterDriveEmail || 'akuncoding211@gmail.com').trim().toLowerCase())
       ),
-      masterDriveEmail: 'akuncoding211@gmail.com',
+      masterDriveEmail: String(state.masterDriveEmail || 'akuncoding211@gmail.com').trim().toLowerCase(),
       riwayat_audit_log: state.auditLogs || [],
       companySettings: state.companySettings || {},
       raw: state
@@ -2624,17 +2624,21 @@ app.post("/api/unified-storage", (req, res) => {
       };
     }
     if (incoming.employeeLoans !== undefined) state.employeeLoans = incoming.employeeLoans;
+    if (typeof incoming.masterDriveEmail === 'string' && incoming.masterDriveEmail.includes('@') && incoming.masterDriveEmail.includes('.')) {
+      state.masterDriveEmail = incoming.masterDriveEmail.trim().toLowerCase();
+    } else if (!state.masterDriveEmail) {
+      state.masterDriveEmail = 'akuncoding211@gmail.com';
+    }
     if (incoming.googleDrives !== undefined && Array.isArray(incoming.googleDrives)) {
-      const LOCKED_DRIVE_EMAIL = 'akuncoding211@gmail.com';
+      const ACTIVE_LOCKED_DRIVE_EMAIL = String(state.masterDriveEmail || 'akuncoding211@gmail.com').trim().toLowerCase();
       const lockedIncoming = incoming.googleDrives
-        .filter((d: any) => String(d?.email || '').trim().toLowerCase() === LOCKED_DRIVE_EMAIL)
-        .map((d: any) => ({ ...d, email: LOCKED_DRIVE_EMAIL }));
-      if (lockedIncoming.length > 0) {
+        .filter((d: any) => String(d?.email || '').trim().toLowerCase() === ACTIVE_LOCKED_DRIVE_EMAIL)
+        .map((d: any) => ({ ...d, email: ACTIVE_LOCKED_DRIVE_EMAIL }));
+      if (lockedIncoming.length > 0 || incoming.googleDrives.length === 0) {
         state.googleDrives = lockedIncoming;
       } else {
-        // Keep existing locked drive entries and strip any non-locked accounts
         state.googleDrives = (state.googleDrives || []).filter(
-          (d: any) => String(d?.email || '').trim().toLowerCase() === LOCKED_DRIVE_EMAIL
+          (d: any) => String(d?.email || '').trim().toLowerCase() === ACTIVE_LOCKED_DRIVE_EMAIL
         );
       }
     }

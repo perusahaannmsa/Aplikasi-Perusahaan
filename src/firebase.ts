@@ -1,4 +1,5 @@
 import { initializeApp, getApp, getApps, FirebaseApp, deleteApp } from 'firebase/app';
+import { getAnalytics, isSupported as isAnalyticsSupported, Analytics } from 'firebase/analytics';
 import firebaseAppletConfig from '../firebase-applet-config.json';
 import { 
   getFirestore, 
@@ -72,6 +73,7 @@ export interface FirestoreErrorInfo {
 let firebaseApp: FirebaseApp | null = null;
 export let firestoreDb: Firestore | null = null;
 let firebaseAuth: Auth | null = null;
+let firebaseAnalytics: Analytics | null = null;
 let currentUser: User | null = null;
 
 export const getSharedFirebaseApp = (): FirebaseApp | null => {
@@ -87,6 +89,11 @@ export const getSharedFirestoreDb = (): Firestore | null => {
 export const getSharedFirebaseAuth = (): Auth | null => {
   if (!firebaseAuth) isFirebaseConfigured();
   return firebaseAuth;
+};
+
+export const getSharedFirebaseAnalytics = (): Analytics | null => {
+  if (!firebaseApp) isFirebaseConfigured();
+  return firebaseAnalytics;
 };
 
 export const withTimeout = <T>(promise: Promise<T>, timeoutMs: number, label = 'Operasi Firestore'): Promise<T> => {
@@ -111,7 +118,7 @@ export const withTimeout = <T>(promise: Promise<T>, timeoutMs: number, label = '
 
 // 🔒 PERMANENT LOCKED OFFICIAL FIREBASE CONFIGURATION (PT Nusantara Mineral Sukses Abadi)
 // JANGAN DIUBAH OLEH AI GITHUB ATAU SISTEM APAPUN - KONFIGURASI RESMI & PERMANEN PERUSAHAAN
-export const PERMANENT_LOCKED_FIREBASE_CONFIG = {
+export const PERMANENT_LOCKED_FIREBASE_CONFIG = Object.freeze({
   apiKey: "AIzaSyDfIvUOLqAULR9eKy0rkqJfY_99Q4rxy2M",
   authDomain: "pencatatan-voucher-perusahaan.firebaseapp.com",
   databaseURL: "https://pencatatan-voucher-perusahaan-default-rtdb.asia-southeast1.firebasedatabase.app",
@@ -121,35 +128,22 @@ export const PERMANENT_LOCKED_FIREBASE_CONFIG = {
   appId: "1:5344554002:web:9137a500fbb8f3223b7ccb",
   measurementId: "G-1249N852Y5",
   firestoreDatabaseId: "(default)"
-};
+});
 
 export const getOfficialFirebaseConfig = () => PERMANENT_LOCKED_FIREBASE_CONFIG;
 
-// Helper to check and parse stored config - permanently defaults to NMSA Official Project
-export const getStoredFirebaseConfig = (): any => {
-  // 1. Check if a custom user config was explicitly saved via Migration / Settings panel
-  try {
-    const isManualCustom = localStorage.getItem('NUSANTARA_CUSTOM_CONFIG_MANUAL') === 'true';
-    const custom = localStorage.getItem('NUSANTARA_FIREBASE_CONFIG');
-    if (custom) {
-      const parsed = JSON.parse(custom);
-      if (parsed && parsed.apiKey && parsed.projectId) {
-        if (isManualCustom || parsed.projectId === PERMANENT_LOCKED_FIREBASE_CONFIG.projectId) {
-          return {
-            ...parsed,
-            firestoreDatabaseId: parsed.firestoreDatabaseId || '(default)'
-          };
-        } else {
-          // Stale non-manual config from another project -> clear and restore official config
-          try { localStorage.removeItem('NUSANTARA_FIREBASE_CONFIG'); } catch (_) {}
-        }
+// Permanently locked Firebase & Firestore configuration: always strip overrides and return official project
+export const getStoredFirebaseConfig = (): typeof PERMANENT_LOCKED_FIREBASE_CONFIG => {
+  if (typeof window !== 'undefined') {
+    try {
+      if (localStorage.getItem('NUSANTARA_CUSTOM_CONFIG_MANUAL')) {
+        localStorage.removeItem('NUSANTARA_CUSTOM_CONFIG_MANUAL');
       }
-    }
-  } catch (e) {
-    console.warn('Error reading stored custom firebase config:', e);
+      if (localStorage.getItem('NUSANTARA_FIREBASE_CONFIG')) {
+        localStorage.removeItem('NUSANTARA_FIREBASE_CONFIG');
+      }
+    } catch (_) {}
   }
-
-  // 2. Always return the official locked NMSA configuration
   return PERMANENT_LOCKED_FIREBASE_CONFIG;
 };
 
@@ -620,8 +614,9 @@ export const getCompanyProfileFromFirestore = async (companyId: string): Promise
         // Auto-load shared Google Drive settings from Firestore strictly for the locked Drive account
         if (Array.isArray(data.googleDrives) && data.googleDrives.length > 0) {
           console.log('🔄 Auto-loaded company-shared Google Drive settings from Firestore:', data.googleDrives.length, 'drives');
+          const activeMaster = getMasterDriveEmail();
           const mergedDrives = mergeDrivesWithLocal(data.googleDrives).filter(
-            (d: any) => (d?.email || '').trim().toLowerCase() === LOCKED_MASTER_DRIVE_EMAIL
+            (d: any) => (d?.email || '').trim().toLowerCase() === activeMaster
           );
           localStorage.setItem('NUSANTARA_CONNECTED_DRIVES', JSON.stringify(mergedDrives));
           const activeDrive = mergedDrives.find((d: any) => isDriveTokenValid(d) && (d.quotaLimit - d.quotaUsed > 10 * 1024 * 1024));
@@ -843,19 +838,10 @@ export const registerUserToFirebase = async (
   throw new Error('Fitur pendaftaran akun dinonaktifkan. Aplikasi berstatus tertutup khusus akun terdaftar langsung oleh Administrator di Firebase Console.');
 };
 
-// Production configuration for NMSA original database
-export const NMSA_PROD_FIREBASE_CONFIG = {
-  apiKey: "AIzaSyDfIvUOLqAULR9eKy0rkqJfY_99Q4rxy2M",
-  authDomain: "pencatatan-voucher-perusahaan.firebaseapp.com",
-  databaseURL: "https://pencatatan-voucher-perusahaan-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "pencatatan-voucher-perusahaan",
-  storageBucket: "pencatatan-voucher-perusahaan.firebasestorage.app",
-  messagingSenderId: "5344554002",
-  appId: "1:5344554002:web:9137a500fbb8f3223b7ccb",
-  measurementId: "G-1249N852Y5"
-};
+// Production configuration for NMSA original database (permanently locked)
+export const NMSA_PROD_FIREBASE_CONFIG = PERMANENT_LOCKED_FIREBASE_CONFIG;
 
-// Switch active database to NMSA original project
+// Switch active database to NMSA permanently locked official project
 export const switchToProductionDatabase = (): boolean => {
   try {
     localStorage.removeItem('NUSANTARA_CUSTOM_CONFIG_MANUAL');
@@ -864,19 +850,14 @@ export const switchToProductionDatabase = (): boolean => {
   return initializeFirebaseApp(PERMANENT_LOCKED_FIREBASE_CONFIG);
 };
 
-// Switch active database back to AI Studio Applet project
+// Permanently locked: always resolves to official project pencatatan-voucher-perusahaan
 export const switchToAppletDatabase = (): boolean => {
-  localStorage.removeItem('NUSANTARA_FIREBASE_CONFIG');
-  if (firebaseAppletConfig && (firebaseAppletConfig as any).apiKey) {
-    return initializeFirebaseApp(firebaseAppletConfig);
-  }
-  return false;
+  return switchToProductionDatabase();
 };
 
 // Get current active Firebase project ID
 export const getActiveFirebaseProjectId = (): string => {
-  const cfg = getStoredFirebaseConfig();
-  return cfg?.projectId || 'unknown';
+  return PERMANENT_LOCKED_FIREBASE_CONFIG.projectId;
 };
 
 const createSafeFirestoreInstance = (app: FirebaseApp, dbId: string): Firestore => {
@@ -896,20 +877,16 @@ const createSafeFirestoreInstance = (app: FirebaseApp, dbId: string): Firestore 
   }
 };
 
-// Initialize Firebase dynamically based on configs
-export const initializeFirebaseApp = (customConfig?: any): boolean => {
-  const config = customConfig || getStoredFirebaseConfig();
+// Initialize Firebase permanently locked to pencatatan-voucher-perusahaan
+export const initializeFirebaseApp = (_customConfig?: any): boolean => {
+  const config = getStoredFirebaseConfig();
   if (!config || !config.apiKey || !config.projectId) {
-    firebaseApp = null;
-    firestoreDb = null;
-    firebaseAuth = null;
     return false;
   }
 
   try {
     const defaultApp = getApps().find(a => a.name === '[DEFAULT]');
     if (defaultApp) {
-      // If the current defaultApp belongs to a different project, recreate it cleanly
       if (defaultApp.options.projectId !== config.projectId) {
         try {
           deleteApp(defaultApp);
@@ -921,6 +898,21 @@ export const initializeFirebaseApp = (customConfig?: any): boolean => {
     } else {
       firebaseApp = initializeApp(config);
     }
+
+    // Initialize Firebase Analytics safely in supported browser environments
+    if (typeof window !== 'undefined' && !firebaseAnalytics && firebaseApp) {
+      const appForAnalytics = firebaseApp;
+      isAnalyticsSupported()
+        .then((supported) => {
+          if (supported && !firebaseAnalytics) {
+            try {
+              firebaseAnalytics = getAnalytics(appForAnalytics);
+            } catch (_) {}
+          }
+        })
+        .catch(() => {});
+    }
+
     // Set firestore and auth instances
     const dbId = config.firestoreDatabaseId || (firebaseAppletConfig as any)?.firestoreDatabaseId || "(default)";
     firestoreDb = createSafeFirestoreInstance(firebaseApp, dbId);
@@ -942,7 +934,7 @@ export const initializeFirebaseApp = (customConfig?: any): boolean => {
       }
     });
 
-    console.log('✅ Firebase initialized successfully with project:', config.projectId);
+    console.log('✅ Firebase initialized (PERMANENT LOCKED) with project:', config.projectId);
     
     // If quota is already exceeded, immediately disable network to prevent gRPC Write stream errors
     if (isFirestoreQuotaExceeded()) {
@@ -1533,6 +1525,7 @@ export const getDriveRemainingMinutes = (drive: ConnectedDrive): number => {
  * are NEVER overwritten by stale or expired records stored in the cloud.
  */
 export const mergeDrivesWithLocal = (remoteDrives: ConnectedDrive[]): ConnectedDrive[] => {
+  const activeMaster = getMasterDriveEmail();
   let localDrives: ConnectedDrive[] = [];
   try {
     const raw = localStorage.getItem('NUSANTARA_CONNECTED_DRIVES');
@@ -1540,10 +1533,10 @@ export const mergeDrivesWithLocal = (remoteDrives: ConnectedDrive[]): ConnectedD
   } catch (e) {}
 
   const cleanRemote = (Array.isArray(remoteDrives) ? remoteDrives : []).filter(
-    d => d && d.email && d.email.trim().toLowerCase() === LOCKED_MASTER_DRIVE_EMAIL
+    d => d && d.email && d.email.trim().toLowerCase() === activeMaster
   );
   const cleanLocal = (Array.isArray(localDrives) ? localDrives : []).filter(
-    d => d && d.email && d.email.trim().toLowerCase() === LOCKED_MASTER_DRIVE_EMAIL
+    d => d && d.email && d.email.trim().toLowerCase() === activeMaster
   );
 
   if (cleanRemote.length === 0) return cleanLocal;
@@ -1587,9 +1580,10 @@ export const setGoogleDriveToken = (token: string | null) => {
   }
 };
 
-// 🔒 KONFIGURASI AKUN RESMI PERMANEN & TERKUNCI (PT Nusantara Mineral Sukses Abadi)
-// JANGAN UBAH ATAU HAPUS SAAT PENAMBAHAN FITUR MAUPUN UPDATE APLIKASI.
-// Akun-akun ini dikunci secara internal dan TIDAK BOLEH ditampilkan secara terbuka pada antarmuka pengguna.
+// 🔒 KONFIGURASI AKUN RESMI DEFAULT & TERKUNCI (PT Nusantara Mineral Sukses Abadi)
+// Akun default Google Drive adalah akuncoding211@gmail.com, hanya dapat diganti secara eksplisit melalui Pengaturan Akun Drive.
+export const CUSTOM_LOCKED_DRIVE_EMAIL_KEY = 'NUSANTARA_CUSTOM_LOCKED_DRIVE_EMAIL';
+
 export const PERMANENT_LOCKED_ACCOUNTS = Object.freeze({
   firebaseAuthEmail: 'yudiakungaming@gmail.com',
   googleDriveEmail: 'akuncoding211@gmail.com',
@@ -1606,7 +1600,6 @@ export const DEFAULT_AUTHORIZED_DRIVE_EMAILS: string[] = [
 ];
 
 export const isBlockedLegacyDriveEmail = (_email?: string | null): boolean => {
-  // Never silently block user's Google Drive accounts
   return false;
 };
 
@@ -1642,13 +1635,26 @@ export const getIsolatedDriveAuth = (): Auth => {
   return driveOAuthAuth;
 };
 
-// Enforce permanent lock of Google Drive to akuncoding211@gmail.com on every boot
+export const getMasterDriveEmail = (): string => {
+  if (typeof window !== 'undefined') {
+    try {
+      const custom = (localStorage.getItem(CUSTOM_LOCKED_DRIVE_EMAIL_KEY) || '').trim().toLowerCase();
+      if (custom && custom.includes('@') && custom.includes('.')) {
+        return custom;
+      }
+    } catch (_) {}
+  }
+  return LOCKED_MASTER_DRIVE_EMAIL;
+};
+
+// Enforce permanent lock of Google Drive (defaulting to akuncoding211@gmail.com unless explicitly changed) on boot
 if (typeof window !== 'undefined') {
   try {
-    localStorage.setItem('NUSANTARA_MASTER_DRIVE_EMAIL', LOCKED_MASTER_DRIVE_EMAIL);
-    localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', LOCKED_MASTER_DRIVE_EMAIL);
-    localStorage.setItem('g_user_email', LOCKED_MASTER_DRIVE_EMAIL);
-    localStorage.setItem('NUSANTARA_AUTHORIZED_DRIVES', JSON.stringify([LOCKED_MASTER_DRIVE_EMAIL]));
+    const activeMaster = getMasterDriveEmail();
+    localStorage.setItem('NUSANTARA_MASTER_DRIVE_EMAIL', activeMaster);
+    localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', activeMaster);
+    localStorage.setItem('g_user_email', activeMaster);
+    localStorage.setItem('NUSANTARA_AUTHORIZED_DRIVES', JSON.stringify([activeMaster]));
     localStorage.setItem('NUSANTARA_DRIVE_FLEXIBLE_MODE', 'false');
     localStorage.setItem('NMSA_DEFAULT_DUAL_ACCOUNTS_V2', 'true');
 
@@ -1659,8 +1665,8 @@ if (typeof window !== 'undefined') {
         const parsedDrives = JSON.parse(rawDrives);
         if (Array.isArray(parsedDrives)) {
           const onlyLocked = parsedDrives
-            .filter((d: any) => (d?.email || '').trim().toLowerCase() === LOCKED_MASTER_DRIVE_EMAIL)
-            .map((d: any) => ({ ...d, email: LOCKED_MASTER_DRIVE_EMAIL }));
+            .filter((d: any) => (d?.email || '').trim().toLowerCase() === activeMaster)
+            .map((d: any) => ({ ...d, email: activeMaster }));
           if (onlyLocked.length !== parsedDrives.length) {
             localStorage.setItem('NUSANTARA_CONNECTED_DRIVES', JSON.stringify(onlyLocked));
           }
@@ -1671,18 +1677,97 @@ if (typeof window !== 'undefined') {
 }
 
 /**
- * Flexible mode is permanently disabled: Google Drive is permanently locked to akuncoding211@gmail.com.
+ * Explicitly switches the permanently locked Google Drive account (ONLY triggered by user from Settings).
+ * Never resets when switching companies.
+ */
+export const changeLockedDriveAccount = async (newEmail: string): Promise<string> => {
+  const clean = (newEmail || '').trim().toLowerCase();
+  if (!clean || !clean.includes('@') || !clean.includes('.')) {
+    throw new Error('Masukkan alamat email Google yang valid (contoh: akunbaru@gmail.com).');
+  }
+  const previous = getMasterDriveEmail();
+  if (typeof window !== 'undefined') {
+    if (clean === LOCKED_MASTER_DRIVE_EMAIL) {
+      localStorage.removeItem(CUSTOM_LOCKED_DRIVE_EMAIL_KEY);
+    } else {
+      localStorage.setItem(CUSTOM_LOCKED_DRIVE_EMAIL_KEY, clean);
+    }
+    localStorage.setItem('NUSANTARA_MASTER_DRIVE_EMAIL', clean);
+    localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', clean);
+    localStorage.setItem('g_user_email', clean);
+    localStorage.setItem('NUSANTARA_AUTHORIZED_DRIVES', JSON.stringify([clean]));
+
+    if (previous !== clean) {
+      // Clear cached tokens from previous account so the new account binds cleanly
+      localStorage.removeItem('NUSANTARA_CONNECTED_DRIVES');
+      setGoogleDriveToken(null);
+      localStorage.removeItem('g_access_token');
+      localStorage.removeItem('g_access_token_time');
+    }
+  }
+
+  try {
+    fetch('/api/unified-storage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ masterDriveEmail: clean, googleDrives: previous !== clean ? [] : undefined })
+    }).catch(() => {});
+  } catch (_) {}
+
+  if (
+    isFirebaseConfigured() &&
+    firestoreDb &&
+    hasAuthenticatedFirebaseUser() &&
+    !isFirestoreQuotaExceeded() &&
+    !isFirestorePermissionDenied() &&
+    !isFirestoreInternalDegraded()
+  ) {
+    const targetIds = Array.from(new Set([activeCompanyId || 'nmsa', 'nmsa'].filter(Boolean)));
+    const payload = {
+      masterDriveEmail: clean,
+      ...(previous !== clean ? { googleDrives: [] } : {}),
+      updatedAt: new Date().toISOString()
+    };
+    Promise.all(
+      targetIds.map((compId) =>
+        setDoc(doc(firestoreDb!, 'companies', compId), payload, { merge: true }).catch((err) => {
+          markFirestorePermissionDenied(err);
+        })
+      )
+    ).catch(() => {});
+  }
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('nusantara-drive-updated', {
+      detail: {
+        activeAccount: getActiveGoogleDriveAccount(),
+        masterEmail: clean,
+        hasToken: previous === clean && Boolean(getStoredGoogleDriveToken(false))
+      }
+    }));
+  }
+
+  return clean;
+};
+
+export const resetLockedDriveAccountToDefault = async (): Promise<string> => {
+  return changeLockedDriveAccount(LOCKED_MASTER_DRIVE_EMAIL);
+};
+
+/**
+ * Flexible mode is disabled: only the locked master Google Drive account is used.
  */
 export const isDriveFlexibleMode = (): boolean => {
   return false;
 };
 
 export const setDriveFlexibleMode = async (_enabled: boolean): Promise<void> => {
+  const activeMaster = getMasterDriveEmail();
   try {
     localStorage.setItem('NUSANTARA_DRIVE_FLEXIBLE_MODE', 'false');
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('nusantara-drive-updated', {
-        detail: { flexibleMode: false, masterEmail: LOCKED_MASTER_DRIVE_EMAIL }
+        detail: { flexibleMode: false, masterEmail: activeMaster }
       }));
     }
   } catch (e) {
@@ -1691,12 +1776,13 @@ export const setDriveFlexibleMode = async (_enabled: boolean): Promise<void> => 
 };
 
 export const getAuthorizedDriveEmails = (): string[] => {
-  return [LOCKED_MASTER_DRIVE_EMAIL];
+  return [getMasterDriveEmail()];
 };
 
 export const saveAuthorizedDriveEmails = async (_emails: string[]): Promise<void> => {
+  const activeMaster = getMasterDriveEmail();
   try {
-    localStorage.setItem('NUSANTARA_AUTHORIZED_DRIVES', JSON.stringify([LOCKED_MASTER_DRIVE_EMAIL]));
+    localStorage.setItem('NUSANTARA_AUTHORIZED_DRIVES', JSON.stringify([activeMaster]));
   } catch (e) {
     console.error('Failed to persist locked drive email:', e);
   }
@@ -1704,32 +1790,30 @@ export const saveAuthorizedDriveEmails = async (_emails: string[]): Promise<void
 
 export const addAuthorizedDriveEmail = async (email: string): Promise<string[]> => {
   const clean = (email || '').trim().toLowerCase();
-  if (clean !== LOCKED_MASTER_DRIVE_EMAIL) {
-    throw new Error(`Penyimpanan Google Drive dikunci permanen hanya ke akun ${LOCKED_MASTER_DRIVE_EMAIL}. Akun lain tidak dapat ditambahkan.`);
+  const activeMaster = getMasterDriveEmail();
+  if (clean !== activeMaster) {
+    throw new Error(`Penyimpanan Google Drive dikunci hanya ke akun ${activeMaster}. Gunakan tombol "Ganti Akun Google Terhubung" jika memang ingin mengganti akun.`);
   }
-  await saveAuthorizedDriveEmails([LOCKED_MASTER_DRIVE_EMAIL]);
-  return [LOCKED_MASTER_DRIVE_EMAIL];
+  await saveAuthorizedDriveEmails([activeMaster]);
+  return [activeMaster];
 };
 
 export const updateAuthorizedDriveEmail = async (_oldEmail: string, newEmail: string): Promise<string[]> => {
-  const cleanNew = (newEmail || '').trim().toLowerCase();
-  if (cleanNew !== LOCKED_MASTER_DRIVE_EMAIL) {
-    throw new Error(`Akun Google Drive dikunci permanen ke ${LOCKED_MASTER_DRIVE_EMAIL} dan tidak dapat diubah ke akun lain.`);
-  }
-  await saveAuthorizedDriveEmails([LOCKED_MASTER_DRIVE_EMAIL]);
-  return [LOCKED_MASTER_DRIVE_EMAIL];
+  const updated = await changeLockedDriveAccount(newEmail);
+  return [updated];
 };
 
 export const removeAuthorizedDriveEmail = async (_emailToRemove: string): Promise<string[]> => {
-  throw new Error(`Akun Google Drive utama (${LOCKED_MASTER_DRIVE_EMAIL}) dikunci permanen di aplikasi dan tidak dapat dihapus.`);
+  const activeMaster = getMasterDriveEmail();
+  throw new Error(`Akun Google Drive utama (${activeMaster}) dikunci di aplikasi dan tidak dapat dihapus.`);
 };
 
 /**
- * Strict check: ONLY allows the permanently locked Google Drive account (akuncoding211@gmail.com).
+ * Strict check: ONLY allows the active locked Google Drive account (default akuncoding211@gmail.com).
  */
 export const isStrictlyAuthorizedDriveEmail = (email?: string | null): boolean => {
   if (!email) return false;
-  return email.trim().toLowerCase() === LOCKED_MASTER_DRIVE_EMAIL;
+  return email.trim().toLowerCase() === getMasterDriveEmail();
 };
 
 export const isDriveEmailAuthorized = (email?: string | null): boolean => {
@@ -1747,21 +1831,24 @@ export const getTokenForRegisteredDriveEmail = (email?: string | null): string |
   return null;
 };
 
-export const getMasterDriveEmail = (): string => {
-  return LOCKED_MASTER_DRIVE_EMAIL;
-};
-
-export const setMasterDriveEmail = async (_email: string): Promise<void> => {
+export const setMasterDriveEmail = async (email?: string): Promise<void> => {
+  const activeMaster = email && email.includes('@') && email.includes('.')
+    ? email.trim().toLowerCase()
+    : getMasterDriveEmail();
   try {
-    localStorage.setItem('NUSANTARA_MASTER_DRIVE_EMAIL', LOCKED_MASTER_DRIVE_EMAIL);
-    localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', LOCKED_MASTER_DRIVE_EMAIL);
-    localStorage.setItem('g_user_email', LOCKED_MASTER_DRIVE_EMAIL);
+    if (activeMaster !== getMasterDriveEmail()) {
+      await changeLockedDriveAccount(activeMaster);
+      return;
+    }
+    localStorage.setItem('NUSANTARA_MASTER_DRIVE_EMAIL', activeMaster);
+    localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', activeMaster);
+    localStorage.setItem('g_user_email', activeMaster);
 
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('nusantara-drive-updated', {
         detail: {
           activeAccount: getActiveGoogleDriveAccount(),
-          masterEmail: LOCKED_MASTER_DRIVE_EMAIL
+          masterEmail: activeMaster
         }
       }));
     }
@@ -1840,7 +1927,6 @@ export const getConnectedDrives = (): ConnectedDrive[] => {
       const parsed: ConnectedDrive[] = JSON.parse(raw);
       if (Array.isArray(parsed)) {
         let changed = false;
-        // Keep ONLY drives whose emails are explicitly authorized/registered in the app
         const filteredDrives = parsed.filter(d => 
           d && d.email && 
           !isBlockedLegacyDriveEmail(d.email) &&
@@ -1877,7 +1963,7 @@ export const getConnectedDrives = (): ConnectedDrive[] => {
     const initialDrive: ConnectedDrive = {
       email: masterEmail,
       accessToken: legacyToken,
-      displayName: 'Master Drive NMSA',
+      displayName: `Master Drive (${masterEmail})`,
       quotaUsed: 0,
       quotaLimit: 15 * 1024 * 1024 * 1024, // 15 GB
       lastChecked: new Date().toISOString(),
@@ -1893,38 +1979,58 @@ export const getConnectedDrives = (): ConnectedDrive[] => {
 let lastServerDriveHydrateTime = 0;
 let lastFirestoreDriveSyncSignature = '';
 
-export const loadConnectedDrivesFromFirestore = async (companyId: string = ''): Promise<ConnectedDrive[]> => {
+export const loadConnectedDrivesFromFirestore = async (
+  companyId: string = '',
+  bypassCooldown = false
+): Promise<ConnectedDrive[]> => {
   const localDrives = getConnectedDrives();
-  const hasValidLocal = localDrives.some((d) => isDriveTokenValid(d) && d.accessToken);
-  if (hasValidLocal) {
+  const hasValidLocal = localDrives.some((d) => isDriveTokenValid(d) && d.accessToken && !d.isExpired);
+  if (hasValidLocal && !bypassCooldown) {
     return localDrives;
   }
 
   const now = Date.now();
-  if (now - lastServerDriveHydrateTime < 10000) {
+  if (!bypassCooldown && now - lastServerDriveHydrateTime < 4000) {
     return localDrives;
   }
   lastServerDriveHydrateTime = now;
 
   let bestMerged: ConnectedDrive[] = localDrives;
+  let activeMaster = getMasterDriveEmail();
 
   // 1. Check backend unified storage first
   try {
     const res = await fetch('/api/unified-storage');
     if (res.ok) {
       const data = await res.json();
+      const serverMaster = typeof data?.masterDriveEmail === 'string'
+        ? data.masterDriveEmail.trim().toLowerCase()
+        : '';
+      if (serverMaster && serverMaster.includes('@') && serverMaster.includes('.')) {
+        const localCustom = typeof window !== 'undefined'
+          ? (localStorage.getItem(CUSTOM_LOCKED_DRIVE_EMAIL_KEY) || '').trim().toLowerCase()
+          : '';
+        if (!localCustom && serverMaster !== LOCKED_MASTER_DRIVE_EMAIL) {
+          localStorage.setItem(CUSTOM_LOCKED_DRIVE_EMAIL_KEY, serverMaster);
+          localStorage.setItem('NUSANTARA_MASTER_DRIVE_EMAIL', serverMaster);
+          localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', serverMaster);
+          localStorage.setItem('g_user_email', serverMaster);
+          localStorage.setItem('NUSANTARA_AUTHORIZED_DRIVES', JSON.stringify([serverMaster]));
+          activeMaster = serverMaster;
+        }
+      }
       const serverDrives: ConnectedDrive[] = Array.isArray(data?.googleDrives) ? data.googleDrives : [];
       if (serverDrives.length > 0) {
         const merged = mergeDrivesWithLocal(serverDrives);
-        const validMerged = merged.filter((d) => (d?.email || '').trim().toLowerCase() === LOCKED_MASTER_DRIVE_EMAIL);
+        const validMerged = merged.filter((d) => (d?.email || '').trim().toLowerCase() === activeMaster);
         if (validMerged.length > 0) {
           bestMerged = validMerged;
           localStorage.setItem('NUSANTARA_CONNECTED_DRIVES', JSON.stringify(validMerged));
-          const activeDrive = validMerged.find((d) => isDriveTokenValid(d) && d.accessToken);
+          const activeDrive = validMerged.find((d) => isDriveTokenValid(d) && d.accessToken && !d.isExpired);
           if (activeDrive?.accessToken) {
             setGoogleDriveToken(activeDrive.accessToken);
             localStorage.setItem('g_access_token', activeDrive.accessToken);
-            localStorage.setItem('g_access_token_time', String(Date.now()));
+            localStorage.setItem('g_access_token_time', String(activeDrive.issuedAt || Date.now()));
             return validMerged;
           }
         }
@@ -1952,15 +2058,15 @@ export const loadConnectedDrivesFromFirestore = async (companyId: string = ''): 
           const cloudDrives: ConnectedDrive[] = Array.isArray(data?.googleDrives) ? data.googleDrives : [];
           if (cloudDrives.length > 0) {
             const merged = mergeDrivesWithLocal(cloudDrives);
-            const validMerged = merged.filter((d) => (d?.email || '').trim().toLowerCase() === LOCKED_MASTER_DRIVE_EMAIL);
+            const validMerged = merged.filter((d) => (d?.email || '').trim().toLowerCase() === activeMaster);
             if (validMerged.length > 0) {
               bestMerged = validMerged;
               localStorage.setItem('NUSANTARA_CONNECTED_DRIVES', JSON.stringify(validMerged));
-              const activeDrive = validMerged.find((d) => isDriveTokenValid(d) && d.accessToken);
+              const activeDrive = validMerged.find((d) => isDriveTokenValid(d) && d.accessToken && !d.isExpired);
               if (activeDrive?.accessToken) {
                 setGoogleDriveToken(activeDrive.accessToken);
                 localStorage.setItem('g_access_token', activeDrive.accessToken);
-                localStorage.setItem('g_access_token_time', String(Date.now()));
+                localStorage.setItem('g_access_token_time', String(activeDrive.issuedAt || Date.now()));
                 if (typeof window !== 'undefined') {
                   window.dispatchEvent(new CustomEvent('nusantara-drive-updated', {
                     detail: {
@@ -1988,45 +2094,47 @@ export const loadConnectedDrivesFromFirestore = async (companyId: string = ''): 
 };
 
 export const getActiveGoogleDriveAccount = (): { email: string; displayName?: string; photoURL?: string } | null => {
+  const activeMaster = getMasterDriveEmail();
   const drives = getConnectedDrives();
-  const lockedDrive = drives.find(d => d.email?.trim().toLowerCase() === LOCKED_MASTER_DRIVE_EMAIL);
+  const lockedDrive = drives.find(d => d.email?.trim().toLowerCase() === activeMaster);
   if (lockedDrive) {
     return {
-      email: LOCKED_MASTER_DRIVE_EMAIL,
+      email: activeMaster,
       displayName: lockedDrive.displayName,
       photoURL: lockedDrive.photoURL
     };
   }
-  return { email: LOCKED_MASTER_DRIVE_EMAIL, displayName: 'Master Drive Permanen' };
+  return { email: activeMaster, displayName: 'Master Drive Permanen' };
 };
 
 export const saveConnectedDrives = async (drives: ConnectedDrive[]) => {
   try {
+    const activeMaster = getMasterDriveEmail();
     const cleanDrives = (Array.isArray(drives) ? drives : [])
-      .filter(d => d && d.email && d.email.trim().toLowerCase() === LOCKED_MASTER_DRIVE_EMAIL)
-      .map(d => ({ ...d, email: LOCKED_MASTER_DRIVE_EMAIL }));
+      .filter(d => d && d.email && d.email.trim().toLowerCase() === activeMaster)
+      .map(d => ({ ...d, email: activeMaster }));
     localStorage.setItem('NUSANTARA_CONNECTED_DRIVES', JSON.stringify(cleanDrives));
     // Synced with legacy single token to maintain maximum compatibility with existing code
     const activeDrive = cleanDrives.find(d => !d.isExpired && (d.quotaLimit - d.quotaUsed > 10 * 1024 * 1024));
     const bestToken = activeDrive ? activeDrive.accessToken : (cleanDrives[0]?.accessToken || null);
     setGoogleDriveToken(bestToken);
 
-    localStorage.setItem('NUSANTARA_MASTER_DRIVE_EMAIL', LOCKED_MASTER_DRIVE_EMAIL);
-    localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', LOCKED_MASTER_DRIVE_EMAIL);
-    localStorage.setItem('g_user_email', LOCKED_MASTER_DRIVE_EMAIL);
+    localStorage.setItem('NUSANTARA_MASTER_DRIVE_EMAIL', activeMaster);
+    localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', activeMaster);
+    localStorage.setItem('g_user_email', activeMaster);
 
     // Backup to server unified storage
     try {
       fetch('/api/unified-storage', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ googleDrives: cleanDrives })
+        body: JSON.stringify({ googleDrives: cleanDrives, masterDriveEmail: activeMaster })
       }).catch(() => {});
     } catch (_) {}
 
     // Sync valid active tokens to Firestore companies so other devices & PT (NMSA <-> NH) auto-connect silently
-    const hasFreshToken = cleanDrives.some((d) => isDriveTokenValid(d) && Boolean(d.accessToken));
-    const signature = cleanDrives.map((d) => `${d.email}:${d.issuedAt || 0}:${d.isExpired ? 1 : 0}`).join('|');
+    const hasFreshToken = cleanDrives.some((d) => isDriveTokenValid(d) && Boolean(d.accessToken) && !d.isExpired);
+    const signature = cleanDrives.map((d) => `${d.email}:${d.issuedAt || 0}:${d.isExpired ? 1 : 0}:${d.quotaUsed || 0}`).join('|');
     if (
       hasFreshToken &&
       signature &&
@@ -2042,7 +2150,7 @@ export const saveConnectedDrives = async (drives: ConnectedDrive[]) => {
       const targetIds = Array.from(new Set([activeCompanyId || 'nmsa', 'nmsa'].filter(Boolean)));
       const payload = {
         googleDrives: cleanDrives,
-        masterDriveEmail: getMasterDriveEmail(),
+        masterDriveEmail: activeMaster,
         updatedAt: new Date().toISOString(),
       };
       Promise.all(
@@ -2060,6 +2168,7 @@ export const saveConnectedDrives = async (drives: ConnectedDrive[]) => {
         detail: {
           drives: cleanDrives,
           activeAccount: getActiveGoogleDriveAccount(),
+          masterEmail: activeMaster,
           accessToken: bestToken,
           hasToken: !!bestToken
         }
@@ -2148,7 +2257,7 @@ export const connectDriveWithManualToken = async (
     throw new Error('Kode token Google Drive tidak boleh kosong.');
   }
 
-  // 1. Validate token directly with Google Drive API / userinfo (without silent email fallback masking wrong accounts)
+  // 1. Validate token directly with Google Drive API / userinfo
   let verifiedEmail = '';
   let displayName = 'Google Drive';
   let photoURL = '';
@@ -2192,19 +2301,20 @@ export const connectDriveWithManualToken = async (
     );
   }
 
+  const activeMaster = getMasterDriveEmail();
   const email = (verifiedEmail || targetEmailHint || '').trim().toLowerCase();
-  if (email !== LOCKED_MASTER_DRIVE_EMAIL) {
+  if (email !== activeMaster) {
     throw new Error(
       `Akses Ditolak: Token berasal dari '${email || '(tidak diketahui)'}'.\n` +
-      `Penyimpanan Google Drive aplikasi ini dikunci permanen HANYA untuk akun ${LOCKED_MASTER_DRIVE_EMAIL}.`
+      `Penyimpanan Google Drive aplikasi saat ini dikunci untuk akun ${activeMaster}. Jika ingin mengganti akun Google terhubung, gunakan fitur "Ganti Akun Google Terhubung" di Pengaturan.`
     );
   }
 
   const now = Date.now();
   const newDrive: ConnectedDrive = {
-    email: LOCKED_MASTER_DRIVE_EMAIL,
+    email: activeMaster,
     accessToken: cleanToken,
-    displayName: displayName || `Google Drive (${LOCKED_MASTER_DRIVE_EMAIL})`,
+    displayName: displayName || `Google Drive (${activeMaster})`,
     photoURL,
     quotaUsed,
     quotaLimit,
@@ -2215,59 +2325,103 @@ export const connectDriveWithManualToken = async (
   };
 
   await saveConnectedDrives([newDrive]);
-  await saveAuthorizedDriveEmails([LOCKED_MASTER_DRIVE_EMAIL]);
-  await setMasterDriveEmail(LOCKED_MASTER_DRIVE_EMAIL);
+  await saveAuthorizedDriveEmails([activeMaster]);
+  await setMasterDriveEmail(activeMaster);
   localStorage.setItem('g_access_token', cleanToken);
   localStorage.setItem('g_access_token_time', Date.now().toString());
-  localStorage.setItem('g_user_email', LOCKED_MASTER_DRIVE_EMAIL);
-  localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', LOCKED_MASTER_DRIVE_EMAIL);
+  localStorage.setItem('g_user_email', activeMaster);
+  localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', activeMaster);
 
   return newDrive;
 };
 
-export const refreshAllDrivesQuota = async (): Promise<ConnectedDrive[]> => {
-  const drives = getConnectedDrives();
-  if (drives.length === 0) return [];
+let activeQuotaRefreshPromise: Promise<ConnectedDrive[]> | null = null;
 
-  const updatedDrives = await Promise.all(
-    drives.map(async (drive) => {
-      const isWithinWindow = isDriveTokenValid(drive);
-      try {
-        const meta = await fetchDriveQuotaMetadata(drive.accessToken);
-        return {
-          ...drive,
-          email: meta.email || drive.email,
-          displayName: meta.displayName || drive.displayName,
-          photoURL: meta.photoURL || drive.photoURL,
-          quotaUsed: meta.quotaUsed ?? drive.quotaUsed,
-          quotaLimit: meta.quotaLimit ?? drive.quotaLimit,
-          lastChecked: new Date().toISOString(),
-          isExpired: false
-        };
-      } catch (err: any) {
-        console.warn(`Drive quota check note for ${drive.email}:`, err);
-        const isAuthError = err?.message?.includes('401') || err?.message?.includes('UNAUTHORIZED');
-        
-        // If token is still within its 55-minute lifetime, ignore transient 401 from quota API
-        if (isAuthError && isWithinWindow) {
-          console.log(`🛡️ Token for ${drive.email} is within valid lifetime (${getDriveRemainingMinutes(drive)}m left). Retaining active status.`);
-          return {
-            ...drive,
-            lastChecked: new Date().toISOString(),
-            isExpired: false
-          };
-        }
+export const refreshAllDrivesQuota = async (forceCloudHydrate = false): Promise<ConnectedDrive[]> => {
+  if (activeQuotaRefreshPromise) {
+    return activeQuotaRefreshPromise;
+  }
 
-        return {
-          ...drive,
-          isExpired: isAuthError ? true : (drive.isExpired ?? false)
-        };
+  activeQuotaRefreshPromise = (async () => {
+    try {
+      let drives = getConnectedDrives();
+      if (forceCloudHydrate || drives.length === 0 || !drives.some((d) => isDriveTokenValid(d) && d.accessToken && !d.isExpired)) {
+        try {
+          const hydrated = await loadConnectedDrivesFromFirestore('', true);
+          if (hydrated.length > 0) drives = hydrated;
+        } catch (_) {}
       }
-    })
-  );
 
-  saveConnectedDrives(updatedDrives);
-  return updatedDrives;
+      if (drives.length === 0) return [];
+
+      lastDriveQuotaCheckTime = Date.now();
+
+      const updatedDrives = await Promise.all(
+        drives.map(async (drive) => {
+          if (!drive.accessToken) {
+            return { ...drive, isExpired: true };
+          }
+          try {
+            const meta = await fetchDriveQuotaMetadata(drive.accessToken);
+            return {
+              ...drive,
+              email: getMasterDriveEmail(),
+              displayName: meta.displayName || drive.displayName,
+              photoURL: meta.photoURL || drive.photoURL,
+              quotaUsed: meta.quotaUsed ?? drive.quotaUsed,
+              quotaLimit: meta.quotaLimit ?? drive.quotaLimit,
+              lastChecked: new Date().toISOString(),
+              isExpired: false
+            };
+          } catch (err: any) {
+            console.warn(`Drive quota check note for ${drive.email}:`, err);
+            const isAuthError = err?.message?.includes('401') || err?.message?.includes('UNAUTHORIZED');
+
+            if (isAuthError) {
+              // Real 401 from Google API: invalidate stale token and check if cloud/server holds a newer token
+              invalidateDriveToken(drive.accessToken, true);
+              try {
+                const cloudDrives = await loadConnectedDrivesFromFirestore('', true);
+                const cloudCandidate = cloudDrives.find(
+                  (cd) =>
+                    cd.email?.toLowerCase() === drive.email?.toLowerCase() &&
+                    cd.accessToken &&
+                    cd.accessToken !== drive.accessToken &&
+                    !cd.isExpired
+                );
+                if (cloudCandidate?.accessToken) {
+                  const retryMeta = await fetchDriveQuotaMetadata(cloudCandidate.accessToken);
+                  return {
+                    ...cloudCandidate,
+                    email: getMasterDriveEmail(),
+                    displayName: retryMeta.displayName || cloudCandidate.displayName,
+                    photoURL: retryMeta.photoURL || cloudCandidate.photoURL,
+                    quotaUsed: retryMeta.quotaUsed ?? cloudCandidate.quotaUsed,
+                    quotaLimit: retryMeta.quotaLimit ?? cloudCandidate.quotaLimit,
+                    lastChecked: new Date().toISOString(),
+                    isExpired: false
+                  };
+                }
+              } catch (_) {}
+            }
+
+            return {
+              ...drive,
+              lastChecked: new Date().toISOString(),
+              isExpired: isAuthError ? true : (drive.isExpired ?? false)
+            };
+          }
+        })
+      );
+
+      await saveConnectedDrives(updatedDrives);
+      return updatedDrives;
+    } finally {
+      activeQuotaRefreshPromise = null;
+    }
+  })();
+
+  return activeQuotaRefreshPromise;
 };
 
 export const autoCleanDriveFolders = async (activeSubmissions: any[]) => {
@@ -2276,8 +2430,6 @@ export const autoCleanDriveFolders = async (activeSubmissions: any[]) => {
 
   try {
     console.log('[Auto-Sync] Memeriksa sinkronisasi data dengan Google Drive...');
-    // Real implementation would be too dangerous to blindly delete folders.
-    // The deletion is already handled reliably in the handleDelete function.
   } catch (error) {
     console.error('[Auto-Sync] Error during auto clean:', error);
   }
@@ -2285,7 +2437,6 @@ export const autoCleanDriveFolders = async (activeSubmissions: any[]) => {
 
 export const deleteGoogleDriveFile = async (fileId: string): Promise<void> => {
   return executeDriveApiWithAutoRefresh(async (token) => {
-    // 1. Try direct DELETE
     const response = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?supportsAllDrives=true`, {
       method: 'DELETE',
       headers: {
@@ -2299,10 +2450,9 @@ export const deleteGoogleDriveFile = async (fileId: string): Promise<void> => {
     }
 
     if (response.status === 401) {
-      throw new Error('UNAUTHORIZED_401'); // Triggers auto-refresh retry in wrapper
+      throw new Error('UNAUTHORIZED_401');
     }
 
-    // 2. Fallback: If permanent DELETE is prohibited by permission/policy, move to trash via PATCH
     const trashResponse = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?supportsAllDrives=true`, {
       method: 'PATCH',
       headers: {
@@ -2323,7 +2473,7 @@ export const deleteGoogleDriveFile = async (fileId: string): Promise<void> => {
 };
 
 // Invalidate a specific token or current active token so next calls trigger fresh renewal
-export const invalidateDriveToken = (badToken?: string | null): void => {
+export const invalidateDriveToken = (badToken?: string | null, forceExpire = true): void => {
   const currentDrives = getConnectedDrives();
   let changed = false;
   const now = Date.now();
@@ -2331,8 +2481,7 @@ export const invalidateDriveToken = (badToken?: string | null): void => {
   if (badToken) {
     currentDrives.forEach(d => {
       if (d.accessToken === badToken) {
-        // Do not prematurely invalidate tokens issued less than 3 minutes ago
-        const isFresh = d.issuedAt && (now - d.issuedAt < 3 * 60 * 1000);
+        const isFresh = !forceExpire && d.issuedAt && (now - d.issuedAt < 3 * 60 * 1000);
         if (!isFresh) {
           d.isExpired = true;
           changed = true;
@@ -2344,11 +2493,13 @@ export const invalidateDriveToken = (badToken?: string | null): void => {
       localStorage.removeItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
       changed = true;
     }
+    if (localStorage.getItem('g_access_token') === badToken) {
+      localStorage.removeItem('g_access_token');
+    }
   } else {
-    // Invalidate active one if not very fresh
     const active = currentDrives.find(d => !d.isExpired);
     if (active) {
-      const isFresh = active.issuedAt && (now - active.issuedAt < 3 * 60 * 1000);
+      const isFresh = !forceExpire && active.issuedAt && (now - active.issuedAt < 3 * 60 * 1000);
       if (!isFresh) {
         active.isExpired = true;
         changed = true;
@@ -2356,6 +2507,7 @@ export const invalidateDriveToken = (badToken?: string | null): void => {
     }
     googleDriveTokenMemory = null;
     localStorage.removeItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
+    localStorage.removeItem('g_access_token');
   }
 
   if (changed) {
@@ -2366,6 +2518,7 @@ export const invalidateDriveToken = (badToken?: string | null): void => {
 export const getStoredGoogleDriveToken = (strictFreshnessCheck = false): string | null => {
   const drives = getConnectedDrives();
   if (drives.length === 0) {
+    if (strictFreshnessCheck) return null;
     if (googleDriveTokenMemory) return googleDriveTokenMemory;
     try {
       return localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
@@ -2376,7 +2529,7 @@ export const getStoredGoogleDriveToken = (strictFreshnessCheck = false): string 
 
   // Find first active drive with available storage space and valid lifetime
   const availableDrive = drives.find(d => {
-    if (strictFreshnessCheck && !isDriveTokenValid(d)) return false;
+    if (strictFreshnessCheck && (!isDriveTokenValid(d) || d.isExpired)) return false;
     if (!strictFreshnessCheck && d.isExpired) return false;
     const remainingBytes = d.quotaLimit - d.quotaUsed;
     return remainingBytes > 10 * 1024 * 1024; // 10MB
@@ -2449,6 +2602,7 @@ export const saveCompanySettingsToFirestore = async (
   companyId: string = 'nmsa'
 ): Promise<void> => {
   const compId = companyId || activeCompanyId || 'nmsa';
+  const activeMaster = getMasterDriveEmail();
   
   // 1. Sync to local memory / localStorage immediately for instantaneous responsiveness
   if (partialSettings.sppdPedomanRates) {
@@ -2458,11 +2612,11 @@ export const saveCompanySettingsToFirestore = async (
     localStorage.setItem('sppd_monthly_counters', JSON.stringify(partialSettings.sppdMonthlyCounters));
   }
   if (partialSettings.authorizedDriveEmails) {
-    localStorage.setItem('NUSANTARA_AUTHORIZED_DRIVES', JSON.stringify([LOCKED_MASTER_DRIVE_EMAIL]));
+    localStorage.setItem('NUSANTARA_AUTHORIZED_DRIVES', JSON.stringify([activeMaster]));
   }
   if (partialSettings.masterDriveEmail) {
-    localStorage.setItem('NUSANTARA_MASTER_DRIVE_EMAIL', LOCKED_MASTER_DRIVE_EMAIL);
-    localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', LOCKED_MASTER_DRIVE_EMAIL);
+    localStorage.setItem('NUSANTARA_MASTER_DRIVE_EMAIL', activeMaster);
+    localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', activeMaster);
   }
   if (partialSettings.pettyCashHolders) {
     localStorage.setItem('petty_cash_holders_v2', JSON.stringify(partialSettings.pettyCashHolders));
@@ -2509,7 +2663,6 @@ export const subscribeToCompanySettingsFromFirestore = (
   _onSettingsUpdate: (settings: CompanyCloudSettings) => void,
   _companyId: string = 'nmsa'
 ): (() => void) => {
-  // Disabled Firestore real-time snapshot listener on companies to conserve daily free quota
   return () => {};
 };
 
@@ -2518,24 +2671,21 @@ let activeDriveRenewalPromise: Promise<string> | null = null;
 
 // Helper function to silently auto-refresh token if it's expired or about to expire
 export const ensureValidDriveToken = async (forceRefresh = false): Promise<string | null> => {
-  // 1. If force refresh is requested, sync latest cloud drives from Firestore first
   if (forceRefresh) {
     try {
-      await loadConnectedDrivesFromFirestore();
+      await loadConnectedDrivesFromFirestore('', true);
     } catch (e) {}
   }
 
-  // 2. Check if stored token in memory or drive list is fresh
   let token = getStoredGoogleDriveToken(!forceRefresh);
   if (token && !forceRefresh) {
     return token;
   }
 
-  // 3. Check if a fresh token exists in Firestore company document (synced from any active device)
   try {
-    const cloudDrives = await loadConnectedDrivesFromFirestore();
+    const cloudDrives = await loadConnectedDrivesFromFirestore('', forceRefresh);
     if (cloudDrives && cloudDrives.length > 0) {
-      const activeDrive = cloudDrives.find(d => isDriveTokenValid(d) && (d.quotaLimit - d.quotaUsed > 15 * 1024 * 1024));
+      const activeDrive = cloudDrives.find(d => isDriveTokenValid(d) && !d.isExpired && (d.quotaLimit - d.quotaUsed > 15 * 1024 * 1024));
       if (activeDrive && activeDrive.accessToken) {
         setGoogleDriveToken(activeDrive.accessToken);
         return activeDrive.accessToken;
@@ -2543,7 +2693,6 @@ export const ensureValidDriveToken = async (forceRefresh = false): Promise<strin
     }
   } catch (e) {}
 
-  // 4. Fallback token in memory or localStorage ONLY IF NOT forceRefresh
   if (!forceRefresh) {
     return googleDriveTokenMemory || localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
   }
@@ -2555,49 +2704,45 @@ export const getOrRenewDriveToken = async (
   targetEmail?: string,
   interactiveIfRequired = false
 ): Promise<string> => {
-  // If a renewal is already in-flight across the app, reuse the exact same promise!
   if (activeDriveRenewalPromise) {
     return activeDriveRenewalPromise;
   }
 
   activeDriveRenewalPromise = (async () => {
     try {
-      // 1. Check local drives first - prioritize active Master Drive email, then any valid connected drive
       const preferredMaster = getMasterDriveEmail().toLowerCase();
       const currentDrives = getConnectedDrives();
       const masterValid = currentDrives.find(
-        d => d.email?.toLowerCase() === preferredMaster && isDriveTokenValid(d) && (d.quotaLimit - d.quotaUsed > 10 * 1024 * 1024)
+        d => d.email?.toLowerCase() === preferredMaster && isDriveTokenValid(d) && !d.isExpired && (d.quotaLimit - d.quotaUsed > 10 * 1024 * 1024)
       );
-      const currentValid = masterValid || currentDrives.find(d => isDriveTokenValid(d) && (d.quotaLimit - d.quotaUsed > 10 * 1024 * 1024));
+      const currentValid = masterValid || currentDrives.find(d => isDriveTokenValid(d) && !d.isExpired && (d.quotaLimit - d.quotaUsed > 10 * 1024 * 1024));
       if (currentValid && currentValid.accessToken) {
         setGoogleDriveToken(currentValid.accessToken);
         localStorage.setItem('g_access_token', currentValid.accessToken);
-        localStorage.setItem('g_access_token_time', Date.now().toString());
+        localStorage.setItem('g_access_token_time', String(currentValid.issuedAt || Date.now()));
         return currentValid.accessToken;
       }
 
-      // 2. Check server unified-storage for latest synced cloud drive token from other tabs/devices
+      // Check server unified-storage & Firestore for latest synced cloud drive token from other tabs/devices
       try {
-        const cloudDrives = await loadConnectedDrivesFromFirestore();
+        const cloudDrives = await loadConnectedDrivesFromFirestore('', true);
         if (cloudDrives && cloudDrives.length > 0) {
           const validMaster = cloudDrives.find(
-            d => d.email?.toLowerCase() === preferredMaster && isDriveTokenValid(d) && d.accessToken
+            d => d.email?.toLowerCase() === preferredMaster && isDriveTokenValid(d) && !d.isExpired && d.accessToken
           );
-          const validDrive = validMaster || cloudDrives.find(d => isDriveTokenValid(d) && d.accessToken);
+          const validDrive = validMaster || cloudDrives.find(d => isDriveTokenValid(d) && !d.isExpired && d.accessToken);
           if (validDrive && validDrive.accessToken) {
             setGoogleDriveToken(validDrive.accessToken);
             localStorage.setItem('g_access_token', validDrive.accessToken);
-            localStorage.setItem('g_access_token_time', Date.now().toString());
+            localStorage.setItem('g_access_token_time', String(validDrive.issuedAt || Date.now()));
             return validDrive.accessToken;
           }
         }
       } catch (fsErr) {}
 
-      // 3. Determine Google Drive target email (user's chosen Master Drive or default)
       const activeAccount = getActiveGoogleDriveAccount();
       const emailToUse = (targetEmail || activeAccount?.email || preferredMaster || LOCKED_MASTER_DRIVE_EMAIL).trim().toLowerCase();
 
-      // 4. If interactive renewal is allowed (explicit user action), open Google OAuth popup
       if (interactiveIfRequired) {
         try {
           const loginRes = await googleDriveLogin(emailToUse, false);
@@ -2614,7 +2759,6 @@ export const getOrRenewDriveToken = async (
         }
       }
 
-      // 5. Fallback to memory token only when non-interactive
       if (!interactiveIfRequired) {
         const fallback = googleDriveTokenMemory || localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
         if (fallback) return fallback;
@@ -2622,10 +2766,9 @@ export const getOrRenewDriveToken = async (
 
       return '';
     } finally {
-      // Clear mutex lock after 500ms cooling period
       setTimeout(() => {
         activeDriveRenewalPromise = null;
-      }, 500);
+      }, 300);
     }
   })();
 
@@ -2635,7 +2778,7 @@ export const getOrRenewDriveToken = async (
 // Cooldown timestamp to prevent repeated/annoying popups when user closes or cancels an auth popup
 let lastDrivePopupCancelledAt = 0;
 
-// Universal High-Reliability Google Drive API Executor with Auto-Token Precheck & Auto-Retry
+// Universal High-Reliability Google Drive API Executor with Auto-Token Precheck, Auto-Retry & Auto-Quota Refresh
 export const executeDriveApiWithAutoRefresh = async <T>(
   action: (token: string) => Promise<T>,
   options?: {
@@ -2643,48 +2786,51 @@ export const executeDriveApiWithAutoRefresh = async <T>(
     maxRetries?: number;
     interactiveIfRequired?: boolean;
     targetEmail?: string;
+    skipPostQuotaRefresh?: boolean;
   }
 ): Promise<T> => {
   const maxRetries = options?.maxRetries ?? 2;
   const popupInCooldown = Date.now() - lastDrivePopupCancelledAt < 15000;
   const allowInteractive = (options?.interactiveIfRequired ?? true) && !popupInCooldown;
+  const masterTarget = options?.targetEmail || getMasterDriveEmail() || LOCKED_MASTER_DRIVE_EMAIL;
   let attempts = 0;
 
   while (attempts <= maxRetries) {
     attempts++;
-    
-    // Obtain valid token (forces fresh sync on retry)
+
+    // Obtain valid token (hydrates fresh token from server/Firestore on retry or when missing)
     let token = await ensureValidDriveToken(attempts > 1);
     if (!token) {
-      const activeAccount = getActiveGoogleDriveAccount();
-      const targetEmail = options?.targetEmail || activeAccount?.email || LOCKED_MASTER_DRIVE_EMAIL;
-      token = await getOrRenewDriveToken(targetEmail, allowInteractive);
+      token = await getOrRenewDriveToken(masterTarget, allowInteractive);
     }
-    if (!token) {
+    if (!token && attempts === 1) {
       token = googleDriveTokenMemory || localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN') || '';
     }
 
     if (!token || token.trim() === '') {
       throw new Error(
-        'Akun Google Drive belum terhubung atau sesi login telah berakhir. ' +
-        'Silakan buka menu pengaturan Google Drive dan klik "Hubungkan Akun Google Drive" terlebih dahulu.'
+        `Sesi Google Drive (${masterTarget}) belum aktif atau telah berakhir. ` +
+        'Klik "Sambungkan" pada dialog otorisasi Google agar penyimpanan dan kuota Drive otomatis aktif kembali.'
       );
     }
 
     try {
       const result = await action(token);
 
-      // Handle fetch Response object with 401 Unauthorized
       if (result instanceof Response && result.status === 401) {
-        console.warn(`⚠️ [Google Drive Auto-Check] Mendeteksi respons 401 pada ${options?.actionName || 'Drive API'}. Memperbarui token otomatis (Percobaan ${attempts}/${maxRetries + 1})...`);
+        console.warn(`⚠️ [Google Drive Auto-Check] Mendeteksi respons 401 pada ${options?.actionName || 'Drive API'}. Memperbarui token & kuota otomatis (Percobaan ${attempts}/${maxRetries + 1})...`);
         if (attempts <= maxRetries) {
-          invalidateDriveToken(token);
-          const activeAccount = getActiveGoogleDriveAccount();
-          const targetEmail = options?.targetEmail || activeAccount?.email || LOCKED_MASTER_DRIVE_EMAIL;
-          const freshToken = await getOrRenewDriveToken(targetEmail, allowInteractive);
+          invalidateDriveToken(token, true);
+          await loadConnectedDrivesFromFirestore('', true).catch(() => []);
+          const freshToken = await getOrRenewDriveToken(masterTarget, allowInteractive);
           token = freshToken;
-          continue; // Retry loop with fresh token
+          continue;
         }
+      }
+
+      // Automatically refresh Drive quota after saving/uploading or accessing Drive across any menu
+      if (!options?.skipPostQuotaRefresh && Date.now() - lastDriveQuotaCheckTime > 4000) {
+        refreshAllDrivesQuota(false).catch(() => {});
       }
 
       return result;
@@ -2701,15 +2847,14 @@ export const executeDriveApiWithAutoRefresh = async <T>(
 
       if (isAuthErr && attempts <= maxRetries) {
         console.warn(`⚠️ [Google Drive Auto-Check] Token kedaluwarsa (${errMsg}). Memperbarui token Google Drive secara otomatis (Percobaan ${attempts}/${maxRetries + 1})...`);
-        invalidateDriveToken(token);
-        const activeAccount = getActiveGoogleDriveAccount();
-        const targetEmail = options?.targetEmail || activeAccount?.email || LOCKED_MASTER_DRIVE_EMAIL;
+        invalidateDriveToken(token, true);
+        await loadConnectedDrivesFromFirestore('', true).catch(() => []);
         try {
-          const freshToken = await getOrRenewDriveToken(targetEmail, allowInteractive);
+          const freshToken = await getOrRenewDriveToken(masterTarget, allowInteractive);
           if (freshToken) {
             token = freshToken;
             localStorage.setItem('g_access_token', freshToken);
-            continue; // Retry loop with fresh token
+            continue;
           }
         } catch (renewErr) {
           console.warn('Auto renewal attempt error:', renewErr);
@@ -2722,15 +2867,16 @@ export const executeDriveApiWithAutoRefresh = async <T>(
   throw new Error(`Operasi Google Drive gagal setelah ${maxRetries + 1} percobaan.`);
 };
 
-// Periodic Background Auto-Keeper for Google Drive connection
+// Periodic Background Auto-Keeper for Google Drive connection & live quota sync
 let tokenAutoRefreshIntervalId: any = null;
-let isRefreshingDriveToken = false;
+let activeAutoRefreshPromise: Promise<string | null> | null = null;
 let lastDriveRefreshTime = 0;
 let lastDriveQuotaCheckTime = 0;
 
 /**
- * Universal Trigger for Google Drive Token Refresh.
- * Checks token validity cleanly without unnecessary 30s spam when token is healthy.
+ * Universal Trigger for Google Drive Token & Quota Auto-Refresh.
+ * Automatically refreshes live quota whenever any menu accesses or saves to Google Drive
+ * without forcing the user to return to Settings.
  */
 export const triggerGoogleDriveAutoRefresh = async (
   reason = 'manual', 
@@ -2740,69 +2886,80 @@ export const triggerGoogleDriveAutoRefresh = async (
   if (typeof window === 'undefined') return null;
   const now = Date.now();
 
-  // Skip background timer checks when tab is hidden unless forced manually
   if (reason === '30s-timer' && document.visibilityState === 'hidden') {
     return getStoredGoogleDriveToken(true);
   }
 
-  // Debounce non-forced checks to prevent network thrashing
-  if (!force && (now - lastDriveRefreshTime < 5000)) {
-    return getStoredGoogleDriveToken(true);
+  if (activeAutoRefreshPromise && !force) {
+    return activeAutoRefreshPromise;
   }
-  
-  if (isRefreshingDriveToken) {
+
+  if (!force && (now - lastDriveRefreshTime < 2500)) {
     return getStoredGoogleDriveToken(true);
   }
 
-  isRefreshingDriveToken = true;
   lastDriveRefreshTime = now;
 
-  try {
-    const activeDrives = getConnectedDrives();
-    const currentToken = getStoredGoogleDriveToken(true);
-    const shouldCheckQuotaApi =
-      force && reason !== '30s-timer'
-        ? true
-        : (now - lastDriveQuotaCheckTime > 5 * 60 * 1000);
+  const runner = (async (): Promise<string | null> => {
+    try {
+      // Ensure cloud/server token hydration when missing or forced
+      let currentToken = getStoredGoogleDriveToken(true);
+      if (!currentToken || force) {
+        await loadConnectedDrivesFromFirestore('', force).catch(() => []);
+        currentToken = getStoredGoogleDriveToken(true);
+      }
 
-    if (!currentToken || (force && reason !== '30s-timer')) {
-      if (reason !== '30s-timer') {
-        console.log(`⏰ [Google Drive Auto-Keeper] Memeriksa & memperbarui token (${reason})...`);
-      }
-      const freshToken = await getOrRenewDriveToken(undefined, allowInteractive);
-      if (freshToken) {
-        return freshToken;
-      }
-    } else if (activeDrives.length > 0 && shouldCheckQuotaApi) {
-      lastDriveQuotaCheckTime = now;
-      try {
-        await refreshAllDrivesQuota();
-      } catch (qErr: any) {
-        const errMsg = String(qErr?.message || qErr);
-        const isAuth401 = errMsg.includes('401') || errMsg.includes('UNAUTHORIZED') || errMsg.includes('Invalid Credentials');
-        if (isAuth401) {
-          console.warn('⚠️ [Google Drive Auto-Keeper] Token kadaluarsa saat pengecekan kuota. Memperbarui token otomatis...');
-          if (currentToken) {
-            invalidateDriveToken(currentToken);
-          }
-          const refreshed = await loadConnectedDrivesFromFirestore();
-          const valid = refreshed.find(d => isDriveTokenValid(d) && d.accessToken);
-          if (valid && valid.accessToken) {
-            setGoogleDriveToken(valid.accessToken);
-            return valid.accessToken;
-          }
-          return await getOrRenewDriveToken(undefined, allowInteractive);
+      if (!currentToken) {
+        const freshToken = await getOrRenewDriveToken(getMasterDriveEmail(), allowInteractive);
+        if (freshToken) {
+          currentToken = freshToken;
         }
       }
-    }
 
-    return getStoredGoogleDriveToken(true);
-  } catch (err) {
-    console.warn('[Google Drive Auto-Keeper] Error saat auto-refresh:', err);
-    return null;
-  } finally {
-    isRefreshingDriveToken = false;
-  }
+      // Automatically refresh Google Drive quota whenever accessing/saving via any menu
+      const quotaAgeMs = Date.now() - lastDriveQuotaCheckTime;
+      const shouldRefreshQuota =
+        force ||
+        (reason !== '30s-timer' && reason !== 'user-activity' && quotaAgeMs > 12000) ||
+        quotaAgeMs > 45000;
+
+      if (shouldRefreshQuota && (currentToken || getConnectedDrives().length > 0)) {
+        try {
+          const updated = await refreshAllDrivesQuota(force);
+          const validDrive = updated.find((d) => isDriveTokenValid(d) && !d.isExpired && d.accessToken);
+          if (validDrive?.accessToken) {
+            return validDrive.accessToken;
+          }
+          // Token expired on Google's side -> recover from cloud/interactive if permitted
+          const recovered = await getOrRenewDriveToken(getMasterDriveEmail(), allowInteractive);
+          if (recovered) {
+            await refreshAllDrivesQuota(false).catch(() => []);
+            return recovered;
+          }
+        } catch (qErr: any) {
+          const errMsg = String(qErr?.message || qErr);
+          if (errMsg.includes('401') || errMsg.includes('UNAUTHORIZED')) {
+            if (currentToken) invalidateDriveToken(currentToken, true);
+            const recovered = await getOrRenewDriveToken(getMasterDriveEmail(), allowInteractive);
+            if (recovered) {
+              await refreshAllDrivesQuota(false).catch(() => []);
+              return recovered;
+            }
+          }
+        }
+      }
+
+      return getStoredGoogleDriveToken(true);
+    } catch (err) {
+      console.warn('[Google Drive Auto-Keeper] Error saat auto-refresh:', err);
+      return getStoredGoogleDriveToken(true);
+    } finally {
+      activeAutoRefreshPromise = null;
+    }
+  })();
+
+  activeAutoRefreshPromise = runner;
+  return runner;
 };
 
 export const startGoogleDriveTokenAutoRefresh = (intervalSeconds = 30): (() => void) => {
@@ -2811,7 +2968,6 @@ export const startGoogleDriveTokenAutoRefresh = (intervalSeconds = 30): (() => v
   // Run immediately on launch
   triggerGoogleDriveAutoRefresh('startup', true);
 
-  // Clear existing interval if any
   if (tokenAutoRefreshIntervalId) {
     clearInterval(tokenAutoRefreshIntervalId);
   }
@@ -2821,7 +2977,6 @@ export const startGoogleDriveTokenAutoRefresh = (intervalSeconds = 30): (() => v
     triggerGoogleDriveAutoRefresh('30s-timer', false);
   }, intervalMs);
 
-  // Trigger when tab becomes visible or gains focus
   const onVisibilityChange = () => {
     if (document.visibilityState === 'visible') {
       triggerGoogleDriveAutoRefresh('tab-visible', false);
@@ -2832,7 +2987,6 @@ export const startGoogleDriveTokenAutoRefresh = (intervalSeconds = 30): (() => v
     triggerGoogleDriveAutoRefresh('window-focus', false);
   };
 
-  // Trigger SILENT token sync on user activity (NEVER open unsolicited popups on clicks/keypresses!)
   let lastUserActivityCheck = 0;
   const onUserActivity = () => {
     const t = Date.now();
@@ -2874,23 +3028,20 @@ export const googleDriveLogin = async (
     throw new Error('Database autentikasi belum beroperasi.');
   }
 
-  // Use isolated secondary Auth instance so Google Drive OAuth NEVER overwrites the primary portal Firebase Auth session!
+  const activeMaster = getMasterDriveEmail();
   const targetAuth = getIsolatedDriveAuth();
   const provider = new GoogleAuthProvider();
-  // Request full Google Drive + drive.file permissions so created & legacy folders can be managed and deleted
   provider.addScope('https://www.googleapis.com/auth/drive');
   provider.addScope('https://www.googleapis.com/auth/drive.file');
   for (const sc of extraScopes) {
     if (sc && typeof sc === 'string') provider.addScope(sc);
   }
 
-  // Permanently locked to akuncoding211@gmail.com regardless of passed loginHint or _forceSelectAccount
-  const effectiveHint = LOCKED_MASTER_DRIVE_EMAIL;
+  const effectiveHint = (loginHint && loginHint.includes('@') ? loginHint.trim().toLowerCase() : activeMaster);
   provider.setCustomParameters({
-    login_hint: LOCKED_MASTER_DRIVE_EMAIL
+    login_hint: effectiveHint
   });
 
-  // Set timeout protection (45 seconds) so it NEVER spins indefinitely!
   const TIMEOUT_MS = 45000;
   let timeoutTimer: any = null;
   const timeoutPromise = new Promise<never>((_, reject) => {
@@ -2919,7 +3070,6 @@ export const googleDriveLogin = async (
       throw new Error('Sesi otentikasi Google gagal menyuplai kunci akses (Access Token).');
     }
 
-    // Fetch detailed metadata from Drive API for accurate storage & user matching
     let driveDetails: any = null;
     try {
       const aboutRes = await fetch('https://www.googleapis.com/drive/v3/about?fields=user,storageQuota', {
@@ -2945,33 +3095,33 @@ export const googleDriveLogin = async (
       throw new Error('Gagal membaca alamat email akun Google Drive yang dipilih.');
     }
 
-    if (userEmail !== LOCKED_MASTER_DRIVE_EMAIL) {
+    if (userEmail !== activeMaster) {
       await signOut(targetAuth).catch(() => {});
       throw new Error(
         `Akses Ditolak: Anda masuk sebagai '${userEmail}'.\n` +
-        `Penyimpanan Google Drive aplikasi ini dikunci permanen HANYA ke akun ${LOCKED_MASTER_DRIVE_EMAIL}. Silakan pilih akun ${LOCKED_MASTER_DRIVE_EMAIL} saat otorisasi.`
+        `Penyimpanan Google Drive aplikasi saat ini dikunci ke akun ${activeMaster}. Silakan pilih akun ${activeMaster} saat otorisasi, atau ganti akun terhubung di Pengaturan Google Drive.`
       );
     }
 
     if (!driveDetails) {
       driveDetails = {
-        email: LOCKED_MASTER_DRIVE_EMAIL,
-        displayName: result.user.displayName || LOCKED_MASTER_DRIVE_EMAIL,
+        email: activeMaster,
+        displayName: result.user.displayName || activeMaster,
         photoURL: result.user.photoURL || '',
         quotaUsed: 0,
         quotaLimit: 15 * 1024 * 1024 * 1024
       };
     }
 
-    await saveAuthorizedDriveEmails([LOCKED_MASTER_DRIVE_EMAIL]);
-    await setMasterDriveEmail(LOCKED_MASTER_DRIVE_EMAIL);
-    localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', LOCKED_MASTER_DRIVE_EMAIL);
+    await saveAuthorizedDriveEmails([activeMaster]);
+    await setMasterDriveEmail(activeMaster);
+    localStorage.setItem('NUSANTARA_LAST_ACTIVE_EMAIL', activeMaster);
 
     const now = Date.now();
     const newDrive: ConnectedDrive = {
-      email: LOCKED_MASTER_DRIVE_EMAIL,
+      email: activeMaster,
       accessToken: credential.accessToken,
-      displayName: driveDetails.displayName || LOCKED_MASTER_DRIVE_EMAIL,
+      displayName: driveDetails.displayName || activeMaster,
       photoURL: driveDetails.photoURL,
       quotaUsed: driveDetails.quotaUsed,
       quotaLimit: driveDetails.quotaLimit,
@@ -2981,12 +3131,13 @@ export const googleDriveLogin = async (
       expiresAt: now + TOKEN_LIFESPAN_MS
     };
 
+    lastDriveQuotaCheckTime = now;
     await saveConnectedDrives([newDrive]);
     localStorage.setItem('g_access_token', credential.accessToken);
     localStorage.setItem('g_access_token_time', Date.now().toString());
-    localStorage.setItem('g_user_email', LOCKED_MASTER_DRIVE_EMAIL);
+    localStorage.setItem('g_user_email', activeMaster);
 
-    return { user: result.user, accessToken: credential.accessToken, driveDetails: { ...driveDetails, email: LOCKED_MASTER_DRIVE_EMAIL } };
+    return { user: result.user, accessToken: credential.accessToken, driveDetails: { ...driveDetails, email: activeMaster } };
   } catch (error: any) {
     if (timeoutTimer) clearTimeout(timeoutTimer);
 
@@ -5188,33 +5339,22 @@ export const deleteSppdRecordFromFirestore = async (id: string): Promise<void> =
   }
 };
 
-// Set stored config dynamically (allows pasting from UI setting panel)
-export const saveAndInitializeFirebaseConfig = (config: any): boolean => {
-  if (!config || !config.apiKey || !config.projectId) {
+// Permanently locked Firebase config: always initializes official pencatatan-voucher-perusahaan
+export const saveAndInitializeFirebaseConfig = (_config?: any): boolean => {
+  try {
     localStorage.removeItem('NUSANTARA_FIREBASE_CONFIG');
     localStorage.removeItem('NUSANTARA_CUSTOM_CONFIG_MANUAL');
-    firebaseApp = null;
-    firestoreDb = null;
-    firebaseAuth = null;
-    return false;
-  }
-
-  localStorage.setItem('NUSANTARA_FIREBASE_CONFIG', JSON.stringify(config));
-  if (config.projectId === PERMANENT_LOCKED_FIREBASE_CONFIG.projectId) {
-    localStorage.removeItem('NUSANTARA_CUSTOM_CONFIG_MANUAL');
-  } else {
-    localStorage.setItem('NUSANTARA_CUSTOM_CONFIG_MANUAL', 'true');
-  }
-  return initializeFirebaseApp(config);
+  } catch (_) {}
+  return initializeFirebaseApp(PERMANENT_LOCKED_FIREBASE_CONFIG);
 };
 
-// Clear config to disconnect custom Firebase and revert to official config
-export const clearFirebaseConfig = () => {
-  localStorage.removeItem('NUSANTARA_FIREBASE_CONFIG');
-  localStorage.removeItem('NUSANTARA_CUSTOM_CONFIG_MANUAL');
-  firebaseApp = null;
-  firestoreDb = null;
-  firebaseAuth = null;
+// Permanently locked: cannot disconnect Firebase/Firestore; immediately keeps/restores official project
+export const clearFirebaseConfig = (): boolean => {
+  try {
+    localStorage.removeItem('NUSANTARA_FIREBASE_CONFIG');
+    localStorage.removeItem('NUSANTARA_CUSTOM_CONFIG_MANUAL');
+  } catch (_) {}
+  return initializeFirebaseApp(PERMANENT_LOCKED_FIREBASE_CONFIG);
 };
 
 // --- Internal Memo Cloud Firestore + Local + Server Sync Methods ---

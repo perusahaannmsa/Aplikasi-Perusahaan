@@ -943,11 +943,11 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
     }
   }, [buktiPembayaranFile, buktiPembayaranDrive]);
 
-  // Check Drive connection status automatically and react to token refresh events
+  // Check Drive connection status automatically and refresh quota on mount
   useEffect(() => {
     const checkStatus = async () => {
       try {
-        const token = await triggerGoogleDriveAutoRefresh('form-mount', false, false);
+        const token = await triggerGoogleDriveAutoRefresh('form-mount', true, false);
         if (token) {
           setIsDriveConnected(true);
         } else {

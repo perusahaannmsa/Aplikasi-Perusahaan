@@ -15,6 +15,8 @@ import {
   connectDriveWithManualToken,
   getMasterDriveEmail,
   setMasterDriveEmail,
+  changeLockedDriveAccount,
+  resetLockedDriveAccountToDefault,
   getActiveGoogleDriveAccount,
   ensureValidDriveToken,
   loadConnectedDrivesFromFirestore,
@@ -79,6 +81,9 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
   // Inline edit state
   const [editingEmail, setEditingEmail] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState<string>('');
+  const [showChangeAccountPanel, setShowChangeAccountPanel] = useState(false);
+  const [newLockedEmailInput, setNewLockedEmailInput] = useState('');
+  const [isChangingAccount, setIsChangingAccount] = useState(false);
 
   // Manual token input state
   const [manualTokenInput, setManualTokenInput] = useState('');
@@ -91,22 +96,26 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
-  const loadData = async () => {
+  const loadData = async (alsoRefreshLiveQuota = false) => {
     try {
-      await loadConnectedDrivesFromFirestore();
+      await loadConnectedDrivesFromFirestore('', alsoRefreshLiveQuota);
+      if (alsoRefreshLiveQuota) {
+        await refreshAllDrivesQuota(true).catch(() => []);
+      }
     } catch (e) {}
 
+    const activeMaster = getMasterDriveEmail();
     const list = getConnectedDrives();
     setDrives(list);
-    setAuthorizedEmails([LOCKED_MASTER_DRIVE_EMAIL]);
-    setMasterEmail(LOCKED_MASTER_DRIVE_EMAIL);
+    setAuthorizedEmails([activeMaster]);
+    setMasterEmail(activeMaster);
     setFlexibleModeState(false);
-    setManualTokenEmail(LOCKED_MASTER_DRIVE_EMAIL);
+    setManualTokenEmail(activeMaster);
   };
 
   useEffect(() => {
     if (isOpen) {
-      loadData();
+      loadData(true);
       if (initialTab) setActiveTab(initialTab);
       if (targetEmailForToken) setManualTokenEmail(targetEmailForToken);
     }
@@ -218,6 +227,54 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
     showFeedback('success', `Akun '${clean}' sekarang dijadikan sebagai Master Google Drive aktif.`);
   };
 
+  const handleSwitchLockedDriveAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const clean = newLockedEmailInput.trim().toLowerCase();
+    if (!clean || !clean.includes('@') || !clean.includes('.')) {
+      showFeedback('error', 'Masukkan alamat email Google yang valid (contoh: akunbaru@gmail.com).');
+      return;
+    }
+    if (clean === masterEmail.toLowerCase()) {
+      setShowChangeAccountPanel(false);
+      showFeedback('info', `Akun '${clean}' sudah menjadi akun Google Drive utama yang terkunci.`);
+      return;
+    }
+    if (!window.confirm(`Ganti akun penyimpanan Google Drive yang terhubung dari '${masterEmail}' ke '${clean}'? Seluruh menu aplikasi selanjutnya akan menyimpan ke akun '${clean}'.`)) {
+      return;
+    }
+
+    setIsChangingAccount(true);
+    try {
+      const updatedEmail = await changeLockedDriveAccount(clean);
+      setShowChangeAccountPanel(false);
+      setNewLockedEmailInput('');
+      await loadData(false);
+      showFeedback('success', `Akun Google Drive terkunci berhasil diganti ke '${updatedEmail}'. Klik "Sambungkan" atau "Input Token" untuk menghubungkan akun baru ini.`);
+    } catch (err: any) {
+      showFeedback('error', err?.message || 'Gagal mengganti akun Google Drive terhubung.');
+    } finally {
+      setIsChangingAccount(false);
+    }
+  };
+
+  const handleResetToDefaultDriveAccount = async () => {
+    if (masterEmail.toLowerCase() === LOCKED_MASTER_DRIVE_EMAIL) return;
+    if (!window.confirm(`Kembalikan akun Google Drive terhubung ke akun default (${LOCKED_MASTER_DRIVE_EMAIL})?`)) {
+      return;
+    }
+    setIsChangingAccount(true);
+    try {
+      const restored = await resetLockedDriveAccountToDefault();
+      setShowChangeAccountPanel(false);
+      await loadData(false);
+      showFeedback('success', `Akun Google Drive dikembalikan ke akun default (${restored}).`);
+    } catch (err: any) {
+      showFeedback('error', err?.message || 'Gagal mengembalikan akun default.');
+    } finally {
+      setIsChangingAccount(false);
+    }
+  };
+
   const handleConnectDriveAccount = async (emailHint?: string) => {
     const targetEmail = emailHint || masterEmail || getMasterDriveEmail() || LOCKED_MASTER_DRIVE_EMAIL;
     setIsConnecting(true);
@@ -225,8 +282,8 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
     try {
       const result = await googleDriveLogin(targetEmail, false);
       if (result.accessToken) {
-        await loadData();
-        showFeedback('success', `Google Drive (${maskLockedAccountLabel(result.user?.email || targetEmail, 'Master Drive NMSA')}) berhasil terhubung & tersinkronisasi!`);
+        await loadData(true);
+        showFeedback('success', `Google Drive (${maskLockedAccountLabel(result.user?.email || targetEmail, 'Master Drive NMSA')}) berhasil terhubung & kuota tersinkronisasi!`);
       }
     } catch (err: any) {
       console.error(err);
@@ -313,7 +370,7 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
                 </span>
               </div>
               <p className="text-xs text-stone-300 font-mono mt-0.5">
-                Penyimpanan Permanen Terkunci • Eksklusif Akun {LOCKED_MASTER_DRIVE_EMAIL}
+                Penyimpanan Terkunci • Akun Aktif: {masterEmail || LOCKED_MASTER_DRIVE_EMAIL}
               </p>
             </div>
           </div>
@@ -430,22 +487,78 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
               
               {/* Permanent Lock Status Banner */}
               <div className="bg-gradient-to-r from-amber-50 via-white to-emerald-50 border border-amber-300 rounded-2xl p-4 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="space-y-1">
+                <div className="space-y-1 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     <Lock size={15} className="text-amber-700 shrink-0" />
                     <span className="text-xs font-black uppercase tracking-wider text-stone-900">
-                      Penyimpanan Google Drive Terkunci Permanen
+                      Penyimpanan Google Drive Terkunci &amp; Auto-Refresh Kuota
                     </span>
                     <span className="text-[9px] font-mono font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
-                      LOCKED PERMANEN
+                      {masterEmail.toLowerCase() === LOCKED_MASTER_DRIVE_EMAIL ? 'DEFAULT PERMANEN' : 'AKUN TERHUBUNG KUSTOM'}
                     </span>
                   </div>
                   <p className="text-[11px] text-stone-600 leading-relaxed">
-                    Seluruh arsip aplikasi (Voucher, Absen, Internal Memo, SPPD, Pinjaman &amp; PPh) dikunci permanen ke akun Google Drive{' '}
-                    <strong className="font-mono text-stone-900">{LOCKED_MASTER_DRIVE_EMAIL}</strong>. Akun ini tidak dapat diubah, diganti, maupun dihapus saat ganti perusahaan atau update aplikasi.
+                    Seluruh menu aplikasi (Voucher, Absen, Internal Memo, SPPD, Pinjaman &amp; PPh) otomatis me-refresh kuota &amp; menyimpan arsip melalui akun{' '}
+                    <strong className="font-mono text-stone-900">{masterEmail || LOCKED_MASTER_DRIVE_EMAIL}</strong> tanpa perlu hubungkan ulang di pengaturan.
                   </p>
                 </div>
+
+                <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowChangeAccountPanel((prev) => !prev);
+                      setNewLockedEmailInput('');
+                    }}
+                    className="inline-flex items-center gap-1.5 bg-white hover:bg-amber-50 border border-amber-300 text-amber-900 text-[11px] font-bold px-3 py-1.5 rounded-xl transition cursor-pointer shadow-4xs"
+                  >
+                    <Edit2 size={12} />
+                    <span>{showChangeAccountPanel ? 'Tutup Form Ganti' : 'Ganti Akun Google Terhubung'}</span>
+                  </button>
+
+                  {masterEmail.toLowerCase() !== LOCKED_MASTER_DRIVE_EMAIL && (
+                    <button
+                      type="button"
+                      onClick={handleResetToDefaultDriveAccount}
+                      disabled={isChangingAccount}
+                      className="inline-flex items-center gap-1.5 bg-stone-900 hover:bg-stone-800 text-white text-[11px] font-bold px-3 py-1.5 rounded-xl transition cursor-pointer shadow-4xs disabled:opacity-50"
+                    >
+                      <RefreshCw size={11} />
+                      <span>Default ({LOCKED_MASTER_DRIVE_EMAIL})</span>
+                    </button>
+                  )}
+                </div>
               </div>
+
+              {showChangeAccountPanel && (
+                <form onSubmit={handleSwitchLockedDriveAccount} className="bg-amber-50/70 border border-amber-300 rounded-2xl p-4 space-y-3 shadow-xs">
+                  <div className="space-y-0.5">
+                    <h5 className="text-xs font-bold text-stone-900 uppercase tracking-wider">
+                      Ganti Akun Google Drive yang Terkunci di Aplikasi
+                    </h5>
+                    <p className="text-[11px] text-stone-600">
+                      Akun default adalah <strong className="font-mono">{LOCKED_MASTER_DRIVE_EMAIL}</strong>. Ubah hanya jika Anda memang ingin mengalihkan seluruh penyimpanan Google Drive ke akun Google lain.
+                    </p>
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input
+                      type="email"
+                      required
+                      value={newLockedEmailInput}
+                      onChange={(e) => setNewLockedEmailInput(e.target.value)}
+                      placeholder="Masukkan email Google baru (contoh: akunbaru@gmail.com)"
+                      className="flex-1 bg-white border border-stone-300 focus:border-amber-600 rounded-xl px-3 py-2 text-xs font-mono focus:outline-none"
+                    />
+                    <button
+                      type="submit"
+                      disabled={isChangingAccount}
+                      className="bg-stone-900 hover:bg-stone-800 text-white text-xs font-bold px-4 py-2 rounded-xl transition cursor-pointer disabled:opacity-50 shrink-0"
+                    >
+                      {isChangingAccount ? 'Menyimpan...' : 'Simpan & Kunci Akun Baru'}
+                    </button>
+                  </div>
+                </form>
+              )}
 
               {/* Akun Permanen Terkunci */}
               <div className="bg-white border border-stone-250 rounded-2xl p-4 shadow-xs space-y-3">
@@ -453,16 +566,16 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
                   <div className="flex items-center gap-2">
                     <ShieldCheck size={15} className="text-emerald-700" />
                     <h4 className="text-xs font-bold text-stone-900 uppercase tracking-wider">
-                      Akun Google Drive Utama (Permanen)
+                      Akun Google Drive Utama (Terkunci Aktif)
                     </h4>
                   </div>
                   <span className="text-[10px] text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-lg font-mono font-bold">
-                    Hanya {LOCKED_MASTER_DRIVE_EMAIL}
+                    {masterEmail || LOCKED_MASTER_DRIVE_EMAIL}
                   </span>
                 </div>
 
                 <div className="divide-y divide-stone-100 border border-stone-200 rounded-xl overflow-hidden">
-                  {[LOCKED_MASTER_DRIVE_EMAIL].map((email, idx) => {
+                  {[masterEmail || LOCKED_MASTER_DRIVE_EMAIL].map((email) => {
                     const matchedDrive = drives.find(d => d.email.toLowerCase() === email.toLowerCase());
                     const isValidToken = matchedDrive ? isDriveTokenValid(matchedDrive) : false;
                     const remainingMins = matchedDrive ? getDriveRemainingMinutes(matchedDrive) : 0;
@@ -478,11 +591,11 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
                           <div className="min-w-0 space-y-0.5">
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="text-xs font-mono font-bold text-stone-900 truncate">
-                                {LOCKED_MASTER_DRIVE_EMAIL}
+                                {email}
                               </span>
                               <span className="bg-amber-100 border border-amber-300 text-amber-900 text-[9px] font-black font-mono px-2 py-0.5 rounded-md uppercase tracking-wider flex items-center gap-1">
                                 <Star size={10} className="fill-amber-500 text-amber-600" />
-                                MASTER PERMANEN
+                                MASTER TERKUNCI
                               </span>
                               {matchedDrive && (
                                 isValidToken ? (
@@ -508,10 +621,10 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
                         <div className="flex items-center gap-1.5 self-end sm:self-auto shrink-0 flex-wrap">
                           <button
                             type="button"
-                            onClick={() => handleConnectDriveAccount(LOCKED_MASTER_DRIVE_EMAIL)}
+                            onClick={() => handleConnectDriveAccount(email)}
                             disabled={isConnecting}
                             className="bg-stone-900 hover:bg-stone-800 text-white text-[11px] font-bold px-2.5 py-1.5 rounded-xl transition cursor-pointer flex items-center gap-1 shadow-3xs disabled:opacity-50"
-                            title="Hubungkan akun permanen via pop-up Google"
+                            title="Hubungkan akun terhubung via pop-up Google"
                           >
                             <Cloud size={11} className={isConnectingThis ? 'animate-spin text-amber-400' : 'text-amber-400'} />
                             <span>{isConnectingThis ? 'Menghubungkan...' : 'Sambungkan'}</span>
@@ -520,11 +633,11 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
                           <button
                             type="button"
                             onClick={() => {
-                              setManualTokenEmail(LOCKED_MASTER_DRIVE_EMAIL);
+                              setManualTokenEmail(email);
                               setActiveTab('manual-token');
                             }}
                             className="bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-300 text-emerald-900 text-[11px] font-bold px-2.5 py-1.5 rounded-xl transition cursor-pointer flex items-center gap-1 shadow-4xs"
-                            title="Input token Google Drive manual untuk akun permanen ini"
+                            title="Input token Google Drive manual untuk akun ini"
                           >
                             <Key size={11} className="text-emerald-700" />
                             <span>Input Token</span>
@@ -553,7 +666,7 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
                       Input / Tempel Token Akses Google Drive Secara Langsung
                     </h4>
                     <p className="text-[11px] text-stone-600 font-mono mt-0.5">
-                      Khusus akun Google Drive permanen: <strong>{LOCKED_MASTER_DRIVE_EMAIL}</strong>
+                      Khusus akun Google Drive terkunci: <strong>{masterEmail || LOCKED_MASTER_DRIVE_EMAIL}</strong>
                     </p>
                   </div>
                 </div>
@@ -561,12 +674,12 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
                 <form onSubmit={handleManualTokenSubmit} className="space-y-3 pt-2">
                   <div className="space-y-1">
                     <label className="block text-[10px] font-mono font-bold text-stone-600 uppercase tracking-wider">
-                      1. Akun Google Drive Terkunci Permanen:
+                      1. Akun Google Drive Terkunci Aktif:
                     </label>
                     <div className="flex items-center gap-2 bg-amber-50/80 border border-amber-300 rounded-xl px-3 py-2 text-xs font-mono font-bold text-stone-900">
                       <Lock size={13} className="text-amber-700 shrink-0" />
-                      <span>{LOCKED_MASTER_DRIVE_EMAIL}</span>
-                      <span className="ml-auto text-[10px] text-amber-800 uppercase">Permanen</span>
+                      <span>{masterEmail || LOCKED_MASTER_DRIVE_EMAIL}</span>
+                      <span className="ml-auto text-[10px] text-amber-800 uppercase">Terkunci</span>
                     </div>
                   </div>
 

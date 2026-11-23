@@ -1292,8 +1292,9 @@ export default function App() {
     newView: AppViewMode,
     options?: { preservePrevious?: boolean }
   ) => {
-    // ⚡ Proactively refresh and extend Google Drive token silently when user switches view
-    triggerGoogleDriveAutoRefresh('menu-switch-' + newView, false, false).catch(() => {});
+    // ⚡ Proactively refresh Google Drive token & quota when user switches menu
+    const isDriveMenu = ['absen', 'sppd', 'memo', 'pph23', 'pinjaman', 'drive', 'form', 'print', 'npwp', 'pettycash'].includes(newView);
+    triggerGoogleDriveAutoRefresh('menu-switch-' + newView, isDriveMenu, false).catch(() => {});
 
     setViewInternal((current) => {
       if (current !== newView && current !== 'form' && current !== 'print' && !options?.preservePrevious) {
@@ -1305,10 +1306,10 @@ export default function App() {
     });
   };
 
-  // ⚡ Otomatis membaca database penyimpanan di Firebase & menyegarkan token Google Drive ketika menu terkait dibuka
+  // ⚡ Otomatis membaca database penyimpanan di Firebase & menyegarkan token + kuota Google Drive ketika menu dibuka
   useEffect(() => {
-    // Keep Google Drive token alive and ready across all view changes
-    triggerGoogleDriveAutoRefresh('view-' + view, false, false).catch(() => {});
+    const isDriveMenu = ['absen', 'sppd', 'memo', 'pph23', 'pinjaman', 'drive', 'form', 'print', 'npwp', 'pettycash'].includes(view);
+    triggerGoogleDriveAutoRefresh('view-' + view, isDriveMenu, false).catch(() => {});
 
     if (!authUser) return;
 
@@ -4299,14 +4300,14 @@ export default function App() {
             onOpenLoanManager={() => setView('pinjaman')}
             onSelect={(sub, initialTab) => {
               try { sessionStorage.setItem('sublist_scrollPos', window.scrollY.toString()); } catch (e) {}
-              triggerGoogleDriveAutoRefresh('lihat-transaksi', false, false).catch(() => {});
+              triggerGoogleDriveAutoRefresh('lihat-transaksi', true, false).catch(() => {});
               setActiveSubmission(sub);
               setPrintInitialTab(initialTab || 'both');
               setView('print');
             }}
             onEdit={(sub) => {
               try { sessionStorage.setItem('sublist_scrollPos', window.scrollY.toString()); } catch (e) {}
-              triggerGoogleDriveAutoRefresh('edit-transaksi', false, false).catch(() => {});
+              triggerGoogleDriveAutoRefresh('edit-transaksi', true, false).catch(() => {});
               setEditingSubmission(sub);
               setView('form');
             }}
@@ -4323,7 +4324,7 @@ export default function App() {
             onDuplicate={handleDuplicate}
             onAddNew={() => {
               try { sessionStorage.setItem('sublist_scrollPos', window.scrollY.toString()); } catch (e) {}
-              triggerGoogleDriveAutoRefresh('input-pengajuan-baru', false, false).catch(() => {});
+              triggerGoogleDriveAutoRefresh('input-pengajuan-baru', true, false).catch(() => {});
               setEditingSubmission(null);
               setView('form');
             }}

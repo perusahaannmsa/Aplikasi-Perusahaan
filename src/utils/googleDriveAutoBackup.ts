@@ -11,13 +11,10 @@ import {
   downloadDriveFileContent
 } from '../lib/googleWorkspaceAbsen';
 import { 
-  ensureValidDriveToken, 
-  getActiveGoogleDriveAccount, 
-  getConnectedDrives, 
   executeDriveApiWithAutoRefresh,
-  getStoredGoogleDriveToken,
-  getOrRenewDriveToken,
   getMasterDriveEmail,
+  getStoredGoogleDriveToken,
+  triggerGoogleDriveAutoRefresh,
   LOCKED_MASTER_DRIVE_EMAIL
 } from '../firebase';
 
@@ -159,6 +156,7 @@ class GoogleDriveAutoBackupService {
    */
   private async withDriveToken<T>(fn: (token: string) => Promise<T>): Promise<T> {
     const targetEmail = getMasterDriveEmail() || LOCKED_MASTER_DRIVE_EMAIL;
+    await triggerGoogleDriveAutoRefresh('auto-backup-drive', false, false).catch(() => null);
     return executeDriveApiWithAutoRefresh(async (tok) => {
       return await fn(tok);
     }, { 
@@ -752,7 +750,10 @@ class GoogleDriveAutoBackupService {
   public async runAllAutoBackups(force = false): Promise<{ success: boolean; count: number }> {
     if (this.isSyncing) return { success: false, count: 0 };
 
-    const token = getStoredGoogleDriveToken();
+    let token = getStoredGoogleDriveToken();
+    if (!token) {
+      token = await triggerGoogleDriveAutoRefresh('auto-backup-run-all', force, false).catch(() => null);
+    }
     if (!token) {
       console.log('Google Drive belum terhubung, auto-backup ditunda.');
       return { success: false, count: 0 };

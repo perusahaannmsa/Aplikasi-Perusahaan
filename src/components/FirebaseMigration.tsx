@@ -64,10 +64,10 @@ export const FirebaseMigration: React.FC<FirebaseMigrationProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  // Active Firebase config info
+  // Active Firebase config info (permanently locked to pencatatan-voucher-perusahaan)
   const currentConfig = getStoredFirebaseConfig();
   const currentProjectId = currentConfig?.projectId || 'pencatatan-voucher-perusahaan';
-  const isCustomConfigActive = Boolean(localStorage.getItem('NUSANTARA_FIREBASE_CONFIG'));
+  const isCustomConfigActive = false;
 
   // Counts of collections to migrate
   const [counts, setCounts] = useState<{
@@ -599,39 +599,17 @@ export const FirebaseMigration: React.FC<FirebaseMigrationProps> = ({
     }
   };
 
-  // Step 5: Save target config as active default and refresh
+  // Step 5: Permanent lock keeps pencatatan-voucher-perusahaan as the sole active database
   const handlePromoteAndFinalize = () => {
-    if (!targetApiKey || !targetProjectId || !targetAppId) {
-      alert('Kredensial project baru tidak lengkap.');
-      return;
-    }
-
-    const payload = {
-      apiKey: targetApiKey.trim(),
-      authDomain: targetAuthDomain.trim() || `${targetProjectId.trim()}.firebaseapp.com`,
-      projectId: targetProjectId.trim(),
-      storageBucket: targetStorageBucket.trim() || `${targetProjectId.trim()}.appspot.com`,
-      messagingSenderId: targetMessagingSenderId.trim(),
-      appId: targetAppId.trim()
-    };
-
-    saveAndInitializeFirebaseConfig(payload);
-    sessionStorage.removeItem('NUSANTARA_SESSION_ACTIVE');
-    
-    alert('SELAMAT! Aplikasi sekarang terhubung ke Project Firebase baru Anda. Halaman akan dimuat ulang dengan database baru.');
-    
+    alert('Database utama aplikasi dikunci secara permanen ke proyek resmi (pencatatan-voucher-perusahaan) karena seluruh akun pengguna terhubung ke database tersebut. Data Anda tetap aman tersalin ke proyek tujuan sebagai cadangan.');
     cleanupMigrationApp();
     onMigrationComplete();
-    window.location.reload();
   };
 
   // Revert back to original default Firebase config
   const handleResetToDefaultFirebase = () => {
-    if (window.confirm('Apakah Anda yakin ingin mengembalikan koneksi database ke Firebase bawaan asli?')) {
-      clearFirebaseConfig();
-      alert('Koneksi berhasil dikembalikan ke Firebase bawaan asli. Aplikasi akan disegarkan.');
-      window.location.reload();
-    }
+    clearFirebaseConfig();
+    alert('Database resmi (pencatatan-voucher-perusahaan) sudah aktif dan terkunci permanen.');
   };
 
   return (
@@ -1304,33 +1282,26 @@ service cloud.firestore {
                 </div>
               </div>
 
-              <div className="p-4 bg-stone-50 border border-stone-200 rounded-xl text-xs space-y-2 text-stone-700">
-                <p className="font-bold text-stone-900">LANGKAH SELANJUTNYA:</p>
+              <div className="p-4 bg-amber-50/70 border border-amber-200 rounded-xl text-xs space-y-2 text-stone-700">
+                <p className="font-bold text-stone-900">DATABASE UTAMA TERKUNCI PERMANEN:</p>
                 <p className="leading-relaxed">
-                  Pilih opsi di bawah apakah Anda ingin langsung mengalihkan aplikasi ini ke proyek Firebase baru, atau hanya membiarkan datanya tersimpan di proyek baru sementara aplikasi tetap terhubung ke database saat ini.
+                  Penyimpanan utama Firebase / Firestore aplikasi dikunci permanen pada proyek <strong className="font-mono text-stone-900">{currentProjectId}</strong> agar seluruh akun pengguna yang terhubung tetap sinkron tanpa terputus. Data di proyek tujuan tersimpan aman sebagai salinan cadangan.
                 </p>
               </div>
 
-              <div className="flex flex-col sm:flex-row justify-between items-center gap-3 pt-2 border-t border-stone-150">
+              <div className="flex flex-col sm:flex-row justify-end items-center gap-3 pt-2 border-t border-stone-150">
                 <button
                   type="button"
                   onClick={() => {
-                    alert('Data telah tersalin dengan aman di proyek baru Anda. Aplikasi tetap menggunakan proyek aktif saat ini.');
+                    cleanupMigrationApp();
+                    onMigrationComplete();
                     if (onCloseModal) onCloseModal();
                     setIsOpen(false);
                   }}
-                  className="w-full sm:w-auto px-4 py-2.5 text-xs font-bold text-stone-700 bg-stone-100 hover:bg-stone-200 rounded-xl transition cursor-pointer"
-                >
-                  Selesai (Tetap di Firebase Saat Ini)
-                </button>
-                
-                <button
-                  type="button"
-                  onClick={handlePromoteAndFinalize}
-                  className="w-full sm:w-auto px-5 py-2.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition flex items-center justify-center gap-2 shadow-sm font-semibold cursor-pointer"
+                  className="w-full sm:w-auto px-5 py-2.5 text-xs font-bold bg-stone-900 hover:bg-stone-800 text-white rounded-xl transition flex items-center justify-center gap-2 shadow-sm cursor-pointer"
                 >
                   <Check size={16} />
-                  <span>Jadikan Database Utama &amp; Refresh Aplikasi</span>
+                  <span>Selesai &amp; Tetap di Database Terkunci</span>
                 </button>
               </div>
             </div>

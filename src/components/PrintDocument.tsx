@@ -1758,10 +1758,10 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({
       setRenderedPages([]);
 
       try {
-        // Proactively ensure freshest Google Drive token before downloading attachments
+        // Proactively ensure freshest Google Drive token and refreshed quota before downloading attachments
         let token = getStoredGoogleDriveToken();
         try {
-          const freshTok = await triggerGoogleDriveAutoRefresh('print-mount', false, false);
+          const freshTok = await triggerGoogleDriveAutoRefresh('print-mount', true, false);
           if (freshTok) token = freshTok;
         } catch (_) {}
 

@@ -8,12 +8,10 @@ import {
   uploadFileToDrive,
 } from '../lib/googleWorkspaceAbsen';
 import {
-  ensureValidDriveToken,
   executeDriveApiWithAutoRefresh,
   getActiveGoogleDriveAccount,
-  getOrRenewDriveToken,
-  getStoredGoogleDriveToken,
-  googleDriveLogin,
+  getMasterDriveEmail,
+  triggerGoogleDriveAutoRefresh,
 } from '../firebase';
 import { NpwpRecord, Submission } from '../types';
 
@@ -74,24 +72,9 @@ const resolvePeriodHierarchy = (periodKey?: string, fallbackDateStr?: string): s
 export class PphGoogleDriveService {
   private async withDriveToken<T>(actionName: string, fn: (token: string) => Promise<T>): Promise<T> {
     const activeAccount = getActiveGoogleDriveAccount();
-    const lastEmail = localStorage.getItem('NUSANTARA_LAST_ACTIVE_EMAIL');
-    const targetEmail = activeAccount?.email || lastEmail || undefined;
+    const targetEmail = activeAccount?.email || getMasterDriveEmail();
 
-    let token = getStoredGoogleDriveToken(false);
-    if (!token) token = localStorage.getItem('g_access_token');
-    if (!token) token = await getOrRenewDriveToken(targetEmail, false);
-    if (!token) token = await ensureValidDriveToken(false);
-
-    if (!token) {
-      const loginRes = await googleDriveLogin(targetEmail, false);
-      token = loginRes.accessToken;
-    }
-
-    if (!token) {
-      throw new Error(
-        'Akun Google Drive belum terhubung atau sesi kedaluwarsa. Silakan sambungkan Google Drive terlebih dahulu.'
-      );
-    }
+    await triggerGoogleDriveAutoRefresh('pph-drive-access', false, false).catch(() => null);
 
     return executeDriveApiWithAutoRefresh(
       async (tok) => fn(tok),

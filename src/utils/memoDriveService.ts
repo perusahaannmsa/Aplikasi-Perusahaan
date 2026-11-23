@@ -9,12 +9,10 @@ import {
   uploadFileToDrive,
 } from '../lib/googleWorkspaceAbsen';
 import {
-  ensureValidDriveToken,
   getActiveGoogleDriveAccount,
+  getMasterDriveEmail,
   executeDriveApiWithAutoRefresh,
-  getOrRenewDriveToken,
-  getStoredGoogleDriveToken,
-  googleDriveLogin,
+  triggerGoogleDriveAutoRefresh,
 } from '../firebase';
 import { InternalMemo } from '../types';
 import { generateInternalMemoPdfBlob, extractMemoSequence } from './memoUtils';
@@ -31,40 +29,13 @@ export interface MemoDriveUploadResult {
 
 export class MemoGoogleDriveService {
   /**
-   * Helper to ensure token is valid and execute drive operation with automatic account renewal
+   * Helper to ensure token & quota are refreshed automatically before/after Memo Drive operations
    */
   private async withDriveToken<T>(fn: (token: string) => Promise<T>): Promise<T> {
     const activeAccount = getActiveGoogleDriveAccount();
-    const lastEmail = localStorage.getItem('NUSANTARA_LAST_ACTIVE_EMAIL');
-    const targetEmail = activeAccount?.email || lastEmail || undefined;
+    const targetEmail = activeAccount?.email || getMasterDriveEmail();
 
-    let token = getStoredGoogleDriveToken(false);
-    if (!token) {
-      token = localStorage.getItem('g_access_token');
-    }
-    if (!token) {
-      token = await getOrRenewDriveToken(targetEmail, false);
-    }
-    if (!token) {
-      token = await ensureValidDriveToken(false);
-    }
-
-    // If still no token, perform interactive login popup so user request succeeds
-    if (!token) {
-      try {
-        const loginRes = await googleDriveLogin(targetEmail, false);
-        token = loginRes.accessToken;
-      } catch (authErr: any) {
-        throw new Error(
-          authErr.message ||
-          'Akun Google Drive belum terhubung atau sesi login telah kedaluwarsa. Silakan sambungkan Google Drive terlebih dahulu.'
-        );
-      }
-    }
-
-    if (!token) {
-      throw new Error('Akun Google Drive belum terhubung atau sesi login telah kedaluwarsa. Silakan sambungkan Google Drive.');
-    }
+    await triggerGoogleDriveAutoRefresh('memo-drive-access', false, false).catch(() => null);
 
     return executeDriveApiWithAutoRefresh(
       async (tok) => {

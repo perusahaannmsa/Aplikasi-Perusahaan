@@ -1,8 +1,11 @@
 import {
+  executeDriveApiWithAutoRefresh,
   getConnectedDrives,
+  getOrRenewDriveToken,
   getTokenForRegisteredDriveEmail,
   invalidateDriveToken,
   isStrictlyAuthorizedDriveEmail,
+  loadConnectedDrivesFromFirestore,
   saveConnectedDrives,
 } from '../firebase';
 
@@ -111,17 +114,24 @@ export const getDriveMimeBadge = (mimeType: string): string => {
   return 'Berkas';
 };
 
-const assertRegisteredAccountAndGetToken = (accountEmail: string): string => {
+const assertRegisteredAccountAndGetToken = async (accountEmail: string): Promise<string> => {
   const clean = (accountEmail || '').trim().toLowerCase();
   if (!clean || !isStrictlyAuthorizedDriveEmail(clean)) {
     throw new Error(
       `AKUN_TIDAK_TERDAFTAR: Akun '${accountEmail || '-'}' tidak terdaftar di aplikasi. Hanya akun Google yang telah Anda daftarkan yang dapat dibaca.`
     );
   }
-  const token = getTokenForRegisteredDriveEmail(clean);
+  let token = getTokenForRegisteredDriveEmail(clean);
+  if (!token) {
+    await loadConnectedDrivesFromFirestore('', true).catch(() => []);
+    token = getTokenForRegisteredDriveEmail(clean);
+  }
+  if (!token) {
+    token = await getOrRenewDriveToken(clean, true).catch(() => '');
+  }
   if (!token) {
     throw new Error(
-      `TOKEN_BELUM_AKTIF: Sesi Google Drive untuk akun '${clean}' belum terhubung atau sudah kedaluwarsa. Silakan sambungkan akun ini terlebih dahulu.`
+      `TOKEN_BELUM_AKTIF: Sesi Google Drive untuk akun '${clean}' belum terhubung atau sudah kedaluwarsa. Klik Sambungkan untuk mengaktifkan kembali.`
     );
   }
   return token;
@@ -129,101 +139,102 @@ const assertRegisteredAccountAndGetToken = (accountEmail: string): string => {
 
 /**
  * Reads storage metadata and ONLY the 5 allowed root folders (Absen, Voucher, Internal Memo, Pinjaman, PPh 23)
- * for a registered account. No other Drive folders or files are queried or returned.
+ * for a registered account. Automatically refreshes quota & recovers expired tokens.
  */
 export const loadRegisteredAccountScopedDrive = async (
   accountEmail: string
 ): Promise<RegisteredAccountStorageSnapshot> => {
   const cleanEmail = (accountEmail || '').trim().toLowerCase();
-  const token = assertRegisteredAccountAndGetToken(cleanEmail);
-
-  // 1. Verify token identity & storage quota
-  const aboutRes = await fetch(
-    'https://www.googleapis.com/drive/v3/about?fields=user(emailAddress,displayName,photoLink),storageQuota(usage,limit)',
-    {
-      headers: { Authorization: `Bearer ${token}` },
-    }
-  );
-
-  if (aboutRes.status === 401) {
-    invalidateDriveToken(token);
+  if (!cleanEmail || !isStrictlyAuthorizedDriveEmail(cleanEmail)) {
     throw new Error(
-      `TOKEN_EXPIRED_401: Token Google Drive untuk '${cleanEmail}' sudah kedaluwarsa. Silakan sambungkan ulang akun ini.`
+      `AKUN_TIDAK_TERDAFTAR: Akun '${accountEmail || '-'}' tidak terdaftar di aplikasi. Hanya akun Google yang telah Anda daftarkan yang dapat dibaca.`
     );
   }
 
-  let displayName = `Google Drive (${cleanEmail})`;
-  let photoURL = '';
-  let quotaUsed = 0;
-  let quotaLimit = 15 * 1024 * 1024 * 1024;
-
-  if (aboutRes.ok) {
-    const aboutData = await aboutRes.json();
-    const tokenEmail = (aboutData?.user?.emailAddress || '').trim().toLowerCase();
-    if (tokenEmail && !isStrictlyAuthorizedDriveEmail(tokenEmail)) {
-      throw new Error(
-        `AKUN_TIDAK_TERDAFTAR: Token aktif milik '${tokenEmail}' tidak terdaftar dalam daftar akun aplikasi.`
+  return executeDriveApiWithAutoRefresh(
+    async (token) => {
+      // 1. Verify token identity & live storage quota
+      const aboutRes = await fetch(
+        'https://www.googleapis.com/drive/v3/about?fields=user(emailAddress,displayName,photoLink),storageQuota(usage,limit)',
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
       );
-    }
-    if (tokenEmail && tokenEmail !== cleanEmail) {
-      throw new Error(
-        `AKUN_TIDAK_COCOK: Token yang tersimpan milik '${tokenEmail}', bukan '${cleanEmail}'. Silakan sambungkan ulang akun '${cleanEmail}'.`
-      );
-    }
-    displayName = aboutData?.user?.displayName || displayName;
-    photoURL = aboutData?.user?.photoLink || '';
-    quotaUsed = parseInt(aboutData?.storageQuota?.usage || '0', 10) || 0;
-    quotaLimit = parseInt(aboutData?.storageQuota?.limit || String(quotaLimit), 10) || quotaLimit;
 
-    // Update cached quota metadata on matching connected drive
-    try {
-      const drives = getConnectedDrives();
-      const idx = drives.findIndex((d) => d.email.trim().toLowerCase() === cleanEmail);
-      if (idx !== -1) {
-        drives[idx] = {
-          ...drives[idx],
-          displayName,
-          photoURL,
-          quotaUsed,
-          quotaLimit,
-          lastChecked: new Date().toISOString(),
-          isExpired: false,
-        };
-        await saveConnectedDrives(drives);
+      if (aboutRes.status === 401) {
+        invalidateDriveToken(token, true);
+        throw new Error('UNAUTHORIZED_401');
       }
-    } catch (_) {}
-  }
 
-  // 2. Query ONLY the 5 permitted main folders by exact folder name (plus legacy NPWP folder if present)
-  const nameClauses = Array.from(ALLOWED_ROOT_FOLDER_NAMES)
-    .map((n) => `name = '${n.replace(/'/g, "\\'")}'`)
-    .join(' or ');
+      let displayName = `Google Drive (${cleanEmail})`;
+      let photoURL = '';
+      let quotaUsed = 0;
+      let quotaLimit = 15 * 1024 * 1024 * 1024;
 
-  const scopedQuery =
-    `mimeType = '${FOLDER_MIME}' and trashed = false and (${nameClauses})`;
+      if (aboutRes.ok) {
+        const aboutData = await aboutRes.json();
+        const tokenEmail = (aboutData?.user?.emailAddress || '').trim().toLowerCase();
+        if (tokenEmail && !isStrictlyAuthorizedDriveEmail(tokenEmail)) {
+          throw new Error(
+            `AKUN_TIDAK_TERDAFTAR: Token aktif milik '${tokenEmail}' tidak terdaftar dalam daftar akun aplikasi.`
+          );
+        }
+        if (tokenEmail && tokenEmail !== cleanEmail) {
+          throw new Error(
+            `AKUN_TIDAK_COCOK: Token yang tersimpan milik '${tokenEmail}', bukan '${cleanEmail}'. Silakan sambungkan ulang akun '${cleanEmail}'.`
+          );
+        }
+        displayName = aboutData?.user?.displayName || displayName;
+        photoURL = aboutData?.user?.photoLink || '';
+        quotaUsed = parseInt(aboutData?.storageQuota?.usage || '0', 10) || 0;
+        quotaLimit = parseInt(aboutData?.storageQuota?.limit || String(quotaLimit), 10) || quotaLimit;
 
-  const listUrl =
-    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(scopedQuery)}` +
-    `&spaces=drive&pageSize=50&orderBy=modifiedTime desc` +
-    `&fields=files(id,name,mimeType,modifiedTime,webViewLink,parents)`;
+        try {
+          const drives = getConnectedDrives();
+          const idx = drives.findIndex((d) => d.email.trim().toLowerCase() === cleanEmail);
+          if (idx !== -1) {
+            drives[idx] = {
+              ...drives[idx],
+              displayName,
+              photoURL,
+              quotaUsed,
+              quotaLimit,
+              lastChecked: new Date().toISOString(),
+              isExpired: false,
+            };
+            await saveConnectedDrives(drives);
+          }
+        } catch (_) {}
+      }
 
-  const listRes = await fetch(listUrl, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+      // 2. Query ONLY the 5 permitted main folders by exact folder name (plus legacy NPWP folder if present)
+      const nameClauses = Array.from(ALLOWED_ROOT_FOLDER_NAMES)
+        .map((n) => `name = '${n.replace(/'/g, "\\'")}'`)
+        .join(' or ');
 
-  if (listRes.status === 401) {
-    invalidateDriveToken(token);
-    throw new Error(
-      `TOKEN_EXPIRED_401: Sesi Google Drive '${cleanEmail}' telah kedaluwarsa. Silakan sambungkan ulang.`
-    );
-  }
+      const scopedQuery =
+        `mimeType = '${FOLDER_MIME}' and trashed = false and (${nameClauses})`;
 
-  if (!listRes.ok) {
-    const errText = await listRes.text().catch(() => listRes.statusText);
-    throw new Error(`Gagal membaca 5 folder utama Google Drive: ${errText}`);
-  }
+      const listUrl =
+        `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(scopedQuery)}` +
+        `&spaces=drive&pageSize=50&orderBy=modifiedTime desc` +
+        `&fields=files(id,name,mimeType,modifiedTime,webViewLink,parents)`;
 
-  const listData = await listRes.json();
+      const listRes = await fetch(listUrl, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (listRes.status === 401) {
+        invalidateDriveToken(token, true);
+        throw new Error('UNAUTHORIZED_401');
+      }
+
+      if (!listRes.ok) {
+        const errText = await listRes.text().catch(() => listRes.statusText);
+        throw new Error(`Gagal membaca 5 folder utama Google Drive: ${errText}`);
+      }
+
+      const listData = await listRes.json();
   const rawFiles: any[] = Array.isArray(listData?.files) ? listData.files : [];
 
   // Double-filter client-side to guarantee only the permitted exact names are kept
@@ -273,6 +284,14 @@ export const loadRegisteredAccountScopedDrive = async (
     roots,
     allowedFolderIds,
   };
+    },
+    {
+      actionName: 'Baca Kuota & Folder Google Drive',
+      targetEmail: cleanEmail,
+      interactiveIfRequired: true,
+      skipPostQuotaRefresh: true,
+    }
+  );
 };
 
 /**
@@ -286,7 +305,11 @@ export const fetchScopedFolderChildren = async (
   searchQuery?: string
 ): Promise<ScopedDriveFile[]> => {
   const cleanEmail = (accountEmail || '').trim().toLowerCase();
-  const token = assertRegisteredAccountAndGetToken(cleanEmail);
+  if (!cleanEmail || !isStrictlyAuthorizedDriveEmail(cleanEmail)) {
+    throw new Error(
+      `AKUN_TIDAK_TERDAFTAR: Akun '${accountEmail || '-'}' tidak terdaftar di aplikasi.`
+    );
+  }
 
   if (!folderId || !allowedFolderIds.has(folderId)) {
     throw new Error(
@@ -294,59 +317,66 @@ export const fetchScopedFolderChildren = async (
     );
   }
 
-  const safeFolderId = folderId.replace(/'/g, "\\'");
-  let q = `'${safeFolderId}' in parents and trashed = false`;
-  const cleanSearch = (searchQuery || '').trim();
-  if (cleanSearch) {
-    const escaped = cleanSearch.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-    q += ` and name contains '${escaped}'`;
-  }
+  return executeDriveApiWithAutoRefresh(
+    async (token) => {
+      const safeFolderId = folderId.replace(/'/g, "\\'");
+      let q = `'${safeFolderId}' in parents and trashed = false`;
+      const cleanSearch = (searchQuery || '').trim();
+      if (cleanSearch) {
+        const escaped = cleanSearch.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        q += ` and name contains '${escaped}'`;
+      }
 
-  const url =
-    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}` +
-    `&spaces=drive&pageSize=100&orderBy=folder,modifiedTime desc` +
-    `&fields=files(id,name,mimeType,size,modifiedTime,webViewLink,webContentLink,parents)`;
+      const url =
+        `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}` +
+        `&spaces=drive&pageSize=100&orderBy=folder,modifiedTime desc` +
+        `&fields=files(id,name,mimeType,size,modifiedTime,webViewLink,webContentLink,parents)`;
 
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
 
-  if (res.status === 401) {
-    invalidateDriveToken(token);
-    throw new Error(
-      `TOKEN_EXPIRED_401: Sesi Google Drive '${cleanEmail}' telah kedaluwarsa. Silakan sambungkan ulang.`
-    );
-  }
+      if (res.status === 401) {
+        invalidateDriveToken(token, true);
+        throw new Error('UNAUTHORIZED_401');
+      }
 
-  if (!res.ok) {
-    const errText = await res.text().catch(() => res.statusText);
-    throw new Error(`Gagal membuka isi folder Google Drive: ${errText}`);
-  }
+      if (!res.ok) {
+        const errText = await res.text().catch(() => res.statusText);
+        throw new Error(`Gagal membuka isi folder Google Drive: ${errText}`);
+      }
 
-  const data = await res.json();
-  const raw: any[] = Array.isArray(data?.files) ? data.files : [];
+      const data = await res.json();
+      const raw: any[] = Array.isArray(data?.files) ? data.files : [];
 
-  return raw.map((f) => {
-    const isFolder = f.mimeType === FOLDER_MIME;
-    if (isFolder && f.id) {
-      allowedFolderIds.add(f.id);
+      return raw.map((f) => {
+        const isFolder = f.mimeType === FOLDER_MIME;
+        if (isFolder && f.id) {
+          allowedFolderIds.add(f.id);
+        }
+        return {
+          id: f.id,
+          name: f.name,
+          mimeType: f.mimeType || 'application/octet-stream',
+          isFolder,
+          size: f.size ? parseInt(String(f.size), 10) : undefined,
+          modifiedTime: f.modifiedTime,
+          webViewLink:
+            f.webViewLink ||
+            (isFolder
+              ? `https://drive.google.com/drive/folders/${f.id}`
+              : `https://drive.google.com/file/d/${f.id}/view`),
+          webContentLink: f.webContentLink,
+          parents: f.parents,
+        };
+      });
+    },
+    {
+      actionName: 'Baca Isi Folder Google Drive',
+      targetEmail: cleanEmail,
+      interactiveIfRequired: true,
     }
-    return {
-      id: f.id,
-      name: f.name,
-      mimeType: f.mimeType || 'application/octet-stream',
-      isFolder,
-      size: f.size ? parseInt(String(f.size), 10) : undefined,
-      modifiedTime: f.modifiedTime,
-      webViewLink:
-        f.webViewLink ||
-        (isFolder
-          ? `https://drive.google.com/drive/folders/${f.id}`
-          : `https://drive.google.com/file/d/${f.id}/view`),
-      webContentLink: f.webContentLink,
-      parents: f.parents,
-    };
-  });
+  );
 };
 
 /**
@@ -357,12 +387,19 @@ export const initializeScopedRootFolder = async (
   moduleKey: DriveModuleKey
 ): Promise<ScopedDriveFile> => {
   const cleanEmail = (accountEmail || '').trim().toLowerCase();
-  const token = assertRegisteredAccountAndGetToken(cleanEmail);
+  const token = await assertRegisteredAccountAndGetToken(cleanEmail);
   const category = SCOPED_DRIVE_CATEGORIES.find((c) => c.key === moduleKey);
   if (!category) {
     throw new Error(`Kategori folder '${moduleKey}' tidak dikenali.`);
   }
-  const folderId = await getOrCreateNestedFolder(token, [category.folderName]);
+  const folderId = await executeDriveApiWithAutoRefresh(
+    async (liveToken) => getOrCreateNestedFolder(liveToken || token, [category.folderName]),
+    {
+      actionName: `Siapkan Folder ${category.folderName}`,
+      targetEmail: cleanEmail,
+      interactiveIfRequired: true,
+    }
+  );
   return {
     id: folderId,
     name: category.folderName,

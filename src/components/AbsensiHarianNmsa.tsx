@@ -1986,17 +1986,17 @@ export function AbsensiHarianNmsa({
     return () => unsubscribe();
   }, []);
 
-  // Automatically fetch unified Google Drive access token and refresh proactively on mount
+  // Automatically fetch unified Google Drive access token and refresh quota proactively on mount
   useEffect(() => {
     const fetchUnifiedDriveToken = async () => {
       try {
-        const token = await triggerGoogleDriveAutoRefresh("menu-absensi-mount", false, false);
+        const token = await triggerGoogleDriveAutoRefresh("menu-absensi-mount", true, false);
         if (token) {
           localStorage.setItem("g_access_token", token);
           setGoogleToken(token);
           setIsDriveConnected(true);
           const activeAccount = getActiveGoogleDriveAccount();
-          setGoogleUserEmail(activeAccount?.email || LOCKED_MASTER_DRIVE_EMAIL);
+          setGoogleUserEmail(activeAccount?.email || getMasterDriveEmail());
         }
       } catch (err) {
         console.warn("Unified Drive Token fetch error:", err);
