@@ -394,8 +394,8 @@ export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto print:hidden">
-      <div className="bg-white rounded-2xl shadow-2xl border border-stone-200 w-full max-w-4xl overflow-hidden flex flex-col max-h-[94vh]">
+    <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/60 backdrop-blur-xs p-3 sm:p-5 overflow-y-auto print:hidden">
+      <div className="bg-white rounded-2xl shadow-2xl border border-stone-200 w-full max-w-4xl overflow-hidden flex flex-col max-h-[88vh]">
         {/* Modal Header */}
         <div className="bg-stone-900 text-white px-5 py-3.5 flex items-center justify-between">
           <div className="flex items-center gap-2.5">

@@ -2616,7 +2616,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
               </div>
             </div>
 
-            {/* Compact Action Buttons: Satukan Nama, Atur TTD List & Cetak List (PDF) */}
+            {/* Compact Action Buttons: Satukan Nama & Cetak List (PDF) */}
             <div className="flex flex-wrap items-center gap-2 shrink-0 w-full xl:w-auto">
               {onOpenConsolidateModal && (
                 <button
@@ -2629,29 +2629,6 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
                   <span>Satukan Nama</span>
                 </button>
               )}
-
-              <button
-                type="button"
-                onClick={() => setIsListSignerModalOpen(true)}
-                className={`inline-flex items-center justify-center gap-1.5 px-3 py-2 border font-bold rounded-xl transition duration-150 text-xs shadow-3xs cursor-pointer select-none whitespace-nowrap ${
-                  listShowSigners
-                    ? 'bg-amber-50 hover:bg-amber-100 border-amber-300 text-amber-950'
-                    : 'bg-rose-50 hover:bg-rose-100 border-rose-300 text-rose-800'
-                }`}
-                title="Atur Penanda Tangan atau Hilangkan Kolom TTD untuk Cetak List (PDF)"
-              >
-                {listShowSigners ? (
-                  <SlidersHorizontal size={13} className="text-amber-600" />
-                ) : (
-                  <EyeOff size={13} className="text-rose-600" />
-                )}
-                <span>Atur TTD List</span>
-                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
-                  listShowSigners ? 'bg-amber-600 text-white' : 'bg-rose-600 text-white'
-                }`}>
-                  {listShowSigners ? `${activeListSignerCount}` : 'Hilang'}
-                </span>
-              </button>
 
               <button
                 type="button"
@@ -7407,97 +7384,29 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
 
       {/* Modal Pratinjau & Pengaturan Cetak List (PDF) */}
       {isListPrintPreviewOpen && typeof document !== 'undefined' && createPortal(
-        <div className="fixed inset-0 z-50 bg-stone-950/75 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 print:hidden">
-          <div className="bg-white rounded-2xl border border-stone-200 shadow-2xl w-full max-w-5xl max-h-[94vh] flex flex-col overflow-hidden">
-            {/* Toolbar Modal */}
-            <div className="bg-stone-900 text-white px-4 sm:px-5 py-3.5 flex flex-col lg:flex-row lg:items-center justify-between gap-3 shrink-0">
-              <div className="flex items-center gap-2.5">
+        <div className="fixed inset-0 z-[1100] bg-stone-950/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 print:hidden">
+          <div className="bg-white rounded-2xl border border-stone-200 shadow-2xl w-full max-w-4xl h-[calc(100vh-2.5rem)] max-h-[820px] flex flex-col overflow-hidden">
+            {/* Header Bar Rapi */}
+            <div className="bg-stone-900 text-white px-4 py-3 flex items-center justify-between gap-3 shrink-0">
+              <div className="flex items-center gap-2.5 min-w-0">
                 <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
-                  <Printer size={17} />
+                  <Printer size={16} />
                 </div>
-                <div>
-                  <h3 className="text-sm font-black tracking-tight">Menu Cetak List Transaksi (PDF)</h3>
-                  <p className="text-[11px] text-stone-400 font-mono">
+                <div className="min-w-0">
+                  <h3 className="text-sm font-black tracking-tight truncate">Menu Cetak List Transaksi (PDF)</h3>
+                  <p className="text-[11px] text-stone-400 font-mono truncate">
                     {filteredSubmissions.length} transaksi · {activeCompanyFullName}
                   </p>
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
-                {/* Toggle Tampilkan / Hilangkan Kolom Penanda Tangan */}
-                <div className="inline-flex items-center bg-stone-800 p-0.5 rounded-xl border border-stone-700">
-                  <button
-                    type="button"
-                    onClick={() => handleToggleListSignersVisibility(true)}
-                    className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition flex items-center gap-1 cursor-pointer ${
-                      listShowSigners
-                        ? 'bg-emerald-600 text-white shadow-xs'
-                        : 'text-stone-300 hover:text-white'
-                    }`}
-                  >
-                    <Eye size={12} />
-                    <span>Tampilkan TTD</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleToggleListSignersVisibility(false)}
-                    className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition flex items-center gap-1 cursor-pointer ${
-                      !listShowSigners
-                        ? 'bg-rose-600 text-white shadow-xs'
-                        : 'text-stone-300 hover:text-white'
-                    }`}
-                  >
-                    <EyeOff size={12} />
-                    <span>Hilangkan TTD</span>
-                  </button>
-                </div>
-
-                {/* Format Garis vs Kotak */}
-                {listShowSigners && (
-                  <div className="inline-flex items-center bg-stone-800 p-0.5 rounded-xl border border-stone-700">
-                    <button
-                      type="button"
-                      onClick={() => handleChangeListSignatureStyle('line')}
-                      className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer ${
-                        listSignatureStyle === 'line'
-                          ? 'bg-amber-500 text-stone-950 font-black'
-                          : 'text-stone-300 hover:text-white'
-                      }`}
-                    >
-                      Garis
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleChangeListSignatureStyle('table')}
-                      className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer ${
-                        listSignatureStyle === 'table'
-                          ? 'bg-amber-500 text-stone-950 font-black'
-                          : 'text-stone-300 hover:text-white'
-                      }`}
-                    >
-                      Kotak
-                    </button>
-                  </div>
-                )}
-
-                <button
-                  type="button"
-                  onClick={() => setIsListSignerModalOpen(true)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 text-xs font-black transition cursor-pointer"
-                >
-                  <SlidersHorizontal size={13} />
-                  <span>Atur Penanda Tangan</span>
-                  <span className="px-1.5 py-0.2 rounded-full bg-stone-900/15 text-[10px]">
-                    {listShowSigners ? `${activeListSignerCount} Kolom` : 'Nonaktif'}
-                  </span>
-                </button>
-
+              <div className="flex items-center gap-2 shrink-0">
                 <button
                   type="button"
                   onClick={() => {
                     window.print();
                   }}
-                  className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black shadow-sm transition cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black shadow-sm transition cursor-pointer"
                 >
                   <Printer size={13} />
                   <span>Cetak / Simpan PDF</span>
@@ -7514,29 +7423,81 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
               </div>
             </div>
 
-            {/* Info Banner */}
-            <div className={`px-4 py-2 border-b text-[11px] flex flex-wrap items-center justify-between gap-2 ${
-              listShowSigners
-                ? 'bg-amber-50 border-amber-200 text-amber-950'
-                : 'bg-rose-50 border-rose-200 text-rose-900'
-            }`}>
-              <span className="font-semibold">
-                {listShowSigners
-                  ? `Menampilkan ${activeListSignerCount} kolom penanda tangan (${listSignatureStyle === 'table' ? 'Format Kotak Tertutup' : 'Format Garis Bersih'}) — Tersimpan otomatis khusus perusahaan ${activeCompanyId.toUpperCase()}.`
-                  : `Kolom penanda tangan dihilangkan pada cetakan PDF ini — Khusus perusahaan ${activeCompanyId.toUpperCase()}.`}
-              </span>
+            {/* Sub-Toolbar Pengaturan PDF & Penanda Tangan di Dalam Menu Cetak List */}
+            <div className="bg-stone-100 border-b border-stone-200 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 shrink-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[11px] font-bold text-stone-600">Penanda Tangan:</span>
+                <div className="inline-flex items-center bg-white p-0.5 rounded-xl border border-stone-300 shadow-3xs">
+                  <button
+                    type="button"
+                    onClick={() => handleToggleListSignersVisibility(true)}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition flex items-center gap-1 cursor-pointer ${
+                      listShowSigners
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'text-stone-600 hover:text-stone-900'
+                    }`}
+                  >
+                    <Eye size={12} />
+                    <span>Tampilkan</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleToggleListSignersVisibility(false)}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition flex items-center gap-1 cursor-pointer ${
+                      !listShowSigners
+                        ? 'bg-rose-600 text-white shadow-xs'
+                        : 'text-stone-600 hover:text-stone-900'
+                    }`}
+                  >
+                    <EyeOff size={12} />
+                    <span>Hilangkan TTD</span>
+                  </button>
+                </div>
+
+                {listShowSigners && (
+                  <div className="inline-flex items-center bg-white p-0.5 rounded-xl border border-stone-300 shadow-3xs">
+                    <button
+                      type="button"
+                      onClick={() => handleChangeListSignatureStyle('line')}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer ${
+                        listSignatureStyle === 'line'
+                          ? 'bg-amber-500 text-stone-950 font-black'
+                          : 'text-stone-600 hover:text-stone-900'
+                      }`}
+                    >
+                      Hanya Garis
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleChangeListSignatureStyle('table')}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer ${
+                        listSignatureStyle === 'table'
+                          ? 'bg-amber-500 text-stone-950 font-black'
+                          : 'text-stone-600 hover:text-stone-900'
+                      }`}
+                    >
+                      Kotak Tabel
+                    </button>
+                  </div>
+                )}
+              </div>
+
               <button
                 type="button"
                 onClick={() => setIsListSignerModalOpen(true)}
-                className="underline font-bold cursor-pointer hover:text-stone-900"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-stone-950 text-xs font-black transition cursor-pointer shadow-3xs"
               >
-                Ubah / Samakan dgn F1 &amp; F2 →
+                <SlidersHorizontal size={13} />
+                <span>Atur Penanda Tangan</span>
+                <span className="px-1.5 py-0.2 rounded-full bg-stone-900/15 text-[10px]">
+                  {listShowSigners ? `${activeListSignerCount} Kolom` : 'Tanpa TTD'}
+                </span>
               </button>
             </div>
 
             {/* Live A4 Preview Area */}
-            <div className="flex-1 overflow-y-auto bg-stone-200/80 p-3 sm:p-6">
-              <div className="bg-white border border-stone-300 shadow-lg rounded-lg mx-auto max-w-[900px] p-5 sm:p-8 font-sans text-black space-y-4">
+            <div className="flex-1 min-h-0 overflow-y-auto bg-stone-200/80 p-3 sm:p-5">
+              <div className="bg-white border border-stone-300 shadow-md rounded-lg mx-auto max-w-[780px] p-4 sm:p-6 font-sans text-black space-y-3.5">
                 <div className="border-b-2 border-stone-900 pb-2.5 flex justify-between items-end gap-4">
                   <div>
                     <h1 className="text-base font-bold font-display uppercase tracking-wider text-stone-900 leading-tight">
