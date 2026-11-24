@@ -11,6 +11,9 @@ export interface CompanySignerBundle {
   companyId: string;
   f1Signers: SignerConfigItem[];
   f2Signers: SignerConfigItem[];
+  listSigners: SignerConfigItem[];
+  listShowSigners: boolean;
+  listSignatureStyle: 'table' | 'line';
   signatureStyle: 'table' | 'line';
   f2ApprovedBy: 'harijon' | 'nursyam' | 'none';
   creatorName: string;
@@ -26,6 +29,9 @@ export interface CompanySignerBundle {
 
 const LEGACY_F1_KEY = 'nmsa_custom_f1_signers_config';
 const LEGACY_F2_KEY = 'nmsa_custom_f2_signers_config';
+const LEGACY_LIST_SIGNERS_KEY = 'nmsa_custom_list_signers_config';
+const LEGACY_LIST_SHOW_KEY = 'nmsa_list_show_signers';
+const LEGACY_LIST_STYLE_KEY = 'nmsa_list_signature_style';
 const LEGACY_STYLE_KEY = 'NMSA_SIGNATURE_STYLE';
 const LEGACY_F2_APPROVED_KEY = 'nmsa_voucher_f2_approved_by';
 
@@ -255,6 +261,43 @@ export const buildDefaultF2SignersForCompany = (
   ];
 };
 
+export const buildDefaultListSignersForCompany = (
+  companyId: string,
+  f1Signers?: SignerConfigItem[],
+  compProfile?: Partial<CompanyProfile> | null
+): SignerConfigItem[] => {
+  if (compProfile?.listSigners && Array.isArray(compProfile.listSigners) && compProfile.listSigners.length > 0) {
+    return sanitizeSignersList(compProfile.listSigners);
+  }
+
+  const cleanId = normalizeSignerCompanyId(companyId);
+  const baseF1 =
+    f1Signers && f1Signers.length > 0
+      ? f1Signers
+      : buildDefaultF1SignersForCompany(cleanId, compProfile);
+
+  const col1Name =
+    (compProfile?.sigDibuat || '').trim() && !(cleanId === 'nmsa' && compProfile?.sigDibuat === 'Nur Wahyudi')
+      ? (compProfile?.sigDibuat || '').trim()
+      : baseF1[0]?.name || 'Staff Finance';
+  const col1Role =
+    (compProfile?.sigDibuatJabatan || '').trim() && !(cleanId === 'nmsa' && compProfile?.sigDibuatJabatan === 'Staff Operasional')
+      ? (compProfile?.sigDibuatJabatan || '').trim()
+      : baseF1[0]?.role || 'Keuangan / Kasir';
+
+  const col2Name = (compProfile?.sigDisetujui || '').trim() || 'Andi Dhiya Salsabila';
+  const col2Role = (compProfile?.sigDisetujuiJabatan || '').trim() || 'Direktur Keuangan';
+
+  const col3Name = (compProfile?.sigDirektur || '').trim() || 'H. Andi Nursyam Halid';
+  const col3Role = (compProfile?.sigDirekturJabatan || '').trim() || 'Direktur Utama';
+
+  return [
+    { title: 'Dibuat Oleh', name: col1Name, role: col1Role, enabled: true },
+    { title: 'Diperiksa Oleh', name: col2Name, role: col2Role, enabled: true },
+    { title: 'Disahkan Oleh', name: col3Name, role: col3Role, enabled: true },
+  ];
+};
+
 export const resolveCompanySignerBundle = (
   companyId?: string | null,
   providedUserProfile?: any
@@ -295,6 +338,45 @@ export const resolveCompanySignerBundle = (
   }
   if (f2Signers.length === 0) {
     f2Signers = buildDefaultF2SignersForCompany(cleanId, f1Signers, compProfile);
+  }
+
+  // 2b. List Print Signers: Scoped localStorage -> Signers map -> CompanyProfile -> derived defaults
+  let listSigners: SignerConfigItem[] = [];
+  if (typeof window !== 'undefined' && window.localStorage) {
+    const scopedListRaw = safeParseJson<any[]>(localStorage.getItem(getCompanyScopedKey(LEGACY_LIST_SIGNERS_KEY, cleanId)));
+    if (Array.isArray(scopedListRaw) && scopedListRaw.length > 0) {
+      listSigners = sanitizeSignersList(scopedListRaw);
+    }
+  }
+  if (listSigners.length === 0 && mapEntry?.listSigners?.length) {
+    listSigners = sanitizeSignersList(mapEntry.listSigners);
+  }
+  if (listSigners.length === 0) {
+    listSigners = buildDefaultListSignersForCompany(cleanId, f1Signers, compProfile);
+  }
+
+  let listShowSigners = true;
+  if (typeof window !== 'undefined' && window.localStorage) {
+    const savedShow = localStorage.getItem(getCompanyScopedKey(LEGACY_LIST_SHOW_KEY, cleanId));
+    if (savedShow === 'false' || savedShow === 'true') {
+      listShowSigners = savedShow === 'true';
+    } else if (typeof mapEntry?.listShowSigners === 'boolean') {
+      listShowSigners = mapEntry.listShowSigners;
+    } else if (typeof compProfile?.listShowSigners === 'boolean') {
+      listShowSigners = compProfile.listShowSigners;
+    }
+  }
+
+  let listSignatureStyle: 'table' | 'line' = 'line';
+  if (typeof window !== 'undefined' && window.localStorage) {
+    const savedListStyle = localStorage.getItem(getCompanyScopedKey(LEGACY_LIST_STYLE_KEY, cleanId));
+    if (savedListStyle === 'line' || savedListStyle === 'table') {
+      listSignatureStyle = savedListStyle;
+    } else if (mapEntry?.listSignatureStyle === 'line' || mapEntry?.listSignatureStyle === 'table') {
+      listSignatureStyle = mapEntry.listSignatureStyle;
+    } else if (compProfile?.listSignatureStyle === 'line' || compProfile?.listSignatureStyle === 'table') {
+      listSignatureStyle = compProfile.listSignatureStyle;
+    }
   }
 
   // 3. Signature style ('table' vs 'line')
@@ -384,6 +466,9 @@ export const resolveCompanySignerBundle = (
     companyId: cleanId,
     f1Signers,
     f2Signers,
+    listSigners,
+    listShowSigners,
+    listSignatureStyle,
     signatureStyle,
     f2ApprovedBy,
     creatorName,
@@ -408,6 +493,10 @@ export const saveCompanySignerBundle = (
 
   const nextF1 = partial.f1Signers ? sanitizeSignersList(partial.f1Signers) : current.f1Signers;
   const nextF2 = partial.f2Signers ? sanitizeSignersList(partial.f2Signers) : current.f2Signers;
+  const nextListSigners = partial.listSigners ? sanitizeSignersList(partial.listSigners) : current.listSigners;
+  const nextListShowSigners =
+    typeof partial.listShowSigners === 'boolean' ? partial.listShowSigners : current.listShowSigners;
+  const nextListSignatureStyle = partial.listSignatureStyle || current.listSignatureStyle || 'line';
   const nextStyle = partial.signatureStyle || current.signatureStyle || 'table';
   const nextF2Approved = partial.f2ApprovedBy || current.f2ApprovedBy || 'none';
 
@@ -421,6 +510,9 @@ export const saveCompanySignerBundle = (
     companyId: cleanId,
     f1Signers: nextF1,
     f2Signers: nextF2,
+    listSigners: nextListSigners,
+    listShowSigners: nextListShowSigners,
+    listSignatureStyle: nextListSignatureStyle,
     signatureStyle: nextStyle,
     f2ApprovedBy: nextF2Approved,
     creatorName:
@@ -462,6 +554,9 @@ export const saveCompanySignerBundle = (
     try {
       localStorage.setItem(getCompanyScopedKey(LEGACY_F1_KEY, cleanId), JSON.stringify(nextBundle.f1Signers));
       localStorage.setItem(getCompanyScopedKey(LEGACY_F2_KEY, cleanId), JSON.stringify(nextBundle.f2Signers));
+      localStorage.setItem(getCompanyScopedKey(LEGACY_LIST_SIGNERS_KEY, cleanId), JSON.stringify(nextBundle.listSigners));
+      localStorage.setItem(getCompanyScopedKey(LEGACY_LIST_SHOW_KEY, cleanId), String(nextBundle.listShowSigners));
+      localStorage.setItem(getCompanyScopedKey(LEGACY_LIST_STYLE_KEY, cleanId), nextBundle.listSignatureStyle);
       localStorage.setItem(getCompanyScopedKey(LEGACY_STYLE_KEY, cleanId), nextBundle.signatureStyle);
       localStorage.setItem(getCompanyScopedKey(LEGACY_F2_APPROVED_KEY, cleanId), nextBundle.f2ApprovedBy);
 
@@ -483,6 +578,9 @@ export const saveCompanySignerBundle = (
         const syncedCompanyFields = {
           f1Signers: nextBundle.f1Signers,
           f2Signers: nextBundle.f2Signers,
+          listSigners: nextBundle.listSigners,
+          listShowSigners: nextBundle.listShowSigners,
+          listSignatureStyle: nextBundle.listSignatureStyle,
           signatureStyle: nextBundle.signatureStyle,
           f2ApprovedBy: nextBundle.f2ApprovedBy,
           sigDibuat: nextBundle.creatorName,
@@ -552,6 +650,9 @@ export const resetCompanySignerBundle = (
       [
         LEGACY_F1_KEY,
         LEGACY_F2_KEY,
+        LEGACY_LIST_SIGNERS_KEY,
+        LEGACY_LIST_SHOW_KEY,
+        LEGACY_LIST_STYLE_KEY,
         LEGACY_STYLE_KEY,
         LEGACY_F2_APPROVED_KEY,
         LEGACY_CREATOR_KEY,
@@ -578,6 +679,9 @@ export const resetCompanySignerBundle = (
             const copy = { ...c };
             delete copy.f1Signers;
             delete copy.f2Signers;
+            delete copy.listSigners;
+            delete copy.listShowSigners;
+            delete copy.listSignatureStyle;
             delete copy.signatureStyle;
             delete copy.f2ApprovedBy;
             return copy;
@@ -592,6 +696,9 @@ export const resetCompanySignerBundle = (
         const copy = { ...activeProf };
         delete copy.f1Signers;
         delete copy.f2Signers;
+        delete copy.listSigners;
+        delete copy.listShowSigners;
+        delete copy.listSignatureStyle;
         delete copy.signatureStyle;
         delete copy.f2ApprovedBy;
         localStorage.setItem('NUSANTARA_ACTIVE_COMPANY_PROFILE', JSON.stringify(copy));
@@ -630,7 +737,8 @@ export const hydrateCompanySignersFromServerSettings = (companySettings: any): v
 
         // Only hydrate if local scoped storage does not have a newer config
         const hasLocalScopedF1 = !!localStorage.getItem(getCompanyScopedKey(LEGACY_F1_KEY, cleanId));
-        if (!hasLocalScopedF1 || incTime > curTime) {
+        const hasLocalScopedList = !!localStorage.getItem(getCompanyScopedKey(LEGACY_LIST_SIGNERS_KEY, cleanId));
+        if (!hasLocalScopedF1 || !hasLocalScopedList || incTime > curTime) {
           saveCompanySignerBundle(cleanId, incomingBundle, { syncServer: false });
           changed = true;
         }

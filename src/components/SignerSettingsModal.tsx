@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Save, RotateCcw, UserCheck, Shield, CheckCircle2, Sliders, Plus, Trash2, Users } from 'lucide-react';
+import { X, Save, RotateCcw, UserCheck, Shield, CheckCircle2, Sliders, Plus, Trash2, Users, Eye, EyeOff, FileSpreadsheet } from 'lucide-react';
 
 export interface SignerConfigItem {
   title: string;
@@ -13,8 +13,12 @@ export interface SignerSettingsModalProps {
   onClose: () => void;
   companyId?: string;
   companyName?: string;
+  initialTab?: 'f1' | 'f2' | 'list';
   f1Signers: SignerConfigItem[];
   f2Signers: SignerConfigItem[];
+  listSigners?: SignerConfigItem[];
+  listShowSigners?: boolean;
+  listSignatureStyle?: 'table' | 'line';
   signatureStyle?: 'table' | 'line';
   onSave: (
     newF1: SignerConfigItem[],
@@ -22,7 +26,13 @@ export interface SignerSettingsModalProps {
     newStyle: 'table' | 'line',
     saveAsDefault: boolean
   ) => void;
+  onSaveList?: (
+    newListSigners: SignerConfigItem[],
+    showListSigners: boolean,
+    listStyle: 'table' | 'line'
+  ) => void;
   onReset: () => void;
+  onResetList?: () => void;
 }
 
 export const DEFAULT_SIGNER_POOL: SignerConfigItem[] = [
@@ -36,23 +46,41 @@ export const DEFAULT_SIGNER_POOL: SignerConfigItem[] = [
   { title: 'Disahkan', name: 'Dewan Direksi', role: 'Dewan Direksi', enabled: true },
 ];
 
+const DEFAULT_LIST_SIGNERS: SignerConfigItem[] = [
+  { title: 'Dibuat Oleh', name: 'Staff Finance', role: 'Keuangan / Kasir', enabled: true },
+  { title: 'Diperiksa Oleh', name: 'Andi Dhiya Salsabila', role: 'Direktur Keuangan', enabled: true },
+  { title: 'Disahkan Oleh', name: 'H. Andi Nursyam Halid', role: 'Direktur Utama', enabled: true },
+];
+
 export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
   isOpen,
   onClose,
   companyId,
   companyName,
+  initialTab = 'f1',
   f1Signers,
   f2Signers,
+  listSigners,
+  listShowSigners = true,
+  listSignatureStyle = 'line',
   signatureStyle = 'table',
   onSave,
+  onSaveList,
   onReset,
+  onResetList,
 }) => {
   const companyCode = (companyId || 'NMSA').toUpperCase().trim();
   const displayCompanyLabel = companyName ? `${companyCode} • ${companyName}` : companyCode;
+  const hasListTab = typeof onSaveList === 'function' || Array.isArray(listSigners);
   const [localF1, setLocalF1] = useState<SignerConfigItem[]>(f1Signers);
   const [localF2, setLocalF2] = useState<SignerConfigItem[]>(f2Signers);
+  const [localList, setLocalList] = useState<SignerConfigItem[]>(
+    listSigners && listSigners.length > 0 ? listSigners : DEFAULT_LIST_SIGNERS
+  );
+  const [localListShow, setLocalListShow] = useState<boolean>(listShowSigners);
+  const [localListStyle, setLocalListStyle] = useState<'table' | 'line'>(listSignatureStyle);
   const [localStyle, setLocalStyle] = useState<'table' | 'line'>(signatureStyle);
-  const [activeTab, setActiveTab] = useState<'f1' | 'f2'>('f1');
+  const [activeTab, setActiveTab] = useState<'f1' | 'f2' | 'list'>(initialTab);
   const [saveAsDefault, setSaveAsDefault] = useState<boolean>(true);
   const [showSavedToast, setShowSavedToast] = useState(false);
 
@@ -71,9 +99,18 @@ export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
           enabled: s.enabled !== false,
         }))
       );
+      setLocalList(
+        (listSigners && listSigners.length > 0 ? listSigners : DEFAULT_LIST_SIGNERS).map((s) => ({
+          ...s,
+          enabled: s.enabled !== false,
+        }))
+      );
+      setLocalListShow(listShowSigners !== false);
+      setLocalListStyle(listSignatureStyle || 'line');
       setLocalStyle(signatureStyle);
+      setActiveTab(initialTab === 'list' && hasListTab ? 'list' : initialTab === 'f2' ? 'f2' : 'f1');
     }
-  }, [isOpen, f1Signers, f2Signers, signatureStyle]);
+  }, [isOpen, f1Signers, f2Signers, listSigners, listShowSigners, listSignatureStyle, signatureStyle, initialTab, hasListTab]);
 
   if (!isOpen) return null;
 
@@ -253,8 +290,75 @@ export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
     }
   };
 
+  const handleUpdateList = (index: number, field: keyof SignerConfigItem, value: any) => {
+    setLocalList((prev) => {
+      const updated = [...prev];
+      updated[index] = { ...updated[index], [field]: value };
+      return updated;
+    });
+  };
+
+  const handleToggleListEnabled = (index: number) => {
+    setLocalList((prev) => {
+      const updated = [...prev];
+      const current = updated[index]?.enabled !== false;
+      updated[index] = { ...updated[index], enabled: !current };
+      return updated;
+    });
+  };
+
+  const handleSetSignerCountList = (count: number) => {
+    setLocalList((prev) => {
+      const updated = [...prev];
+      while (updated.length < count && updated.length < DEFAULT_SIGNER_POOL.length) {
+        const nextDefault = DEFAULT_SIGNER_POOL[updated.length];
+        updated.push({ ...nextDefault, enabled: true });
+      }
+      return updated.map((s, idx) => ({
+        ...s,
+        enabled: idx < count,
+      }));
+    });
+  };
+
+  const handleAddSignerList = () => {
+    setLocalList((prev) => {
+      if (prev.length >= 8) return prev;
+      const nextIdx = prev.length;
+      const defaultData = DEFAULT_SIGNER_POOL[nextIdx] || {
+        title: 'Mengetahui',
+        name: 'Penanda Tangan Baru',
+        role: 'Jabatan',
+        enabled: true,
+      };
+      return [...prev, { ...defaultData, enabled: true }];
+    });
+  };
+
+  const handleRemoveSignerList = (index: number) => {
+    setLocalList((prev) => {
+      if (prev.length <= 1) return prev;
+      return prev.filter((_, idx) => idx !== index);
+    });
+  };
+
+  const handleSyncListWithF1 = () => {
+    const active = localF1.filter((s) => s.enabled !== false);
+    setLocalList((active.length > 0 ? active : localF1).map((s) => ({ ...s, enabled: true })));
+    setLocalListShow(true);
+  };
+
+  const handleSyncListWithF2 = () => {
+    const active = localF2.filter((s) => s.enabled !== false);
+    setLocalList((active.length > 0 ? active : localF2).map((s) => ({ ...s, enabled: true })));
+    setLocalListShow(true);
+  };
+
   const handleSaveAndApply = () => {
     onSave(localF1, localF2, localStyle, saveAsDefault);
+    if (onSaveList) {
+      onSaveList(localList, localListShow, localListStyle);
+    }
     setShowSavedToast(true);
     setTimeout(() => {
       setShowSavedToast(false);
@@ -285,6 +389,7 @@ export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
 
   const activeF1Count = localF1.filter((s) => s.enabled !== false).length;
   const activeF2Count = localF2.filter((s) => s.enabled !== false).length;
+  const activeListCount = localList.filter((s) => s.enabled !== false).length;
 
   if (!isOpen) return null;
 
@@ -319,9 +424,33 @@ export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
 
         {/* Presets & Tabs Toolbar */}
         <div className="bg-stone-50 border-b border-stone-200 px-5 py-3 flex flex-wrap items-center justify-between gap-2.5">
-          {/* Tabs: F1 vs F2 */}
-          <div className="flex bg-stone-200/70 p-1 rounded-xl gap-1">
+          {/* Tabs: F1 vs F2 vs Cetak List */}
+          <div className="flex bg-stone-200/70 p-1 rounded-xl gap-1 flex-wrap">
+            {hasListTab && (
+              <button
+                type="button"
+                onClick={() => setActiveTab('list')}
+                className={`px-3 py-1 text-xs font-bold rounded-lg transition cursor-pointer flex items-center gap-1.5 ${
+                  activeTab === 'list'
+                    ? 'bg-white text-stone-900 shadow-xs'
+                    : 'text-stone-600 hover:text-stone-900'
+                }`}
+              >
+                <FileSpreadsheet size={13} className="text-amber-600" />
+                <span>Cetak List (PDF)</span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${
+                  !localListShow
+                    ? 'bg-rose-100 text-rose-800'
+                    : activeListCount >= 5
+                    ? 'bg-purple-100 text-purple-800'
+                    : 'bg-emerald-100 text-emerald-800'
+                }`}>
+                  {localListShow ? `${activeListCount} Kolom` : 'Tanpa TTD'}
+                </span>
+              </button>
+            )}
             <button
+              type="button"
               onClick={() => setActiveTab('f1')}
               className={`px-3 py-1 text-xs font-bold rounded-lg transition cursor-pointer flex items-center gap-1.5 ${
                 activeTab === 'f1'
@@ -341,6 +470,7 @@ export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
               </span>
             </button>
             <button
+              type="button"
               onClick={() => setActiveTab('f2')}
               className={`px-3 py-1 text-xs font-bold rounded-lg transition cursor-pointer flex items-center gap-1.5 ${
                 activeTab === 'f2'
@@ -356,88 +486,417 @@ export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
           </div>
 
           {/* Quick Presets */}
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[11px] font-semibold text-stone-500 font-mono">Preset Cepat:</span>
-            <button
-              onClick={() => handleApplyPreset('nmsa_standard')}
-              className="px-2 py-0.5 text-[10.5px] font-bold bg-white border border-stone-300 hover:border-amber-500 text-stone-700 rounded-md transition cursor-pointer"
-              title="Standar NMSA (4 Kolom)"
-            >
-              Standar 4 Kolom
-            </button>
-            <button
-              onClick={() => handleApplyPreset('5_penanda_tangan')}
-              className="px-2 py-0.5 text-[10.5px] font-bold bg-white border border-stone-300 hover:border-amber-500 text-stone-700 rounded-md transition cursor-pointer"
-              title="5 Kolom (4 di atas + 1 Direktur Utama di bawah tengah)"
-            >
-              5 Kolom (+ Dirut Bawah)
-            </button>
-            <button
-              onClick={() => handleApplyPreset('6_penanda_tangan')}
-              className="px-2 py-0.5 text-[10.5px] font-bold bg-white border border-stone-300 hover:border-amber-500 text-stone-700 rounded-md transition cursor-pointer"
-              title="6 Kolom (4 di atas + 2 di bawah tengah)"
-            >
-              6 Kolom (Direksi)
-            </button>
-            <button
-              onClick={() => handleApplyPreset('8_penanda_tangan')}
-              className="px-2 py-0.5 text-[10.5px] font-bold bg-white border border-stone-300 hover:border-amber-500 text-stone-700 rounded-md transition cursor-pointer"
-              title="8 Kolom (4 di atas + 4 di bawah sejajar)"
-            >
-              8 Kolom (Lengkap)
-            </button>
-            <button
-              onClick={() => handleApplyPreset('operasional')}
-              className="px-2 py-0.5 text-[10.5px] font-bold bg-white border border-stone-300 hover:border-amber-500 text-stone-700 rounded-md transition cursor-pointer"
-              title="Operasional Lapangan"
-            >
-              Operasional
-            </button>
-          </div>
+          {activeTab === 'list' ? (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[11px] font-semibold text-stone-500 font-mono">Preset List:</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setLocalList(DEFAULT_LIST_SIGNERS.map((s) => ({ ...s })));
+                  setLocalListShow(true);
+                }}
+                className="px-2 py-0.5 text-[10.5px] font-bold bg-white border border-stone-300 hover:border-amber-500 text-stone-700 rounded-md transition cursor-pointer"
+              >
+                Standar 3 Kolom
+              </button>
+              <button
+                type="button"
+                onClick={handleSyncListWithF1}
+                className="px-2 py-0.5 text-[10.5px] font-bold bg-amber-50 border border-amber-300 hover:bg-amber-100 text-amber-900 rounded-md transition cursor-pointer"
+                title="Salin seluruh penanda tangan Voucher F1 ke Cetak List PDF"
+              >
+                🔄 Samakan dgn F1
+              </button>
+              <button
+                type="button"
+                onClick={handleSyncListWithF2}
+                className="px-2 py-0.5 text-[10.5px] font-bold bg-white border border-stone-300 hover:border-amber-500 text-stone-700 rounded-md transition cursor-pointer"
+                title="Salin penanda tangan Formulir F2 ke Cetak List PDF"
+              >
+                Samakan dgn F2
+              </button>
+              <button
+                type="button"
+                onClick={() => setLocalListShow((prev) => !prev)}
+                className={`px-2 py-0.5 text-[10.5px] font-bold rounded-md border transition cursor-pointer ${
+                  !localListShow
+                    ? 'bg-rose-600 text-white border-rose-700'
+                    : 'bg-white border-rose-300 text-rose-700 hover:bg-rose-50'
+                }`}
+              >
+                {localListShow ? '🚫 Hilangkan TTD' : '✓ Tampilkan TTD'}
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[11px] font-semibold text-stone-500 font-mono">Preset Cepat:</span>
+              <button
+                onClick={() => handleApplyPreset('nmsa_standard')}
+                className="px-2 py-0.5 text-[10.5px] font-bold bg-white border border-stone-300 hover:border-amber-500 text-stone-700 rounded-md transition cursor-pointer"
+                title="Standar NMSA (4 Kolom)"
+              >
+                Standar 4 Kolom
+              </button>
+              <button
+                onClick={() => handleApplyPreset('5_penanda_tangan')}
+                className="px-2 py-0.5 text-[10.5px] font-bold bg-white border border-stone-300 hover:border-amber-500 text-stone-700 rounded-md transition cursor-pointer"
+                title="5 Kolom (4 di atas + 1 Direktur Utama di bawah tengah)"
+              >
+                5 Kolom (+ Dirut Bawah)
+              </button>
+              <button
+                onClick={() => handleApplyPreset('6_penanda_tangan')}
+                className="px-2 py-0.5 text-[10.5px] font-bold bg-white border border-stone-300 hover:border-amber-500 text-stone-700 rounded-md transition cursor-pointer"
+                title="6 Kolom (4 di atas + 2 di bawah tengah)"
+              >
+                6 Kolom (Direksi)
+              </button>
+              <button
+                onClick={() => handleApplyPreset('8_penanda_tangan')}
+                className="px-2 py-0.5 text-[10.5px] font-bold bg-white border border-stone-300 hover:border-amber-500 text-stone-700 rounded-md transition cursor-pointer"
+                title="8 Kolom (4 di atas + 4 di bawah sejajar)"
+              >
+                8 Kolom (Lengkap)
+              </button>
+              <button
+                onClick={() => handleApplyPreset('operasional')}
+                className="px-2 py-0.5 text-[10.5px] font-bold bg-white border border-stone-300 hover:border-amber-500 text-stone-700 rounded-md transition cursor-pointer"
+                title="Operasional Lapangan"
+              >
+                Operasional
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Modal Body */}
         <div className="p-5 overflow-y-auto flex-1 space-y-4">
-          {/* FORMAT TAMPILAN: KOTAK PENANDA TANGAN VS HANYA GARIS SAJA */}
-          <div className="bg-amber-50/60 border border-amber-200/90 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-3xs">
-            <div>
-              <span className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
-                <Sliders size={14} className="text-amber-600" />
-                Format Tampilan Penanda Tangan:
-              </span>
-              <p className="text-[11px] text-stone-600 mt-0.5">
-                Pilih apakah menggunakan kotak bergaris tertutup atau garis bawah terbuka seperti biasa
-              </p>
-            </div>
-            <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-amber-300 shadow-3xs shrink-0">
-              <button
-                type="button"
-                onClick={() => setLocalStyle('table')}
-                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 cursor-pointer ${
-                  localStyle === 'table'
-                    ? 'bg-amber-600 text-white shadow-xs'
-                    : 'text-stone-700 hover:text-stone-900 hover:bg-stone-100'
-                }`}
-              >
-                <span>▦</span>
-                <span>Kotak Penanda Tangan</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setLocalStyle('line')}
-                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 cursor-pointer ${
-                  localStyle === 'line'
-                    ? 'bg-amber-600 text-white shadow-xs'
-                    : 'text-stone-700 hover:text-stone-900 hover:bg-stone-100'
-                }`}
-              >
-                <span>━</span>
-                <span>Hanya Garis Saja</span>
-              </button>
-            </div>
-          </div>
+          {activeTab === 'list' ? (
+            <div className="space-y-4">
+              {/* Toggle Tampilkan vs Hilangkan Kolom Penanda Tangan di Cetak List PDF */}
+              <div className={`rounded-xl p-3.5 border flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition ${
+                localListShow
+                  ? 'bg-emerald-50/70 border-emerald-200'
+                  : 'bg-rose-50/80 border-rose-300'
+              }`}>
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2">
+                    {localListShow ? (
+                      <Eye size={15} className="text-emerald-700" />
+                    ) : (
+                      <EyeOff size={15} className="text-rose-700" />
+                    )}
+                    <span className="text-xs font-black text-stone-900">
+                      Status Kolom Penanda Tangan di Cetak List (PDF)
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-stone-600">
+                    {localListShow
+                      ? 'Kolom penanda tangan AKTIF dan akan dicetak di bagian bawah laporan list transaksi.'
+                      : 'Kolom penanda tangan DIHILANGKAN. Cetak List PDF hanya menampilkan daftar transaksi & total nilai.'}
+                  </p>
+                </div>
 
-          {activeTab === 'f1' ? (
+                <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-stone-300 shadow-3xs shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setLocalListShow(true)}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 cursor-pointer ${
+                      localListShow
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'text-stone-700 hover:bg-stone-100'
+                    }`}
+                  >
+                    <Eye size={13} />
+                    <span>Tampilkan</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLocalListShow(false)}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 cursor-pointer ${
+                      !localListShow
+                        ? 'bg-rose-600 text-white shadow-xs'
+                        : 'text-stone-700 hover:bg-stone-100'
+                    }`}
+                  >
+                    <EyeOff size={13} />
+                    <span>Hilangkan TTD</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Format Tampilan List */}
+              <div className={`bg-amber-50/60 border border-amber-200/90 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-3xs ${!localListShow ? 'opacity-50 pointer-events-none' : ''}`}>
+                <div>
+                  <span className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                    <Sliders size={14} className="text-amber-600" />
+                    Format Tampilan Penanda Tangan List:
+                  </span>
+                  <p className="text-[11px] text-stone-600 mt-0.5">
+                    Pilih format kotak bergaris tertutup (seperti F1/F2) atau hanya garis bawah bersih
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-amber-300 shadow-3xs shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setLocalListStyle('table')}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 cursor-pointer ${
+                      localListStyle === 'table'
+                        ? 'bg-amber-600 text-white shadow-xs'
+                        : 'text-stone-700 hover:text-stone-900 hover:bg-stone-100'
+                    }`}
+                  >
+                    <span>▦</span>
+                    <span>Kotak Penanda Tangan</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLocalListStyle('line')}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 cursor-pointer ${
+                      localListStyle === 'line'
+                        ? 'bg-amber-600 text-white shadow-xs'
+                        : 'text-stone-700 hover:text-stone-900 hover:bg-stone-100'
+                    }`}
+                  >
+                    <span>━</span>
+                    <span>Hanya Garis Saja</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Controls Jumlah Kolom List */}
+              <div className={`bg-stone-100/90 p-3 rounded-xl border border-stone-200/90 space-y-2.5 ${!localListShow ? 'opacity-50 pointer-events-none' : ''}`}>
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-2.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-bold text-stone-800 flex items-center gap-1">
+                      <Users size={14} className="text-amber-600" />
+                      Jumlah Kolom:
+                    </span>
+                    <div className="flex items-center gap-1 flex-wrap">
+                      {[1, 2, 3, 4, 5, 6, 7, 8].map((num) => (
+                        <button
+                          key={num}
+                          type="button"
+                          onClick={() => handleSetSignerCountList(num)}
+                          className={`px-2.5 py-1 text-xs font-bold rounded-lg transition cursor-pointer flex items-center gap-1 ${
+                            activeListCount === num
+                              ? 'bg-amber-600 text-white shadow-xs'
+                              : 'bg-white border border-stone-300 text-stone-700 hover:bg-stone-50 hover:border-amber-400'
+                          }`}
+                        >
+                          <span>{num}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleAddSignerList}
+                    disabled={localList.length >= 8}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                      localList.length >= 8
+                        ? 'bg-stone-200 text-stone-400 border border-stone-300 cursor-not-allowed'
+                        : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
+                    }`}
+                  >
+                    <Plus size={13} />
+                    <span>+ Tambah Kolom {localList.length < 8 ? `(${localList.length + 1})` : ''}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* List Signer Cards */}
+              {localListShow && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                  {localList.map((item, idx) => {
+                    const isEnabled = item.enabled !== false;
+                    const isRow2 = idx >= 4;
+                    return (
+                      <div
+                        key={idx}
+                        className={`p-3.5 rounded-xl border shadow-2xs space-y-2.5 transition relative ${
+                          isEnabled
+                            ? isRow2
+                              ? 'bg-amber-50/50 border-amber-200/90'
+                              : 'bg-stone-50/80 border-stone-200/90'
+                            : 'bg-stone-100/70 border-dashed border-stone-300 opacity-60'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between border-b border-stone-200/80 pb-1.5">
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className={`w-5 h-5 rounded-full text-white text-[11px] font-black inline-flex items-center justify-center ${
+                                isEnabled ? (isRow2 ? 'bg-amber-600' : 'bg-amber-500') : 'bg-stone-400'
+                              }`}
+                            >
+                              {idx + 1}
+                            </span>
+                            <span className="text-xs font-bold text-stone-900">Kolom {idx + 1}</span>
+                            <span className={`text-[9.5px] px-1.5 py-0.2 rounded font-bold uppercase tracking-wider ${
+                              isRow2
+                                ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                                : 'bg-stone-200 text-stone-700'
+                            }`}>
+                              {isRow2 ? `Baris 2 (#${idx - 3})` : 'Baris 1'}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleListEnabled(idx)}
+                              className={`px-2 py-0.5 text-[10.5px] font-bold rounded-md transition flex items-center gap-1 cursor-pointer ${
+                                isEnabled
+                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 hover:bg-emerald-200'
+                                  : 'bg-stone-200 text-stone-600 border border-stone-300 hover:bg-stone-300'
+                              }`}
+                            >
+                              {isEnabled ? (
+                                <>
+                                  <CheckCircle2 size={12} className="text-emerald-700" />
+                                  <span>Aktif</span>
+                                </>
+                              ) : (
+                                <>
+                                  <X size={12} className="text-stone-500" />
+                                  <span>Nonaktif</span>
+                                </>
+                              )}
+                            </button>
+
+                            {localList.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveSignerList(idx)}
+                                className="p-1 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded transition cursor-pointer"
+                                title="Hapus kolom penanda tangan ini"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[10.5px] font-bold uppercase tracking-wider text-stone-600 mb-1">
+                            Status / Judul Kolom:
+                          </label>
+                          <input
+                            type="text"
+                            value={item.title}
+                            onChange={(e) => handleUpdateList(idx, 'title', e.target.value)}
+                            placeholder="Contoh: Dibuat Oleh, Diperiksa Oleh, Disahkan Oleh"
+                            className="w-full px-2.5 py-1.5 text-xs bg-white border border-stone-300 rounded-lg focus:outline-none focus:ring-1.5 focus:ring-amber-500 font-semibold"
+                          />
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {['Dibuat Oleh', 'Diperiksa Oleh', 'Disahkan Oleh', 'Diajukan', 'Diverifikasi', 'Disetujui'].map((preset) => (
+                              <button
+                                key={preset}
+                                type="button"
+                                onClick={() => handleUpdateList(idx, 'title', preset)}
+                                className="px-1.5 py-0.5 text-[9.5px] bg-stone-200/70 hover:bg-amber-100 hover:text-amber-900 rounded text-stone-700 transition cursor-pointer"
+                              >
+                                {preset}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[10.5px] font-bold uppercase tracking-wider text-stone-600 mb-1">
+                            Nama Lengkap:
+                          </label>
+                          <input
+                            type="text"
+                            value={item.name}
+                            onChange={(e) => handleUpdateList(idx, 'name', e.target.value)}
+                            placeholder="Nama Penanda Tangan"
+                            className="w-full px-2.5 py-1.5 text-xs bg-white border border-stone-300 rounded-lg focus:outline-none focus:ring-1.5 focus:ring-amber-500 font-bold"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[10.5px] font-bold uppercase tracking-wider text-stone-600 mb-1">
+                            Jabatan / Posisi:
+                          </label>
+                          <input
+                            type="text"
+                            value={item.role}
+                            onChange={(e) => handleUpdateList(idx, 'role', e.target.value)}
+                            placeholder="Jabatan"
+                            className="w-full px-2.5 py-1.5 text-xs bg-white border border-stone-300 rounded-lg focus:outline-none focus:ring-1.5 focus:ring-amber-500 font-medium"
+                          />
+                        </div>
+
+                        <div className="pt-1 border-t border-stone-200/60">
+                          <span className="text-[9.5px] font-semibold text-stone-400 block mb-1 font-mono">
+                            Pilih Cepat Nama &amp; Jabatan:
+                          </span>
+                          <div className="flex flex-wrap gap-1">
+                            {commonNamePresets.map((p) => (
+                              <button
+                                key={p.name}
+                                type="button"
+                                onClick={() => {
+                                  handleUpdateList(idx, 'name', p.name);
+                                  handleUpdateList(idx, 'role', p.role);
+                                }}
+                                className="px-1.5 py-0.5 text-[9.5px] bg-stone-100 hover:bg-amber-100 hover:text-amber-900 rounded text-stone-700 transition cursor-pointer"
+                              >
+                                {p.name.split(' ')[0]}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : (
+            <>
+              {/* FORMAT TAMPILAN: KOTAK PENANDA TANGAN VS HANYA GARIS SAJA */}
+              <div className="bg-amber-50/60 border border-amber-200/90 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-3xs">
+                <div>
+                  <span className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                    <Sliders size={14} className="text-amber-600" />
+                    Format Tampilan Penanda Tangan:
+                  </span>
+                  <p className="text-[11px] text-stone-600 mt-0.5">
+                    Pilih apakah menggunakan kotak bergaris tertutup atau garis bawah terbuka seperti biasa
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-amber-300 shadow-3xs shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setLocalStyle('table')}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 cursor-pointer ${
+                      localStyle === 'table'
+                        ? 'bg-amber-600 text-white shadow-xs'
+                        : 'text-stone-700 hover:text-stone-900 hover:bg-stone-100'
+                    }`}
+                  >
+                    <span>▦</span>
+                    <span>Kotak Penanda Tangan</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLocalStyle('line')}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 cursor-pointer ${
+                      localStyle === 'line'
+                        ? 'bg-amber-600 text-white shadow-xs'
+                        : 'text-stone-700 hover:text-stone-900 hover:bg-stone-100'
+                    }`}
+                  >
+                    <span>━</span>
+                    <span>Hanya Garis Saja</span>
+                  </button>
+                </div>
+              </div>
+
+              {activeTab === 'f1' ? (
             <div className="space-y-3.5">
               {/* Top Controls: Active Column Count Quick Select + Add Signer Button */}
               <div className="bg-stone-100/90 p-3 rounded-xl border border-stone-200/90 space-y-2.5">
@@ -797,6 +1256,8 @@ export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
               </div>
             </div>
           )}
+            </>
+          )}
         </div>
 
         {/* Modal Footer */}
@@ -817,7 +1278,13 @@ export const SignerSettingsModal: React.FC<SignerSettingsModalProps> = ({
           <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
             <button
               type="button"
-              onClick={onReset}
+              onClick={() => {
+                if (activeTab === 'list' && onResetList) {
+                  onResetList();
+                } else {
+                  onReset();
+                }
+              }}
               className="px-3 py-2 text-xs font-bold text-stone-600 hover:text-stone-900 bg-stone-200/70 hover:bg-stone-200 rounded-xl transition flex items-center gap-1 cursor-pointer"
             >
               <RotateCcw size={13} />

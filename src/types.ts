@@ -516,6 +516,9 @@ export interface CompanyProfile {
   sigKeuangan?: string;
   f1Signers?: Array<{ title: string; name: string; role: string; enabled?: boolean }>;
   f2Signers?: Array<{ title: string; name: string; role: string; enabled?: boolean }>;
+  listSigners?: Array<{ title: string; name: string; role: string; enabled?: boolean }>;
+  listShowSigners?: boolean;
+  listSignatureStyle?: 'table' | 'line';
   signatureStyle?: 'table' | 'line';
   f2ApprovedBy?: 'harijon' | 'nursyam' | 'none';
   isActive?: boolean;

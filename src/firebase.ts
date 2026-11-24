@@ -638,13 +638,24 @@ export const getCompanyProfileFromFirestore = async (companyId: string): Promise
             else list.push(cachedComp);
             localStorage.setItem('NUSANTARA_SAVED_COMPANIES', JSON.stringify(list));
           }
-          if (Array.isArray(data.f1Signers) || Array.isArray(data.f2Signers) || data.signatureStyle || data.f2ApprovedBy) {
+          if (
+            Array.isArray(data.f1Signers) ||
+            Array.isArray(data.f2Signers) ||
+            Array.isArray(data.listSigners) ||
+            typeof data.listShowSigners === 'boolean' ||
+            data.listSignatureStyle ||
+            data.signatureStyle ||
+            data.f2ApprovedBy
+          ) {
             hydrateCompanySignersFromServerSettings({
               companySignersByCompany: {
                 [cleanId]: {
                   companyId: cleanId,
                   f1Signers: Array.isArray(data.f1Signers) ? data.f1Signers : undefined,
                   f2Signers: Array.isArray(data.f2Signers) ? data.f2Signers : undefined,
+                  listSigners: Array.isArray(data.listSigners) ? data.listSigners : undefined,
+                  listShowSigners: typeof data.listShowSigners === 'boolean' ? data.listShowSigners : undefined,
+                  listSignatureStyle: data.listSignatureStyle,
                   signatureStyle: data.signatureStyle,
                   f2ApprovedBy: data.f2ApprovedBy,
                   creatorName: data.sigDibuat,
@@ -757,6 +768,9 @@ export const saveCompanyProfileToFirestore = async (company: Partial<CompanyProf
     sigKeuangan: company.sigKeuangan || 'Sri Ekowati',
     ...(Array.isArray(company.f1Signers) ? { f1Signers: company.f1Signers } : {}),
     ...(Array.isArray(company.f2Signers) ? { f2Signers: company.f2Signers } : {}),
+    ...(Array.isArray(company.listSigners) ? { listSigners: company.listSigners } : {}),
+    ...(typeof company.listShowSigners === 'boolean' ? { listShowSigners: company.listShowSigners } : {}),
+    ...(company.listSignatureStyle ? { listSignatureStyle: company.listSignatureStyle } : {}),
     ...(company.signatureStyle ? { signatureStyle: company.signatureStyle } : {}),
     ...(company.f2ApprovedBy ? { f2ApprovedBy: company.f2ApprovedBy } : {}),
     icon: company.icon || '🏢',

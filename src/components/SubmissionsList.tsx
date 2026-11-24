@@ -3,10 +3,20 @@ import { createPortal } from 'react-dom';
 import { Submission, ActivityLog } from '../types';
 import { formatRupiah, formatDateIndonesian, isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, sortSubmissionsDescending } from '../utils';
 import { getVoucherShareLink } from '../utils/appLinks';
-import { Search, Eye, Edit2, Trash2, Calendar, MapPin, DollarSign, Plus, Copy, RefreshCw, Cloud, CloudUpload, FileText, Database, History, FileSpreadsheet, CheckCircle, AlertCircle, Printer, Check, ExternalLink, Coins, User, Bell, ChevronDown, Sparkles, Share2, Send, MoreVertical, Receipt, Building2, X, AlertTriangle, Info, Layers, Filter, CreditCard, Star, Download, RotateCcw } from 'lucide-react';
+import { Search, Eye, Edit2, Trash2, Calendar, MapPin, DollarSign, Plus, Copy, RefreshCw, Cloud, CloudUpload, FileText, Database, History, FileSpreadsheet, CheckCircle, AlertCircle, Printer, Check, ExternalLink, Coins, User, Bell, ChevronDown, Sparkles, Share2, Send, MoreVertical, Receipt, Building2, X, AlertTriangle, Info, Layers, Filter, CreditCard, Star, Download, RotateCcw, SlidersHorizontal, EyeOff } from 'lucide-react';
 import { loadActivityLogsFromFirestore, isFirebaseConfigured, triggerGoogleDriveAutoRefresh } from '../firebase';
 import { LiveClock } from './LiveClock';
 import { normalizeText, extractYearMonth, normalizeExactTransactionCode } from '../utils/duplicateDetector';
+import { F1SignaturesBlock } from './F1SignaturesBlock';
+import { SignerSettingsModal, SignerConfigItem } from './SignerSettingsModal';
+import {
+  normalizeSignerCompanyId,
+  resolveCompanySignerBundle,
+  saveCompanySignerBundle,
+  resetCompanySignerBundle,
+  buildDefaultListSignersForCompany,
+  COMPANY_SIGNERS_UPDATED_EVENT,
+} from '../utils/companySigners';
 
 interface SubmissionsListProps {
   submissions: Submission[];
@@ -205,6 +215,104 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
   // Dropdown pilihan untuk kolom CHECK (Pilih Semua, Belum Lunas, Prioritas Bayar, Belum Firestore, dll.)
   const [isCheckMenuOpen, setIsCheckMenuOpen] = useState(false);
   const [checkMenuPosition, setCheckMenuPosition] = useState<{ top: number; left: number } | null>(null);
+
+  // Pengaturan Penanda Tangan Cetak List (PDF) per Perusahaan (sinkron dengan gaya F1 & F2 + opsi Hilangkan TTD)
+  const activeCompanyId = useMemo(
+    () => normalizeSignerCompanyId(userProfile?.companyId || userProfile?.companyDetails?.id),
+    [userProfile?.companyId, userProfile?.companyDetails?.id]
+  );
+  const activeCompanyFullName = useMemo(() => {
+    const raw =
+      userProfile?.companyDetails?.fullName ||
+      userProfile?.companyName ||
+      userProfile?.companyDetails?.name ||
+      'PT NUSANTARA MINERAL SUKSES ABADI';
+    return String(raw).trim() || 'PT NUSANTARA MINERAL SUKSES ABADI';
+  }, [userProfile?.companyDetails?.fullName, userProfile?.companyName, userProfile?.companyDetails?.name]);
+
+  const [listSigners, setListSigners] = useState<SignerConfigItem[]>(() =>
+    resolveCompanySignerBundle(activeCompanyId, userProfile).listSigners
+  );
+  const [listShowSigners, setListShowSigners] = useState<boolean>(() =>
+    resolveCompanySignerBundle(activeCompanyId, userProfile).listShowSigners
+  );
+  const [listSignatureStyle, setListSignatureStyle] = useState<'table' | 'line'>(() =>
+    resolveCompanySignerBundle(activeCompanyId, userProfile).listSignatureStyle
+  );
+  const [companyF1Signers, setCompanyF1Signers] = useState<SignerConfigItem[]>(() =>
+    resolveCompanySignerBundle(activeCompanyId, userProfile).f1Signers
+  );
+  const [companyF2Signers, setCompanyF2Signers] = useState<SignerConfigItem[]>(() =>
+    resolveCompanySignerBundle(activeCompanyId, userProfile).f2Signers
+  );
+  const [companySignatureStyle, setCompanySignatureStyle] = useState<'table' | 'line'>(() =>
+    resolveCompanySignerBundle(activeCompanyId, userProfile).signatureStyle
+  );
+  const [isListPrintPreviewOpen, setIsListPrintPreviewOpen] = useState(false);
+  const [isListSignerModalOpen, setIsListSignerModalOpen] = useState(false);
+
+  useEffect(() => {
+    const syncListSigners = () => {
+      const bundle = resolveCompanySignerBundle(activeCompanyId, userProfile);
+      setListSigners(bundle.listSigners);
+      setListShowSigners(bundle.listShowSigners);
+      setListSignatureStyle(bundle.listSignatureStyle);
+      setCompanyF1Signers(bundle.f1Signers);
+      setCompanyF2Signers(bundle.f2Signers);
+      setCompanySignatureStyle(bundle.signatureStyle);
+    };
+    syncListSigners();
+    if (typeof window !== 'undefined') {
+      window.addEventListener(COMPANY_SIGNERS_UPDATED_EVENT, syncListSigners);
+      return () => window.removeEventListener(COMPANY_SIGNERS_UPDATED_EVENT, syncListSigners);
+    }
+  }, [activeCompanyId, userProfile]);
+
+  const handleSaveListSigners = (
+    nextSigners: SignerConfigItem[],
+    showSigners: boolean,
+    style: 'table' | 'line'
+  ) => {
+    setListSigners(nextSigners);
+    setListShowSigners(showSigners);
+    setListSignatureStyle(style);
+    saveCompanySignerBundle(activeCompanyId, {
+      listSigners: nextSigners,
+      listShowSigners: showSigners,
+      listSignatureStyle: style,
+    });
+  };
+
+  const handleToggleListSignersVisibility = (nextVisible: boolean) => {
+    setListShowSigners(nextVisible);
+    saveCompanySignerBundle(activeCompanyId, { listShowSigners: nextVisible });
+  };
+
+  const handleChangeListSignatureStyle = (nextStyle: 'table' | 'line') => {
+    setListSignatureStyle(nextStyle);
+    saveCompanySignerBundle(activeCompanyId, { listSignatureStyle: nextStyle });
+  };
+
+  const handleResetListSigners = () => {
+    const defaultList = buildDefaultListSignersForCompany(
+      activeCompanyId,
+      companyF1Signers,
+      userProfile?.companyDetails
+    );
+    setListSigners(defaultList);
+    setListShowSigners(true);
+    setListSignatureStyle('line');
+    saveCompanySignerBundle(activeCompanyId, {
+      listSigners: defaultList,
+      listShowSigners: true,
+      listSignatureStyle: 'line',
+    });
+  };
+
+  const activeListSignerCount = useMemo(
+    () => listSigners.filter((s) => s.enabled !== false).length,
+    [listSigners]
+  );
 
   // Filter & sorotan transaksi yang diprioritaskan untuk dibayar selanjutnya
   const [priorityFilter, setPriorityFilter] = useState<boolean>(() => {
@@ -2508,8 +2616,8 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
               </div>
             </div>
 
-            {/* Compact Action Buttons: Satukan Nama & Cetak List (PDF) */}
-            <div className="flex items-center gap-2 shrink-0 w-full xl:w-auto">
+            {/* Compact Action Buttons: Satukan Nama, Atur TTD List & Cetak List (PDF) */}
+            <div className="flex flex-wrap items-center gap-2 shrink-0 w-full xl:w-auto">
               {onOpenConsolidateModal && (
                 <button
                   type="button"
@@ -2524,9 +2632,32 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
 
               <button
                 type="button"
-                onClick={() => window.print()}
+                onClick={() => setIsListSignerModalOpen(true)}
+                className={`inline-flex items-center justify-center gap-1.5 px-3 py-2 border font-bold rounded-xl transition duration-150 text-xs shadow-3xs cursor-pointer select-none whitespace-nowrap ${
+                  listShowSigners
+                    ? 'bg-amber-50 hover:bg-amber-100 border-amber-300 text-amber-950'
+                    : 'bg-rose-50 hover:bg-rose-100 border-rose-300 text-rose-800'
+                }`}
+                title="Atur Penanda Tangan atau Hilangkan Kolom TTD untuk Cetak List (PDF)"
+              >
+                {listShowSigners ? (
+                  <SlidersHorizontal size={13} className="text-amber-600" />
+                ) : (
+                  <EyeOff size={13} className="text-rose-600" />
+                )}
+                <span>Atur TTD List</span>
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                  listShowSigners ? 'bg-amber-600 text-white' : 'bg-rose-600 text-white'
+                }`}>
+                  {listShowSigners ? `${activeListSignerCount}` : 'Hilang'}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsListPrintPreviewOpen(true)}
                 className="flex-1 xl:flex-initial inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-stone-900 hover:bg-stone-800 border border-stone-955 text-white font-extrabold rounded-xl transition duration-150 text-xs shadow-3xs cursor-pointer select-none whitespace-nowrap"
-                title="Cetak Laporan Bulanan / Filter Terpilih"
+                title="Buka Menu Pratinjau, Atur/Hilangkan Penanda Tangan, & Cetak List (PDF)"
               >
                 <Printer size={13} className="text-amber-500" />
                 <span>Cetak List (PDF)</span>
@@ -5851,8 +5982,10 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
         <div id="printable-submissions-table" className="hidden print:block print-only-container font-sans text-black p-0 space-y-4 max-w-full overflow-hidden">
           <div className="border-b-2 border-stone-900 pb-2.5 flex justify-between items-end">
             <div>
-              <h1 className="text-base font-bold font-display uppercase tracking-wider text-stone-900 leading-tight">PT NUSANTARA MINERAL SUKSES ABADI</h1>
-              <p className="text-[9px] text-stone-600 font-mono">DIVISI FINANCE & INTERNAL LEDGER DATABASE</p>
+              <h1 className="text-base font-bold font-display uppercase tracking-wider text-stone-900 leading-tight">
+                {activeCompanyFullName.toUpperCase()}
+              </h1>
+              <p className="text-[9px] text-stone-600 font-mono">DIVISI FINANCE &amp; INTERNAL LEDGER DATABASE</p>
               <h2 className="text-xs font-bold text-stone-850 mt-0.5">Laporan List Transaksi Pengeluaran Kas / Bank</h2>
             </div>
             <div className="text-right font-mono text-[8.5px] text-stone-600 leading-tight">
@@ -5932,30 +6065,17 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
             </tfoot>
           </table>
 
-          {/* Autograph / Tanda Tangan */}
-          <div className="pt-8 grid grid-cols-3 gap-6 text-center text-[11px] leading-normal pb-8 page-break break-inside-avoid">
-            <div className="space-y-12">
-              <p className="font-semibold text-stone-600">Dibuat Oleh,</p>
-              <div className="space-y-0.5">
-                <p className="font-bold underline text-stone-900 uppercase">{userProfile?.name || 'Staff Finance'}</p>
-                <p className="text-stone-400 text-[9px] font-mono">Keuangan / Kasir</p>
-              </div>
+          {/* Autograph / Tanda Tangan (Dapat Diatur 1-8 Kolom atau Dihilangkan Sepenuhnya) */}
+          {listShowSigners && (
+            <div className="pt-6 pb-4 page-break break-inside-avoid">
+              <F1SignaturesBlock
+                signers={listSigners}
+                style={listSignatureStyle}
+                density="dense"
+                isCompact
+              />
             </div>
-            <div className="space-y-12">
-              <p className="font-semibold text-stone-600">Diperiksa Oleh,</p>
-              <div className="space-y-0.5">
-                <p className="font-bold underline text-stone-900 uppercase">ANDI DHIYA SALSABILA</p>
-                <p className="text-stone-400 text-[9px] font-mono">Direktur Keuangan</p>
-              </div>
-            </div>
-            <div className="space-y-12">
-              <p className="font-semibold text-stone-600">Disahkan Oleh,</p>
-              <div className="space-y-0.5">
-                <p className="font-bold underline text-stone-900 uppercase">ANDI NURSYAM HALID</p>
-                <p className="text-stone-400 text-[9px] font-mono">Direktur Utama</p>
-              </div>
-            </div>
-          </div>
+          )}
         </div>
       )}
 
@@ -7284,6 +7404,271 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
         })(),
         document.body
       )}
+
+      {/* Modal Pratinjau & Pengaturan Cetak List (PDF) */}
+      {isListPrintPreviewOpen && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-50 bg-stone-950/75 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 print:hidden">
+          <div className="bg-white rounded-2xl border border-stone-200 shadow-2xl w-full max-w-5xl max-h-[94vh] flex flex-col overflow-hidden">
+            {/* Toolbar Modal */}
+            <div className="bg-stone-900 text-white px-4 sm:px-5 py-3.5 flex flex-col lg:flex-row lg:items-center justify-between gap-3 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+                  <Printer size={17} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black tracking-tight">Menu Cetak List Transaksi (PDF)</h3>
+                  <p className="text-[11px] text-stone-400 font-mono">
+                    {filteredSubmissions.length} transaksi · {activeCompanyFullName}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Toggle Tampilkan / Hilangkan Kolom Penanda Tangan */}
+                <div className="inline-flex items-center bg-stone-800 p-0.5 rounded-xl border border-stone-700">
+                  <button
+                    type="button"
+                    onClick={() => handleToggleListSignersVisibility(true)}
+                    className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition flex items-center gap-1 cursor-pointer ${
+                      listShowSigners
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'text-stone-300 hover:text-white'
+                    }`}
+                  >
+                    <Eye size={12} />
+                    <span>Tampilkan TTD</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleToggleListSignersVisibility(false)}
+                    className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition flex items-center gap-1 cursor-pointer ${
+                      !listShowSigners
+                        ? 'bg-rose-600 text-white shadow-xs'
+                        : 'text-stone-300 hover:text-white'
+                    }`}
+                  >
+                    <EyeOff size={12} />
+                    <span>Hilangkan TTD</span>
+                  </button>
+                </div>
+
+                {/* Format Garis vs Kotak */}
+                {listShowSigners && (
+                  <div className="inline-flex items-center bg-stone-800 p-0.5 rounded-xl border border-stone-700">
+                    <button
+                      type="button"
+                      onClick={() => handleChangeListSignatureStyle('line')}
+                      className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer ${
+                        listSignatureStyle === 'line'
+                          ? 'bg-amber-500 text-stone-950 font-black'
+                          : 'text-stone-300 hover:text-white'
+                      }`}
+                    >
+                      Garis
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleChangeListSignatureStyle('table')}
+                      className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer ${
+                        listSignatureStyle === 'table'
+                          ? 'bg-amber-500 text-stone-950 font-black'
+                          : 'text-stone-300 hover:text-white'
+                      }`}
+                    >
+                      Kotak
+                    </button>
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setIsListSignerModalOpen(true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 text-xs font-black transition cursor-pointer"
+                >
+                  <SlidersHorizontal size={13} />
+                  <span>Atur Penanda Tangan</span>
+                  <span className="px-1.5 py-0.2 rounded-full bg-stone-900/15 text-[10px]">
+                    {listShowSigners ? `${activeListSignerCount} Kolom` : 'Nonaktif'}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.print();
+                  }}
+                  className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black shadow-sm transition cursor-pointer"
+                >
+                  <Printer size={13} />
+                  <span>Cetak / Simpan PDF</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsListPrintPreviewOpen(false)}
+                  className="p-1.5 rounded-lg text-stone-400 hover:text-white hover:bg-stone-800 transition cursor-pointer"
+                  title="Tutup Pratinjau"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            {/* Info Banner */}
+            <div className={`px-4 py-2 border-b text-[11px] flex flex-wrap items-center justify-between gap-2 ${
+              listShowSigners
+                ? 'bg-amber-50 border-amber-200 text-amber-950'
+                : 'bg-rose-50 border-rose-200 text-rose-900'
+            }`}>
+              <span className="font-semibold">
+                {listShowSigners
+                  ? `Menampilkan ${activeListSignerCount} kolom penanda tangan (${listSignatureStyle === 'table' ? 'Format Kotak Tertutup' : 'Format Garis Bersih'}) — Tersimpan otomatis khusus perusahaan ${activeCompanyId.toUpperCase()}.`
+                  : `Kolom penanda tangan dihilangkan pada cetakan PDF ini — Khusus perusahaan ${activeCompanyId.toUpperCase()}.`}
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsListSignerModalOpen(true)}
+                className="underline font-bold cursor-pointer hover:text-stone-900"
+              >
+                Ubah / Samakan dgn F1 &amp; F2 →
+              </button>
+            </div>
+
+            {/* Live A4 Preview Area */}
+            <div className="flex-1 overflow-y-auto bg-stone-200/80 p-3 sm:p-6">
+              <div className="bg-white border border-stone-300 shadow-lg rounded-lg mx-auto max-w-[900px] p-5 sm:p-8 font-sans text-black space-y-4">
+                <div className="border-b-2 border-stone-900 pb-2.5 flex justify-between items-end gap-4">
+                  <div>
+                    <h1 className="text-base font-bold font-display uppercase tracking-wider text-stone-900 leading-tight">
+                      {activeCompanyFullName.toUpperCase()}
+                    </h1>
+                    <p className="text-[9px] text-stone-600 font-mono">DIVISI FINANCE &amp; INTERNAL LEDGER DATABASE</p>
+                    <h2 className="text-xs font-bold text-stone-850 mt-0.5">Laporan List Transaksi Pengeluaran Kas / Bank</h2>
+                  </div>
+                  <div className="text-right font-mono text-[9px] text-stone-600 leading-tight shrink-0">
+                    <p>Dicetak pada: {new Date().toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+                    <p>Filter: {monthFilter === 'All' ? 'Semua Bulan' : MONTHS_LIST.find(m => m.value === monthFilter)?.label} {yearFilter === 'All' ? 'Semua Tahun' : yearFilter}</p>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-[9px] my-1 table-fixed">
+                    <thead>
+                      <tr className="bg-stone-100 border-y-2 border-stone-900 font-bold text-stone-900">
+                        <th className="py-1.5 px-1 border border-stone-400 text-center w-[4%]">No</th>
+                        <th className="py-1.5 px-1 border border-stone-400 w-[11%]">Tanggal</th>
+                        <th className="py-1.5 px-1 border border-stone-400 w-[15%]">No Voucher/Kode</th>
+                        <th className="py-1.5 px-1 border border-stone-400 w-[6%] text-center">Lokasi</th>
+                        <th className="py-1.5 px-1.5 border border-stone-400 w-[17%]">Jenis Pengajuan</th>
+                        <th className="py-1.5 px-1.5 border border-stone-400 w-[18%]">Penerima Kas</th>
+                        <th className="py-1.5 px-1 border border-stone-400 w-[7%] text-center">Metode</th>
+                        <th className="py-1.5 px-1 border border-stone-400 w-[8.5%] text-center">Status</th>
+                        <th className="py-1.5 px-1.5 border border-stone-400 w-[13.5%] text-right">Total Nilai</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-stone-300">
+                      {filteredSubmissions.length > 0 ? (
+                        filteredSubmissions.slice(0, 50).map((sub, idx) => {
+                          const subTotal = sub.items.reduce((sum, i) => sum + i.total, 0);
+                          const effStatus = getSubStatus(sub);
+                          const displayStatus = effStatus === 'DP / Cicilan'
+                            ? `DP/Cicilan${sub.dpAmount ? ` (Rp ${formatRupiah(sub.dpAmount)})` : ''}`
+                            : effStatus;
+                          return (
+                            <tr key={sub.id} className="align-top border-b border-stone-300">
+                              <td className="py-1 px-1 border border-stone-300 text-center font-mono text-stone-600">{idx + 1}</td>
+                              <td className="py-1 px-1 border border-stone-300 font-medium leading-tight break-words">{formatDateIndonesian(sub.tanggal)}</td>
+                              <td className="py-1 px-1 border border-stone-300 font-mono font-bold text-stone-900 break-all leading-tight">{sub.kode}</td>
+                              <td className="py-1 px-1 border border-stone-300 font-semibold text-center break-words">{sub.lokasi || '-'}</td>
+                              <td className="py-1 px-1.5 border border-stone-300 text-stone-900 leading-tight break-words">{sub.jenisPengajuan || '-'}</td>
+                              <td className="py-1 px-1.5 border border-stone-300 font-bold text-stone-900 leading-tight break-words">{sub.dibayarkanKepada || '-'}</td>
+                              <td className="py-1 px-1 border border-stone-300 text-center font-mono text-stone-600">Transfer</td>
+                              <td className="py-1 px-1 border border-stone-300 text-center font-mono font-bold leading-tight break-words">{displayStatus}</td>
+                              <td className="py-1 px-1.5 border border-stone-300 text-right font-mono font-black text-stone-900 whitespace-nowrap">Rp {formatRupiah(subTotal)}</td>
+                            </tr>
+                          );
+                        })
+                      ) : (
+                        <tr>
+                          <td colSpan={9} className="py-8 text-center text-stone-400">Tidak ada data transaksi yang cocok dengan kriteria filter.</td>
+                        </tr>
+                      )}
+                      {filteredSubmissions.length > 50 && (
+                        <tr>
+                          <td colSpan={9} className="py-1.5 px-2 text-center bg-stone-50 text-stone-500 italic">
+                            ... dan {filteredSubmissions.length - 50} baris transaksi lainnya akan ikut tercetak penuh saat menekan "Cetak / Simpan PDF".
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                    <tfoot>
+                      <tr className="bg-stone-100 font-bold text-stone-955 border-t-2 border-stone-900">
+                        <td colSpan={8} className="py-1.5 px-2 text-right text-stone-850 font-mono uppercase tracking-wider">
+                          SUM/TOTAL NILAI KELUAR:
+                        </td>
+                        <td className="py-1.5 px-1.5 text-right font-mono font-black text-stone-955 whitespace-nowrap">
+                          Rp {formatRupiah(filteredSubmissions.reduce((sum, s) => sum + s.items.reduce((acc, i) => acc + i.total, 0), 0))}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+
+                {listShowSigners ? (
+                  <div className="pt-4">
+                    <F1SignaturesBlock
+                      signers={listSigners}
+                      style={listSignatureStyle}
+                      density="dense"
+                      isCompact
+                    />
+                  </div>
+                ) : (
+                  <div className="py-3 px-4 rounded-xl border border-dashed border-stone-300 bg-stone-50 text-center text-[11px] text-stone-500 italic">
+                    Kolom penanda tangan dihilangkan — tidak akan tercetak di PDF.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Modal Pengaturan Penanda Tangan Lengkap (Cetak List, F1, F2) */}
+      <SignerSettingsModal
+        isOpen={isListSignerModalOpen}
+        onClose={() => setIsListSignerModalOpen(false)}
+        companyId={activeCompanyId}
+        companyName={activeCompanyFullName}
+        initialTab="list"
+        f1Signers={companyF1Signers}
+        f2Signers={companyF2Signers}
+        listSigners={listSigners}
+        listShowSigners={listShowSigners}
+        listSignatureStyle={listSignatureStyle}
+        signatureStyle={companySignatureStyle}
+        onSave={(newF1, newF2, newStyle, saveAsDefault) => {
+          setCompanyF1Signers(newF1);
+          setCompanyF2Signers(newF2);
+          setCompanySignatureStyle(newStyle);
+          if (saveAsDefault) {
+            saveCompanySignerBundle(activeCompanyId, {
+              f1Signers: newF1,
+              f2Signers: newF2,
+              signatureStyle: newStyle,
+            });
+          }
+        }}
+        onSaveList={handleSaveListSigners}
+        onReset={() => {
+          const fresh = resetCompanySignerBundle(activeCompanyId, userProfile);
+          setCompanyF1Signers(fresh.f1Signers);
+          setCompanyF2Signers(fresh.f2Signers);
+          setCompanySignatureStyle(fresh.signatureStyle);
+        }}
+        onResetList={handleResetListSigners}
+      />
     </div>
   );
 };
