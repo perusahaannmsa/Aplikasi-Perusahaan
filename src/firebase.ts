@@ -2602,12 +2602,6 @@ export interface CompanyCloudSettings {
   theme?: string;
   accurateMappedReports?: any[];
   googleDrives?: ConnectedDrive[];
-  waConnected?: boolean;
-  waUser?: any;
-  waPhone?: string;
-  waName?: string;
-  waQr?: string | null;
-  waStatus?: string;
   updatedAt?: string;
 }
 
@@ -2652,15 +2646,6 @@ export const saveCompanySettingsToFirestore = async (
   }
   if (partialSettings.recipientHistory) {
     localStorage.setItem('NUSANTARA_RECIPIENT_HISTORY', JSON.stringify(partialSettings.recipientHistory));
-  }
-  if (partialSettings.waConnected !== undefined) {
-    localStorage.setItem('nmsa_wa_connected', partialSettings.waConnected ? 'true' : 'false');
-  }
-  if (partialSettings.waPhone) {
-    localStorage.setItem('nmsa_wa_phone', partialSettings.waPhone);
-  }
-  if (partialSettings.waName) {
-    localStorage.setItem('nmsa_wa_name', partialSettings.waName);
   }
 
   // 2. Persist to server /api/shared-state as secondary persistent backup

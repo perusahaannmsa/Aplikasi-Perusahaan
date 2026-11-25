@@ -35,7 +35,7 @@ import { AccuratePettyCashMapping } from './components/AccuratePettyCashMapping'
 import { AccountMappingContainer } from './components/AccountMappingContainer';
 import { AgendaReminderBanner } from './components/AgendaReminderBanner';
 import { GeneralLedger } from './components/GeneralLedger';
-import { WhatsAppAiModal } from './components/WhatsAppAiModal';
+import { WhatsAppBaileysModal } from './components/WhatsAppBaileysModal';
 import { LiveClock } from './components/LiveClock';
 import { Pph23BupotRecap } from './components/Pph23BupotRecap';
 import { ProjectBudgetRab } from './components/ProjectBudgetRab';
@@ -3727,6 +3727,7 @@ export default function App() {
           }}
           userProfile={userProfile}
           initialSelfAttendanceMode={searchParams.has('self') || currentPath === '/absen-mandiri' || currentPath === '/absen'}
+          onOpenWhatsApp={() => setIsWhatsAppModalOpen(true)}
         />
       </div>
     );
@@ -4458,6 +4459,7 @@ export default function App() {
               handleSaveSubmission(newSub);
             }}
             userProfile={userProfile}
+            onOpenWhatsApp={() => setIsWhatsAppModalOpen(true)}
           />
         )}
 
@@ -4860,13 +4862,11 @@ export default function App() {
         userProfile={userProfile}
       />
 
-      {/* Integrasi WhatsApp Business AI & Pusat Data Modal */}
-      {isWhatsAppModalOpen && (
-        <WhatsAppAiModal
-          isOpen={isWhatsAppModalOpen}
-          onClose={() => setIsWhatsAppModalOpen(false)}
-        />
-      )}
+      {/* Modul WhatsApp Baileys */}
+      <WhatsAppBaileysModal
+        isOpen={isWhatsAppModalOpen}
+        onClose={() => setIsWhatsAppModalOpen(false)}
+      />
 
       {/* Salin Data ke Akun Firebase Lain (Migrasi Proyek) Modal */}
       {isFirebaseMigrationOpen && (

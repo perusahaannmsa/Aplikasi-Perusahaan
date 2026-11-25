@@ -19,23 +19,7 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import { PDFParse } from "pdf-parse";
-import { 
-  initWhatsApp, 
-  getWhatsAppStatus, 
-  disconnectWhatsApp, 
-  sendWhatsAppMessage, 
-  requestWhatsAppPairingCode,
-  setCustomConnectedUser,
-  generateBusinessAiReply,
-  recordKeepAlivePing,
-  getKeepAliveInfo,
-  hasAuthBackup,
-  hasWhatsAppCredentials,
-  isWhatsAppConnected,
-  markUiStatusPoll,
-  refreshWhatsAppQr,
-  isWhatsAppTransitioning
-} from "./server/wa-bot";
+import { createWhatsAppBaileysModule } from "./server/whatsappBaileys";
 import { getDynamicReminderMessage } from "./src/utils/reminderMessageGenerator";
 
 dotenv.config();
@@ -103,6 +87,21 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+const baileys = createWhatsAppBaileysModule({
+  readState,
+  writeState,
+  getJakartaDateStr,
+  checkIsHolidayOrWeekend: async (dateStr: string) => {
+    const res = await checkIsHolidayOrWeekend(dateStr);
+    return { isBlocked: res.isBlocked, reason: res.reason || undefined };
+  },
+  getReminderMessage: (name: string, url: string, workerId?: string, dateStr?: string) =>
+    getRandomReminderMessage(name, url, workerId, dateStr),
+  validateAdminToken,
+});
+
+app.use("/api/baileys", baileys.router);
 
 function getGeminiApiKeys(): string[] {
   const keys: string[] = [];
@@ -3585,8 +3584,8 @@ app.post("/api/worker-report", async (req, res) => {
     }
     writeState(state);
 
-    // Try sending WhatsApp notification
-    const waStatus = getWhatsAppStatus();
+    // Try sending WhatsApp notification via unified Baileys module
+    const waStatus = baileys.getStatus();
     let sentToAdmin = false;
     let sentToRoles = 0;
 
@@ -3597,11 +3596,11 @@ app.post("/api/worker-report", async (req, res) => {
       messageText = `⚠️ *LAPORAN KENDALA LINK ABSENSI* 👷‍♂️\n\nHalo Admin / Mandor,\nKaryawan berikut melaporkan kendala pada link absensi mereka hari ini:\n\n👤 *Nama:* ${worker.name}\n🆔 *ID:* ${worker.id}\n📞 *No. WA:* ${worker.phoneNumber || '-'}\n💼 *Jabatan:* ${worker.role}\n📅 *Waktu:* ${todayYMD} ${timeStr} WIB\n\n💬 *Kendala:* _${description || 'Terdapat kendala ketika membuka link absensi.'}_\n\n_Harap bantu verifikasi atau lakukan pencatatan kehadiran manual di dashboard admin._ 🙏`;
     }
 
-    if (waStatus.status === "connected") {
+    if (baileys.isConnected()) {
       // 1. Send to self (the logged in admin account) if possible
       if (waStatus.user?.id) {
         try {
-          await sendWhatsAppMessage(waStatus.user.id, messageText);
+          await baileys.sendMessage(waStatus.user.id, messageText);
           sentToAdmin = true;
         } catch (e) {
           console.error("Failed to send report to self/admin user:", e);
@@ -3620,7 +3619,7 @@ app.post("/api/worker-report", async (req, res) => {
 
       for (const admin of adminWorkers) {
         try {
-          await sendWhatsAppMessage(admin.phoneNumber, messageText);
+          await baileys.sendMessage(admin.phoneNumber, messageText);
           sentToRoles++;
         } catch (e) {
           console.error(`Failed to send report to admin/mandor worker (${admin.name}):`, e);
@@ -3946,26 +3945,13 @@ Return a strict JSON response conforming exactly to this structure:
   }
 });
 
-// --- UPTIMEROBOT & 24/7 KEEP-ALIVE HEALTH CHECK ENDPOINTS ---
-// Public keep-alive ping for UptimeRobot, Cron-Job.org, or any external monitor
-// Keeps Render / Railway / Replit instances awake 24/7 and auto-revives WhatsApp if idle
+// --- HEALTH CHECK ENDPOINT ---
 app.all(["/api/health", "/api/ping", "/api/keepalive", "/health", "/ping"], (req, res) => {
-  const originInfo = {
-    ip: (req.headers["x-forwarded-for"] as string) || req.ip || req.socket.remoteAddress || "unknown",
-    userAgent: (req.headers["user-agent"] as string) || "UptimeRobot",
-    method: req.method,
-  };
+  const waStatus = baileys.getStatus();
+  const hasCreds = baileys.hasCredentials();
 
-  const pingResult = recordKeepAlivePing(originInfo);
-  const waStatus = getWhatsAppStatus();
-  const hasCreds = hasWhatsAppCredentials();
-  
-  let revived = false;
-  // If credentials exist but WhatsApp dropped or disconnected, revive it on ping!
-  if (hasCreds && waStatus.status === "disconnected") {
-    console.log("[Uptime Keep-Alive] Menerima ping dari pemantau 24/7, mengaktifkan kembali bot WhatsApp secara otomatis...");
-    initWhatsApp().catch((err) => console.error("Error auto-reviving WhatsApp on health ping:", err));
-    revived = true;
+  if (hasCreds && waStatus.status === "disconnected" && !baileys.isTransitioning()) {
+    baileys.init().catch((err) => console.error("Error auto-reviving Baileys on health ping:", err));
   }
 
   if (req.method === "HEAD") {
@@ -3974,350 +3960,15 @@ app.all(["/api/health", "/api/ping", "/api/keepalive", "/health", "/ping"], (req
 
   return res.status(200).json({
     status: "ok",
-    service: "Sistem Terpadu & Bot WhatsApp PT NMSA",
+    service: "Sistem Terpadu & Modul WhatsApp Baileys PT NMSA",
     uptimeSeconds: Math.floor(process.uptime()),
     timestamp: new Date().toISOString(),
-    keepAlive: {
-      totalPings: pingResult.totalPings,
-      lastPing: pingResult.lastPing,
-      autoReviveWhatsApp: true,
-      revivedThisPing: revived,
-    },
-    whatsapp: {
+    baileys: {
       status: waStatus.status,
       connectedUser: waStatus.user,
       hasCredentials: hasCreds,
-      autoReconnect: "enabled",
     },
   });
-});
-
-// GET Keep-alive stats for frontend modal
-app.get("/api/wa/keepalive-stats", (req, res) => {
-  const info = getKeepAliveInfo();
-  const waStatus = getWhatsAppStatus();
-  const hasCreds = hasWhatsAppCredentials();
-  res.json({
-    success: true,
-    ...info,
-    uptimeSeconds: Math.floor(process.uptime()),
-    whatsapp: {
-      status: waStatus.status,
-      user: waStatus.user,
-      hasCredentials: hasCreds,
-    }
-  });
-});
-
-// --- WHATSAPP BAILEYS BOT INTEGRATION ENDPOINTS ---
-
-// GET WhatsApp connection status
-app.get("/api/wa/status", (req, res) => {
-  try {
-    const isBackgroundPoll = req.query.background === "1";
-    if (!isBackgroundPoll) {
-      markUiStatusPoll();
-    }
-    let status = getWhatsAppStatus();
-    if (!isWhatsAppTransitioning() && status.status === "disconnected" && (hasWhatsAppCredentials() || (!isBackgroundPoll && !status.error))) {
-      initWhatsApp().catch((err) => console.error("Auto init WA on status error:", err));
-      status = getWhatsAppStatus();
-    }
-    
-    // Calculate late reminder pending status safely
-    let isTimeTrigger = false;
-    let alreadySentToday = false;
-    let absentWorkers: any[] = [];
-    const todayYMD = getJakartaDateStr();
-
-    try {
-      const state = readState();
-      const jktTimeString = new Date().toLocaleTimeString("en-US", { timeZone: "Asia/Jakarta", hour12: false });
-      const [currentHour, currentMinute] = jktTimeString.split(":").map(Number);
-      
-      const scheduledTime = state.autoReminderHour || "09:00";
-      const [targetHour, targetMinute] = scheduledTime.split(":").map(Number);
-
-      isTimeTrigger = currentHour > targetHour || (currentHour === targetHour && currentMinute >= targetMinute);
-      alreadySentToday = state.lastCronSentDate === todayYMD;
-
-      const workers = state.workers || [];
-      const records = state.attendanceRecords || [];
-      const activeWorkers = workers.filter((w: any) => w.isActive);
-      absentWorkers = activeWorkers.filter((worker: any) => {
-        const record = records.find((r: any) => r.workerId === worker.id);
-        return !record || !record.attendance || !record.attendance[todayYMD];
-      });
-    } catch (calcErr) {
-      console.warn("Could not calculate late reminder status:", calcErr);
-    }
-
-    return res.json({
-      success: true,
-      ...status,
-      lateReminderPending: status.status === "connected" && isTimeTrigger && !alreadySentToday && absentWorkers.length > 0,
-      absentWorkersCount: absentWorkers.length,
-      absentWorkersNames: absentWorkers.map(w => w.name),
-      todayDate: todayYMD
-    });
-  } catch (err: any) {
-    console.error("Error in /api/wa/status endpoint:", err);
-    return res.json({
-      success: false,
-      status: "disconnected",
-      qr: null,
-      user: null,
-      error: err?.message || "Status tidak tersedia saat ini",
-      hasCredentials: false,
-      hasBackup: false,
-      lateReminderPending: false,
-      absentWorkersCount: 0,
-      absentWorkersNames: [],
-      todayDate: getJakartaDateStr()
-    });
-  }
-});
-
-// POST Refresh QR code manually
-app.post("/api/wa/refresh-qr", async (req, res) => {
-  try {
-    markUiStatusPoll();
-    console.log("[WhatsApp Bot] Memperbarui QR Code atas permintaan pengguna...");
-    const freshStatus = await refreshWhatsAppQr();
-
-    return res.json({
-      success: true,
-      ...freshStatus,
-      message: "QR Code berhasil diperbarui."
-    });
-  } catch (err: any) {
-    console.error("[Refresh QR Error]:", err);
-    return res.json({ success: false, error: err.message || "Gagal memperbarui QR Code." });
-  }
-});
-
-// POST Disconnect WhatsApp connection
-app.post("/api/wa/disconnect", async (req, res) => {
-  try {
-    const result = await disconnectWhatsApp();
-    return res.json(result || { success: true });
-  } catch (err: any) {
-    return res.json({ success: false, error: err.message || "Gagal memutuskan koneksi WhatsApp." });
-  }
-});
-
-// POST Request pairing code for phone linking
-app.post("/api/wa/pairing-code", async (req, res) => {
-  markUiStatusPoll();
-  const { phone } = req.body || {};
-  if (!phone || !String(phone).trim()) {
-    return res.status(400).json({ success: false, error: "Nomor WhatsApp wajib diisi." });
-  }
-  try {
-    const code = await requestWhatsAppPairingCode(String(phone).trim());
-    const freshStatus = getWhatsAppStatus();
-    return res.json({ ...freshStatus, success: true, code, pairingCode: code });
-  } catch (err: any) {
-    console.error("[Pairing Code Error]", err);
-    return res.status(400).json({ success: false, error: err.message || "Gagal membuat Kode Pairing WhatsApp." });
-  }
-});
-
-// POST Connect phone number directly as personal WhatsApp
-app.post("/api/wa/connect-phone", (req, res) => {
-  try {
-    const { phone, name } = req.body || {};
-    if (!phone) {
-      return res.status(400).json({ success: false, error: "Nomor WhatsApp wajib diisi." });
-    }
-    let clean = String(phone).replace(/[^0-9]/g, "");
-    if (clean.startsWith("0")) clean = "62" + clean.slice(1);
-    else if (clean.startsWith("8")) clean = "62" + clean;
-    const resolvedName = name || `WhatsApp Pribadi (${clean})`;
-
-    const user = setCustomConnectedUser(clean, resolvedName);
-    return res.json({
-      success: true,
-      status: "connected",
-      user,
-      message: `Nomor WhatsApp ${clean} berhasil ditautkan sebagai WhatsApp pribadi sistem.`
-    });
-  } catch (err: any) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// POST Send a test WhatsApp message manually
-app.post("/api/wa/send-test", async (req, res) => {
-  if (!validateAdminToken(req)) {
-    return res.status(401).json({ success: false, error: "Unauthorized: Admin login required" });
-  }
-  const { phone, message } = req.body;
-  if (!phone || !message) {
-    return res.status(400).json({ success: false, error: "Nomor WhatsApp dan pesan wajib diisi." });
-  }
-  if (!isWhatsAppConnected()) {
-    return res.status(400).json({ 
-      success: false, 
-      error: "WhatsApp belum terhubung. Silakan pindai QR code atau tautkan nomor telepon terlebih dahulu." 
-    });
-  }
-  const result = await sendWhatsAppMessage(phone, message);
-  res.json(result);
-});
-
-// GET WhatsApp Security & Privacy Settings for Financial Vouchers
-app.get("/api/wa/security-settings", (req, res) => {
-  const state = readState();
-  const waStatus = getWhatsAppStatus();
-  
-  const defaultSettings = {
-    privacyMode: "whitelist", // 'whitelist' | 'pin' | 'public'
-    allowedPhones: [],
-    securityPin: "1234",
-    enableDriveLinks: true,
-    unauthorizedMessage: "Nomor WhatsApp Anda belum terdaftar dalam otorisasi akses voucher keuangan PT NMSA. Silakan hubungi Finance/Admin untuk mendaftarkan nomor Anda."
-  };
-
-  const settings = state.waSecuritySettings || defaultSettings;
-  res.json({
-    success: true,
-    settings,
-    connectedUser: waStatus.user
-  });
-});
-
-// POST WhatsApp Security & Privacy Settings
-app.post("/api/wa/security-settings", (req, res) => {
-  if (!validateAdminToken(req)) {
-    return res.status(401).json({ success: false, error: "Unauthorized: Admin login required" });
-  }
-  const { privacyMode, allowedPhones, securityPin, enableDriveLinks, unauthorizedMessage } = req.body;
-  const state = readState();
-  state.waSecuritySettings = {
-    privacyMode: privacyMode || "whitelist",
-    allowedPhones: Array.isArray(allowedPhones) ? allowedPhones : [],
-    securityPin: securityPin || "1234",
-    enableDriveLinks: enableDriveLinks !== false,
-    unauthorizedMessage: unauthorizedMessage || "Nomor WhatsApp Anda belum terdaftar dalam otorisasi akses voucher keuangan PT NMSA. Silakan hubungi Finance/Admin untuk mendaftarkan nomor Anda."
-  };
-  writeState(state);
-  res.json({ success: true, settings: state.waSecuritySettings });
-});
-
-// --- UNIVERSAL WHATSAPP WEBHOOK & MAKE.COM / FONNTE / WABLAS INTEGRATION ---
-
-// POST /api/whatsapp-webhook (Direct Webhook for Make.com / Fonnte / Custom Integrations)
-// POST /api/fonnte-webhook (Alias for Fonnte Webhook URL)
-const handleIncomingWebhook = async (req: express.Request, res: express.Response) => {
-  try {
-    const payload = req.body || {};
-    console.log("Incoming WhatsApp Webhook Payload:", JSON.stringify(payload).slice(0, 300));
-
-    // Extract message query from various webhook formats (Fonnte, Make.com, Wablas, Baileys, Custom)
-    const userMessage = (
-      payload.message || 
-      payload.text || 
-      payload.query || 
-      payload.pesan || 
-      payload.body || 
-      payload.content || 
-      payload.msg || 
-      (payload.entry && payload.entry[0]?.changes && payload.entry[0]?.changes[0]?.value?.messages && payload.entry[0]?.changes[0]?.value?.messages[0]?.text?.body) ||
-      ""
-    ).toString().trim();
-
-    const senderPhone = (
-      payload.sender || 
-      payload.from || 
-      payload.target || 
-      payload.phone || 
-      payload.senderPhone || 
-      payload.user || 
-      payload.number ||
-      (payload.entry && payload.entry[0]?.changes && payload.entry[0]?.changes[0]?.value?.messages && payload.entry[0]?.changes[0]?.value?.messages[0]?.from) ||
-      "Pengguna WhatsApp"
-    ).toString().trim();
-
-    const senderName = (payload.name || payload.senderName || payload.pushName || "Pengguna").toString().trim();
-
-    if (!userMessage) {
-      return res.json({ 
-        status: "success", 
-        message: "Webhook diterima tetapi tidak ada pesan teks.",
-        reply: "Halo! Silakan ketik pertanyaan Anda seputar voucher atau data perusahaan NMSA." 
-      });
-    }
-
-    // Generate intelligent reply using Gemini AI with full company data context and security access control
-    const aiReply = await generateBusinessAiReply(userMessage, senderName, senderPhone);
-
-    // If request contains a Fonnte Token (or fonnteToken query/body) and target phone, send reply back to Fonnte API
-    const fonnteToken = req.headers["x-fonnte-token"] || payload.fonnteToken || req.query.fonnteToken;
-    if (fonnteToken && senderPhone && senderPhone !== "Pengguna WhatsApp") {
-      try {
-        const formData = new URLSearchParams();
-        formData.append("target", senderPhone);
-        formData.append("message", aiReply);
-
-        await fetch("https://api.fonnte.com/send", {
-          method: "POST",
-          headers: {
-            "Authorization": String(fonnteToken)
-          },
-          body: formData
-        });
-      } catch (fErr) {
-        console.warn("Failed to auto-dispatch reply to Fonnte:", fErr);
-      }
-    }
-
-    // Return standard JSON response that works directly in Make.com, Fonnte Webhooks, and HTTP modules
-    return res.json({
-      status: "success",
-      reply: aiReply,
-      message: aiReply,
-      text: aiReply,
-      data: {
-        sender: senderPhone,
-        senderName,
-        query: userMessage,
-        response: aiReply
-      }
-    });
-  } catch (error: any) {
-    console.error("Error handling WhatsApp Webhook:", error);
-    return res.status(500).json({
-      status: "error",
-      error: error.message || "Failed to process WhatsApp Webhook query",
-      reply: "Mohon maaf, terjadi kendala pemrosesan sistem saat membaca data perusahaan."
-    });
-  }
-};
-
-app.post("/api/whatsapp-webhook", handleIncomingWebhook);
-app.post("/api/fonnte-webhook", handleIncomingWebhook);
-app.get("/api/whatsapp-webhook", (req, res) => {
-  // Webhook verification / healthcheck ping
-  res.json({
-    status: "active",
-    name: "PT Nusantara Mineral Sukses Abadi WhatsApp AI Webhook",
-    instructions: "Kirimkan POST request dengan payload { message: 'pertanyaan', sender: 'nomor_hp' } untuk mendapatkan jawaban AI otomatis berbasis data perusahaan."
-  });
-});
-
-// POST /api/ai-query (Interactive query endpoint for UI test / direct AI sandbox)
-app.post("/api/ai-query", async (req, res) => {
-  try {
-    const { query, sender, senderPhone } = req.body;
-    if (!query) {
-      return res.status(400).json({ error: "Parameter 'query' wajib diisi." });
-    }
-    const reply = await generateBusinessAiReply(query, sender || "Admin", senderPhone || "admin_ui");
-    res.json({ success: true, reply });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message || "Gagal menghasilkan jawaban AI." });
-  }
 });
 
 // GET /api/data & GET /api/vouchers (Clean JSON endpoints for Make.com / external tools)
@@ -5023,518 +4674,7 @@ app.get("/api/check-holiday", async (req, res) => {
   });
 });
 
-// GET /api/cron-reminder & /api/cron/late-reminder (UptimeRobot automated pinger & manual click trigger)
-app.all(["/api/cron-reminder", "/api/cron/late-reminder"], async (req, res) => {
-  const force = req.query.force === "true";
-  const state = readState();
-  const todayYMD = getJakartaDateStr();
-  
-  // Save host origin
-  const hostOrigin = req.protocol + "://" + req.get("host");
-  if (hostOrigin && hostOrigin !== state.lastHostOrigin) {
-    state.lastHostOrigin = hostOrigin;
-  }
-  
-  // Format neat local Indonesian time string
-  const nowStr = new Date().toLocaleTimeString("id-ID", { timeZone: "Asia/Jakarta" });
-  state.lastCronPing = `${todayYMD} ${nowStr} WIB`;
-  
-  // Get current Jakarta hour/minute
-  const jktTimeString = new Date().toLocaleTimeString("en-US", { timeZone: "Asia/Jakarta", hour12: false });
-  const [currentHour, currentMinute] = jktTimeString.split(":").map(Number);
-  
-  // Parse scheduled hour/minute
-  const scheduledTime = state.autoReminderHour || "09:00";
-  const [targetHour, targetMinute] = scheduledTime.split(":").map(Number);
-
-  // Conditions to trigger: force or (time is matched and not sent today yet)
-  const isTimeTrigger = currentHour > targetHour || (currentHour === targetHour && currentMinute >= targetMinute);
-  const alreadySentToday = state.lastCronSentDate === todayYMD;
-
-  // Master Switch & Auto Reminder toggles check
-  if (!force) {
-    if (state.masterAutoSendEnabled === false) {
-      const statusMsg = "Pengiriman pesan otomatis dinonaktifkan (Master Switch OFF). WhatsApp tetap terhubung.";
-      state.lastCronStatus = statusMsg;
-      writeState(state);
-      return res.json({
-        success: true,
-        skipped: true,
-        reason: "master_disabled",
-        message: statusMsg
-      });
-    }
-
-    if (state.autoReminderEnabled === false) {
-      const statusMsg = "Pengingat absensi otomatis dinonaktifkan dalam menu pengaturan WhatsApp AI Assistant.";
-      state.lastCronStatus = statusMsg;
-      writeState(state);
-      return res.json({
-        success: true,
-        skipped: true,
-        reason: "reminder_disabled",
-        message: statusMsg
-      });
-    }
-
-    // Active day verification
-    const daysMap: Record<string, string> = {
-      Sunday: "Minggu",
-      Monday: "Senin",
-      Tuesday: "Selasa",
-      Wednesday: "Rabu",
-      Thursday: "Kamis",
-      Friday: "Jumat",
-      Saturday: "Sabtu"
-    };
-    const dayNameEn = new Date().toLocaleDateString("en-US", { timeZone: "Asia/Jakarta", weekday: "long" });
-    const dayNameId = daysMap[dayNameEn] || "Senin";
-    const activeDays = state.reminderActiveDays || ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"];
-    if (!activeDays.includes(dayNameId)) {
-      const statusMsg = `Dilewati otomatis: Hari ${dayNameId} tidak diaktifkan pada jadwal pengingat.`;
-      state.lastCronStatus = statusMsg;
-      writeState(state);
-      return res.json({
-        success: true,
-        skipped: true,
-        reason: "inactive_day",
-        message: statusMsg
-      });
-    }
-  }
-
-  // Holiday and Weekend Check
-  const holidayCheck = await checkIsHolidayOrWeekend(todayYMD);
-
-  if (holidayCheck.isBlocked && !force) {
-    // If it's Saturday, Sunday, or a National Holiday, we block the reminder and mark today as handled.
-    const statusMsg = `Dilewati otomatis: ${holidayCheck.reason}.`;
-    state.lastCronStatus = statusMsg;
-    if (isTimeTrigger) {
-      state.lastCronSentDate = todayYMD;
-    }
-    writeState(state);
-    return res.json({
-      success: true,
-      message: `Pesan pengingat dilewati otomatis karena hari ini adalah ${holidayCheck.reason}`,
-      isHoliday: true,
-      reason: holidayCheck.reason,
-      status: statusMsg
-    });
-  }
-
-  if (force || (isTimeTrigger && !alreadySentToday)) {
-    console.log(`Cron execution triggered: force=${force}, isTimeTrigger=${isTimeTrigger}, alreadySentToday=${alreadySentToday}`);
-    
-    // Check WhatsApp connection status
-    if (!isWhatsAppConnected()) {
-      state.lastCronStatus = `Pengingat otomatis dilewati: WhatsApp Bot belum terhubung.`;
-      writeState(state);
-      return res.json({ 
-        success: false, 
-        message: "Pengingat dilewati: WhatsApp Bot belum terhubung. Silakan hubungkan WhatsApp di menu pengaturan terlebih dahulu.",
-        notConnected: true
-      });
-    }
-
-    const workers = state.workers || [];
-    const records = state.attendanceRecords || [];
-    const activeWorkers = workers.filter((w: any) => w.isActive);
-    
-    // Find workers who haven't checked in yet today
-    const absentWorkers = activeWorkers.filter((worker: any) => {
-      const record = records.find((r: any) => r.workerId === worker.id);
-      return !record || !record.attendance || !record.attendance[todayYMD];
-    });
-
-    if (absentWorkers.length === 0) {
-      state.lastCronStatus = `Selesai: Seluruh karyawan aktif (${activeWorkers.length}) sudah melakukan absen hadir hari ini.`;
-      if (!force) {
-        state.lastCronSentDate = todayYMD;
-      }
-      writeState(state);
-      return res.json({ 
-        success: true, 
-        message: "Seluruh karyawan aktif sudah absen hari ini. Tidak ada pengingat yang perlu dikirim." 
-      });
-    }
-
-    let sentCount = 0;
-    let failedCount = 0;
-    const errors: string[] = [];
-    
-    const hostOrigin = req.protocol + "://" + req.get("host");
-
-    for (const worker of absentWorkers) {
-      if (!isWhatsAppConnected()) {
-        errors.push("Koneksi WhatsApp terputus. Sisa antrean pengingat dihentikan.");
-        console.warn("[Cron Late Reminder] WhatsApp disconnected during broadcast. Halting remaining queue.");
-        break;
-      }
-
-      if (!worker.phoneNumber) {
-        failedCount++;
-        continue;
-      }
-
-      // Generate instant check-in URL with explicit view=absen and quick=true (plus friday=true if Friday)
-      const isFriday = new Date().toLocaleDateString("en-US", { timeZone: "Asia/Jakarta", weekday: "long" }) === "Friday";
-      const fridayParam = isFriday ? "&friday=true" : "";
-      const loginUrl = `${hostOrigin}/?view=absen&workerId=${encodeURIComponent(worker.id)}&id=${encodeURIComponent(worker.id)}&quick=true${fridayParam}`;
-      
-      // Select an energetic, highly varied personalized message template
-      const message = getRandomReminderMessage(worker.name, loginUrl, worker.id, todayYMD);
-
-      const result = await sendWhatsAppMessage(worker.phoneNumber, message);
-      if (result.success) {
-        sentCount++;
-      } else {
-        failedCount++;
-        if (result.error) errors.push(result.error);
-        if (!isWhatsAppConnected()) {
-          console.warn("[Cron Late Reminder] WhatsApp disconnected after delivery failure. Halting remaining queue.");
-          break;
-        }
-      }
-
-      // Safe delay between messages
-      await new Promise(r => setTimeout(r, 1200));
-    }
-
-    state.lastCronStatus = `Berhasil mengirim pengingat ke ${sentCount} karyawan.${failedCount > 0 ? ` Gagal: ${failedCount} karyawan.` : ""}`;
-    if (!force || req.query.markSent === "true") {
-      state.lastCronSentDate = todayYMD;
-    }
-    writeState(state);
-
-    return res.json({
-      success: true,
-      message: `Berhasil memproses cron pengingat. Terkirim: ${sentCount}, Gagal: ${failedCount}`,
-      errors
-    });
-  } else {
-    // Just a passive ping to keep server alive and update status
-    let statusMsg = "";
-    if (alreadySentToday) {
-      statusMsg = `Selesai: Pengingat hari ini (${todayYMD}) sudah dikirimkan otomatis pada jam ${scheduledTime}.`;
-    } else {
-      statusMsg = `Standby: Menunggu jam target ${scheduledTime}. Waktu server saat ini: ${nowStr} WIB.`;
-    }
-    state.lastCronStatus = statusMsg;
-    writeState(state);
-    return res.json({
-      success: true,
-      message: "Cron ping recorded successfully.",
-      time: nowStr,
-      target: scheduledTime,
-      status: statusMsg
-    });
-  }
-});
-
-// GET /api/bot-reminder-settings & /api/wa/automation-settings (Fetch full automation configuration & status)
-app.get(["/api/bot-reminder-settings", "/api/wa/automation-settings"], (req, res) => {
-  try {
-    const state = readState();
-    const waStatus = getWhatsAppStatus();
-    const jktTimeString = new Date().toLocaleTimeString("id-ID", { timeZone: "Asia/Jakarta" });
-    const todayYMD = getJakartaDateStr();
-    
-    const workers = state.workers || [];
-    const records = state.attendanceRecords || [];
-    const activeWorkers = workers.filter((w: any) => w.isActive);
-    const pendingWorkers = activeWorkers.filter((worker: any) => {
-      const record = records.find((r: any) => r.workerId === worker.id);
-      return !record || !record.attendance || !record.attendance[todayYMD];
-    });
-
-    res.json({
-      success: true,
-      masterAutoSendEnabled: state.masterAutoSendEnabled !== false,
-      autoReminderHour: state.autoReminderHour || "09:00",
-      autoReminderEnabled: state.autoReminderEnabled !== false,
-      enableAiAutoReply: state.enableAiAutoReply !== false,
-      reminderActiveDays: state.reminderActiveDays || ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"],
-      skipHolidays: state.skipHolidays !== false,
-      skipWeekends: state.skipWeekends !== false,
-      requireFridaySignature: state.requireFridaySignature !== false,
-      allowLocationCheckin: state.allowLocationCheckin !== false,
-      autoReplyScope: state.autoReplyScope || "all",
-      reminderTone: state.reminderTone || "standard",
-      lastCronPing: state.lastCronPing || "",
-      lastCronStatus: state.lastCronStatus || "",
-      lastCronSentDate: state.lastCronSentDate || "",
-      serverTimeWIB: `${todayYMD} ${jktTimeString} WIB`,
-      totalActiveWorkers: activeWorkers.length,
-      pendingAttendanceCount: pendingWorkers.length,
-      waConnected: waStatus.status === "connected",
-      waPhone: waStatus.user?.id ? waStatus.user.id.split(":")[0] : null
-    });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// POST /api/bot-reminder-settings & /api/wa/automation-settings (Update automation configuration)
-app.post(["/api/bot-reminder-settings", "/api/wa/automation-settings"], (req, res) => {
-  try {
-    const { 
-      masterAutoSendEnabled,
-      autoReminderHour, 
-      autoReminderEnabled, 
-      enableAiAutoReply,
-      reminderActiveDays, 
-      skipHolidays,
-      skipWeekends,
-      requireFridaySignature,
-      allowLocationCheckin,
-      autoReplyScope,
-      reminderTone
-    } = req.body;
-    const state = readState();
-    if (masterAutoSendEnabled !== undefined) state.masterAutoSendEnabled = masterAutoSendEnabled;
-    if (autoReminderHour !== undefined) state.autoReminderHour = autoReminderHour;
-    if (autoReminderEnabled !== undefined) state.autoReminderEnabled = autoReminderEnabled;
-    if (enableAiAutoReply !== undefined) state.enableAiAutoReply = enableAiAutoReply;
-    if (reminderActiveDays !== undefined) state.reminderActiveDays = reminderActiveDays;
-    if (skipHolidays !== undefined) state.skipHolidays = skipHolidays;
-    if (skipWeekends !== undefined) state.skipWeekends = skipWeekends;
-    if (requireFridaySignature !== undefined) state.requireFridaySignature = requireFridaySignature;
-    if (allowLocationCheckin !== undefined) state.allowLocationCheckin = allowLocationCheckin;
-    if (autoReplyScope !== undefined) state.autoReplyScope = autoReplyScope;
-    if (reminderTone !== undefined) state.reminderTone = reminderTone;
-    writeState(state);
-    res.json({
-      success: true,
-      message: "Pengaturan pesan otomatis WhatsApp berhasil disimpan ke server!",
-      settings: {
-        masterAutoSendEnabled: state.masterAutoSendEnabled,
-        autoReminderHour: state.autoReminderHour,
-        autoReminderEnabled: state.autoReminderEnabled,
-        enableAiAutoReply: state.enableAiAutoReply,
-        reminderActiveDays: state.reminderActiveDays,
-        skipHolidays: state.skipHolidays,
-        skipWeekends: state.skipWeekends,
-        requireFridaySignature: state.requireFridaySignature,
-        allowLocationCheckin: state.allowLocationCheckin,
-        autoReplyScope: state.autoReplyScope,
-        reminderTone: state.reminderTone
-      }
-    });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// POST /api/trigger-bot-reminder (Manual force trigger from Attendance UI)
-app.post("/api/trigger-bot-reminder", async (req, res) => {
-  try {
-    const state = readState();
-    const todayYMD = getJakartaDateStr();
-    
-    if (!isWhatsAppConnected()) {
-      return res.json({ 
-        success: false, 
-        message: "Pengingat belum dapat dikirim: WhatsApp Bot belum terhubung. Silakan hubungkan WhatsApp di menu pengaturan terlebih dahulu.",
-        notConnected: true
-      });
-    }
-
-    const workers = state.workers || [];
-    const records = state.attendanceRecords || [];
-    const activeWorkers = workers.filter((w: any) => w.isActive);
-    
-    const absentWorkers = activeWorkers.filter((worker: any) => {
-      const record = records.find((r: any) => r.workerId === worker.id);
-      return !record || !record.attendance || !record.attendance[todayYMD];
-    });
-
-    if (absentWorkers.length === 0) {
-      return res.json({ 
-        success: true, 
-        message: "Seluruh karyawan aktif sudah absen hari ini. Tidak ada pengingat yang perlu dikirim.",
-        sentCount: 0,
-        failedCount: 0
-      });
-    }
-
-    let sentCount = 0;
-    let failedCount = 0;
-    const errors: string[] = [];
-    const hostOrigin = state.lastHostOrigin || (req.protocol + "://" + req.get("host"));
-    const isFriday = new Date().toLocaleDateString("en-US", { timeZone: "Asia/Jakarta", weekday: "long" }) === "Friday";
-    const fridayParam = isFriday ? "&friday=true" : "";
-
-    for (const worker of absentWorkers) {
-      if (!isWhatsAppConnected()) {
-        errors.push("Koneksi WhatsApp terputus. Sisa pengiriman dihentikan.");
-        console.warn("[Trigger Bot Reminder] WhatsApp disconnected during broadcast, halted.");
-        break;
-      }
-
-      if (!worker.phoneNumber) {
-        failedCount++;
-        continue;
-      }
-
-      const loginUrl = `${hostOrigin}/?view=absen&workerId=${encodeURIComponent(worker.id)}&id=${encodeURIComponent(worker.id)}&quick=true${fridayParam}`;
-      const message = getRandomReminderMessage(worker.name, loginUrl, worker.id, todayYMD);
-
-      const result = await sendWhatsAppMessage(worker.phoneNumber, message);
-      if (result.success) {
-        sentCount++;
-      } else {
-        failedCount++;
-        if (result.error) errors.push(result.error);
-        if (!isWhatsAppConnected()) {
-          break;
-        }
-      }
-
-      // Safe delay between messages
-      await new Promise(r => setTimeout(r, 1200));
-    }
-
-    state.lastCronStatus = `Pengingat manual terkirim ke ${sentCount} karyawan.${failedCount > 0 ? ` Gagal: ${failedCount} karyawan.` : ""}`;
-    state.lastCronSentDate = todayYMD;
-    writeState(state);
-
-    return res.json({
-      success: true,
-      message: `Berhasil mengirimkan pengingat ke ${sentCount} karyawan.${failedCount > 0 ? ` (Gagal: ${failedCount})` : ""}`,
-      sentCount,
-      failedCount,
-      errors
-    });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message || "Gagal memproses pengingat." });
-  }
-});
-
-// GET /api/friday-verifications (Fetch Friday digital signature server verifications)
-app.get("/api/friday-verifications", (req, res) => {
-  try {
-    const state = readState();
-    const verifications = state.fridayVerifications || {};
-    const date = req.query.date as string;
-    const workerId = req.query.workerId as string;
-
-    if (date && workerId) {
-      const key = `${workerId}_${date}`;
-      return res.json({ success: true, verification: verifications[key] || null });
-    }
-
-    if (date) {
-      const filtered: Record<string, any> = {};
-      for (const [k, v] of Object.entries(verifications)) {
-        if ((v as any).date === date) {
-          filtered[k] = v;
-        }
-      }
-      return res.json({ success: true, verifications: filtered });
-    }
-
-    return res.json({ success: true, verifications });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// Internal Background Daemon: Check every 30s to auto-send reminder when target hour arrives
-let autoReminderTimer: NodeJS.Timeout | null = null;
-function initBackgroundAutoReminder() {
-  if (autoReminderTimer) clearInterval(autoReminderTimer);
-  autoReminderTimer = setInterval(async () => {
-    try {
-      const state = readState();
-      if (state.masterAutoSendEnabled === false) return;
-      if (state.autoReminderEnabled === false) return;
-
-      const daysMap: Record<string, string> = {
-        Sunday: "Minggu",
-        Monday: "Senin",
-        Tuesday: "Selasa",
-        Wednesday: "Rabu",
-        Thursday: "Kamis",
-        Friday: "Jumat",
-        Saturday: "Sabtu"
-      };
-      const dayNameEn = new Date().toLocaleDateString("en-US", { timeZone: "Asia/Jakarta", weekday: "long" });
-      const dayNameId = daysMap[dayNameEn] || "Senin";
-      const activeDays = state.reminderActiveDays || ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"];
-      if (!activeDays.includes(dayNameId)) return;
-
-      const todayYMD = getJakartaDateStr();
-      const jktTimeString = new Date().toLocaleTimeString("en-US", { timeZone: "Asia/Jakarta", hour12: false });
-      const [currentHour, currentMinute] = jktTimeString.split(":").map(Number);
-      
-      const scheduledTime = state.autoReminderHour || "09:00";
-      const [targetHour, targetMinute] = scheduledTime.split(":").map(Number);
-
-      const isTimeTrigger = currentHour > targetHour || (currentHour === targetHour && currentMinute >= targetMinute);
-      const alreadySentToday = state.lastCronSentDate === todayYMD;
-
-      if (!alreadySentToday && isTimeTrigger) {
-        const holidayCheck = await checkIsHolidayOrWeekend(todayYMD);
-        if (holidayCheck.isBlocked) {
-          state.lastCronSentDate = todayYMD;
-          state.lastCronStatus = `Dilewati otomatis: ${holidayCheck.reason}.`;
-          writeState(state);
-          return;
-        }
-
-        if (!isWhatsAppConnected()) {
-          return;
-        }
-
-        const workers = state.workers || [];
-        const records = state.attendanceRecords || [];
-        const activeWorkers = workers.filter((w: any) => w.isActive);
-        const absentWorkers = activeWorkers.filter((worker: any) => {
-          const record = records.find((r: any) => r.workerId === worker.id);
-          return !record || !record.attendance || !record.attendance[todayYMD];
-        });
-
-        if (absentWorkers.length === 0) {
-          state.lastCronSentDate = todayYMD;
-          state.lastCronStatus = `Selesai otomatis: Semua karyawan aktif telah absen.`;
-          writeState(state);
-          return;
-        }
-
-        const hostOrigin = state.lastHostOrigin || "http://localhost:3000";
-        const isFriday = new Date().toLocaleDateString("en-US", { timeZone: "Asia/Jakarta", weekday: "long" }) === "Friday";
-        const fridayParam = isFriday ? "&friday=true" : "";
-        let sentCount = 0;
-
-        for (const worker of absentWorkers) {
-          if (!isWhatsAppConnected()) {
-            console.log(`[AutoReminder Daemon] WhatsApp disconnected during broadcast, halted remaining queue.`);
-            break;
-          }
-          if (!worker.phoneNumber) continue;
-          const loginUrl = `${hostOrigin}/?view=absen&workerId=${encodeURIComponent(worker.id)}&id=${encodeURIComponent(worker.id)}&quick=true${fridayParam}`;
-          const message = getRandomReminderMessage(worker.name, loginUrl, worker.id, todayYMD);
-          const result = await sendWhatsAppMessage(worker.phoneNumber, message);
-          if (result.success) {
-            sentCount++;
-          } else if (!isWhatsAppConnected()) {
-            break;
-          }
-          await new Promise(r => setTimeout(r, 1200));
-        }
-
-        state.lastCronSentDate = todayYMD;
-        state.lastCronStatus = `Pengingat otomatis terkirim ke ${sentCount} karyawan pada jam ${scheduledTime} WIB.`;
-        writeState(state);
-        console.log(`[AutoReminder Daemon] Sent to ${sentCount} workers at ${scheduledTime} WIB.`);
-      }
-    } catch (e) {
-      console.error("[AutoReminder Daemon Error]", e);
-    }
-  }, 30000);
-}
-initBackgroundAutoReminder();
+// Scheduling & cron endpoints are handled inside server/whatsappBaileys.ts mounted at /api/baileys.
 
 // ==========================================
 // DYNAMIC SHARE IMAGE & OPEN GRAPH PREVIEW
@@ -6066,16 +5206,15 @@ async function bootstrap() {
 
   const serverInstance = app.listen(PORT, HOST, () => {
     console.log(`Server is running at http://${HOST === "0.0.0.0" ? "localhost" : HOST}:${PORT}`);
-    // Delay WhatsApp Bot service boot so Vite dev server stabilizes completely first
+    // Delay WhatsApp Baileys service boot so Vite dev server stabilizes completely first
     setTimeout(() => {
       try {
-        if (hasWhatsAppCredentials()) {
-          console.log("[Startup] Kredensial / backup sesi WhatsApp terdeteksi.");
-          // Only start socket connection gracefully in background
-          initWhatsApp().catch((err) => console.warn("Notice: WhatsApp Bot initialization postponed:", err?.message || err));
+        if (baileys.hasCredentials()) {
+          console.log("[Startup] Kredensial / backup sesi Baileys terdeteksi.");
+          baileys.init().catch((err) => console.warn("Notice: Baileys initialization postponed:", err?.message || err));
         }
       } catch (e: any) {
-        console.warn("Could not check WhatsApp credentials on startup:", e?.message || e);
+        console.warn("Could not check Baileys credentials on startup:", e?.message || e);
       }
     }, 10000);
 

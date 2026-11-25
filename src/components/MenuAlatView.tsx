@@ -202,9 +202,9 @@ export const MenuAlatView: React.FC<MenuAlatViewProps> = ({
       {
         id: 'whatsapp',
         group: 'integrasi',
-        title: 'WhatsApp AI Assistant',
-        description: 'Hubungkan QR / Kode Pairing, pengingat absen, dan AI keuangan.',
-        tag: 'WhatsApp',
+        title: 'WhatsApp Baileys',
+        description: 'Tautkan QR Code, Kode Pairing 8-Digit & pengingat absensi via Baileys.',
+        tag: 'Baileys',
         icon: <MessageSquare size={18} />,
         accentBg: 'bg-emerald-100 text-emerald-800',
         onClick: onOpenWhatsApp,

@@ -89,10 +89,10 @@ import { googleDriveAutoBackup, BackupSyncLog, DriveAutoBackupSettings } from ".
 import { SignaturePad } from "./SignaturePad";
 import { OnlineSignatureModal } from "./OnlineSignatureModal";
 import { SelfSigningPortal } from "./SelfSigningPortal";
-import { WhatsAppBotReminderMenu } from "./WhatsAppBotReminderMenu";
 import { CopyAttendanceModal } from "./CopyAttendanceModal";
 import { getDynamicReminderMessage } from "../utils/reminderMessageGenerator";
 import { apiFetch } from "../utils/backendApi";
+import { useWhatsAppBaileys, sendViaBaileys, triggerBaileysReminder } from "../utils/whatsappBaileys";
 
 // Utility to format Date as local YYYY-MM-DD
 function formatLocalYYYYMMDD(date: Date): string {
@@ -772,6 +772,7 @@ interface AbsensiHarianNmsaProps {
   userProfile?: any;
   initialWorkerId?: string;
   initialSelfAttendanceMode?: boolean;
+  onOpenWhatsApp?: () => void;
 }
 
 export function AbsensiHarianNmsa({ 
@@ -784,7 +785,8 @@ export function AbsensiHarianNmsa({
   onPostToVoucherHO,
   userProfile,
   initialWorkerId: propInitialWorkerId,
-  initialSelfAttendanceMode
+  initialSelfAttendanceMode,
+  onOpenWhatsApp
 }: AbsensiHarianNmsaProps) {
   // Parse URL query parameters at the top of component to prevent TDZ ReferenceError
   const urlParams = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
@@ -1623,34 +1625,11 @@ export function AbsensiHarianNmsa({
     return localStorage.getItem("wa_auto_reminder_hour") || "09:00";
   });
 
-  // --- WhatsApp Baileys Bot State ---
-  const [waPanelMode, setWaPanelMode] = useState<"bot" | "manual">("bot");
-  const [waBotStatus, setWaBotStatus] = useState<string>("disconnected");
-  const [waBotQr, setWaBotQr] = useState<string | null>(null);
-  const [waBotUser, setWaBotUser] = useState<{ id: string; name?: string } | null>(null);
-  const [waBotError, setWaBotError] = useState<string | null>(null);
-  const [waBotPairingInProgress, setWaBotPairingInProgress] = useState<boolean>(false);
-  const [waIsVercelServerless, setWaIsVercelServerless] = useState<boolean>(false);
-  const [isRefreshingWaQr, setIsRefreshingWaQr] = useState<boolean>(false);
-  
   // Late connection reminder states
   const [showLateReminderConfirm, setShowLateReminderConfirm] = useState<boolean>(false);
   const [lateReminderCount, setLateReminderCount] = useState<number>(0);
   const [lateReminderWorkers, setLateReminderWorkers] = useState<string[]>([]);
   const [isSendingLateReminder, setIsSendingLateReminder] = useState<boolean>(false);
-  
-  // Link via phone/pairing code states
-  const [waConnectMethod, setWaConnectMethod] = useState<"qr" | "phone">("qr");
-  const [waPairingPhone, setWaPairingPhone] = useState<string>("");
-  const [waPairingCode, setWaPairingCode] = useState<string | null>(null);
-  const [waPairingLoading, setWaPairingLoading] = useState<boolean>(false);
-
-  
-  // Test message states
-  const [waTestPhone, setWaTestPhone] = useState<string>("");
-  const [waTestMessage, setWaTestMessage] = useState<string>("");
-  const [waTestSending, setWaTestSending] = useState<boolean>(false);
-  const [waTestResult, setWaTestResult] = useState<{ success: boolean; msg: string } | null>(null);
 
   // Cron states (saved in the database store on the server)
   const [lastCronPing, setLastCronPing] = useState<string>("");
@@ -1698,92 +1677,31 @@ export function AbsensiHarianNmsa({
     }
   }, [isDashWaOpen, waActivityTick]);
 
-  // Periodically fetch WhatsApp Gateway status from Express backend (single-flight + sequence guarded)
-  const isWaConnected = waBotStatus === "connected";
-  const waStatusInFlightRef = useRef<boolean>(false);
-  const waStatusSeqRef = useRef<number>(0);
-  const waPairingGraceUntilRef = useRef<number>(0);
+  // Single unified WhatsApp Baileys state hook (no duplicate polling)
+  const { state: baileysState, refreshStatus: refreshBaileysStatus } = useWhatsAppBaileys({
+    enabled: !initialSelfAttendanceMode,
+    activeUi: isDashWaOpen,
+  });
+  const isWaConnected = baileysState.isConnected;
+
   useEffect(() => {
-    let active = true;
-    let pollTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const checkWaStatus = async () => {
-      if (waStatusInFlightRef.current) return;
-      waStatusInFlightRef.current = true;
-      const mySeq = ++waStatusSeqRef.current;
-      try {
-        const res = await apiFetch(isDashWaOpen ? "/api/wa/status?activeUi=1" : "/api/wa/status?background=1", {
-          headers: { Accept: "application/json" }
-        });
-        if (!active || mySeq !== waStatusSeqRef.current) return;
-        const contentType = res.headers.get("content-type");
-        if (res.ok && contentType && contentType.includes("application/json")) {
-          const data = await res.json();
-          if (!active || mySeq !== waStatusSeqRef.current) return;
-          if (data.proxyError) return;
-
-          setWaIsVercelServerless(Boolean(data.isVercelServerless));
-          if (data.isVercelServerless && data.needsBackendServer) {
-            setWaBotStatus("disconnected");
-            setWaBotQr(null);
-            setWaBotUser(null);
-            setWaPairingCode(null);
-            setWaBotPairingInProgress(false);
-            return;
-          }
-
-          if (data.status !== "connecting" || Date.now() > waPairingGraceUntilRef.current) {
-            setWaBotStatus(data.status || "disconnected");
-          }
-          setWaBotQr((prev) => {
-            const nextQr = data.isPairingInProgress ? null : (data.qr || null);
-            return prev === nextQr ? prev : nextQr;
-          });
-          setWaBotUser(data.user || null);
-          setWaBotPairingInProgress(Boolean(data.isPairingInProgress));
-          if (data.status === "connected") {
-            waPairingGraceUntilRef.current = 0;
-            setWaPairingCode(null);
-          } else if (data.pairingCode) {
-            setWaPairingCode(String(data.pairingCode));
-          } else if (Date.now() > waPairingGraceUntilRef.current && data.status !== "connecting") {
-            setWaPairingCode(null);
-          }
-          setWaBotError(data.error ? (typeof data.error === 'object' ? data.error?.message || JSON.stringify(data.error) : String(data.error)) : null);
-
-          // If there is a late reminder pending, show confirmation popup unless dismissed today
-          if (data.lateReminderPending) {
-            const todayYMD = data.todayDate || new Date().toLocaleDateString("en-CA");
-            const dismissed = localStorage.getItem(`wa_late_reminder_dismissed_${todayYMD}`);
-            if (dismissed !== "true") {
-              setLateReminderCount(data.absentWorkersCount || 0);
-              setLateReminderWorkers(data.absentWorkersNames || []);
-              setShowLateReminderConfirm(true);
-            }
-          } else {
-            setShowLateReminderConfirm(false);
-          }
-        }
-      } catch (err) {
-        // Silently capture network/parsing transitions
-      } finally {
-        waStatusInFlightRef.current = false;
+    if (baileysState.lateReminderPending) {
+      const todayYMD = baileysState.todayDate || new Date().toLocaleDateString("en-CA");
+      const dismissed = localStorage.getItem(`wa_late_reminder_dismissed_${todayYMD}`);
+      if (dismissed !== "true") {
+        setLateReminderCount(baileysState.absentWorkersCount || 0);
+        setLateReminderWorkers(baileysState.absentWorkersNames || []);
+        setShowLateReminderConfirm(true);
       }
-    };
-
-    const runPoll = async () => {
-      await checkWaStatus();
-      if (!active) return;
-      const pollMs = isDashWaOpen ? (isWaConnected ? 8000 : 2000) : 30000;
-      pollTimer = setTimeout(runPoll, pollMs);
-    };
-
-    runPoll();
-    return () => {
-      active = false;
-      if (pollTimer) clearTimeout(pollTimer);
-    };
-  }, [isDashWaOpen, isWaConnected]);
+    } else {
+      setShowLateReminderConfirm(false);
+    }
+  }, [
+    baileysState.lateReminderPending,
+    baileysState.todayDate,
+    baileysState.absentWorkersCount,
+    baileysState.absentWorkersNames,
+  ]);
 
   useEffect(() => {
     localStorage.setItem("wa_auto_reminder_enabled", autoReminderEnabled ? "true" : "false");
@@ -2285,18 +2203,18 @@ export function AbsensiHarianNmsa({
     }
   };
 
-  // Send late connection reminder now
+  // Send late connection reminder now via unified Baileys module
   const handleSendLateReminderNow = async () => {
     setIsSendingLateReminder(true);
     try {
-      const res = await fetch("/api/cron-reminder?force=true&markSent=true");
-      const data = await res.json();
+      const data = await triggerBaileysReminder(true);
       if (data.success) {
         setShowLateReminderConfirm(false);
         await fetchSharedState(true);
-        alert("Berhasil! Pesan pengingat telah dikirim ke karyawan yang belum absen hari ini.");
+        await refreshBaileysStatus();
+        alert(data.message || "Berhasil! Pesan pengingat telah dikirim ke karyawan yang belum absen hari ini.");
       } else {
-        alert("Gagal mengirim pengingat: " + (data.message || "Terjadi kesalahan"));
+        alert("Gagal mengirim pengingat: " + (data.message || data.error || "Terjadi kesalahan"));
       }
     } catch (err) {
       console.error("Error sending late reminder:", err);
@@ -4599,143 +4517,19 @@ export function AbsensiHarianNmsa({
     syncStateToServer(updatedWorkers, updatedRecords, weeklyReports).catch(() => {});
   };
 
-  // --- WhatsApp Baileys Controller Handlers ---
-  const handleRequestWaPairingCode = async () => {
-    let clean = waPairingPhone.replace(/[^0-9]/g, "");
-    if (clean.startsWith("620")) clean = "62" + clean.slice(3);
-    else if (clean.startsWith("0")) clean = "62" + clean.slice(1);
-    else if (clean.startsWith("8")) clean = "62" + clean;
-
-    if (!clean || clean.length < 9 || clean.length > 15) {
-      setWaBotError("Silakan masukkan nomor WhatsApp yang valid terlebih dahulu (contoh: 0812xxxxxx).");
-      return;
-    }
-    waStatusSeqRef.current += 1;
-    waPairingGraceUntilRef.current = Date.now() + 12000;
-    setWaPairingLoading(true);
-    setWaPairingCode(null);
-    setWaBotError(null);
-    try {
-      const res = await apiFetch("/api/wa/pairing-code", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: clean }),
-      });
-      waStatusSeqRef.current += 1;
-      const data = await res.json().catch(() => ({}));
-      if (data.isVercelServerless) {
-        waPairingGraceUntilRef.current = 0;
-        setWaIsVercelServerless(true);
-        setWaBotError(data.error || "Mode Vercel Serverless: Atur URL Server Backend (Tab 8 pada popup AI WhatsApp) agar Baileys aktif.");
-        return;
-      }
-      if (res.ok && (data.code || data.pairingCode)) {
-        waPairingGraceUntilRef.current = Date.now() + 8000;
-        setWaPairingCode(data.code || data.pairingCode);
-      } else {
-        waPairingGraceUntilRef.current = 0;
-        setWaBotError("Gagal membuat Kode Pairing: " + (data.error || "Pastikan Server Backend sedang aktif."));
-      }
-    } catch (err: any) {
-      waPairingGraceUntilRef.current = 0;
-      console.error("Failed to request pairing code:", err);
-      setWaBotError("Kesalahan jaringan saat meminta kode pairing.");
-    } finally {
-      setWaPairingLoading(false);
-    }
-  };
-
-  const handleRefreshWaQr = async () => {
-    waStatusSeqRef.current += 1;
-    waPairingGraceUntilRef.current = 0;
-    setIsRefreshingWaQr(true);
-    setWaBotError(null);
-    setWaBotPairingInProgress(false);
-    setWaPairingCode(null);
-    setWaBotQr(null);
-    setWaBotStatus("connecting");
-    try {
-      const res = await apiFetch("/api/wa/refresh-qr", { method: "POST" });
-      waStatusSeqRef.current += 1;
-      const data = await res.json().catch(() => ({}));
-      if (data.status) setWaBotStatus(data.status);
-      if (data.qr) setWaBotQr(data.qr);
-      if (data.user) setWaBotUser(data.user);
-      setWaBotPairingInProgress(Boolean(data.isPairingInProgress));
-      setWaIsVercelServerless(Boolean(data.isVercelServerless));
-      if (data.error) {
-        setWaBotError(typeof data.error === "object" ? data.error?.message || JSON.stringify(data.error) : String(data.error));
-      }
-    } catch (err: any) {
-      console.error("Failed to refresh WA QR:", err);
-      setWaBotError("Gagal memuat ulang QR Code dari server.");
-    } finally {
-      setIsRefreshingWaQr(false);
-    }
-  };
-
-  const handleDisconnectWa = async () => {
-    if (!window.confirm("Apakah Anda yakin ingin memutuskan koneksi WhatsApp? Sesi Anda akan dihapus dan Anda harus melakukan scan QR code kembali.")) return;
-    waStatusSeqRef.current += 1;
-    waPairingGraceUntilRef.current = 0;
-    setWaBotError(null);
-    try {
-      const res = await apiFetch("/api/wa/disconnect", { method: "POST" });
-      const data = await res.json().catch(() => ({}));
-      if (data.success) {
-        setWaBotStatus("disconnected");
-        setWaBotQr(null);
-        setWaBotUser(null);
-        setWaPairingCode(null);
-      } else {
-        setWaBotError("Gagal memutuskan koneksi WhatsApp: " + (data.error || "Kesalahan server"));
-      }
-    } catch (err: any) {
-      console.error("Failed to disconnect WhatsApp:", err);
-      setWaBotError("Kesalahan jaringan saat memutuskan koneksi.");
-    }
-  };
-
-  const handleSendWaTest = async () => {
-    if (!waTestPhone || !waTestMessage) {
-      setWaTestResult({ success: false, msg: "Nomor penerima dan isi pesan wajib diisi!" });
-      return;
-    }
-    setWaTestSending(true);
-    setWaTestResult(null);
-    try {
-      const res = await apiFetch("/api/wa/send-test", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: waTestPhone, message: waTestMessage }),
-      });
-      const data = await res.json();
-      if (res.ok && !data.error) {
-        setWaTestResult({ success: true, msg: "Pesan uji coba berhasil dikirim!" });
-        setWaTestMessage("");
-      } else {
-        setWaTestResult({ success: false, msg: data.error || "Gagal mengirim pesan uji coba." });
-      }
-    } catch (err: any) {
-      setWaTestResult({ success: false, msg: err.message || "Kesalahan koneksi jaringan." });
-    } finally {
-      setWaTestSending(false);
-    }
-  };
-
   const handleTriggerCronManual = async () => {
     setIsCronRunning(true);
     try {
-      const res = await apiFetch("/api/cron-reminder?force=true");
-      const data = await res.json();
-      if (res.ok) {
+      const data = await triggerBaileysReminder(true);
+      if (data.success) {
         alert(data.message || "Berhasil memproses pengingat harian!");
-        fetchSharedState(true); // refresh telemetry immediately
+        await fetchSharedState(true);
+        await refreshBaileysStatus();
       } else {
-        alert(`Gagal memproses: ${data.message || "Kesalahan tidak dikenal."}`);
+        alert(`Gagal memproses: ${data.message || data.error || "WhatsApp Baileys belum terhubung."}`);
       }
     } catch (err: any) {
-      alert(`Kesalahan jaringan: ${err.message || err}`);
+      alert(`Kesalahan jaringan: ${err?.message || err}`);
     } finally {
       setIsCronRunning(false);
     }
@@ -7441,7 +7235,7 @@ export function AbsensiHarianNmsa({
               </AnimatePresence>
             </div>
 
-            {/* SECTION 3: WHATSAPP BOT INTEGRATION PANEL (ACCORDION STYLE) */}
+            {/* SECTION 3: MODUL WHATSAPP BAILEYS TERPADU (SINGLE SOURCE OF TRUTH) */}
             <div 
               className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden" 
               id="wa_gateway_panel"
@@ -7450,7 +7244,7 @@ export function AbsensiHarianNmsa({
               <button
                 type="button"
                 onClick={() => setIsDashWaOpen(!isDashWaOpen)}
-                className="w-full flex items-center justify-between p-4 bg-slate-50/70 hover:bg-slate-100/70 transition text-left focus:outline-none border-b border-slate-150"
+                className="w-full flex items-center justify-between p-4 bg-slate-50/70 hover:bg-slate-100/70 transition text-left focus:outline-none border-b border-slate-150 cursor-pointer"
               >
                 <div className="flex items-center gap-3">
                   <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl">
@@ -7458,21 +7252,33 @@ export function AbsensiHarianNmsa({
                   </div>
                   <div>
                     <h3 className="text-xs sm:text-sm font-bold text-slate-900 flex items-center gap-2">
-                      <span>3. Pusat Integrasi WhatsApp & Otomatisasi</span>
+                      <span>3. Modul WhatsApp Baileys &amp; Pengingat Absensi</span>
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border flex items-center gap-1 ${
-                        waBotStatus === "connected" 
+                        baileysState.isConnected
                           ? "bg-emerald-50 text-emerald-700 border-emerald-200" 
-                          : waBotPairingInProgress || waBotStatus === "connecting"
-                          ? "bg-sky-50 text-sky-700 border-sky-200 animate-pulse"
-                          : waBotStatus === "qr"
-                          ? "bg-amber-50 text-amber-700 border-amber-200 animate-pulse"
+                          : baileysState.isPairingInProgress || baileysState.status === "connecting"
+                          ? "bg-sky-50 text-sky-700 border-sky-200"
+                          : baileysState.status === "qr"
+                          ? "bg-amber-50 text-amber-700 border-amber-200"
                           : "bg-slate-50 text-slate-600 border-slate-200"
                       }`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${waBotStatus === "connected" ? "bg-emerald-500 animate-ping" : waBotPairingInProgress || waBotStatus === "connecting" ? "bg-sky-500 animate-ping" : "bg-slate-400"}`} />
-                        <span className="capitalize">{waBotStatus === "connected" ? "Terhubung" : waBotPairingInProgress ? "Menyambungkan..." : waBotStatus === "qr" ? "Butuh Scan" : waBotStatus === "connecting" ? "Menghubungkan..." : "Offline"}</span>
+                        <span className={`w-1.5 h-1.5 rounded-full ${baileysState.isConnected ? "bg-emerald-500" : baileysState.status === "qr" ? "bg-amber-500" : "bg-slate-400"}`} />
+                        <span>
+                          {baileysState.isConnected
+                            ? `Terhubung${baileysState.user?.id ? ` (${baileysState.user.id.split(":")[0].split("@")[0]})` : ""}`
+                            : baileysState.isPairingInProgress
+                            ? "Menyambungkan..."
+                            : baileysState.status === "qr"
+                            ? "QR Siap Dipindai"
+                            : baileysState.status === "connecting"
+                            ? "Menghubungkan..."
+                            : "Terputus"}
+                        </span>
                       </span>
                     </h3>
-                    <p className="text-[11px] text-slate-500 mt-0.5">Sambungkan nomor WhatsApp Anda untuk pengiriman pengingat harian secara gratis, aman, dan otomatis.</p>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Kelola koneksi WhatsApp Baileys, kirim pengingat otomatis, atau luncurkan siaran manual.
+                    </p>
                   </div>
                 </div>
                 <div className="text-slate-400">
@@ -7487,669 +7293,77 @@ export function AbsensiHarianNmsa({
                     animate={{ opacity: 1, height: "auto" }}
                     exit={{ opacity: 0, height: 0 }}
                     transition={{ duration: 0.2 }}
-                    className="overflow-hidden bg-white"
+                    className="overflow-hidden bg-white p-5 space-y-4"
                   >
-
-              {/* TABS SELECTOR */}
-              <div className="flex border-b border-slate-100 bg-slate-50/40">
-                <button
-                  type="button"
-                  onClick={() => setWaPanelMode("bot")}
-                  className={`flex-grow sm:flex-initial py-3.5 px-6 text-xs font-bold transition-all border-b-2 flex items-center justify-center gap-2 ${
-                    waPanelMode === "bot"
-                      ? "border-emerald-600 text-emerald-700 bg-white"
-                      : "border-transparent text-slate-500 hover:text-slate-800"
-                  }`}
-                >
-                  <Zap className="w-4 h-4" />
-                  <span>🤖 BOT WHATSAPP OTOMATIS (Rekomendasi)</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setWaPanelMode("manual")}
-                  className={`flex-grow sm:flex-initial py-3.5 px-6 text-xs font-bold transition-all border-b-2 flex items-center justify-center gap-2 ${
-                    waPanelMode === "manual"
-                      ? "border-indigo-600 text-indigo-700 bg-white"
-                      : "border-transparent text-slate-500 hover:text-slate-800"
-                  }`}
-                >
-                  <MessageSquare className="w-4 h-4" />
-                  <span>📲 ASISTEN SIARAN MANUAL (Klik Link)</span>
-                </button>
-              </div>
-
-              <div className="p-5 space-y-6">
-                
-                {/* MODE 1: SERVER-SIDE AUTOMATED BOT (BAILEYS ENGINE) */}
-                {waPanelMode === "bot" && (
-                  <div className="space-y-6 animate-fade-in">
-                    {/* Educational / Explainer Banner */}
-                    <div className="bg-emerald-50/50 border border-emerald-200/80 rounded-2xl p-4 text-xs text-slate-700 space-y-3 text-left">
-                      <h4 className="font-bold text-emerald-950 flex items-center gap-1.5">
-                        <CheckCircle className="w-4.5 h-4.5 text-emerald-700" />
-                        <span>Cara Kerja Bot Server (Asisten Otomatis)</span>
-                      </h4>
-                      <p className="leading-relaxed">
-                        Fitur ini menggunakan <strong>Baileys WhatsApp Web Gateway</strong> yang berjalan langsung di server Anda. Dengan menghubungkan akun WhatsApp Anda di bawah ini, server akan mengirimkan pesan pengingat <strong>secara otomatis di latar belakang</strong> pada jam kerja yang Anda tentukan, tanpa memerlukan interaksi manual lagi dari Anda!
-                      </p>
-                      <div className="text-[11px] bg-white/80 border border-emerald-200/60 p-3 rounded-xl space-y-1">
-                        <span className="font-bold text-emerald-900 block">💡 Langkah Singkat Memulai:</span>
-                        <p className="text-slate-600 leading-relaxed">
-                          1. Scan Barcode (QR Code) di bawah dengan aplikasi WhatsApp di HP Anda (Pilih menu <b>Perangkat Tertaut</b> &gt; <b>Tautkan Perangkat</b>).<br />
-                          2. Setelah terhubung, status akan berubah menjadi <b className="text-emerald-700">Terhubung</b>.<br />
-                          3. Atur jam pengingat harian dan gunakan tautan otomatisasi di bawah untuk disambungkan ke <b>UptimeRobot</b> agar bot terus berjalan mandiri setiap hari.
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                      {/* Connection Block (Status or QR Code) */}
-                      <div className="lg:col-span-5 bg-slate-50 border border-slate-200 rounded-2xl p-5 flex flex-col justify-between relative overflow-hidden min-h-[340px]">
-                        
-                        {/* Selector if not connected */}
-                        {waBotStatus !== "connected" && (
-                          <div className="flex border border-slate-200 rounded-xl overflow-hidden bg-white mb-4 shrink-0 text-left">
-                            <button
-                              type="button"
-                              onClick={() => setWaConnectMethod("qr")}
-                              className={`w-1/2 py-2 text-[10px] sm:text-[11px] font-bold transition-all text-center cursor-pointer ${
-                                waConnectMethod === "qr"
-                                  ? "bg-slate-900 text-white font-bold"
-                                  : "bg-white text-slate-600 hover:bg-slate-50"
-                              }`}
-                            >
-                              📷 Scan Barcode
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setWaConnectMethod("phone")}
-                              className={`w-1/2 py-2 text-[10px] sm:text-[11px] font-bold transition-all text-center cursor-pointer ${
-                                waConnectMethod === "phone"
-                                  ? "bg-slate-900 text-white font-bold"
-                                  : "bg-white text-slate-600 hover:bg-slate-50"
-                              }`}
-                            >
-                              🔢 Kode Pairing
-                            </button>
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                      {/* Card 1: Baileys Connection Modal Launcher */}
+                      <div className="lg:col-span-2 p-4 rounded-xl border border-slate-200 bg-slate-50/60 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div className="space-y-1 text-left">
+                          <div className="text-xs font-bold text-slate-900">
+                            {baileysState.isConnected
+                              ? `Tersambung: ${baileysState.user?.name || "WhatsApp Baileys"}`
+                              : "Tautkan Perangkat via Modul WhatsApp Baileys"}
                           </div>
-                        )}
-
-                        {/* QR METHOD VIEW */}
-                        {waBotStatus !== "connected" && waConnectMethod === "qr" && (
-                          <div className="my-auto flex flex-col items-center justify-center text-center space-y-4 p-2">
-                            {waIsVercelServerless ? (
-                              <div className="my-auto flex flex-col items-center justify-center text-center p-4 space-y-3 bg-amber-50/90 border border-amber-200 rounded-2xl">
-                                <span className="text-2xl">☁️</span>
-                                <div>
-                                  <h5 className="font-bold text-amber-950 text-xs sm:text-sm">Mode Vercel Serverless Terdeteksi</h5>
-                                  <p className="text-[11px] text-amber-800 mt-1 leading-relaxed">
-                                    Scan QR WhatsApp (Baileys WebSocket) tidak dapat berjalan langsung di Vercel Serverless. Atur <b>URL Server Backend (Render / Railway / VPS)</b> pada popup <b>AI WhatsApp Gateway &rarr; Tab 8 (Server Backend)</b> agar QR live bisa dimunculkan.
-                                  </p>
-                                </div>
-                              </div>
-                            ) : waBotPairingInProgress || (waBotStatus === "connecting" && !waBotQr) ? (
-                              <div className="my-auto flex flex-col items-center justify-center text-center p-4 space-y-3">
-                                <RefreshCw className="w-10 h-10 text-emerald-500 animate-spin mx-auto" />
-                                <div>
-                                  <h5 className="font-bold text-emerald-800 text-sm">
-                                    {waBotPairingInProgress ? "QR Terpindai! Menyambungkan Perangkat..." : "Menghubungkan ke Server WhatsApp..."}
-                                  </h5>
-                                  <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                                    {waBotPairingInProgress
-                                      ? "Jangan tutup halaman atau refresh. Sedang menyelesaikan otentikasi sesi WhatsApp Anda..."
-                                      : "Mengaktifkan gateway server & menunggu QR Code dari WhatsApp..."}
-                                  </p>
-                                </div>
-                              </div>
-                            ) : waBotQr ? (
-                              <>
-                                <div className="space-y-1">
-                                  <h5 className="font-bold text-slate-900 text-sm">Scan QR Code WhatsApp Anda</h5>
-                                  <p className="text-[11px] text-slate-500">QR diperbarui otomatis tanpa memutus handshake saat dipindai.</p>
-                                </div>
-                                
-                                <div className="relative p-3 bg-white rounded-2xl border border-slate-200/80 shadow-md">
-                                  <img 
-                                    src={waBotQr} 
-                                    alt="WhatsApp QR Code Scanner" 
-                                    style={{ imageRendering: "pixelated" }}
-                                    className="w-52 h-52 block mx-auto rounded-lg object-contain"
-                                    referrerPolicy="no-referrer"
-                                  />
-                                </div>
-
-                                <div className="text-[10px] text-amber-800 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-medium leading-normal max-w-xs mx-auto">
-                                  <span>⚠️</span>
-                                  <span>Pilih <b>Perangkat Tertaut</b> di menu WhatsApp HP Anda untuk memindai barcode ini.</span>
-                                </div>
-
-                                <button
-                                  type="button"
-                                  onClick={handleRefreshWaQr}
-                                  disabled={isRefreshingWaQr}
-                                  className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 underline cursor-pointer mt-1 disabled:opacity-50"
-                                >
-                                  {isRefreshingWaQr ? "Memuat QR Baru..." : "🔄 Refresh / Buat QR Code Baru"}
-                                </button>
-                              </>
-                            ) : (
-                              <div className="my-auto flex flex-col items-center justify-center text-center p-4 space-y-3">
-                                <RefreshCw className="w-10 h-10 text-indigo-500 animate-spin mx-auto" />
-                                <div>
-                                  <h5 className="font-bold text-slate-800 text-sm">Mempersiapkan QR Code WhatsApp...</h5>
-                                  <p className="text-xs text-slate-500 mt-1">Mengaktifkan gateway server. Mohon tunggu beberapa detik...</p>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={handleRefreshWaQr}
-                                  disabled={isRefreshingWaQr}
-                                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-3.5 py-2 rounded-xl transition cursor-pointer shadow-xs mt-2 disabled:opacity-50"
-                                >
-                                  {isRefreshingWaQr ? "Memuat..." : "⚡ Klik di Sini untuk Tampilkan QR Code"}
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        )}
-
-                        {/* PHONE PAIRING METHOD VIEW */}
-                        {waBotStatus !== "connected" && waConnectMethod === "phone" && (
-                          <div className="my-auto flex flex-col justify-center text-left space-y-4 p-2">
-                            <div className="space-y-1">
-                              <h5 className="font-bold text-slate-950 text-xs sm:text-sm">Hubungkan dengan Nomor HP</h5>
-                              <p className="text-[11px] text-slate-500">Dapatkan kode 8 karakter untuk dimasukkan di WhatsApp HP Anda.</p>
-                            </div>
-
-                            {waIsVercelServerless && (
-                              <div className="p-3 bg-amber-50/90 border border-amber-200 rounded-xl text-[11px] text-amber-900 leading-relaxed">
-                                <b>☁️ Mode Vercel Serverless:</b> Atur URL Server Backend (Render / Railway / VPS) pada popup <b>AI WhatsApp Gateway &rarr; Tab 8 (Server Backend)</b> untuk mendapatkan kode pairing Baileys resmi.
-                              </div>
-                            )}
-
-                            <div className="space-y-2">
-                              <label className="text-[10px] font-bold text-slate-700 uppercase tracking-wider block">Nomor WhatsApp Bot</label>
-                              <div className="flex gap-2">
-                                <input
-                                  type="text"
-                                  placeholder="Contoh: 08123456789"
-                                  value={waPairingPhone}
-                                  disabled={waIsVercelServerless}
-                                  onChange={(e) => setWaPairingPhone(e.target.value)}
-                                  className="flex-1 bg-white text-slate-950 text-xs px-3 py-2.5 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium shadow-xs disabled:bg-slate-100 disabled:text-slate-400"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={handleRequestWaPairingCode}
-                                  disabled={waIsVercelServerless || waPairingLoading || !waPairingPhone}
-                                  className="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-[11px] px-3.5 rounded-xl transition shadow-xs flex items-center justify-center gap-1 cursor-pointer disabled:bg-slate-200 disabled:text-slate-400 disabled:pointer-events-none"
-                                >
-                                  {waPairingLoading ? (
-                                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                                  ) : (
-                                    "Dapatkan Kode"
-                                  )}
-                                </button>
-                              </div>
-                            </div>
-
-                            {waPairingCode && (
-                              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-center space-y-2">
-                                <span className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider block">KODE PAIRING ANDA:</span>
-                                <div className="text-xl font-black font-mono tracking-widest text-emerald-950 bg-white border border-emerald-150 py-1.5 rounded-xl shadow-xs select-all">
-                                  {waPairingCode}
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    navigator.clipboard.writeText(waPairingCode);
-                                    alert("Kode Pairing disalin!");
-                                  }}
-                                  className="text-[10px] text-emerald-700 hover:text-emerald-800 underline font-bold cursor-pointer"
-                                >
-                                  Salin Kode
-                                </button>
-                              </div>
-                            )}
-
-                            <div className="bg-slate-100 border border-slate-200 rounded-xl p-3 text-[10px] text-slate-600 space-y-1 leading-relaxed">
-                              <span className="font-bold text-slate-800 block">📲 Cara Memasukkan Kode di HP:</span>
-                              <p>
-                                1. Buka <b>WhatsApp</b> di HP Anda.<br />
-                                2. Buka menu <b>Perangkat Tertaut</b> &gt; ketuk <b>Tautkan Perangkat</b>.<br />
-                                3. Di bagian bawah layar pemindai kamera, ketuk <b>Tautkan dengan nomor telepon saja</b>.<br />
-                                4. Masukkan kode 8 karakter di atas.
-                              </p>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Connected State */}
-                        {waBotStatus === "connected" && (
-                          <div className="my-auto flex flex-col items-center justify-center text-center space-y-4 py-4">
-                            <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center shadow-inner animate-pulse">
-                              <CheckCircle className="w-10 h-10" />
-                            </div>
-                            
-                            <div className="space-y-1">
-                              <h5 className="font-bold text-slate-900 text-sm">Bot Berhasil Terhubung!</h5>
-                              <p className="text-xs text-emerald-600 font-bold">Koneksi Aktif di Server</p>
-                            </div>
-
-                            <div className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs space-y-2 text-left shadow-xs">
-                              <div className="flex justify-between border-b border-slate-100 pb-1.5">
-                                <span className="text-slate-500">Nama Perangkat:</span>
-                                <span className="font-bold text-slate-800">{waBotUser?.name || "WhatsApp Gateway"}</span>
-                              </div>
-                              <div className="flex justify-between border-b border-slate-100 pb-1.5">
-                                <span className="text-slate-500">Nomor Telepon:</span>
-                                <span className="font-mono font-bold text-slate-800">{waBotUser?.id ? waBotUser.id.split(":")[0] : "Terhubung"}</span>
-                              </div>
-                              <div className="flex justify-between border-b border-slate-100 pb-1.5">
-                                <span className="text-slate-500">Status Gateway:</span>
-                                <span className="text-emerald-600 font-bold flex items-center gap-1">
-                                  <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping" />
-                                  <span>Aktif Terpadu 24/7</span>
-                                </span>
-                              </div>
-                              <div className="pt-1 text-[11px] text-emerald-800 bg-emerald-50/80 p-2 rounded-lg border border-emerald-200/60 leading-relaxed font-sans">
-                                <strong>✅ 1x Penautan untuk Seluruh Fitur:</strong> Mengirimkan link absensi harian, menerima absen share location, dan menjawab tanya-jawab AI Bisnis secara otomatis.
-                              </div>
-                            </div>
-
-                            <button
-                              type="button"
-                              onClick={handleDisconnectWa}
-                              className="inline-flex items-center gap-1.5 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50 px-3 py-2 rounded-xl transition font-bold border border-rose-200 bg-white cursor-pointer"
-                            >
-                              <LogOut className="w-3.5 h-3.5" />
-                              <span>Putuskan Hubungan Bot</span>
-                            </button>
-                          </div>
-                        )}
-
-                        {/* Display Errors if Any */}
-                        {waBotError && (
-                          <div className="absolute bottom-2 left-2 right-2 bg-rose-50 border border-rose-150 p-2.5 rounded-xl text-[10px] text-rose-700 font-semibold flex flex-col items-center gap-2 shadow-sm z-10">
-                            <div className="flex items-start gap-1 text-left leading-normal">
-                              <span className="shrink-0 mt-0.5">⚠️</span>
-                              <span>
-                                {String(waBotError || '').includes("Logged out of WhatsApp") 
-                                  ? "Koneksi terputus/dibatalkan oleh WhatsApp HP Anda. Silakan bersihkan sesi server lalu tautkan ulang." 
-                                  : String(typeof waBotError === 'object' ? (waBotError as any)?.message || JSON.stringify(waBotError) : waBotError)}
-                              </span>
-                            </div>
-                            <div className="flex gap-2">
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  try {
-                                    const res = await apiFetch("/api/wa/disconnect", { method: "POST" });
-                                    const data = await res.json();
-                                    if (data.success) {
-                                      setWaBotStatus("disconnected");
-                                      setWaBotQr(null);
-                                      setWaBotUser(null);
-                                      setWaPairingCode(null);
-                                      setWaBotError(null);
-                                    }
-                                  } catch (e) {
-                                    console.error("Gagal membersihkan sesi:", e);
-                                    setWaBotError("Gagal membersihkan sesi server.");
-                                  }
-                                }}
-                                className="bg-rose-600 hover:bg-rose-700 text-white font-bold px-2.5 py-1 rounded-lg transition text-[9px] cursor-pointer shadow-xs"
-                              >
-                                Bersihkan Sesi Server
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setWaBotError(null)}
-                                className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold px-2.5 py-1 rounded-lg transition text-[9px] cursor-pointer"
-                              >
-                                Tutup Peringatan
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Bot Controls & Integration Tools */}
-                      <div className="lg:col-span-7 space-y-5 flex flex-col justify-between">
-                        
-                        {/* Test Delivery Form */}
-                        <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-left space-y-3.5">
-                          <div className="space-y-0.5">
-                            <h5 className="font-bold text-slate-800 text-xs uppercase tracking-wider">Uji Coba Pengiriman Pesan</h5>
-                            <p className="text-[11px] text-slate-500">Kirim pesan uji coba untuk memverifikasi fungsionalitas koneksi bot Anda.</p>
-                          </div>
-
-                          <div className="space-y-3">
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                              <div className="sm:col-span-1 space-y-1">
-                                <label className="text-[11px] font-bold text-slate-700">Nomor HP</label>
-                                <input
-                                  type="text"
-                                  placeholder="08123456789"
-                                  value={waTestPhone}
-                                  onChange={(e) => setWaTestPhone(e.target.value)}
-                                  disabled={waBotStatus !== "connected"}
-                                  className="w-full bg-white text-slate-950 text-xs px-2.5 py-2 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium disabled:bg-slate-100 disabled:text-slate-400"
-                                />
-                              </div>
-                              <div className="sm:col-span-2 space-y-1">
-                                <label className="text-[11px] font-bold text-slate-700">Isi Pesan Uji Coba</label>
-                                <input
-                                  type="text"
-                                  placeholder="Halo! Ini adalah pesan uji coba dari Bot WhatsApp Absensi."
-                                  value={waTestMessage}
-                                  onChange={(e) => setWaTestMessage(e.target.value)}
-                                  disabled={waBotStatus !== "connected"}
-                                  className="w-full bg-white text-slate-950 text-xs px-2.5 py-2 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium disabled:bg-slate-100 disabled:text-slate-400"
-                                />
-                              </div>
-                            </div>
-
-                            <button
-                              type="button"
-                              onClick={handleSendWaTest}
-                              disabled={waTestSending || waBotStatus !== "connected"}
-                              className="w-full bg-slate-900 hover:bg-slate-850 active:scale-98 text-white font-bold text-xs py-2.5 px-4 rounded-xl transition flex items-center justify-center gap-2 cursor-pointer shadow-xs disabled:bg-slate-200 disabled:text-slate-400 disabled:pointer-events-none"
-                            >
-                              {waTestSending ? (
-                                <>
-                                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                                  <span>Mengirim Pesan...</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Phone className="w-3.5 h-3.5" />
-                                  <span>Kirim Pesan Uji Coba</span>
-                                </>
-                              )}
-                            </button>
-
-                            {/* Test Result Display */}
-                            {waTestResult && (
-                              <div className={`text-[11px] p-2.5 rounded-lg border font-medium ${
-                                waTestResult.success 
-                                  ? "bg-emerald-50 border-emerald-200 text-emerald-800" 
-                                  : "bg-rose-50 border-rose-200 text-rose-800"
-                              }`}>
-                                {waTestResult.success ? "✓ " : "✗ "} {waTestResult.msg}
-                              </div>
-                            )}
-
-                            {waBotStatus !== "connected" && (
-                              <p className="text-[10px] text-amber-700 italic text-center">
-                                * Hubungkan bot Anda terlebih dahulu dengan men-scan QR code di samping untuk mencoba pengiriman.
-                              </p>
-                            )}
+                          <p className="text-[11px] text-slate-600 leading-relaxed">
+                            Scan QR Code, buat Kode Pairing 8-digit, uji kirim pesan, dan atur jadwal otomatis harian di satu modul terpadu.
+                          </p>
+                          <div className="text-[11px] text-slate-500 font-mono tabular-nums">
+                            {lastCronStatus || `Jadwal otomatis: ${autoReminderHour} WIB · ${baileysState.absentWorkersCount} belum absen`}
                           </div>
                         </div>
-
-                        {/* Cron Schedule & Status Panel */}
-                        <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-left space-y-3.5">
-                          <div className="space-y-0.5">
-                            <h5 className="font-bold text-slate-800 text-xs uppercase tracking-wider">Layanan Pengingat Otomatis (Cron Service)</h5>
-                            <p className="text-[11px] text-slate-500">Atur jam pengiriman dan integrasikan dengan UptimeRobot untuk terus menyala.</p>
-                          </div>
-
-                          <div className="space-y-3 text-xs text-slate-700">
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3 border border-slate-200 rounded-xl">
-                              <div className="space-y-1">
-                                <span className="text-[11px] font-bold text-slate-600 block">Jadwal Pengiriman:</span>
-                                <div className="flex items-center gap-1.5">
-                                  <Clock className="w-3.5 h-3.5 text-indigo-500" />
-                                  <select
-                                    value={autoReminderHour}
-                                    onChange={(e) => setAutoReminderHour(e.target.value)}
-                                    className="bg-slate-50 text-slate-950 font-bold px-2 py-1 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
-                                  >
-                                    <option value="07:00">07:00 WIB</option>
-                                    <option value="08:00">08:00 WIB</option>
-                                    <option value="08:30">08:30 WIB</option>
-                                    <option value="09:00">09:00 WIB (Standar)</option>
-                                    <option value="10:00">10:00 WIB</option>
-                                  </select>
-                                </div>
-                              </div>
-
-                              <button
-                                type="button"
-                                onClick={handleTriggerCronManual}
-                                disabled={isCronRunning || waBotStatus !== "connected"}
-                                className="bg-emerald-600 hover:bg-emerald-500 active:scale-98 text-white font-bold text-xs py-2 px-3 rounded-lg transition flex items-center justify-center gap-1 cursor-pointer disabled:bg-slate-200 disabled:text-slate-400 disabled:pointer-events-none"
-                              >
-                                {isCronRunning ? (
-                                  <>
-                                    <RefreshCw className="w-3 h-3 animate-spin" />
-                                    <span>Memproses...</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Zap className="w-3 h-3" />
-                                    <span>Kirim Manual Sekarang</span>
-                                  </>
-                                )}
-                              </button>
-                            </div>
-
-                            {/* Telemetry log blocks */}
-                            <div className="bg-white p-3 border border-slate-200 rounded-xl space-y-2">
-                              <div className="flex justify-between border-b border-slate-100 pb-1">
-                                <span className="text-[10px] text-slate-500 font-bold uppercase">Terakhir Diping Server:</span>
-                                <span className="font-mono font-semibold text-slate-800">{lastCronPing || "Belum ada riwayat ping"}</span>
-                              </div>
-                              <div className="flex justify-between border-b border-slate-100 pb-1">
-                                <span className="text-[10px] text-slate-500 font-bold uppercase">Tanggal Pengiriman Hari Ini:</span>
-                                <span className="font-mono font-semibold text-slate-800">{lastCronSentDate ? `Sukses (${lastCronSentDate})` : "Belum dikirim hari ini"}</span>
-                              </div>
-                              <div className="space-y-1">
-                                <span className="text-[10px] text-slate-500 font-bold uppercase block">Status Log Terakhir:</span>
-                                <div className="text-[11px] bg-slate-50 p-2 rounded-lg border border-slate-150 text-slate-600 leading-normal italic">
-                                  {lastCronStatus || "Bot siap menerima pemicu jadwal (cron)."}
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* UptimeRobot copy link box */}
-                            <div className="bg-indigo-50/50 border border-indigo-150 p-3 rounded-xl space-y-2">
-                              <div className="space-y-0.5">
-                                <span className="font-bold text-indigo-950 block text-[11px]">🔗 Hubungkan ke UptimeRobot:</span>
-                                <p className="text-[10px] text-slate-600 leading-relaxed">
-                                  Salin tautan cron API di bawah ini ke <b>UptimeRobot</b> dengan tipe pemantauan <b>HTTP(s) GET</b> agar terus dipicu otomatis setiap 5-10 menit. Server akan menyaring jam dan hanya mengirim di jam yang Anda tentukan di atas.
-                                </p>
-                              </div>
-                              <div className="flex items-center gap-1.5">
-                                <input
-                                  type="text"
-                                  readOnly
-                                  value={`${window.location.origin}/api/cron-reminder`}
-                                  className="w-full bg-white text-[10px] font-mono text-slate-700 px-2 py-1.5 border border-indigo-200 rounded-lg select-all outline-none"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    navigator.clipboard.writeText(`${window.location.origin}/api/cron-reminder`);
-                                    alert("Link cron berhasil disalin! Hubungkan link ini ke monitor UptimeRobot Anda.");
-                                  }}
-                                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] px-2.5 py-1.5 rounded-lg transition shrink-0 cursor-pointer"
-                                >
-                                  Salin Link
-                                </button>
-                              </div>
-                            </div>
-
-                          </div>
+                        <div className="flex flex-wrap items-center gap-2 shrink-0">
+                          {onOpenWhatsApp && (
+                            <button
+                              type="button"
+                              onClick={onOpenWhatsApp}
+                              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition cursor-pointer whitespace-nowrap"
+                            >
+                              <Zap className="w-3.5 h-3.5 text-emerald-400" />
+                              <span>{baileysState.isConnected ? "Kelola Baileys" : "Hubungkan Baileys"}</span>
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={handleTriggerCronManual}
+                            disabled={isCronRunning || !baileysState.isConnected}
+                            className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-200 disabled:text-slate-400 text-white text-xs font-bold transition cursor-pointer whitespace-nowrap"
+                          >
+                            {isCronRunning ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <MessageSquare className="w-3.5 h-3.5" />}
+                            <span>{isCronRunning ? "Mengirim..." : "Kirim Pengingat Sekarang"}</span>
+                          </button>
                         </div>
+                      </div>
 
+                      {/* Card 2: Manual Share Link Assistant */}
+                      <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 flex flex-col justify-between gap-3 text-left">
+                        <div className="space-y-1.5">
+                          <label className="text-[11px] font-bold text-slate-700 block">Siaran Manual (Link wa.me)</label>
+                          <select
+                            value={waMethod}
+                            onChange={(e: any) => setWaMethod(e.target.value)}
+                            className="w-full bg-white text-slate-950 text-xs px-2.5 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+                          >
+                            <option value="desktop">WhatsApp Desktop / HP</option>
+                            <option value="web">WhatsApp Web Browser</option>
+                          </select>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBulkViewMode("list");
+                            setShowBulkWA(true);
+                          }}
+                          className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-white hover:bg-slate-100 border border-slate-300 text-slate-800 text-xs font-bold transition cursor-pointer"
+                        >
+                          <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Buka Daftar Siaran Manual</span>
+                        </button>
                       </div>
                     </div>
-                  </div>
+                  </motion.div>
                 )}
-
-                {/* MODE 2: CLIENT-SIDE MANUAL BROADCAST (ORIGINAL) */}
-                {waPanelMode === "manual" && (
-                  <div className="space-y-6 animate-fade-in">
-                    {/* EDUCATIONAL / TRANSPARENCY ANSWER CARD */}
-                    <div className="bg-emerald-50/50 border border-emerald-200/80 rounded-xl p-4 text-xs text-slate-700 space-y-3 text-left">
-                      <h4 className="font-bold text-emerald-900 flex items-center gap-1.5 text-xs sm:text-sm">
-                        <CheckCircle className="w-4.5 h-4.5 text-emerald-700" />
-                        <span>Solusi Presensi WhatsApp 100% Gratis & Aman</span>
-                      </h4>
-                      <p className="leading-relaxed">
-                        Sistem ini menggunakan metode siaran manual dengan HP atau WhatsApp Web Anda langsung. Anda tidak memerlukan token API berbayar, resmi, dan sangat aman dari risiko terblokir.
-                      </p>
-                      <p className="leading-relaxed font-semibold text-slate-800">
-                        💡 Cara Kerja Asisten Siaran Gratis:
-                      </p>
-                      <ul className="list-disc pl-5 space-y-1 text-slate-600">
-                        <li>Sistem menghasilkan format pesan dan tautan login unik otomatis untuk masing-masing karyawan.</li>
-                        <li>Anda bisa menyalin semua pesan sekaligus, atau menggunakan <strong>Asisten Kirim Cepat</strong> untuk mengirim pesan satu per satu dalam beberapa klik secara runtut.</li>
-                      </ul>
-                    </div>
-
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                      
-                      {/* CONFIGURATION */}
-                      <div className="space-y-5">
-                        <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider text-left">Pengaturan Pengiriman Gratis</h4>
-                        
-                        <div className="space-y-4">
-                          {/* Provider Select */}
-                          <div className="space-y-1.5 text-left">
-                            <label className="text-xs font-bold text-slate-700">Metode Pengiriman WhatsApp</label>
-                            <select
-                              value={waMethod}
-                              onChange={(e: any) => setWaMethod(e.target.value)}
-                              className="w-full bg-slate-50 text-slate-950 text-xs px-3 py-2.5 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium cursor-pointer"
-                            >
-                              <option value="desktop">Gunakan Aplikasi WhatsApp Desktop / HP (Aman & Cepat)</option>
-                              <option value="web">Gunakan WhatsApp Web Browser (Buka di Tab Baru)</option>
-                            </select>
-                            <p className="text-[10px] text-slate-500 mt-1">
-                              {waMethod === "desktop" 
-                                ? "✓ Menggunakan protokol wa.me resmi untuk membuka aplikasi WhatsApp Desktop/HP Anda secara otomatis." 
-                                : "✓ Membuka tab baru langsung ke web.whatsapp.com yang sudah terhubung dengan akun Anda."}
-                            </p>
-                          </div>
-
-                          {/* AUTO REMINDER SYSTEM CONFIG */}
-                          <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-4">
-                            <div className="flex items-center justify-between">
-                              <div className="space-y-0.5 text-left">
-                                <div className="font-bold text-xs text-slate-900 flex items-center gap-1.5">
-                                  <Clock className="w-4 h-4 text-indigo-500" />
-                                  <span>Pengingat Kehadiran Harian (Reminder Prompt)</span>
-                                </div>
-                                <p className="text-[11px] text-slate-500 font-sans">Ingatkan karyawan yang belum absen menjelang jam kerja dimulai.</p>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => setAutoReminderEnabled(!autoReminderEnabled)}
-                                className={`w-11 h-6 rounded-full transition duration-200 focus:outline-none relative flex items-center ${
-                                  autoReminderEnabled ? "bg-indigo-600" : "bg-slate-300"
-                                }`}
-                              >
-                                <span 
-                                  className={`w-5 h-5 bg-white rounded-full shadow-md transition-transform duration-200 absolute ${
-                                    autoReminderEnabled ? "translate-x-5.5" : "translate-x-0.5"
-                                  }`}
-                                />
-                              </button>
-                            </div>
-
-                            {autoReminderEnabled && (
-                              <div className="grid grid-cols-1 gap-3 pt-3 border-t border-slate-200 text-left">
-                                <div className="space-y-1">
-                                  <label className="text-[11px] font-bold text-slate-700">Waktu Pengingat</label>
-                                  <div className="flex items-center gap-2">
-                                    <select
-                                      value={autoReminderHour}
-                                      onChange={(e) => setAutoReminderHour(e.target.value)}
-                                      className="bg-white text-slate-950 text-xs px-2 py-1.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono font-bold cursor-pointer"
-                                    >
-                                      <option value="07:00">07:00 pagi</option>
-                                      <option value="08:00">08:00 pagi</option>
-                                      <option value="08:30">08:30 pagi</option>
-                                      <option value="09:00">09:00 pagi (Standar)</option>
-                                      <option value="10:00">10:00 pagi</option>
-                                    </select>
-                                    <span className="text-[11px] text-slate-500 font-medium">Zona waktu lokal</span>
-                                  </div>
-                                </div>
-
-                                <div className="text-[11px] text-slate-500 bg-white border border-slate-200 p-2.5 rounded-lg leading-relaxed font-sans">
-                                  📝 <strong>Cara Kerja:</strong> Dashboard akan memberikan indikator tanda seru merah setelah jam <strong>{autoReminderHour}</strong> jika masih ada karyawan aktif yang belum absen mandiri hari ini. Anda bisa mengklik tombol pengingat untuk meluncurkan asisten siaran kilat.
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* INFO PANEL ON BENEFITS */}
-                      <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col justify-between">
-                        <div className="space-y-3 text-left">
-                          <div className="flex items-center gap-1.5">
-                            <CheckCircle className="w-4 h-4 text-indigo-500" />
-                            <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Keunggulan Metode Resmi Gratis</h4>
-                          </div>
-                          <div className="space-y-2 text-[11px] text-slate-600 leading-relaxed font-sans">
-                            <div className="p-2 bg-white rounded-lg border border-slate-150 flex items-start gap-2">
-                              <span className="text-emerald-600 font-bold">✓</span>
-                              <span><strong>Tanpa Biaya Bulanan:</strong> Tidak perlu berlangganan pihak ketiga yang berbayar (rata-rata Rp 50.000 - Rp 150.000 per bulan).</span>
-                            </div>
-                            <div className="p-2 bg-white rounded-lg border border-slate-150 flex items-start gap-2">
-                              <span className="text-emerald-600 font-bold">✓</span>
-                              <span><strong>Sangat Aman (Anti-Banned):</strong> Menggunakan akun WhatsApp resmi Anda langsung, terverifikasi oleh aplikasi WhatsApp di HP Anda. Aman dari risiko banned.</span>
-                            </div>
-                            <div className="p-2 bg-white rounded-lg border border-slate-150 flex items-start gap-2">
-                              <span className="text-emerald-600 font-bold">✓</span>
-                              <span><strong>Mudah Digunakan:</strong> Tidak membutuhkan setup teknis yang rumit, konfigurasi webhook, server gateway, atau token sandi API yang membingungkan.</span>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="border-t border-slate-200 pt-3 mt-4 text-[10px] text-slate-500 leading-relaxed italic text-left">
-                          ℹ️ Sistem siap digunakan dengan metode pengiriman resmi gratis. Silakan klik tombol di bawah untuk mulai mengirim.
-                        </div>
-                      </div>
-
-                    </div>
-
-                    {/* AUTOMATION TRIGGER BAR FOR TODAY'S ABSENT WORKERS */}
-                    <div className="bg-slate-900 text-white rounded-xl p-4 sm:p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
-                      <div className="space-y-1 text-center sm:text-left">
-                        <div className="inline-flex items-center gap-1 bg-indigo-500/20 border border-indigo-400/30 text-indigo-300 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
-                          <span>Asisten Kirim Gratis</span>
-                        </div>
-                        <h4 className="text-sm font-bold font-display">Kirim Pengingat Uang Makan Hari Ini</h4>
-                        <p className="text-xs text-slate-400 max-w-lg leading-relaxed font-sans">
-                          Kirim pesan pengingat berisi tautan absen mandiri unik dan PIN presensi hari ini ke seluruh karyawan aktif dengan asisten kirim gratis.
-                        </p>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setBulkViewMode("list");
-                          setShowBulkWA(true);
-                        }}
-                        className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 active:scale-98 text-white font-bold text-xs py-3 px-5 rounded-xl transition flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-emerald-950 shrink-0"
-                      >
-                        <MessageSquare className="w-4 h-4" />
-                        <span>Luncurkan Panel Siaran Massal</span>
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
+              </AnimatePresence>
+            </div>
           </div>
         )}
 
@@ -11246,22 +10460,14 @@ export function AbsensiHarianNmsa({
                                     const customMsg = getDeterministicReminderMessage(worker.name, worker.id, quickUrl);
                                     setSendingBotMsgId(worker.id);
                                     try {
-                                      const res = await apiFetch("/api/wa/send-test", {
-                                        method: "POST",
-                                        headers: { "Content-Type": "application/json" },
-                                        body: JSON.stringify({
-                                          phone: worker.phoneNumber,
-                                          message: customMsg,
-                                        }),
-                                      });
-                                      const data = await res.json();
+                                      const data = await sendViaBaileys(worker.phoneNumber, customMsg);
                                       if (data.success) {
-                                        alert(`Pesan absensi berhasil dikirim secara otomatis oleh Bot ke ${worker.name}!`);
+                                        alert(`Pesan absensi berhasil dikirim via WhatsApp Baileys ke ${worker.name}!`);
                                       } else {
-                                        alert(`Gagal mengirim via Bot WA: ${data.error || "Pastikan Bot WhatsApp sudah terhubung di tab Ringkasan & Analitik."}`);
+                                        alert(`Gagal mengirim via Baileys: ${data.error || "Pastikan modul WhatsApp Baileys sudah terhubung."}`);
                                       }
                                     } catch (err) {
-                                      console.error("Gagal mengirim pesan via Bot:", err);
+                                      console.error("Gagal mengirim pesan via Baileys:", err);
                                       alert("Terjadi kesalahan jaringan saat mencoba mengirim pesan.");
                                     } finally {
                                       setSendingBotMsgId(null);

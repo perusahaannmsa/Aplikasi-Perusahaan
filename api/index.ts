@@ -115,25 +115,18 @@ function buildForwardQueryString(rawUrl: string): string {
 
 function shouldProxyToExternalBackend(cleanPath: string): boolean {
   return (
-    cleanPath === "wa" ||
-    cleanPath.startsWith("wa/") ||
+    cleanPath === "baileys" ||
+    cleanPath.startsWith("baileys/") ||
     cleanPath === "health" ||
     cleanPath === "ping" ||
     cleanPath === "keepalive" ||
-    cleanPath === "bot-reminder-settings" ||
-    cleanPath === "trigger-bot-reminder" ||
-    cleanPath === "cron-reminder" ||
-    cleanPath.startsWith("cron/") ||
-    cleanPath === "ai-query" ||
-    cleanPath === "whatsapp-webhook" ||
-    cleanPath === "fonnte-webhook" ||
     cleanPath === "check-holiday" ||
     cleanPath === "friday-verifications"
   );
 }
 
-const VERCEL_NEEDS_BACKEND_MSG =
-  "Hosting Vercel bersifat Serverless sehingga koneksi WhatsApp Baileys (QR Code & Kode Pairing) memerlukan Server Backend Node.js 24/7 (Render / Railway / VPS). Buka Tab 8 'Server Backend ⚙️' atau atur Environment Variable BACKEND_URL di Vercel.";
+const SERVERLESS_BAILEYS_UNAVAILABLE_MSG =
+  "Koneksi WebSocket WhatsApp Baileys memerlukan runtime Node.js persisten (server.ts).";
 
 export default async function handler(req: any, res: any) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -229,182 +222,26 @@ export default async function handler(req: any, res: any) {
       }
     }
 
-    // 1. WhatsApp Bot endpoints when Vercel runs standalone (no external persistent backend configured)
-    if (cleanPath.startsWith("wa/") || cleanPath === "wa") {
-      const subWa = cleanPath.replace(/^wa\/?/, "");
-
-      if (subWa === "status") {
-        return res.end(
-          JSON.stringify({
-            success: true,
-            status: "disconnected",
-            isConnected: false,
-            qr: null,
-            qrSeq: 0,
-            pairingCode: null,
-            user: null,
-            isVercel: true,
-            isVercelServerless: true,
-            needsBackendServer: true,
-            hasCredentials: false,
-            hasBackup: false,
-            error: null,
-            notice: VERCEL_NEEDS_BACKEND_MSG,
-          })
-        );
-      }
-
-      if (subWa === "refresh-qr" || subWa === "pairing-code" || subWa === "send-test") {
-        res.statusCode = 503;
-        return res.end(
-          JSON.stringify({
-            success: false,
-            isVercel: true,
-            isVercelServerless: true,
-            needsBackendServer: true,
-            error: VERCEL_NEEDS_BACKEND_MSG,
-          })
-        );
-      }
-
-      if (subWa === "disconnect") {
-        const state = loadState();
-        state.waConnected = false;
-        state.waUser = null;
-        state.waQr = null;
-        state.pairingCode = null;
-        state.pairingPhone = null;
-        saveState(state);
-        return res.end(
-          JSON.stringify({
-            success: true,
-            isVercelServerless: true,
-            message: "Status lokal WhatsApp telah dibersihkan.",
-          })
-        );
-      }
-
-      if (subWa === "keepalive-stats") {
-        return res.end(
-          JSON.stringify({
-            success: true,
-            uptimeSeconds: Math.floor(process.uptime()),
-            totalPings: 1,
-            lastPing: new Date().toISOString(),
-            isVercel: true,
-            isVercelServerless: true,
-            needsBackendServer: true,
-            status: "serverless",
-          })
-        );
-      }
-
-      if (subWa === "security-settings") {
-        const state = loadState();
-        const existing = state.waSecuritySettings ||
-          state.securitySettings || {
-            privacyMode: "whitelist",
-            allowedPhones: [],
-            securityPin: "1234",
-            enableDriveLinks: true,
-            unauthorizedMessage:
-              "Nomor WhatsApp Anda belum terdaftar dalam otorisasi akses voucher keuangan PT NMSA. Silakan hubungi Finance/Admin untuk mendaftarkan nomor Anda.",
-          };
-        if (req.method === "POST") {
-          const body = await parseRequestBody(req);
-          state.waSecuritySettings = {
-            ...existing,
-            ...body,
-          };
-          saveState(state);
-          return res.end(JSON.stringify({ success: true, settings: state.waSecuritySettings }));
-        }
-        return res.end(
-          JSON.stringify({
-            success: true,
-            settings: existing,
-          })
-        );
-      }
-
-      if (subWa === "automation-settings") {
-        // Handled identically below with bot-reminder-settings
-      } else {
-        return res.end(
-          JSON.stringify({
-            success: true,
-            isVercel: true,
-            isVercelServerless: true,
-            needsBackendServer: true,
-            subPath: subWa,
-          })
-        );
-      }
-    }
-
-    // 2. Bot Reminder / Automation Settings (Unified single handler)
-    if (cleanPath === "bot-reminder-settings" || cleanPath === "wa/automation-settings") {
-      const state = loadState();
-      if (req.method === "POST") {
-        const body = await parseRequestBody(req);
-        if (body && typeof body === "object") {
-          if (body.masterAutoSendEnabled !== undefined) state.masterAutoSendEnabled = body.masterAutoSendEnabled;
-          if (body.autoReminderHour !== undefined) state.autoReminderHour = body.autoReminderHour;
-          if (body.autoReminderEnabled !== undefined) state.autoReminderEnabled = body.autoReminderEnabled;
-          if (body.enableAiAutoReply !== undefined) state.enableAiAutoReply = body.enableAiAutoReply;
-          if (body.reminderActiveDays !== undefined) state.reminderActiveDays = body.reminderActiveDays;
-          if (body.skipHolidays !== undefined) state.skipHolidays = body.skipHolidays;
-          if (body.skipWeekends !== undefined) state.skipWeekends = body.skipWeekends;
-          if (body.requireFridaySignature !== undefined) state.requireFridaySignature = body.requireFridaySignature;
-          if (body.allowLocationCheckin !== undefined) state.allowLocationCheckin = body.allowLocationCheckin;
-          if (body.autoReplyScope !== undefined) state.autoReplyScope = body.autoReplyScope;
-          if (body.reminderTone !== undefined) state.reminderTone = body.reminderTone;
-          saveState(state);
-        }
-        return res.end(
-          JSON.stringify({
-            success: true,
-            message: "Pengaturan tersimpan (mode serverless).",
-            isVercelServerless: true,
-          })
-        );
-      }
+    // 1. Baileys endpoint fallback when deployed strictly on serverless without a Node.js backend
+    if (cleanPath === "baileys" || cleanPath.startsWith("baileys/")) {
+      res.statusCode = 503;
       return res.end(
         JSON.stringify({
-          success: true,
-          isVercelServerless: true,
-          masterAutoSendEnabled: state.masterAutoSendEnabled !== false,
-          autoReminderHour: state.autoReminderHour || "09:00",
-          autoReminderEnabled: state.autoReminderEnabled !== false,
-          enableAiAutoReply: state.enableAiAutoReply !== false,
-          reminderActiveDays: state.reminderActiveDays || ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"],
-          skipHolidays: state.skipHolidays !== false,
-          skipWeekends: state.skipWeekends !== false,
-          requireFridaySignature: state.requireFridaySignature !== false,
-          allowLocationCheckin: state.allowLocationCheckin !== false,
-          autoReplyScope: state.autoReplyScope || "all",
-          reminderTone: state.reminderTone || "standard",
-          lastCronPing: state.lastCronPing || "",
-          lastCronStatus: state.lastCronStatus || "",
-          lastCronSentDate: state.lastCronSentDate || "",
-          serverTimeWIB: new Date().toLocaleTimeString("id-ID", { timeZone: "Asia/Jakarta" }) + " WIB",
-          totalActiveWorkers: (state.workers || []).filter((w: any) => w.isActive).length,
-          pendingAttendanceCount: 0,
-          waConnected: false,
-          waPhone: null,
+          success: false,
+          status: "disconnected",
+          isConnected: false,
+          error: SERVERLESS_BAILEYS_UNAVAILABLE_MSG,
         })
       );
     }
 
-    // 3. Health check
+    // 2. Health check
     if (cleanPath === "health" || cleanPath === "ping" || cleanPath === "keepalive") {
       return res.end(
         JSON.stringify({
           status: "ok",
           timestamp: new Date().toISOString(),
           platform: "vercel-serverless",
-          isVercelServerless: true,
-          needsBackendServer: true,
           uptimeSeconds: Math.floor(process.uptime()),
         })
       );

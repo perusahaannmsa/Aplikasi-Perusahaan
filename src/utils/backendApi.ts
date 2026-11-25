@@ -57,12 +57,8 @@ export function buildApiUrl(endpoint: string): string {
 
 function isStatefulBackendEndpoint(cleanEndpoint: string): boolean {
   return (
-    cleanEndpoint.startsWith('/api/wa') ||
-    cleanEndpoint.startsWith('/api/health') ||
-    cleanEndpoint.startsWith('/api/bot-reminder-settings') ||
-    cleanEndpoint.startsWith('/api/trigger-bot-reminder') ||
-    cleanEndpoint.startsWith('/api/cron') ||
-    cleanEndpoint.startsWith('/api/ai-query')
+    cleanEndpoint.startsWith('/api/baileys') ||
+    cleanEndpoint.startsWith('/api/health')
   );
 }
 
