@@ -5,6 +5,7 @@
  */
 
 const STORAGE_KEY = 'nmsa_backend_api_url';
+export const DEFAULT_VERCEL_BACKEND_URL = 'https://aplikasi-perusahaan.onrender.com';
 
 function sanitizeBackendUrl(raw: string | undefined | null): string {
   if (!raw || !raw.trim()) return '';
@@ -20,6 +21,47 @@ function sanitizeBackendUrl(raw: string | undefined | null): string {
   return clean;
 }
 
+export function isVercelHostname(): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.location.hostname.toLowerCase().endsWith('.vercel.app');
+}
+
+export function validateBackendUrlInput(raw: string): {
+  valid: boolean;
+  normalized: string;
+  error?: string;
+} {
+  const trimmed = (raw || '').trim().replace(/\/+$/, '');
+  if (!trimmed) {
+    return { valid: true, normalized: '' };
+  }
+  if (!/^https?:\/\//i.test(trimmed)) {
+    return {
+      valid: false,
+      normalized: '',
+      error: 'URL harus diawali https:// atau http:// (contoh: https://aplikasi-perusahaan.onrender.com).',
+    };
+  }
+  const sanitized = sanitizeBackendUrl(trimmed);
+  if (!sanitized) {
+    return {
+      valid: false,
+      normalized: '',
+      error:
+        'URL preview AI Studio / Cloud Run tidak mendukung panggilan lintas-domain. Gunakan URL server Node.js publik seperti Render, Railway, Fly.io, atau VPS.',
+    };
+  }
+  if (sanitized.includes('.vercel.app')) {
+    return {
+      valid: false,
+      normalized: '',
+      error:
+        'Domain Vercel bersifat serverless dan tidak dapat dipakai sebagai backend Baileys. Gunakan URL server Node.js (server.ts).',
+    };
+  }
+  return { valid: true, normalized: sanitized };
+}
+
 export function getBackendBaseUrl(): string {
   if (typeof window === 'undefined') return '';
   const saved = localStorage.getItem(STORAGE_KEY);
@@ -33,7 +75,13 @@ export function getBackendBaseUrl(): string {
     }
   }
   const envBackend = sanitizeBackendUrl((import.meta as any).env?.VITE_BACKEND_URL);
-  return envBackend;
+  if (envBackend) {
+    return envBackend;
+  }
+  if (isVercelHostname()) {
+    return DEFAULT_VERCEL_BACKEND_URL;
+  }
+  return '';
 }
 
 export function setBackendBaseUrl(url: string): void {

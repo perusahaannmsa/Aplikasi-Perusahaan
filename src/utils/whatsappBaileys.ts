@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { apiFetch } from "./backendApi";
 
 export type BaileysStatus = "disconnected" | "connecting" | "qr" | "connected";
 
@@ -10,6 +11,7 @@ export interface BaileysUser {
 export interface BaileysState {
   status: BaileysStatus;
   isConnected: boolean;
+  isVercelServerless: boolean;
   qr: string | null;
   qrSeq: number;
   qrUpdatedAt: number | null;
@@ -52,6 +54,7 @@ const BAILEYS_SYNC_EVENT = "nmsa-baileys-sync";
 const DEFAULT_STATE: BaileysState = {
   status: "disconnected",
   isConnected: false,
+  isVercelServerless: false,
   qr: null,
   qrSeq: 0,
   qrUpdatedAt: null,
@@ -101,8 +104,14 @@ function broadcastStateUpdate(state: BaileysState) {
   }
 }
 
+function detectServerlessError(resStatus: number, data: any): boolean {
+  if (Boolean(data?.isVercelServerless)) return true;
+  const errStr = String(data?.error || "").toLowerCase();
+  return resStatus === 503 && errStr.includes("server.ts");
+}
+
 export async function fetchBaileysStatus(activeUi = false): Promise<BaileysState> {
-  const res = await fetch(`/api/baileys/status?${activeUi ? "activeUi=1" : "background=1"}`, {
+  const res = await apiFetch(`/api/baileys/status?${activeUi ? "activeUi=1" : "background=1"}`, {
     headers: { Accept: "application/json" },
   });
   const data = await res.json().catch(() => ({}));
@@ -111,6 +120,7 @@ export async function fetchBaileysStatus(activeUi = false): Promise<BaileysState
     ...data,
     status: (data.status as BaileysStatus) || "disconnected",
     isConnected: Boolean(data.isConnected || data.status === "connected"),
+    isVercelServerless: detectServerlessError(res.status, data),
     qr: data.isPairingInProgress ? null : data.qr || null,
     user: data.user || null,
     error: data.error ? String(data.error) : null,
@@ -118,19 +128,37 @@ export async function fetchBaileysStatus(activeUi = false): Promise<BaileysState
 }
 
 export async function refreshBaileysQr(): Promise<BaileysState> {
-  const res = await fetch("/api/baileys/refresh-qr", { method: "POST" });
-  const data = await res.json().catch(() => ({}));
-  const next: BaileysState = {
-    ...DEFAULT_STATE,
-    ...data,
-    status: (data.status as BaileysStatus) || "connecting",
-    isConnected: Boolean(data.isConnected || data.status === "connected"),
-    qr: data.qr || null,
-    user: data.user || null,
-    error: data.error ? String(data.error) : null,
-  };
-  broadcastStateUpdate(next);
-  return next;
+  try {
+    const res = await apiFetch("/api/baileys/refresh-qr", { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    const isServerless = detectServerlessError(res.status, data);
+    const next: BaileysState = {
+      ...DEFAULT_STATE,
+      ...data,
+      status: isServerless ? "disconnected" : (data.status as BaileysStatus) || "connecting",
+      isConnected: Boolean(data.isConnected || data.status === "connected"),
+      isVercelServerless: isServerless,
+      qr: data.qr || null,
+      user: data.user || null,
+      error: data.error
+        ? String(data.error)
+        : !res.ok
+        ? `Server mengembalikan status ${res.status}.`
+        : null,
+    };
+    broadcastStateUpdate(next);
+    return next;
+  } catch (err: any) {
+    const next: BaileysState = {
+      ...DEFAULT_STATE,
+      status: "disconnected",
+      error: err?.message
+        ? `Gagal menjangkau server Baileys: ${err.message}`
+        : "Gagal menjangkau server Baileys.",
+    };
+    broadcastStateUpdate(next);
+    return next;
+  }
 }
 
 export async function requestBaileysPairingCode(
@@ -143,81 +171,111 @@ export async function requestBaileysPairingCode(
       error: "Format nomor tidak valid. Masukkan nomor WhatsApp lengkap (contoh: 0812xxxxxx).",
     };
   }
-  const res = await fetch("/api/baileys/pairing-code", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ phone: clean }),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (res.ok && data.success && (data.code || data.pairingCode)) {
-    const code = String(data.code || data.pairingCode);
-    const next: BaileysState = {
-      ...DEFAULT_STATE,
-      ...data,
-      pairingCode: code,
-      pairingPhone: clean,
+  try {
+    const res = await apiFetch("/api/baileys/pairing-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone: clean }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.success && (data.code || data.pairingCode)) {
+      const code = String(data.code || data.pairingCode);
+      const next: BaileysState = {
+        ...DEFAULT_STATE,
+        ...data,
+        isVercelServerless: false,
+        pairingCode: code,
+        pairingPhone: clean,
+      };
+      broadcastStateUpdate(next);
+      return { success: true, code, state: next };
+    }
+    return {
+      success: false,
+      error: data.error ? String(data.error) : "Gagal membuat Kode Pairing Baileys.",
     };
-    broadcastStateUpdate(next);
-    return { success: true, code, state: next };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err?.message
+        ? `Gagal menjangkau server Baileys: ${err.message}`
+        : "Gagal menjangkau server Baileys.",
+    };
   }
-  return {
-    success: false,
-    error: data.error ? String(data.error) : "Gagal membuat Kode Pairing Baileys.",
-  };
 }
 
 export async function disconnectBaileys(): Promise<{ success: boolean; error?: string }> {
-  const res = await fetch("/api/baileys/disconnect", { method: "POST" });
-  const data = await res.json().catch(() => ({}));
-  if (data.success) {
-    broadcastStateUpdate({ ...DEFAULT_STATE, status: "disconnected" });
+  try {
+    const res = await apiFetch("/api/baileys/disconnect", { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (data.success) {
+      broadcastStateUpdate({ ...DEFAULT_STATE, status: "disconnected" });
+    }
+    return { success: Boolean(data.success), error: data.error };
+  } catch (err: any) {
+    return { success: false, error: err?.message || "Gagal memutuskan koneksi." };
   }
-  return { success: Boolean(data.success), error: data.error };
 }
 
 export async function sendViaBaileys(
   phone: string,
   message: string
 ): Promise<{ success: boolean; error?: string }> {
-  const res = await fetch("/api/baileys/send", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ phone, message }),
-  });
-  const data = await res.json().catch(() => ({}));
-  return {
-    success: Boolean(res.ok && data.success),
-    error: data.error ? String(data.error) : undefined,
-  };
+  try {
+    const res = await apiFetch("/api/baileys/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone, message }),
+    });
+    const data = await res.json().catch(() => ({}));
+    return {
+      success: Boolean(res.ok && data.success),
+      error: data.error ? String(data.error) : undefined,
+    };
+  } catch (err: any) {
+    return { success: false, error: err?.message || "Gagal mengirim pesan." };
+  }
 }
 
 export async function fetchBaileysSettings(): Promise<BaileysAutomationSettings | null> {
-  const res = await fetch("/api/baileys/settings", { headers: { Accept: "application/json" } });
-  if (!res.ok) return null;
-  const data = await res.json().catch(() => null);
-  return data?.success ? (data as BaileysAutomationSettings) : null;
+  try {
+    const res = await apiFetch("/api/baileys/settings", { headers: { Accept: "application/json" } });
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => null);
+    return data?.success ? (data as BaileysAutomationSettings) : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function saveBaileysSettings(
   payload: Partial<BaileysAutomationSettings>
 ): Promise<{ success: boolean; message?: string; error?: string }> {
-  const res = await fetch("/api/baileys/settings", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  return res.json().catch(() => ({ success: false, error: "Gagal menyimpan pengaturan." }));
+  try {
+    const res = await apiFetch("/api/baileys/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    return res.json().catch(() => ({ success: false, error: "Gagal menyimpan pengaturan." }));
+  } catch (err: any) {
+    return { success: false, error: err?.message || "Gagal menyimpan pengaturan." };
+  }
 }
 
 export async function triggerBaileysReminder(
   markSent = true
 ): Promise<{ success: boolean; message?: string; sentCount?: number; failedCount?: number; error?: string }> {
-  const res = await fetch("/api/baileys/trigger-reminder", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ markSent }),
-  });
-  return res.json().catch(() => ({ success: false, error: "Gagal memicu pengiriman pengingat." }));
+  try {
+    const res = await apiFetch("/api/baileys/trigger-reminder", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ markSent }),
+    });
+    return res.json().catch(() => ({ success: false, error: "Gagal memicu pengiriman pengingat." }));
+  } catch (err: any) {
+    return { success: false, error: err?.message || "Gagal memicu pengiriman pengingat." };
+  }
 }
 
 export function useWhatsAppBaileys(options: { enabled?: boolean; activeUi?: boolean } = {}) {
@@ -239,8 +297,17 @@ export function useWhatsAppBaileys(options: { enabled?: boolean; activeUi?: bool
       const next = await fetchBaileysStatus(activeUi);
       if (mySeq !== seqRef.current) return;
       setState(next);
-    } catch {
-      // keep previous state on transient network hiccup
+    } catch (err: any) {
+      if (mySeq !== seqRef.current) return;
+      setState((prev) => ({
+        ...prev,
+        status: "disconnected",
+        error:
+          prev.error ||
+          (err?.message
+            ? `Tidak dapat terhubung ke endpoint Baileys: ${err.message}`
+            : "Tidak dapat terhubung ke endpoint Baileys."),
+      }));
     } finally {
       inFlightRef.current = false;
     }

@@ -125,6 +125,8 @@ function shouldProxyToExternalBackend(cleanPath: string): boolean {
   );
 }
 
+const DEFAULT_RENDER_BACKEND_URL = "https://aplikasi-perusahaan.onrender.com";
+
 const SERVERLESS_BAILEYS_UNAVAILABLE_MSG =
   "Koneksi WebSocket WhatsApp Baileys memerlukan runtime Node.js persisten (server.ts).";
 
@@ -163,7 +165,7 @@ export default async function handler(req: any, res: any) {
       searchParams.get("backendUrl") ||
       process.env.BACKEND_URL ||
       process.env.VITE_BACKEND_URL ||
-      ""
+      DEFAULT_RENDER_BACKEND_URL
     ).trim();
 
     // Universal proxy to persistent Node.js Baileys backend when configured
@@ -176,7 +178,7 @@ export default async function handler(req: any, res: any) {
           : undefined;
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 25000);
+      const timeoutId = setTimeout(() => controller.abort(), 45000);
       try {
         const proxyRes = await fetch(targetUrl, {
           method: req.method,
@@ -230,6 +232,7 @@ export default async function handler(req: any, res: any) {
           success: false,
           status: "disconnected",
           isConnected: false,
+          isVercelServerless: true,
           error: SERVERLESS_BAILEYS_UNAVAILABLE_MSG,
         })
       );

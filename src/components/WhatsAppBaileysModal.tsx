@@ -11,8 +11,8 @@ import {
   QrCode,
   RefreshCw,
   Send,
+  Server,
   Smartphone,
-  Unplug,
   X,
   Zap,
 } from 'lucide-react';
@@ -23,6 +23,12 @@ import {
   triggerBaileysReminder,
   useWhatsAppBaileys,
 } from '../utils/whatsappBaileys';
+import {
+  buildApiUrl,
+  getBackendBaseUrl,
+  setBackendBaseUrl,
+  validateBackendUrlInput,
+} from '../utils/backendApi';
 
 interface WhatsAppBaileysModalProps {
   isOpen: boolean;
@@ -64,6 +70,13 @@ export const WhatsAppBaileysModal: React.FC<WhatsAppBaileysModalProps> = ({ isOp
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsFeedback, setSettingsFeedback] = useState<string | null>(null);
   const [copiedCronUrl, setCopiedCronUrl] = useState(false);
+
+  // External Node.js server URL config states (needed when frontend is hosted on Vercel)
+  const [backendUrlInput, setBackendUrlInput] = useState(() => getBackendBaseUrl());
+  const [savedBackendUrl, setSavedBackendUrl] = useState(() => getBackendBaseUrl());
+  const [showBackendConfig, setShowBackendConfig] = useState(false);
+  const [backendUrlError, setBackendUrlError] = useState<string | null>(null);
+  const [savingBackendUrl, setSavingBackendUrl] = useState(false);
 
   // Live 1s ticker for QR expiry countdown
   useEffect(() => {
@@ -228,7 +241,43 @@ export const WhatsAppBaileysModal: React.FC<WhatsAppBaileysModalProps> = ({ isOp
     }
   };
 
-  const cronEndpointUrl = `${window.location.origin}/api/baileys/cron-reminder`;
+  const handleSaveBackendUrl = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setBackendUrlError(null);
+    const check = validateBackendUrlInput(backendUrlInput);
+    if (!check.valid) {
+      setBackendUrlError(check.error || 'URL server tidak valid.');
+      return;
+    }
+    setSavingBackendUrl(true);
+    try {
+      setBackendBaseUrl(check.normalized);
+      setSavedBackendUrl(check.normalized);
+      setBackendUrlInput(check.normalized);
+      setPairingError(null);
+      if (check.normalized) {
+        await refreshQr();
+        setShowBackendConfig(false);
+      } else {
+        await refreshStatus();
+      }
+    } finally {
+      setSavingBackendUrl(false);
+    }
+  };
+
+  const handleResetBackendUrl = async () => {
+    setBackendBaseUrl('');
+    const fallback = getBackendBaseUrl();
+    setSavedBackendUrl(fallback);
+    setBackendUrlInput(fallback);
+    setBackendUrlError(null);
+    await refreshStatus();
+  };
+
+  const cronEndpointUrl = savedBackendUrl
+    ? buildApiUrl('/api/baileys/cron-reminder')
+    : `${window.location.origin}/api/baileys/cron-reminder`;
 
   const statusMeta = state.isConnected
     ? { label: 'Terhubung', dot: 'bg-emerald-500', text: 'text-emerald-700' }
@@ -470,9 +519,9 @@ export const WhatsAppBaileysModal: React.FC<WhatsAppBaileysModalProps> = ({ isOp
                       )}
                     </div>
 
-                    <div className="flex flex-col items-center justify-center py-4 min-h-[240px] bg-white rounded-xl border border-stone-200">
+                    <div className="flex flex-col items-center justify-center py-4 px-4 min-h-[240px] bg-white rounded-xl border border-stone-200">
                       {state.isPairingInProgress ? (
-                        <div className="text-center space-y-2.5 px-4">
+                        <div className="text-center space-y-2.5">
                           <RefreshCw className="w-8 h-8 text-emerald-600 animate-spin mx-auto" />
                           <p className="text-xs font-semibold text-stone-800">
                             Menyelesaikan otentikasi perangkat...
@@ -489,11 +538,47 @@ export const WhatsAppBaileysModal: React.FC<WhatsAppBaileysModalProps> = ({ isOp
                           className="w-52 h-52 object-contain"
                           referrerPolicy="no-referrer"
                         />
-                      ) : (
-                        <div className="text-center space-y-3 px-4">
+                      ) : state.isVercelServerless ? (
+                        <div className="text-center space-y-3 max-w-xs">
+                          <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 flex items-center justify-center mx-auto">
+                            <Server className="w-5 h-5" />
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-xs font-bold text-stone-900">
+                              QR Code Butuh Server Node.js (server.ts)
+                            </p>
+                            <p className="text-xs text-stone-500 leading-relaxed">
+                              Domain Vercel bersifat serverless sehingga tidak bisa membuka WebSocket WhatsApp. Akses aplikasi langsung dari server Node.js atau hubungkan URL server Anda di bawah.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setShowBackendConfig(true)}
+                            className="px-3.5 py-2 rounded-lg bg-stone-900 hover:bg-stone-800 text-white text-xs font-semibold transition cursor-pointer"
+                          >
+                            Atur URL Server Node.js
+                          </button>
+                        </div>
+                      ) : state.status === 'connecting' || isRefreshingQr ? (
+                        <div className="text-center space-y-3">
                           <RefreshCw className="w-8 h-8 text-stone-400 animate-spin mx-auto" />
                           <p className="text-xs font-medium text-stone-600">
                             Menyiapkan QR Code dari modul Baileys...
+                          </p>
+                          <button
+                            type="button"
+                            onClick={handleRefreshQr}
+                            disabled={isRefreshingQr}
+                            className="px-3.5 py-2 rounded-lg bg-stone-900 hover:bg-stone-800 text-white text-xs font-semibold transition cursor-pointer"
+                          >
+                            Muat QR Sekarang
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="text-center space-y-3">
+                          <QrCode className="w-8 h-8 text-stone-400 mx-auto" />
+                          <p className="text-xs font-medium text-stone-600">
+                            QR Code belum dimuat. Klik tombol di bawah untuk membuat QR baru.
                           </p>
                           <button
                             type="button"
@@ -926,13 +1011,89 @@ export const WhatsAppBaileysModal: React.FC<WhatsAppBaileysModalProps> = ({ isOp
               )}
             </div>
           )}
+          {(showBackendConfig || state.isVercelServerless) && activeTab === 'link' && !state.isConnected && (
+            <form
+              onSubmit={handleSaveBackendUrl}
+              className="p-4 rounded-xl border border-stone-200 bg-stone-50 space-y-3"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h4 className="text-xs font-bold text-stone-900 flex items-center gap-1.5">
+                    <Server className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Koneksi Server Node.js (server.ts) untuk Vercel / PWA</span>
+                  </h4>
+                  <p className="text-xs text-stone-500 mt-0.5">
+                    Masukkan URL server Node.js persisten (Render / Railway / VPS) yang menjalankan aplikasi ini agar QR Code Baileys langsung tampil di Vercel.
+                  </p>
+                </div>
+                {showBackendConfig && !state.isVercelServerless && (
+                  <button
+                    type="button"
+                    onClick={() => setShowBackendConfig(false)}
+                    className="text-xs font-semibold text-stone-500 hover:text-stone-900 cursor-pointer shrink-0"
+                  >
+                    Tutup
+                  </button>
+                )}
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input
+                  type="url"
+                  value={backendUrlInput}
+                  onChange={(e) => {
+                    setBackendUrlInput(e.target.value);
+                    setBackendUrlError(null);
+                  }}
+                  placeholder="https://nama-server-anda.onrender.com"
+                  className="flex-1 bg-white text-stone-900 text-xs font-mono px-3 py-2 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                />
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="submit"
+                    disabled={savingBackendUrl}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:bg-stone-300 text-white text-xs font-semibold transition cursor-pointer whitespace-nowrap"
+                  >
+                    {savingBackendUrl && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                    <span>Simpan &amp; Muat QR</span>
+                  </button>
+                  {savedBackendUrl && (
+                    <button
+                      type="button"
+                      onClick={handleResetBackendUrl}
+                      className="px-3 py-2 rounded-lg border border-stone-200 bg-white hover:bg-stone-100 text-stone-700 text-xs font-semibold transition cursor-pointer whitespace-nowrap"
+                    >
+                      Reset
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {backendUrlError && (
+                <p className="text-xs font-medium text-rose-700">{backendUrlError}</p>
+              )}
+            </form>
+          )}
         </div>
 
         {/* Footer */}
-        <div className="px-5 sm:px-6 py-3 bg-stone-50 border-t border-stone-200 flex items-center justify-between gap-4 shrink-0">
-          <span className="text-xs text-stone-500">
-            @whiskeysockets/baileys · Endpoint /api/baileys
-          </span>
+        <div className="px-5 sm:px-6 py-3 bg-stone-50 border-t border-stone-200 flex flex-wrap items-center justify-between gap-4 shrink-0">
+          <div className="flex flex-wrap items-center gap-3 text-xs text-stone-500">
+            <span>
+              @whiskeysockets/baileys ·{' '}
+              {savedBackendUrl ? `Server: ${savedBackendUrl}` : 'Endpoint /api/baileys'}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('link');
+                setShowBackendConfig((v) => !v);
+              }}
+              className="text-stone-700 hover:text-stone-950 font-semibold underline underline-offset-2 cursor-pointer"
+            >
+              {showBackendConfig ? 'Sembunyikan URL Server' : 'Atur URL Server'}
+            </button>
+          </div>
           <button
             type="button"
             onClick={onClose}
