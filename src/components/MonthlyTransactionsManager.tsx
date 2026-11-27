@@ -638,7 +638,7 @@ export const MonthlyTransactionsManager: React.FC<MonthlyTransactionsManagerProp
   return (
     <div className="space-y-6 font-sans">
       {/* Header Bar */}
-      <div className="bg-white rounded-2xl border border-stone-200 p-5 sm:p-6 shadow-3xs space-y-4">
+      <div className="bg-white rounded-2xl border border-stone-200 p-5 sm:p-6 shadow-3xs space-y-4 print:hidden">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="space-y-1.5">
             <div className="flex flex-wrap items-center gap-2">
@@ -1501,7 +1501,7 @@ export const MonthlyTransactionsManager: React.FC<MonthlyTransactionsManagerProp
 
       {/* Modal: Add / Edit Recurring Monthly Transaction */}
       {isFormOpen && (
-        <div className="fixed inset-0 z-50 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+        <div className="fixed inset-0 z-50 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto print:hidden">
           <div className="bg-white rounded-2xl border border-stone-200 shadow-2xl w-full max-w-xl overflow-hidden my-auto">
             <div className="px-5 py-4 bg-stone-900 text-white flex items-center justify-between">
               <div>
@@ -1724,7 +1724,7 @@ export const MonthlyTransactionsManager: React.FC<MonthlyTransactionsManagerProp
 
       {/* Modal: Link Existing Voucher to This Month */}
       {linkTargetItem && (
-        <div className="fixed inset-0 z-50 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4 print:hidden">
           <div className="bg-white rounded-2xl border border-stone-200 shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[85vh]">
             <div className="px-5 py-4 bg-stone-900 text-white flex items-center justify-between shrink-0">
               <div>

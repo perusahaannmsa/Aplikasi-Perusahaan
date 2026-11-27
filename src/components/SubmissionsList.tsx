@@ -3933,7 +3933,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
         /* Google Sheets Table Simulator View with tabs & sum status */
         <div className="bg-[#f9fbfd] rounded-2xl border border-stone-300 shadow-sm overflow-hidden flex flex-col font-sans select-none animate-fade-in">
           {/* Google Sheets Header & Topbar */}
-          <div className="bg-emerald-800 text-white p-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-emerald-900">
+          <div className="bg-emerald-800 text-white p-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-emerald-900 print:hidden">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-white text-emerald-800 rounded-lg shadow-sm">
                 <FileText size={18} />
@@ -4027,7 +4027,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
           </div>
 
           {/* Google Sheets Decorative Menu Formatter Bar */}
-          <div className="bg-stone-50 border-b border-stone-200 p-1.5 flex flex-wrap items-center gap-1 text-xs text-stone-600">
+          <div className="bg-stone-50 border-b border-stone-200 p-1.5 flex flex-wrap items-center gap-1 text-xs text-stone-600 print:hidden">
             <div className="px-2 py-1 bg-white border border-stone-200 rounded text-[11px] font-medium text-stone-700 min-w-[70px] text-center">
               Arial
             </div>
@@ -5578,7 +5578,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
         /* Log Riwayat Audit Detail View */
         <div className="bg-white rounded-2xl border border-stone-250 shadow-sm overflow-hidden animate-fade-in">
           {/* Header Activity Log panel */}
-          <div className="px-6 py-5 bg-stone-50 border-b border-stone-200 flex flex-col md:flex-row md:items-center justify-between gap-4 text-left">
+          <div className="px-6 py-5 bg-stone-50 border-b border-stone-200 flex flex-col md:flex-row md:items-center justify-between gap-4 text-left print:hidden">
             <div className="space-y-1">
               <div className="flex items-center gap-2">
                 <span className="text-lg font-bold text-stone-900">Riwayat Audit & Aktivitas Aplikasi</span>
@@ -5617,7 +5617,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
           </div>
 
           {/* Sub Tab Navigation */}
-          <div className="px-6 py-3 bg-stone-50/50 border-b border-stone-150 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-left">
+          <div className="px-6 py-3 bg-stone-50/50 border-b border-stone-150 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-left print:hidden">
             <div className="flex bg-stone-100 p-1 rounded-xl border border-stone-200 flex-wrap gap-1">
               <button
                 onClick={() => setLogsTab('all')}
@@ -6239,7 +6239,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
 
       {/* MODAL ANALISIS & REKAP POTENSI TRANSAKSI DOBEL */}
       {isDuplicateModalOpen && (
-        <div className="fixed inset-0 z-50 bg-stone-900/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 overflow-y-auto animate-fade-in font-sans">
+        <div className="fixed inset-0 z-50 bg-stone-900/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 overflow-y-auto animate-fade-in font-sans print:hidden">
           <div className="relative w-full max-w-4xl bg-white rounded-3xl shadow-2xl border border-stone-200 overflow-hidden flex flex-col max-h-[90vh] my-auto animate-in zoom-in-95 duration-150">
             {/* Modal Header */}
             <div className={`p-5 sm:p-6 flex items-start gap-4 border-b ${
@@ -6661,7 +6661,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
             maxHeight: actionMenuPosition?.maxHeight !== undefined ? `${actionMenuPosition.maxHeight}px` : '420px',
             zIndex: 9999999,
           }}
-          className="action-menu-dropdown-root action-menu-dropdown-popover w-56 bg-white rounded-2xl shadow-2xl border border-stone-200 py-1.5 overflow-y-auto divide-y divide-stone-100 text-left select-none ring-1 ring-black/5 animate-in fade-in duration-100"
+          className="action-menu-dropdown-root action-menu-dropdown-popover w-56 bg-white rounded-2xl shadow-2xl border border-stone-200 py-1.5 overflow-y-auto divide-y divide-stone-100 text-left select-none ring-1 ring-black/5 animate-in fade-in duration-100 print:hidden"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="px-3.5 py-2 bg-stone-50/90 border-b border-stone-150">
@@ -6912,7 +6912,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
       {/* IN-APP DELETE CONFIRMATION MODAL (replaces window.confirm & adds Google Drive folder deletion toggle) */}
       {deleteConfirmSub && createPortal(
         <div
-          className="fixed inset-0 z-[10050] bg-stone-950/60 backdrop-blur-xs flex items-center justify-center p-4"
+          className="fixed inset-0 z-[10050] bg-stone-950/60 backdrop-blur-xs flex items-center justify-center p-4 print:hidden"
           onClick={() => setDeleteConfirmSub(null)}
         >
           <div
@@ -7077,7 +7077,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
           );
           return (
             <div
-              className="fixed inset-0 z-[10055] bg-stone-950/60 backdrop-blur-xs flex items-center justify-center p-4"
+              className="fixed inset-0 z-[10055] bg-stone-950/60 backdrop-blur-xs flex items-center justify-center p-4 print:hidden"
               onClick={() => setBulkDeleteConfirmOpen(false)}
             >
               <div
@@ -7193,7 +7193,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
             width: '272px',
             zIndex: 9999999,
           }}
-          className="check-menu-dropdown-root bg-white rounded-2xl shadow-2xl border border-stone-200 py-1.5 divide-y divide-stone-100 text-left select-none ring-1 ring-black/5"
+          className="check-menu-dropdown-root bg-white rounded-2xl shadow-2xl border border-stone-200 py-1.5 divide-y divide-stone-100 text-left select-none ring-1 ring-black/5 print:hidden"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="px-3.5 py-2 bg-stone-50">
@@ -7304,7 +7304,7 @@ export const SubmissionsList: React.FC<SubmissionsListProps> = ({
           );
           return (
             <div
-              className="fixed inset-0 z-[10060] bg-stone-950/60 backdrop-blur-xs flex items-center justify-center p-4"
+              className="fixed inset-0 z-[10060] bg-stone-950/60 backdrop-blur-xs flex items-center justify-center p-4 print:hidden"
               onClick={() => setBulkMarkPaidConfirmOpen(false)}
             >
               <div

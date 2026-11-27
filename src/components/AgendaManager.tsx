@@ -415,10 +415,54 @@ export function AgendaManager({
   const selectedDateItems = selectedDateFilter ? (dateToItemsMap.get(selectedDateFilter) || []) : [];
 
   return (
-    <div className={embedded ? "w-full font-sans space-y-6" : "w-full flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 font-sans space-y-6"}>
-      
+    <div className={embedded ? "w-full font-sans space-y-6 print:space-y-4" : "w-full flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 font-sans space-y-6 print:p-0 print:max-w-full print:space-y-4"}>
+
+      {/* Formal Print Header / Kop (Only visible when printing/PDF) */}
+      <div className="hidden print:block border-b-2 border-stone-900 pb-2.5">
+        <div className="flex justify-between items-end gap-4">
+          <div>
+            <h1 className="text-base font-black uppercase tracking-wider text-stone-900 leading-tight">
+              {(userProfile?.companyName || 'PT. NUSANTARA MINERAL SUKSES ABADI').toUpperCase()}
+            </h1>
+            <p className="text-[9px] text-stone-600 font-mono">
+              DIVISI FINANCE &amp; ADMINISTRASI OPERASIONAL HO
+            </p>
+            <h2 className="text-xs font-bold text-stone-900 mt-0.5">
+              {viewMode === 'calendar'
+                ? `Kalender Jadwal & Agenda Kerja (${monthNamesIndonesian[month]} ${year})`
+                : 'Daftar Checklist Agenda Kerja & Pengingat Operasional'}
+            </h2>
+          </div>
+          <div className="text-right font-mono text-[8.5px] text-stone-600 leading-tight">
+            <p>
+              Dicetak pada:{' '}
+              {new Date().toLocaleDateString('id-ID', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+              })}
+            </p>
+            <p>
+              Kategori:{' '}
+              {viewMode === 'calendar'
+                ? `${monthNamesIndonesian[month]} ${year}`
+                : activeTab === 'due_or_overdue'
+                ? 'Hari Ini & Terlambat'
+                : activeTab === 'all_active'
+                ? 'Semua Aktif'
+                : activeTab === 'upcoming'
+                ? 'Mendatang'
+                : 'Riwayat Selesai'}
+              {selectedCategory !== 'all' ? ` · ${selectedCategory}` : ''}
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Top Banner / Breadcrumb & Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-stone-200 shadow-xs">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-stone-200 shadow-xs print:hidden">
         <div className="flex items-center gap-3.5 min-w-0">
           <div className="p-3 bg-amber-500 text-white rounded-2xl shadow-xs shrink-0">
             <CalendarDays size={24} />
@@ -495,7 +539,7 @@ export function AgendaManager({
       </div>
 
       {/* KPI / Status Summary Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5 print:hidden">
         <div 
           onClick={() => { setActiveTab('due_or_overdue'); setViewMode('list'); }}
           className={`p-4 rounded-2xl border transition cursor-pointer flex flex-col justify-between ${
@@ -593,7 +637,7 @@ export function AgendaManager({
         <div className="space-y-4">
           
           {/* Controls Bar: Tabs, Search & Filters */}
-          <div className="bg-white p-4 rounded-2xl border border-stone-200 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          <div className="bg-white p-4 rounded-2xl border border-stone-200 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-3 print:hidden">
             
             {/* Filter Tabs */}
             <div className="flex items-center gap-1 overflow-x-auto pb-1 lg:pb-0 scrollbar-none">
@@ -712,7 +756,7 @@ export function AgendaManager({
               </p>
               <button
                 onClick={() => handleOpenAddModal()}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-stone-950 rounded-xl text-xs font-bold transition shadow-xs cursor-pointer"
+                className="print:hidden inline-flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-stone-950 rounded-xl text-xs font-bold transition shadow-xs cursor-pointer"
               >
                 <Plus size={14} />
                 <span>Buat Agenda Baru</span>
@@ -895,7 +939,7 @@ export function AgendaManager({
                     </div>
 
                     {/* Right: Quick Action Controls */}
-                    <div className="flex items-center gap-1.5 sm:self-center shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-stone-100">
+                    <div className="flex items-center gap-1.5 sm:self-center shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-stone-100 print:hidden">
                       {!isCompleted && (
                         <>
                           <button
@@ -979,13 +1023,13 @@ export function AgendaManager({
                 </h2>
                 <button
                   onClick={() => setCalendarDate(new Date())}
-                  className="px-2.5 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold rounded-lg transition cursor-pointer font-mono"
+                  className="print:hidden px-2.5 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold rounded-lg transition cursor-pointer font-mono"
                 >
                   Hari Ini
                 </button>
               </div>
 
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1 print:hidden">
                 <button
                   onClick={() => setCalendarDate(new Date(year, month - 1, 1))}
                   className="p-2 hover:bg-stone-100 rounded-xl text-stone-600 transition cursor-pointer"
@@ -1097,7 +1141,7 @@ export function AgendaManager({
                 </div>
                 <button
                   onClick={() => handleOpenAddModal(selectedDateFilter || todayStr)}
-                  className="p-2 bg-amber-500 hover:bg-amber-600 text-stone-950 rounded-xl text-xs font-bold transition cursor-pointer shadow-3xs flex items-center gap-1"
+                  className="print:hidden p-2 bg-amber-500 hover:bg-amber-600 text-stone-950 rounded-xl text-xs font-bold transition cursor-pointer shadow-3xs flex items-center gap-1"
                   title="Tambah Agenda Pada Tanggal Ini"
                 >
                   <Plus size={14} />
@@ -1150,7 +1194,7 @@ export function AgendaManager({
 
                           <button
                             onClick={() => handleOpenEditModal(item)}
-                            className="p-1 text-stone-400 hover:text-stone-700 rounded transition cursor-pointer"
+                            className="print:hidden p-1 text-stone-400 hover:text-stone-700 rounded transition cursor-pointer"
                           >
                             <Edit3 size={12} />
                           </button>
@@ -1162,7 +1206,7 @@ export function AgendaManager({
               )}
             </div>
 
-            <div className="pt-3 border-t border-stone-100">
+            <div className="pt-3 border-t border-stone-100 print:hidden">
               <button
                 onClick={() => handleOpenAddModal(selectedDateFilter || todayStr)}
                 className="w-full py-2 bg-stone-100 hover:bg-amber-100 hover:text-amber-900 border border-stone-200 text-stone-700 rounded-xl text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5"
@@ -1179,7 +1223,7 @@ export function AgendaManager({
 
       {/* MODAL PENGATURAN SUARA & MUSIK PENGINGAT */}
       {showSoundSettingsModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-950/70 backdrop-blur-xs animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-950/70 backdrop-blur-xs animate-in fade-in duration-150 print:hidden">
           <div className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl border border-stone-200 overflow-hidden flex flex-col font-sans">
             {/* Modal Header */}
             <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-amber-600 to-amber-700 text-white">
@@ -1344,7 +1388,7 @@ export function AgendaManager({
 
       {/* MODAL FORM TAMBAH / EDIT AGENDA */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-xs animate-in fade-in duration-150 print:hidden">
           <div className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl border border-stone-200 overflow-hidden flex flex-col font-sans">
             
             {/* Modal Header */}
@@ -1707,7 +1751,7 @@ export function AgendaManager({
 
       {/* Modal Detail Catatan Transaksi (Note Viewer Modal) */}
       {selectedSubmissionNoteView && (
-        <div className="fixed inset-0 z-50 bg-stone-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-stone-950/60 backdrop-blur-xs flex items-center justify-center p-4 print:hidden">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-stone-250 animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between pb-3 border-b border-stone-200">
               <div className="flex items-center gap-2">

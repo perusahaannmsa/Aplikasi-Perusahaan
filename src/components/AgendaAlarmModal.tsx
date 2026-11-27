@@ -99,7 +99,7 @@ export const AgendaAlarmModal: React.FC<AgendaAlarmModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-md animate-in fade-in duration-300">
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-md animate-in fade-in duration-300 print:hidden">
       <div 
         className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl border-2 border-amber-400/80 overflow-hidden text-slate-900 animate-in zoom-in-95 duration-200"
         role="dialog"

@@ -1041,7 +1041,7 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
 
       {/* Modal Add/Edit NPWP */}
       {isFormModalOpen && (
-        <div className="fixed inset-0 z-50 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4 print:hidden">
           <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-stone-200 overflow-hidden animate-in fade-in zoom-in duration-200">
             <div className="bg-stone-900 px-6 py-4 text-white flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -1175,7 +1175,7 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
 
       {/* Modal Konfirmasi Hapus NPWP */}
       {pendingDeleteTarget && (
-        <div className="fixed inset-0 z-50 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4 print:hidden">
           <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-stone-200 overflow-hidden p-6 space-y-4">
             <div className="flex items-start gap-3">
               <div className="p-2.5 rounded-xl bg-rose-100 text-rose-600 shrink-0">
@@ -1210,7 +1210,7 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
 
       {/* Modal View Invoices for Selected Company */}
       {selectedCompanyForInvoices && (
-        <div className="fixed inset-0 z-50 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4 print:hidden">
           <div className="bg-white rounded-2xl max-w-3xl w-full shadow-2xl border border-stone-200 overflow-hidden flex flex-col max-h-[85vh]">
             <div className="bg-stone-900 px-6 py-4 text-white flex items-center justify-between shrink-0">
               <div className="space-y-0.5">

@@ -1162,7 +1162,7 @@ export const Pph23BupotRecap: React.FC<Pph23BupotRecapProps> = ({
 
       {/* MODAL: LIHAT DOKUMEN TRANSAKSI & LAMPIRAN */}
       {previewSub && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150 print:hidden">
           <div className="bg-white rounded-2xl max-w-xl w-full border border-stone-200 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150 font-sans">
             <div className="p-4 bg-stone-900 text-white flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -1437,7 +1437,7 @@ export const Pph23BupotRecap: React.FC<Pph23BupotRecapProps> = ({
 
       {/* MODAL: SESUAIKAN DPP & TARIF PPH 23 */}
       {editingSub && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150 print:hidden">
           <div className="bg-white rounded-2xl max-w-md w-full border border-stone-200 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150 font-sans">
             <div className="p-4 bg-stone-900 text-white flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -1602,7 +1602,7 @@ export const Pph23BupotRecap: React.FC<Pph23BupotRecapProps> = ({
 
       {/* MODAL: QUICK CATAT NPWP VENDOR */}
       {npwpModalVendor && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150 print:hidden">
           <div className="bg-white rounded-2xl max-w-md w-full border border-stone-200 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150 font-sans">
             <div className="p-4 bg-stone-900 text-white flex items-center justify-between">
               <div className="flex items-center gap-2">

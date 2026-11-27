@@ -4269,7 +4269,7 @@ export default function App() {
           {/* Compact Monthly Recurring Transaction Reminder Strip (< Tgl 15) */}
           {pendingMonthlySummary.pendingCount > 0 && (
             <div
-              className={`rounded-2xl border px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-3xs ${
+              className={`print:hidden rounded-2xl border px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-3xs ${
                 pendingMonthlySummary.overdueCount > 0
                   ? 'bg-rose-50/80 border-rose-200 text-rose-950'
                   : 'bg-amber-50/80 border-amber-300 text-amber-950'
@@ -4315,7 +4315,7 @@ export default function App() {
 
           {/* Mandatory DJP Bukti Potong Reminder Strip (< Tgl 5 Bulan Berikutnya, Explicit Invoice Only) */}
           {pendingBupotDjpCount > 0 && (
-            <div className="rounded-2xl border border-rose-300 bg-rose-50/90 px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-3xs text-rose-950">
+            <div className="print:hidden rounded-2xl border border-rose-300 bg-rose-50/90 px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-3xs text-rose-950">
               <div className="flex items-start sm:items-center gap-3 min-w-0">
                 <div className="p-2 rounded-xl bg-rose-600 text-white shrink-0">
                   <Receipt size={16} />
@@ -4868,7 +4868,7 @@ export default function App() {
 
       {/* Pusat Layanan Awan & Integrasi Modal */}
       {isCloudModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-xs animate-in fade-in duration-150 print:hidden">
           <div className="relative w-full max-w-5xl max-h-[90vh] bg-white rounded-3xl shadow-2xl border border-stone-200 overflow-hidden flex flex-col font-sans">
             <div className="flex items-center justify-between px-6 py-4 bg-stone-900 text-white border-b border-stone-800 shrink-0">
               <div className="flex items-center gap-2.5">
