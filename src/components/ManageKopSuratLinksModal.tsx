@@ -14,7 +14,12 @@ import {
   Link as LinkIcon,
   CheckCircle2,
 } from 'lucide-react';
-import { OFFICIAL_KOP_SURAT_IMAGE_URL } from '../utils/memoUtils';
+import {
+  DEFAULT_NMSA_KOP_SURAT_URL,
+  markKopSuratIdDeleted,
+  OFFICIAL_KOP_SURAT_IMAGE_URL,
+  restoreDefaultKopSuratLinks,
+} from '../utils/memoUtils';
 
 interface ManageKopSuratLinksModalProps {
   isOpen: boolean;
@@ -109,19 +114,22 @@ export const ManageKopSuratLinksModal: React.FC<ManageKopSuratLinksModalProps> =
     setTimeout(() => setSuccessMsg(''), 3000);
   };
 
-  const handleDelete = (id: string, itemUrl: string) => {
-    if (itemUrl === OFFICIAL_KOP_SURAT_IMAGE_URL) {
-      setErrorMsg('Kop surat resmi default PT NMSA tidak dapat dihapus.');
-      setTimeout(() => setErrorMsg(''), 3000);
-      return;
-    }
+  const handleDelete = (id: string) => {
     if (confirm('Apakah Anda yakin ingin menghapus pilihan kop surat ini?')) {
+      markKopSuratIdDeleted(id);
       const updated = links.filter((item) => item.id !== id);
       onSaveLinks(updated);
       if (editingId === id) handleCancelEdit();
       setSuccessMsg('Kop surat berhasil dihapus.');
       setTimeout(() => setSuccessMsg(''), 2500);
     }
+  };
+
+  const handleRestoreDefaults = () => {
+    const restored = restoreDefaultKopSuratLinks();
+    onSaveLinks(restored);
+    setSuccessMsg('3 Kop Surat default (IPN, NH, NMSA) dipulihkan.');
+    setTimeout(() => setSuccessMsg(''), 2500);
   };
 
   return (
@@ -217,7 +225,7 @@ export const ManageKopSuratLinksModal: React.FC<ManageKopSuratLinksModalProps> =
                 </label>
                 <input
                   type="text"
-                  placeholder="https://... atau /kop-surat-nmsa-full.png"
+                  placeholder="https://i.ibb.co.com/..."
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                   className="w-full px-3 py-2 text-xs font-mono bg-white border border-stone-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-none"
@@ -284,13 +292,27 @@ export const ManageKopSuratLinksModal: React.FC<ManageKopSuratLinksModalProps> =
 
           {/* List of Saved Kop Surat Links */}
           <div className="space-y-2.5">
-            <h4 className="text-xs font-black uppercase tracking-wider text-stone-700">
-              Daftar Link Kop Surat Tersimpan ({links.length})
-            </h4>
+            <div className="flex items-center justify-between gap-2">
+              <h4 className="text-xs font-black uppercase tracking-wider text-stone-700">
+                Daftar Link Kop Surat Tersimpan ({links.length})
+              </h4>
+              <button
+                type="button"
+                onClick={handleRestoreDefaults}
+                className="text-[11px] font-bold text-amber-700 hover:text-amber-900 underline cursor-pointer"
+                title="Pulihkan 3 link Kop Surat default (IPN, NH, NMSA)"
+              >
+                Pulihkan Kop Default
+              </button>
+            </div>
 
             <div className="space-y-2">
               {links.map((item) => {
-                const isActive = activeUrl && (activeUrl === item.url || (item.url === OFFICIAL_KOP_SURAT_IMAGE_URL && activeUrl.includes('kop-surat-nmsa-full.png')));
+                const isActive =
+                  activeUrl &&
+                  (activeUrl === item.url ||
+                    (item.url === DEFAULT_NMSA_KOP_SURAT_URL &&
+                      (activeUrl.includes('kop-surat-nmsa-full.png') || activeUrl.includes('Kop-Surat-NMSA'))));
                 return (
                   <div
                     key={item.id}
@@ -378,16 +400,14 @@ export const ManageKopSuratLinksModal: React.FC<ManageKopSuratLinksModalProps> =
                         <Edit2 size={13} />
                       </button>
 
-                      {item.url !== OFFICIAL_KOP_SURAT_IMAGE_URL && (
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(item.id, item.url)}
-                          className="p-1.5 text-stone-400 hover:text-red-700 hover:bg-red-50 rounded-lg transition cursor-pointer"
-                          title="Hapus kop surat"
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(item.id)}
+                        className="p-1.5 text-stone-400 hover:text-red-700 hover:bg-red-50 rounded-lg transition cursor-pointer"
+                        title="Hapus kop surat"
+                      >
+                        <Trash2 size={13} />
+                      </button>
                     </div>
                   </div>
                 );

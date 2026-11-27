@@ -16,6 +16,20 @@ export interface BaileysHostBridge {
   validateAdminToken?: (req: express.Request) => boolean;
 }
 
+export interface BaileysChatMessage {
+  id: string;
+  workerId?: string | null;
+  workerName: string;
+  phone: string;
+  direction: "incoming" | "outgoing";
+  type: "text" | "location" | "reminder" | "auto_reply";
+  message: string;
+  latitude?: number;
+  longitude?: number;
+  timestamp: number;
+  timeWib: string;
+}
+
 export interface BaileysStatusSnapshot {
   status: BaileysConnectionStatus;
   isConnected: boolean;
@@ -33,6 +47,8 @@ export interface BaileysStatusSnapshot {
   error: string | null;
   hasCredentials: boolean;
   hasBackup: boolean;
+  pendingApproval: boolean;
+  requireApprovalOnConnect: boolean;
 }
 
 export interface WhatsAppBaileysModule {
@@ -41,7 +57,11 @@ export interface WhatsAppBaileysModule {
   disconnect: (autoRestart?: boolean, skipRemoteLogout?: boolean) => Promise<{ success: boolean; message?: string; error?: string }>;
   refreshQr: () => Promise<BaileysStatusSnapshot>;
   requestPairingCode: (phone: string) => Promise<string>;
-  sendMessage: (phoneNumber: string, text: string) => Promise<{ success: boolean; error?: string }>;
+  sendMessage: (
+    phoneNumber: string,
+    text: string,
+    meta?: { type?: "text" | "reminder" | "auto_reply"; workerId?: string; workerName?: string }
+  ) => Promise<{ success: boolean; error?: string }>;
   getStatus: () => BaileysStatusSnapshot;
   isConnected: () => boolean;
   isTransitioning: () => boolean;
@@ -139,9 +159,63 @@ export function createWhatsAppBaileysModule(bridge: BaileysHostBridge): WhatsApp
   let isTransitioningSocket = false;
   let initPromise: Promise<any> | null = null;
   let waActionMutex: Promise<any> = Promise.resolve();
+  let awaitingManualApproval = false;
 
   function markUiPoll() {
     lastUiPollAt = Date.now();
+  }
+
+  function formatWibTime(ts = Date.now()): string {
+    return (
+      new Date(ts).toLocaleTimeString("id-ID", {
+        timeZone: "Asia/Jakarta",
+        hour: "2-digit",
+        minute: "2-digit",
+      }) + " WIB"
+    );
+  }
+
+  function appendChatLog(entry: {
+    phone: string;
+    direction: "incoming" | "outgoing";
+    type?: "text" | "location" | "reminder" | "auto_reply";
+    message: string;
+    workerId?: string | null;
+    workerName?: string;
+    latitude?: number;
+    longitude?: number;
+    timestamp?: number;
+  }) {
+    try {
+      const ds = bridge.readState();
+      const normPhone = normalizePhoneNumber(entry.phone);
+      const workers = ds.workers || [];
+      const matchedWorker = workers.find(
+        (w: any) => w.phoneNumber && normalizePhoneNumber(w.phoneNumber) === normPhone
+      );
+      const ts = entry.timestamp || Date.now();
+      const item: BaileysChatMessage = {
+        id: `wa-${ts}-${Math.random().toString(36).slice(2, 7)}`,
+        workerId: entry.workerId ?? matchedWorker?.id ?? null,
+        workerName: matchedWorker?.name || entry.workerName || `+${normPhone}`,
+        phone: normPhone,
+        direction: entry.direction,
+        type: entry.type || "text",
+        message: entry.message,
+        ...(entry.latitude !== undefined ? { latitude: entry.latitude } : {}),
+        ...(entry.longitude !== undefined ? { longitude: entry.longitude } : {}),
+        timestamp: ts,
+        timeWib: formatWibTime(ts),
+      };
+      if (!Array.isArray(ds.waChatLogs)) ds.waChatLogs = [];
+      ds.waChatLogs.push(item);
+      if (ds.waChatLogs.length > 300) {
+        ds.waChatLogs = ds.waChatLogs.slice(-300);
+      }
+      bridge.writeState(ds);
+    } catch (err) {
+      console.warn("[Baileys] Failed recording chat log:", err);
+    }
   }
 
   function isCredsAuthenticated(parsed: any): boolean {
@@ -274,6 +348,20 @@ export function createWhatsAppBaileysModule(bridge: BaileysHostBridge): WhatsApp
   function getStatus(): BaileysStatusSnapshot {
     const hasLocalCreds = fs.existsSync(path.join(authDir, "creds.json"));
     const hasBackup = hasAuthBackup();
+    let requireApprovalOnConnect = true;
+    let pendingApproval = false;
+    try {
+      const ds = bridge.readState();
+      const todayYMD = bridge.getJakartaDateStr();
+      requireApprovalOnConnect = ds.requireApprovalOnConnect !== false;
+      pendingApproval =
+        isConnected() &&
+        requireApprovalOnConnect &&
+        ds.lastCronSentDate !== todayYMD &&
+        (awaitingManualApproval || ds.approvedSendDate !== todayYMD);
+    } catch {
+      // ignore
+    }
     return {
       status: connectionStatus,
       isConnected: isConnected(),
@@ -291,6 +379,8 @@ export function createWhatsAppBaileysModule(bridge: BaileysHostBridge): WhatsApp
       error: lastError,
       hasCredentials: hasLocalCreds || hasBackup,
       hasBackup,
+      pendingApproval,
+      requireApprovalOnConnect,
     };
   }
 
@@ -449,7 +539,7 @@ export function createWhatsAppBaileysModule(bridge: BaileysHostBridge): WhatsApp
           .catch((e) => console.warn("[Baileys] Error saving creds:", e));
       });
 
-      // Handle worker replies & Share Location check-in cleanly
+      // Handle worker replies & Share Location check-in cleanly + log real-time chats
       sock.ev.on("messages.upsert", async (m: any) => {
         try {
           if (m.type !== "notify") return;
@@ -459,13 +549,48 @@ export function createWhatsAppBaileysModule(bridge: BaileysHostBridge): WhatsApp
             if (!senderJid || !senderJid.endsWith("@s.whatsapp.net")) continue;
 
             const appState = bridge.readState();
-            if (appState.masterAutoSendEnabled === false) continue;
-
             const cleanSenderPhone = normalizePhoneNumber(senderJid.split("@")[0]);
             const workers = appState.workers || [];
-            const worker = workers.find(
-              (w: any) => w.isActive && w.phoneNumber && normalizePhoneNumber(w.phoneNumber) === cleanSenderPhone
+            const workerAny = workers.find(
+              (w: any) => w.phoneNumber && normalizePhoneNumber(w.phoneNumber) === cleanSenderPhone
             );
+            const worker = workerAny && workerAny.isActive ? workerAny : null;
+
+            const incomingLoc = msg.message?.locationMessage;
+            const incomingText = (
+              msg.message?.conversation ||
+              msg.message?.extendedTextMessage?.text ||
+              msg.message?.imageMessage?.caption ||
+              msg.message?.documentMessage?.caption ||
+              ""
+            ).trim();
+
+            if (incomingLoc) {
+              const lat = incomingLoc.degreesLatitude;
+              const lon = incomingLoc.degreesLongitude;
+              const dist = Math.round(calcDistanceMeters(lat, lon, OFFICE_LAT, OFFICE_LON));
+              appendChatLog({
+                phone: cleanSenderPhone,
+                direction: "incoming",
+                type: "location",
+                message: `📍 Share Location (jarak ${dist}m dari kantor)`,
+                workerId: workerAny?.id || null,
+                workerName: workerAny?.name || msg.pushName || `+${cleanSenderPhone}`,
+                latitude: lat,
+                longitude: lon,
+              });
+            } else if (incomingText) {
+              appendChatLog({
+                phone: cleanSenderPhone,
+                direction: "incoming",
+                type: "text",
+                message: incomingText,
+                workerId: workerAny?.id || null,
+                workerName: workerAny?.name || msg.pushName || `+${cleanSenderPhone}`,
+              });
+            }
+
+            if (appState.masterAutoSendEnabled === false) continue;
             if (!worker) continue;
 
             const todayDate = bridge.getJakartaDateStr();
@@ -473,9 +598,9 @@ export function createWhatsAppBaileysModule(bridge: BaileysHostBridge): WhatsApp
             const matchedRecord = records.find((r: any) => r.workerId === worker.id);
 
             // 1. Share Location check-in
-            if (msg.message?.locationMessage && appState.allowLocationCheckin !== false) {
-              const lat = msg.message.locationMessage.degreesLatitude;
-              const lon = msg.message.locationMessage.degreesLongitude;
+            if (incomingLoc && appState.allowLocationCheckin !== false) {
+              const lat = incomingLoc.degreesLatitude;
+              const lon = incomingLoc.degreesLongitude;
               const distance = calcDistanceMeters(lat, lon, OFFICE_LAT, OFFICE_LON);
 
               if (distance <= MAX_DISTANCE_METERS) {
@@ -517,23 +642,33 @@ export function createWhatsAppBaileysModule(bridge: BaileysHostBridge): WhatsApp
                 appState.attendanceRecords = records;
                 bridge.writeState(appState);
 
-                await sock.sendMessage(senderJid, {
-                  text: `✅ *Absen Kehadiran Diterima!*\n\nHalo *${worker.name}*, kehadiran Anda hari ini (*${todayDate}*) dicatat otomatis (jarak: *${Math.round(distance)}m* dari kantor).`,
+                const replyText = `✅ *Absen Kehadiran Diterima!*\n\nHalo *${worker.name}*, kehadiran Anda hari ini (*${todayDate}*) dicatat otomatis (jarak: *${Math.round(distance)}m* dari kantor).`;
+                await sock.sendMessage(senderJid, { text: replyText });
+                appendChatLog({
+                  phone: cleanSenderPhone,
+                  direction: "outgoing",
+                  type: "auto_reply",
+                  message: replyText,
+                  workerId: worker.id,
+                  workerName: worker.name,
                 });
               } else {
-                await sock.sendMessage(senderJid, {
-                  text: `⚠️ *Absen Ditolak (Jarak: ${Math.round(distance)}m)*\n\nLokasi Anda di luar batas *${MAX_DISTANCE_METERS}m* kantor. Balas *Sakit*, *Izin*, *Cuti*, atau *Meeting* jika berhalangan hadir.`,
+                const replyText = `⚠️ *Absen Ditolak (Jarak: ${Math.round(distance)}m)*\n\nLokasi Anda di luar batas *${MAX_DISTANCE_METERS}m* kantor. Balas *Sakit*, *Izin*, *Cuti*, atau *Meeting* jika berhalangan hadir.`;
+                await sock.sendMessage(senderJid, { text: replyText });
+                appendChatLog({
+                  phone: cleanSenderPhone,
+                  direction: "outgoing",
+                  type: "auto_reply",
+                  message: replyText,
+                  workerId: worker.id,
+                  workerName: worker.name,
                 });
               }
               continue;
             }
 
             // 2. Text reply handling (status or attendance link)
-            const messageText = (
-              msg.message?.conversation ||
-              msg.message?.extendedTextMessage?.text ||
-              ""
-            ).trim();
+            const messageText = incomingText;
             if (!messageText) continue;
 
             const cleanMsg = messageText.toLowerCase();
@@ -566,8 +701,15 @@ export function createWhatsAppBaileysModule(bridge: BaileysHostBridge): WhatsApp
               appState.attendanceRecords = records;
               bridge.writeState(appState);
 
-              await sock.sendMessage(senderJid, {
-                text: `✅ *Status Absensi Tercatat: ${selectedStatus}*\n\nHalo *${worker.name}*, status hari ini (*${todayDate}*) telah dicatat.\n\nJika ingin mengubah ke Hadir, kirim Share Location saat di kantor atau buka:\n👉 ${attendanceUrl}`,
+              const replyText = `✅ *Status Absensi Tercatat: ${selectedStatus}*\n\nHalo *${worker.name}*, status hari ini (*${todayDate}*) telah dicatat.\n\nJika ingin mengubah ke Hadir, kirim Share Location saat di kantor atau buka:\n👉 ${attendanceUrl}`;
+              await sock.sendMessage(senderJid, { text: replyText });
+              appendChatLog({
+                phone: cleanSenderPhone,
+                direction: "outgoing",
+                type: "auto_reply",
+                message: replyText,
+                workerId: worker.id,
+                workerName: worker.name,
               });
             } else if (
               cleanMsg === "absen" ||
@@ -576,8 +718,15 @@ export function createWhatsAppBaileysModule(bridge: BaileysHostBridge): WhatsApp
               cleanMsg.includes("link absen") ||
               cleanMsg === "menu"
             ) {
-              await sock.sendMessage(senderJid, {
-                text: `Halo *${worker.name}*! 👋\n\nBerikut tautan presensi mandiri hari ini (*${todayDate}*):\n👉 ${attendanceUrl}\n\nAtau kirim *Share Location* saat berada di kantor.`,
+              const replyText = `Halo *${worker.name}*! 👋\n\nBerikut tautan presensi mandiri hari ini (*${todayDate}*):\n👉 ${attendanceUrl}\n\nAtau kirim *Share Location* saat berada di kantor.`;
+              await sock.sendMessage(senderJid, { text: replyText });
+              appendChatLog({
+                phone: cleanSenderPhone,
+                direction: "outgoing",
+                type: "auto_reply",
+                message: replyText,
+                workerId: worker.id,
+                workerName: worker.name,
               });
             }
           }
@@ -597,6 +746,13 @@ export function createWhatsAppBaileysModule(bridge: BaileysHostBridge): WhatsApp
           qrExpiresAt = null;
           connectionStatus = "connecting";
           lastError = null;
+          try {
+            const ds = bridge.readState();
+            ds.approvedSendDate = "";
+            bridge.writeState(ds);
+          } catch {
+            // ignore
+          }
         }
 
         if (qr) {
@@ -636,6 +792,17 @@ export function createWhatsAppBaileysModule(bridge: BaileysHostBridge): WhatsApp
           lastError = null;
           const user = sock?.user;
           connectedUser = user ? { id: user.id, name: user.name || "WhatsApp Baileys" } : { id: "connected" };
+
+          // Selalu tahan pengiriman otomatis setelah perangkat tersambung / selesai scan QR
+          // sampai admin menyetujui pengiriman di modal Baileys (bila opsi persetujuan aktif)
+          try {
+            const ds = bridge.readState();
+            if (ds.requireApprovalOnConnect !== false) {
+              awaitingManualApproval = true;
+            }
+          } catch {
+            awaitingManualApproval = true;
+          }
 
           await pendingCredsSave.catch(() => {});
           if (activeSaveCreds) await activeSaveCreds().catch(() => {});
@@ -810,6 +977,14 @@ export function createWhatsAppBaileysModule(bridge: BaileysHostBridge): WhatsApp
     const run = async () => {
       isTransitioningSocket = true;
       try {
+        try {
+          const ds = bridge.readState();
+          ds.approvedSendDate = "";
+          bridge.writeState(ds);
+        } catch {
+          // ignore
+        }
+        awaitingManualApproval = true;
         connectionStatus = "connecting";
         await disconnect(false, true);
         connectionStatus = "connecting";
@@ -932,7 +1107,11 @@ export function createWhatsAppBaileysModule(bridge: BaileysHostBridge): WhatsApp
     return next;
   }
 
-  async function sendMessage(phoneNumber: string, text: string): Promise<{ success: boolean; error?: string }> {
+  async function sendMessage(
+    phoneNumber: string,
+    text: string,
+    meta?: { type?: "text" | "reminder" | "auto_reply"; workerId?: string; workerName?: string }
+  ): Promise<{ success: boolean; error?: string }> {
     try {
       if (!isConnected()) {
         return { success: false, error: "WhatsApp Baileys belum terhubung." };
@@ -956,6 +1135,14 @@ export function createWhatsAppBaileysModule(bridge: BaileysHostBridge): WhatsApp
       }
 
       await sock.sendMessage(jid, { text });
+      appendChatLog({
+        phone: phoneNumber,
+        direction: "outgoing",
+        type: meta?.type || "text",
+        message: text,
+        workerId: meta?.workerId,
+        workerName: meta?.workerName,
+      });
       await new Promise((r) => setTimeout(r, 800 + Math.floor(Math.random() * 600)));
       return { success: true };
     } catch (err: any) {
@@ -989,6 +1176,12 @@ export function createWhatsAppBaileysModule(bridge: BaileysHostBridge): WhatsApp
         state.lastCronStatus = msg;
         bridge.writeState(state);
         return { success: true, skipped: true, message: msg, sentCount: 0, failedCount: 0 };
+      }
+      if (state.requireApprovalOnConnect !== false && (awaitingManualApproval || state.approvedSendDate !== todayYMD)) {
+        const msg = "Menunggu persetujuan admin setelah scan QR sebelum mengirim pengingat.";
+        state.lastCronStatus = msg;
+        bridge.writeState(state);
+        return { success: true, skipped: true, pendingApproval: true, message: msg, sentCount: 0, failedCount: 0 };
       }
 
       const daysMap: Record<string, string> = {
@@ -1061,7 +1254,11 @@ export function createWhatsAppBaileysModule(bridge: BaileysHostBridge): WhatsApp
       }
       const loginUrl = `${origin}/?view=absen&workerId=${encodeURIComponent(worker.id)}&id=${encodeURIComponent(worker.id)}&quick=true${fridayParam}`;
       const message = bridge.getReminderMessage(worker.name, loginUrl, worker.id, todayYMD);
-      const result = await sendMessage(worker.phoneNumber, message);
+      const result = await sendMessage(worker.phoneNumber, message, {
+        type: "reminder",
+        workerId: worker.id,
+        workerName: worker.name,
+      });
       if (result.success) {
         sentCount++;
       } else {
@@ -1221,6 +1418,68 @@ export function createWhatsAppBaileysModule(bridge: BaileysHostBridge): WhatsApp
     return res.status(result.success ? 200 : 400).json(result);
   });
 
+  router.get("/chats", (req, res) => {
+    try {
+      const state = bridge.readState();
+      const filterPhone = req.query.phone ? normalizePhoneNumber(String(req.query.phone)) : "";
+      const rawChats: BaileysChatMessage[] = Array.isArray(state.waChatLogs) ? state.waChatLogs : [];
+      const chats = filterPhone
+        ? rawChats.filter((c) => normalizePhoneNumber(c.phone) === filterPhone)
+        : rawChats;
+      const workers = (state.workers || [])
+        .filter((w: any) => w.phoneNumber)
+        .map((w: any) => ({
+          id: w.id,
+          name: w.name,
+          role: w.role || "",
+          phoneNumber: w.phoneNumber,
+          normalizedPhone: normalizePhoneNumber(w.phoneNumber),
+          isActive: Boolean(w.isActive),
+        }));
+
+      return res.json({
+        success: true,
+        chats,
+        workers,
+        total: chats.length,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, chats: [], workers: [], error: err?.message });
+    }
+  });
+
+  router.post("/approve-reminder", async (req, res) => {
+    try {
+      const action = req.body?.action === "skip" ? "skip" : "send";
+      const state = bridge.readState();
+      const todayYMD = bridge.getJakartaDateStr();
+
+      awaitingManualApproval = false;
+      state.approvedSendDate = todayYMD;
+
+      if (action === "skip") {
+        state.lastCronSentDate = todayYMD;
+        state.lastCronStatus = "Pengingat hari ini ditahan atas persetujuan admin.";
+        bridge.writeState(state);
+        return res.json({
+          success: true,
+          skipped: true,
+          message: "Pengingat hari ini berhasil ditahan (tidak ada pesan dikirim).",
+        });
+      }
+
+      bridge.writeState(state);
+      const result = await executeAttendanceReminderBroadcast({
+        force: true,
+        markSent: true,
+        hostOrigin: getHostOrigin(req, bridge.readState()),
+      });
+      return res.json(result);
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err?.message || "Gagal memproses persetujuan." });
+    }
+  });
+
   router.get("/settings", (_req, res) => {
     try {
       const state = bridge.readState();
@@ -1238,6 +1497,7 @@ export function createWhatsAppBaileysModule(bridge: BaileysHostBridge): WhatsApp
         success: true,
         masterAutoSendEnabled: state.masterAutoSendEnabled !== false,
         autoReminderEnabled: state.autoReminderEnabled !== false,
+        requireApprovalOnConnect: state.requireApprovalOnConnect !== false,
         autoReminderHour: state.autoReminderHour || "09:00",
         reminderActiveDays: state.reminderActiveDays || ["Senin", "Selasa", "Rabu", "Kamis", "Jumat"],
         skipHolidays: state.skipHolidays !== false,
@@ -1263,6 +1523,7 @@ export function createWhatsAppBaileysModule(bridge: BaileysHostBridge): WhatsApp
       const {
         masterAutoSendEnabled,
         autoReminderEnabled,
+        requireApprovalOnConnect,
         autoReminderHour,
         reminderActiveDays,
         skipHolidays,
@@ -1274,6 +1535,7 @@ export function createWhatsAppBaileysModule(bridge: BaileysHostBridge): WhatsApp
       const state = bridge.readState();
       if (masterAutoSendEnabled !== undefined) state.masterAutoSendEnabled = Boolean(masterAutoSendEnabled);
       if (autoReminderEnabled !== undefined) state.autoReminderEnabled = Boolean(autoReminderEnabled);
+      if (requireApprovalOnConnect !== undefined) state.requireApprovalOnConnect = Boolean(requireApprovalOnConnect);
       if (autoReminderHour !== undefined) state.autoReminderHour = String(autoReminderHour);
       if (Array.isArray(reminderActiveDays)) state.reminderActiveDays = reminderActiveDays;
       if (skipHolidays !== undefined) state.skipHolidays = Boolean(skipHolidays);
@@ -1294,6 +1556,12 @@ export function createWhatsAppBaileysModule(bridge: BaileysHostBridge): WhatsApp
   router.post("/trigger-reminder", async (req, res) => {
     try {
       const markSent = req.body?.markSent !== false;
+      const state = bridge.readState();
+      const todayYMD = bridge.getJakartaDateStr();
+      awaitingManualApproval = false;
+      state.approvedSendDate = todayYMD;
+      bridge.writeState(state);
+
       const result = await executeAttendanceReminderBroadcast({
         force: true,
         markSent,

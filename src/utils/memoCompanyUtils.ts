@@ -1,15 +1,21 @@
 import { InternalMemo, SavedKopSuratLink } from '../types';
-import { isMemoWithoutKopSurat, OFFICIAL_KOP_SURAT_IMAGE_URL } from './memoUtils';
+import {
+  DEFAULT_IPN_KOP_SURAT_URL,
+  DEFAULT_NH_KOP_SURAT_URL,
+  DEFAULT_NMSA_KOP_SURAT_URL,
+  isMemoWithoutKopSurat,
+  OFFICIAL_KOP_SURAT_IMAGE_URL,
+} from './memoUtils';
 
 export interface CompanyMemoGroup {
-  id: string; // 'nmsa', 'ipn', 'anh', or custom slug
-  code: string; // 'NMSA', 'IPN', 'ANH'
-  name: string; // 'PT Nusantara Mineral Sukses Abadi', 'PT Industri Padi Nusantara', etc.
-  shortName: string; // 'PT NMSA', 'PT IPN', 'PT ANH'
+  id: string; // 'nmsa', 'ipn', 'nh', 'anh', or custom slug
+  code: string; // 'NMSA', 'IPN', 'NH', 'ANH'
+  name: string; // 'PT. Nusantara Mineral Sukses Abadi', 'PT. Industri Padi Nusantara', etc.
+  shortName: string; // 'PT NMSA', 'PT IPN', 'PT NH'
   icon?: string;
   defaultKopName?: string;
   defaultKopUrl?: string;
-  memoPrefix: string; // 'IM-NMSA', 'IM-IPN', 'IM-ANH'
+  memoPrefix: string; // 'IM-NMSA', 'IM-IPN', 'IM-NH'
   colorClass: {
     badgeBg: string;
     badgeText: string;
@@ -25,11 +31,11 @@ export const DEFAULT_MEMO_COMPANIES: CompanyMemoGroup[] = [
   {
     id: 'nmsa',
     code: 'NMSA',
-    name: 'PT Nusantara Mineral Sukses Abadi',
+    name: 'PT. Nusantara Mineral Sukses Abadi',
     shortName: 'PT NMSA',
     icon: '🏢',
-    defaultKopName: 'Kop Surat Resmi PT NMSA',
-    defaultKopUrl: OFFICIAL_KOP_SURAT_IMAGE_URL,
+    defaultKopName: 'PT. Nusantara Mineral Sukses Abadi',
+    defaultKopUrl: DEFAULT_NMSA_KOP_SURAT_URL || OFFICIAL_KOP_SURAT_IMAGE_URL,
     memoPrefix: 'IM-NMSA',
     colorClass: {
       badgeBg: 'bg-amber-100',
@@ -44,11 +50,11 @@ export const DEFAULT_MEMO_COMPANIES: CompanyMemoGroup[] = [
   {
     id: 'ipn',
     code: 'IPN',
-    name: 'PT Industri Padi Nusantara',
+    name: 'PT. Industri Padi Nusantara',
     shortName: 'PT IPN',
     icon: '🌾',
-    defaultKopName: 'Kop Surat PT Industri Padi Nusantara',
-    defaultKopUrl: '',
+    defaultKopName: 'PT. Industri Padi Nusantara',
+    defaultKopUrl: DEFAULT_IPN_KOP_SURAT_URL,
     memoPrefix: 'IM-IPN',
     colorClass: {
       badgeBg: 'bg-emerald-100',
@@ -61,14 +67,14 @@ export const DEFAULT_MEMO_COMPANIES: CompanyMemoGroup[] = [
     },
   },
   {
-    id: 'anh',
-    code: 'ANH',
-    name: 'PT Agro Nusantara Halid',
-    shortName: 'PT ANH',
+    id: 'nh',
+    code: 'NH',
+    name: 'PT. Nusantara Halid',
+    shortName: 'PT NH',
     icon: '🌴',
-    defaultKopName: 'Kop Surat PT Agro Nusantara Halid',
-    defaultKopUrl: '',
-    memoPrefix: 'IM-ANH',
+    defaultKopName: 'PT. Nusantara Halid',
+    defaultKopUrl: DEFAULT_NH_KOP_SURAT_URL,
+    memoPrefix: 'IM-NH',
     colorClass: {
       badgeBg: 'bg-blue-100',
       badgeText: 'text-blue-900',
@@ -188,16 +194,20 @@ export function detectMemoCompany(
     }
   }
 
-  // 3. companyHeaderName inspection (e.g. "Kop Surat PT Industri Padi Nusantara", "Kop Surat ANH")
+  // 3. companyHeaderName inspection (e.g. "Kop Surat PT Industri Padi Nusantara", "Kop Surat PT. Nusantara Halid")
   if (memo.companyHeaderName) {
     const head = memo.companyHeaderName.toLowerCase();
     if (head.includes('padi') || head.includes('ipn')) {
       const ipn = companies.find((c) => c.id === 'ipn');
       if (ipn) return ipn;
     }
-    if (head.includes('agro') || head.includes('anh') || head.includes('halid')) {
-      const anh = companies.find((c) => c.id === 'anh');
+    if (head.includes('agro') || head.includes('anh')) {
+      const anh = companies.find((c) => c.id === 'anh') || companies.find((c) => c.id === 'nh');
       if (anh) return anh;
+    }
+    if (head.includes('halid') || /\bnh\b/.test(head)) {
+      const nh = companies.find((c) => c.id === 'nh');
+      if (nh) return nh;
     }
     if (head.includes('mineral') || head.includes('nmsa')) {
       const nmsa = companies.find((c) => c.id === 'nmsa');
@@ -217,9 +227,13 @@ export function detectMemoCompany(
       const ipn = companies.find((c) => c.id === 'ipn');
       if (ipn) return ipn;
     }
-    if (name.includes('agro') || name.includes('anh') || name.includes('halid')) {
-      const anh = companies.find((c) => c.id === 'anh');
+    if (name.includes('agro') || name.includes('anh')) {
+      const anh = companies.find((c) => c.id === 'anh') || companies.find((c) => c.id === 'nh');
       if (anh) return anh;
+    }
+    if (name.includes('halid') || /\bnh\b/.test(name)) {
+      const nh = companies.find((c) => c.id === 'nh');
+      if (nh) return nh;
     }
     if (name.includes('mineral') || name.includes('nmsa')) {
       const nmsa = companies.find((c) => c.id === 'nmsa');

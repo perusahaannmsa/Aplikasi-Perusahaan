@@ -48,10 +48,9 @@ export const InternalMemoDocument: React.FC<InternalMemoDocumentProps> = ({
   const rawHeaderUrl = customHeaderUrl || memo.companyHeaderUrl || OFFICIAL_KOP_SURAT_IMAGE_URL;
   const headerImageUrl =
     !rawHeaderUrl ||
-    rawHeaderUrl.includes('Kop-Surat-NMSA.png') ||
-    rawHeaderUrl.includes('i.ibb.co.com/N26djkQX') ||
+    rawHeaderUrl === '/kop-surat-nmsa-full.png' ||
     rawHeaderUrl.includes('kommodo.ai')
-      ? '/kop-surat-nmsa-full.png'
+      ? OFFICIAL_KOP_SURAT_IMAGE_URL
       : rawHeaderUrl;
 
   // Determine signer mode (default to 3 signers if useThirdSigner or signerCount is 3 or not explicitly 1/2)

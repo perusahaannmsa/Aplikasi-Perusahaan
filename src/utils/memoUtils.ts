@@ -2,7 +2,10 @@ import { BankAccountMaster, InternalMemo, Submission, SavedKopSuratLink } from '
 import { OFFICIAL_KOP_SURAT_BASE64 } from './kopSuratBase64';
 import { resolveCompanyHeaderMeta, fetchLogoAsDataUrl } from '../utils';
 
-export const OFFICIAL_KOP_SURAT_IMAGE_URL = '/kop-surat-nmsa-full.png';
+export const DEFAULT_IPN_KOP_SURAT_URL = 'https://i.ibb.co.com/rKtpGn60/Kop-Surat-IPN.jpg';
+export const DEFAULT_NH_KOP_SURAT_URL = 'https://i.ibb.co.com/DNprY3f/Kop-Surat-NH.gif';
+export const DEFAULT_NMSA_KOP_SURAT_URL = 'https://i.ibb.co.com/N26djkQX/Kop-Surat-NMSA.png';
+export const OFFICIAL_KOP_SURAT_IMAGE_URL = DEFAULT_NMSA_KOP_SURAT_URL;
 
 /**
  * Cleanly format and sanitize rich text HTML from Word editor or plain text legacy memos
@@ -305,23 +308,49 @@ export function extractMemoYear(nomorMemoOrMemo: string | Partial<InternalMemo> 
 }
 
 /**
- * Calculates the next sequential accumulated memo number based on all existing memos.
- * Differentiates strictly between memo with kop surat vs memo without kop surat.
- * Both categories track their own independent sequence counter.
- * Both categories reset at the beginning of each year (di awal tahun reset ke 001).
- * Sequence continues month-to-month within the same year (bulan berganti nomor tetap berlanjut).
+ * Derives normalized company memo prefix from a memo object (e.g. 'IM-NMSA', 'IM-IPN', 'IM-NH', 'IM-ANH').
+ */
+export function resolveMemoCompanyPrefix(memo: Partial<InternalMemo> | undefined | null): string {
+  if (!memo) return 'IM-NMSA';
+  if (memo.nomorMemo) {
+    const match = memo.nomorMemo.toUpperCase().match(/\/(IM-[A-Z0-9_-]+)\//);
+    if (match && match[1]) return match[1];
+  }
+  const nameHint = (memo.companyHeaderName || memo.companyName || '').trim();
+  if (nameHint) {
+    return getCompanyFromKopName(nameHint).memoPrefix;
+  }
+  const urlHint = (memo.companyHeaderUrl || '').trim();
+  if (urlHint) {
+    if (urlHint.includes('Kop-Surat-IPN') || urlHint.includes('rKtpGn60')) return 'IM-IPN';
+    if (urlHint.includes('Kop-Surat-NH') || urlHint.includes('DNprY3f')) return 'IM-NH';
+    if (urlHint.includes('Kop-Surat-NMSA') || urlHint.includes('N26djkQX')) return 'IM-NMSA';
+  }
+  if (memo.companyId) {
+    const cleanId = memo.companyId.trim().toUpperCase();
+    if (cleanId) return cleanId.startsWith('IM-') ? cleanId : `IM-${cleanId}`;
+  }
+  return 'IM-NMSA';
+}
+
+/**
+ * Calculates the next sequential accumulated memo number based on existing memos
+ * OF THE SAME COMPANY / KOP SURAT (or without-kop category), resetting to 001 each new year.
  */
 export function getNextMemoSequence(
   existingMemos: InternalMemo[] = [],
   baseSequence = 168,
   withKop = true,
-  targetYear?: number
+  targetYear?: number,
+  targetPrefix?: string
 ): number {
   const currentYear = targetYear || new Date().getFullYear();
+  const normalizedTargetPrefix = targetPrefix ? targetPrefix.toUpperCase().trim() : '';
+  const isNmsaTarget = !normalizedTargetPrefix || normalizedTargetPrefix === 'IM-NMSA';
 
-  // In the inception year 2026: withKop starts at baseSequence (168), withoutKop starts at 1 (001).
-  // In any new year (2027, etc.): both reset to 1 at the beginning of the year.
-  const defaultStartingSeq = withKop ? (currentYear === 2026 ? baseSequence : 1) : 1;
+  // In inception year 2026: NMSA withKop starts at baseSequence (168),
+  // whereas other companies (IPN, NH, ANH, custom) and withoutKop memos start at 1 (001).
+  const defaultStartingSeq = withKop ? (isNmsaTarget && currentYear === 2026 ? baseSequence : 1) : 1;
 
   if (!existingMemos || existingMemos.length === 0) {
     return defaultStartingSeq;
@@ -331,16 +360,20 @@ export function getNextMemoSequence(
 
   for (const m of existingMemos) {
     const mIsWithoutKop = isMemoWithoutKopSurat(m);
-    // Filter matching category strictly:
-    // With-kop memos ONLY count other with-kop memos
-    // Without-kop memos ONLY count other without-kop memos
     if (withKop && mIsWithoutKop) continue;
     if (!withKop && !mIsWithoutKop) continue;
 
-    // Reset di awal tahun: hanya perhitungkan memo pada tahun yang sama (currentYear)
+    // Isolate sequence per company/kop surat so changing kop never continues another company's numbers
+    if (withKop && normalizedTargetPrefix) {
+      const mPrefix = resolveMemoCompanyPrefix(m).toUpperCase().trim();
+      if (mPrefix !== normalizedTargetPrefix) {
+        continue;
+      }
+    }
+
+    // Reset at the start of each year
     const mYear = extractMemoYear(m);
     if (mYear !== null && mYear !== currentYear) {
-      // Memo dari tahun sebelumnya diabaikan agar nomor urut mereset di awal tahun baru
       continue;
     }
 
@@ -360,7 +393,7 @@ export function getNextMemoSequence(
 
 /**
  * Generates the next official sequential memo number, automatically accumulating
- * according to kop surat status and year.
+ * independently per company / kop surat and year.
  */
 export function generateNextMemoNumber(
   existingMemosOrCount: InternalMemo[] | number = [],
@@ -372,11 +405,12 @@ export function generateNextMemoNumber(
   const targetYear = date.getFullYear();
   let nextSeq: number;
   if (Array.isArray(existingMemosOrCount)) {
-    nextSeq = getNextMemoSequence(existingMemosOrCount, baseSequence, withKop, targetYear);
+    nextSeq = getNextMemoSequence(existingMemosOrCount, baseSequence, withKop, targetYear, prefix);
   } else if (typeof existingMemosOrCount === 'number') {
     nextSeq = existingMemosOrCount;
   } else {
-    nextSeq = withKop ? baseSequence : 1;
+    const isNmsaTarget = !prefix || prefix.toUpperCase() === 'IM-NMSA';
+    nextSeq = withKop ? (isNmsaTarget ? baseSequence : 1) : 1;
   }
   return generateDefaultMemoNumber(nextSeq, date, withKop, prefix);
 }
@@ -473,8 +507,7 @@ export function getSavedInternalMemos(): InternalMemo[] {
           companyHeaderUrl:
             !m.companyHeaderUrl ||
             m.companyHeaderUrl.includes('kommodo.ai') ||
-            m.companyHeaderUrl.includes('Kop-Surat-NMSA.png') ||
-            m.companyHeaderUrl.includes('i.ibb.co.com/N26djkQX')
+            m.companyHeaderUrl === '/kop-surat-nmsa-full.png'
               ? OFFICIAL_KOP_SURAT_IMAGE_URL
               : m.companyHeaderUrl,
         }));
@@ -499,43 +532,130 @@ export function saveInternalMemos(memos: InternalMemo[]): void {
 
 export const DEFAULT_SAVED_KOP_SURAT_LINKS: SavedKopSuratLink[] = [
   {
-    id: 'kop-nmsa-resmi',
-    name: 'Kop Surat Resmi PT NMSA',
-    url: OFFICIAL_KOP_SURAT_IMAGE_URL,
-    isDefault: true,
-    createdAt: '2026-01-01T00:00:00.000Z',
-  },
-  {
     id: 'kop-ipn',
-    name: 'Kop Surat PT Industri Padi Nusantara',
-    url: '/kop-surat-nmsa-full.png',
+    name: 'PT. Industri Padi Nusantara',
+    url: DEFAULT_IPN_KOP_SURAT_URL,
     isDefault: false,
     createdAt: '2026-01-01T00:00:00.000Z',
   },
   {
-    id: 'kop-anh',
-    name: 'Kop Surat PT Agro Nusantara Halid',
-    url: '/kop-surat-nmsa-full.png',
+    id: 'kop-nh',
+    name: 'PT. Nusantara Halid',
+    url: DEFAULT_NH_KOP_SURAT_URL,
     isDefault: false,
+    createdAt: '2026-01-01T00:00:00.000Z',
+  },
+  {
+    id: 'kop-nmsa-resmi',
+    name: 'PT. Nusantara Mineral Sukses Abadi',
+    url: DEFAULT_NMSA_KOP_SURAT_URL,
+    isDefault: true,
     createdAt: '2026-01-01T00:00:00.000Z',
   },
 ];
 
+const KOP_LINKS_STORAGE_KEY = 'NMSA_SAVED_KOP_SURAT_LINKS';
+const KOP_LINKS_DELETED_KEY = 'NMSA_DELETED_KOP_SURAT_IDS';
+const KOP_LINKS_V2_MIGRATED_KEY = 'NMSA_KOP_SURAT_LINKS_V2_MIGRATED';
+
+export function getDeletedKopSuratIds(): string[] {
+  try {
+    const raw = localStorage.getItem(KOP_LINKS_DELETED_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function markKopSuratIdDeleted(id: string): void {
+  try {
+    const current = new Set(getDeletedKopSuratIds());
+    current.add(id);
+    localStorage.setItem(KOP_LINKS_DELETED_KEY, JSON.stringify(Array.from(current)));
+  } catch {
+    // ignore
+  }
+}
+
+export function restoreDefaultKopSuratLinks(): SavedKopSuratLink[] {
+  try {
+    localStorage.removeItem(KOP_LINKS_DELETED_KEY);
+    const existing = getSavedKopSuratLinks();
+    const merged = [...existing];
+    DEFAULT_SAVED_KOP_SURAT_LINKS.forEach((def) => {
+      const hasSameUrlOrId = merged.some(
+        (item) => item.id === def.id || item.url.trim() === def.url.trim()
+      );
+      if (!hasSameUrlOrId) {
+        merged.push(def);
+      }
+    });
+    saveKopSuratLinks(merged);
+    return merged;
+  } catch {
+    return DEFAULT_SAVED_KOP_SURAT_LINKS;
+  }
+}
+
 export function getSavedKopSuratLinks(): SavedKopSuratLink[] {
   try {
-    const raw = localStorage.getItem('NMSA_SAVED_KOP_SURAT_LINKS');
+    const raw = localStorage.getItem(KOP_LINKS_STORAGE_KEY);
+    const deletedIds = new Set(getDeletedKopSuratIds());
+    const alreadyMigratedV2 = localStorage.getItem(KOP_LINKS_V2_MIGRATED_KEY) === 'true';
+
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        const list = [...parsed];
-        DEFAULT_SAVED_KOP_SURAT_LINKS.forEach((def) => {
-          if (!list.some((item) => item.name.toLowerCase() === def.name.toLowerCase())) {
-            list.push(def);
-          }
-        });
-        return list;
+      if (Array.isArray(parsed)) {
+        if (!alreadyMigratedV2) {
+          // One-time upgrade: fix old placeholder '/kop-surat-nmsa-full.png' URLs to the 3 official defaults
+          const upgraded: SavedKopSuratLink[] = [];
+          const seenUrls = new Set<string>();
+
+          parsed.forEach((item: SavedKopSuratLink) => {
+            if (!item || !item.id) return;
+            const upperName = (item.name || '').toUpperCase();
+            // Drop legacy duplicate 'Agro Nusantara Halid' using placeholder NMSA image
+            if (item.url === '/kop-surat-nmsa-full.png' && (upperName.includes('AGRO') || upperName.includes('ANH') || upperName.includes('PADI'))) {
+              return;
+            }
+            let nextUrl = item.url;
+            let nextName = item.name;
+            if (item.id === 'kop-nmsa-resmi' || nextUrl === '/kop-surat-nmsa-full.png') {
+              nextUrl = DEFAULT_NMSA_KOP_SURAT_URL;
+              if (upperName === 'KOP SURAT RESMI PT NMSA') {
+                nextName = 'PT. Nusantara Mineral Sukses Abadi';
+              }
+            } else if (upperName.includes('PADI') && nextUrl === '/kop-surat-nmsa-full.png') {
+              nextUrl = DEFAULT_IPN_KOP_SURAT_URL;
+            }
+            if (!seenUrls.has(nextUrl.trim())) {
+              seenUrls.add(nextUrl.trim());
+              upgraded.push({ ...item, name: nextName, url: nextUrl });
+            }
+          });
+
+          DEFAULT_SAVED_KOP_SURAT_LINKS.forEach((def) => {
+            if (deletedIds.has(def.id)) return;
+            const existsByUrl = upgraded.some((x) => x.url.trim() === def.url.trim());
+            const existsById = upgraded.some((x) => x.id === def.id);
+            if (!existsByUrl && !existsById) {
+              upgraded.push(def);
+            }
+          });
+
+          localStorage.setItem(KOP_LINKS_V2_MIGRATED_KEY, 'true');
+          localStorage.setItem(KOP_LINKS_STORAGE_KEY, JSON.stringify(upgraded));
+          return upgraded;
+        }
+        return parsed;
       }
     }
+
+    const initialDefaults = DEFAULT_SAVED_KOP_SURAT_LINKS.filter((d) => !deletedIds.has(d.id));
+    localStorage.setItem(KOP_LINKS_V2_MIGRATED_KEY, 'true');
+    localStorage.setItem(KOP_LINKS_STORAGE_KEY, JSON.stringify(initialDefaults));
+    return initialDefaults;
   } catch (e) {
     console.error('Failed to load saved kop surat links:', e);
   }
@@ -544,7 +664,8 @@ export function getSavedKopSuratLinks(): SavedKopSuratLink[] {
 
 export function saveKopSuratLinks(links: SavedKopSuratLink[]): void {
   try {
-    localStorage.setItem('NMSA_SAVED_KOP_SURAT_LINKS', JSON.stringify(links));
+    localStorage.setItem(KOP_LINKS_STORAGE_KEY, JSON.stringify(links));
+    localStorage.setItem(KOP_LINKS_V2_MIGRATED_KEY, 'true');
   } catch (e) {
     console.error('Failed to save kop surat links:', e);
   }
@@ -556,18 +677,28 @@ export function findKopSuratNameByUrl(url?: string, links?: SavedKopSuratLink[])
   const cleanUrl = url.trim();
   const found = list.find((item) => item.url.trim() === cleanUrl);
   if (found) return found.name;
-  if (cleanUrl === OFFICIAL_KOP_SURAT_IMAGE_URL || cleanUrl.includes('kop-surat-nmsa-full.png')) {
-    return 'Kop Surat Resmi PT NMSA';
+  if (
+    cleanUrl === OFFICIAL_KOP_SURAT_IMAGE_URL ||
+    cleanUrl === '/kop-surat-nmsa-full.png' ||
+    cleanUrl.includes('Kop-Surat-NMSA')
+  ) {
+    return 'PT. Nusantara Mineral Sukses Abadi';
+  }
+  if (cleanUrl === DEFAULT_IPN_KOP_SURAT_URL || cleanUrl.includes('Kop-Surat-IPN')) {
+    return 'PT. Industri Padi Nusantara';
+  }
+  if (cleanUrl === DEFAULT_NH_KOP_SURAT_URL || cleanUrl.includes('Kop-Surat-NH')) {
+    return 'PT. Nusantara Halid';
   }
   return cleanUrl;
 }
 
 export interface KopCompanyInfo {
-  id: string; // 'nmsa', 'ipn', 'anh', or custom slug
-  code: string; // 'NMSA', 'IPN', 'ANH'
-  shortName: string; // 'PT NMSA', 'PT IPN', 'PT ANH'
+  id: string; // 'nmsa', 'ipn', 'nh', 'anh', or custom slug
+  code: string; // 'NMSA', 'IPN', 'NH', 'ANH'
+  shortName: string; // 'PT NMSA', 'PT IPN', 'PT NH', 'PT ANH'
   fullName: string;
-  memoPrefix: string; // 'IM-NMSA', 'IM-IPN', 'IM-ANH'
+  memoPrefix: string; // 'IM-NMSA', 'IM-IPN', 'IM-NH', 'IM-ANH'
   icon: string;
   tabLabel: string; // '🏢 PT NMSA'
 }
@@ -602,7 +733,7 @@ export function getCompanyFromKopName(kopName?: string): KopCompanyInfo {
     };
   }
 
-  if (upper.includes('AGRO') || upper.includes('ANH') || upper.includes('HALID')) {
+  if (upper.includes('AGRO') || upper.includes('ANH')) {
     return {
       id: 'anh',
       code: 'ANH',
@@ -611,6 +742,18 @@ export function getCompanyFromKopName(kopName?: string): KopCompanyInfo {
       memoPrefix: 'IM-ANH',
       icon: '🌴',
       tabLabel: '🌴 PT ANH',
+    };
+  }
+
+  if (upper.includes('HALID') || /\bNH\b/.test(upper)) {
+    return {
+      id: 'nh',
+      code: 'NH',
+      shortName: 'PT NH',
+      fullName: 'PT. Nusantara Halid',
+      memoPrefix: 'IM-NH',
+      icon: '🌴',
+      tabLabel: '🌴 PT NH',
     };
   }
 
@@ -1431,7 +1574,10 @@ export async function generateInternalMemoPdfBlob(
 async function getKopSuratImageDataUrl(memo?: InternalMemo): Promise<{ dataUrl: string; aspect: number } | null> {
   try {
     const companyMeta = resolveCompanyHeaderMeta(memo);
-    const targetUrl = companyMeta.logoUrl || (!companyMeta.isNmsa ? '' : OFFICIAL_KOP_SURAT_IMAGE_URL);
+    const targetUrl =
+      memo?.companyHeaderUrl ||
+      companyMeta.logoUrl ||
+      (!companyMeta.isNmsa ? '' : OFFICIAL_KOP_SURAT_IMAGE_URL);
     if (!targetUrl) return null;
     return await fetchLogoAsDataUrl(targetUrl);
   } catch {

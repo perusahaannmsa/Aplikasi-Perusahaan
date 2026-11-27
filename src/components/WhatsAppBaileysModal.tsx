@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Check,
@@ -7,21 +7,30 @@ import {
   Copy,
   KeyRound,
   LogOut,
+  MapPin,
+  MessageCircle,
   MessageSquare,
   QrCode,
   RefreshCw,
+  Search,
   Send,
   Server,
+  ShieldCheck,
   Smartphone,
+  Users,
   X,
   Zap,
 } from 'lucide-react';
 import {
+  approveBaileysReminder,
   BaileysAutomationSettings,
+  BaileysChatMessage,
   fetchBaileysSettings,
+  normalizeWhatsAppPhone,
   saveBaileysSettings,
   triggerBaileysReminder,
   useWhatsAppBaileys,
+  useWhatsAppBaileysChats,
 } from '../utils/whatsappBaileys';
 import {
   buildApiUrl,
@@ -35,7 +44,7 @@ interface WhatsAppBaileysModalProps {
   onClose: () => void;
 }
 
-type ModalTab = 'link' | 'send' | 'schedule';
+type ModalTab = 'link' | 'send' | 'chat' | 'schedule';
 
 const ALL_DAYS = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
 
@@ -70,6 +79,25 @@ export const WhatsAppBaileysModal: React.FC<WhatsAppBaileysModalProps> = ({ isOp
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsFeedback, setSettingsFeedback] = useState<string | null>(null);
   const [copiedCronUrl, setCopiedCronUrl] = useState(false);
+
+  // Approval guard state
+  const [processingApproval, setProcessingApproval] = useState<'send' | 'skip' | null>(null);
+  const [approvalFeedback, setApprovalFeedback] = useState<{ ok: boolean; text: string } | null>(null);
+
+  // Real-time Employee Chat UI states
+  const {
+    chats: chatLogs,
+    workers: chatWorkers,
+    loading: loadingChats,
+    refreshChats,
+  } = useWhatsAppBaileysChats({
+    enabled: isOpen && (activeTab === 'chat' || state.isConnected),
+  });
+  const [selectedChatPhone, setSelectedChatPhone] = useState<string>('');
+  const [chatSearch, setChatSearch] = useState('');
+  const [quickReplyText, setQuickReplyText] = useState('');
+  const [sendingQuickReply, setSendingQuickReply] = useState(false);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
 
   // External Node.js server URL config states (needed when frontend is hosted on Vercel)
   const [backendUrlInput, setBackendUrlInput] = useState(() => getBackendBaseUrl());
@@ -121,6 +149,84 @@ export const WhatsAppBaileysModal: React.FC<WhatsAppBaileysModalProps> = ({ isOp
     const remainingMs = state.qrExpiresAt - (nowMs + skew);
     return Math.max(0, Math.ceil(remainingMs / 1000));
   }, [state.qrExpiresAt, state.serverNow, nowMs]);
+
+  // Build unified employee + contact conversation list sorted by latest activity
+  const chatContacts = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        phone: string;
+        name: string;
+        role?: string;
+        isActive?: boolean;
+        lastMessage?: BaileysChatMessage;
+        messageCount: number;
+      }
+    >();
+
+    chatWorkers.forEach((w) => {
+      const norm = w.normalizedPhone || normalizeWhatsAppPhone(w.phoneNumber);
+      if (!norm) return;
+      map.set(norm, {
+        phone: norm,
+        name: w.name,
+        role: w.role,
+        isActive: w.isActive,
+        messageCount: 0,
+      });
+    });
+
+    chatLogs.forEach((msg) => {
+      const norm = normalizeWhatsAppPhone(msg.phone);
+      if (!norm) return;
+      const existing = map.get(norm);
+      if (existing) {
+        existing.messageCount += 1;
+        if (!existing.lastMessage || msg.timestamp >= existing.lastMessage.timestamp) {
+          existing.lastMessage = msg;
+        }
+      } else {
+        map.set(norm, {
+          phone: norm,
+          name: msg.workerName || `+${norm}`,
+          messageCount: 1,
+          lastMessage: msg,
+        });
+      }
+    });
+
+    const query = chatSearch.trim().toLowerCase();
+    return Array.from(map.values())
+      .filter((c) => {
+        if (!query) return true;
+        return c.name.toLowerCase().includes(query) || c.phone.includes(query);
+      })
+      .sort((a, b) => {
+        const tsA = a.lastMessage?.timestamp || 0;
+        const tsB = b.lastMessage?.timestamp || 0;
+        if (tsA !== tsB) return tsB - tsA;
+        return a.name.localeCompare(b.name);
+      });
+  }, [chatWorkers, chatLogs, chatSearch]);
+
+  useEffect(() => {
+    if (activeTab !== 'chat') return;
+    if (!selectedChatPhone && chatContacts.length > 0) {
+      setSelectedChatPhone(chatContacts[0].phone);
+    }
+  }, [activeTab, chatContacts, selectedChatPhone]);
+
+  const activeConversationMessages = useMemo(() => {
+    if (!selectedChatPhone) return [];
+    const target = normalizeWhatsAppPhone(selectedChatPhone);
+    return chatLogs.filter((m) => normalizeWhatsAppPhone(m.phone) === target);
+  }, [chatLogs, selectedChatPhone]);
+
+  useEffect(() => {
+    if (activeTab === 'chat' && chatScrollRef.current) {
+      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+    }
+  }, [activeTab, activeConversationMessages.length, selectedChatPhone]);
 
   if (!isOpen || typeof document === 'undefined') return null;
 
@@ -224,6 +330,7 @@ export const WhatsAppBaileysModal: React.FC<WhatsAppBaileysModalProps> = ({ isOp
       const res = await saveBaileysSettings({
         masterAutoSendEnabled: settings.masterAutoSendEnabled,
         autoReminderEnabled: settings.autoReminderEnabled,
+        requireApprovalOnConnect: settings.requireApprovalOnConnect,
         autoReminderHour: settings.autoReminderHour,
         reminderActiveDays: settings.reminderActiveDays,
         skipHolidays: settings.skipHolidays,
@@ -236,8 +343,45 @@ export const WhatsAppBaileysModal: React.FC<WhatsAppBaileysModalProps> = ({ isOp
           ? res.message || 'Pengaturan jadwal Baileys tersimpan.'
           : res.error || 'Gagal menyimpan pengaturan.'
       );
+      await refreshStatus();
     } finally {
       setSavingSettings(false);
+    }
+  };
+
+  const handleApprovalDecision = async (action: 'send' | 'skip') => {
+    setProcessingApproval(action);
+    setApprovalFeedback(null);
+    try {
+      const res = await approveBaileysReminder(action);
+      setApprovalFeedback({
+        ok: Boolean(res.success),
+        text:
+          res.message ||
+          res.error ||
+          (action === 'send' ? 'Pengingat absen disetujui & dikirim.' : 'Pengingat absen ditahan hari ini.'),
+      });
+      await refreshStatus();
+      await refreshChats();
+      const updatedSettings = await fetchBaileysSettings();
+      if (updatedSettings) setSettings(updatedSettings);
+    } finally {
+      setProcessingApproval(null);
+    }
+  };
+
+  const handleSendQuickReply = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedChatPhone || !quickReplyText.trim() || !state.isConnected) return;
+    setSendingQuickReply(true);
+    try {
+      const res = await sendMessage(selectedChatPhone, quickReplyText.trim());
+      if (res.success) {
+        setQuickReplyText('');
+        await refreshChats();
+      }
+    } finally {
+      setSendingQuickReply(false);
     }
   };
 
@@ -374,6 +518,24 @@ export const WhatsAppBaileysModal: React.FC<WhatsAppBaileysModalProps> = ({ isOp
 
           <button
             type="button"
+            onClick={() => setActiveTab('chat')}
+            className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 transition cursor-pointer ${
+              activeTab === 'chat'
+                ? 'bg-white text-stone-900 border border-stone-200 shadow-2xs'
+                : 'text-stone-600 hover:text-stone-900 hover:bg-stone-100'
+            }`}
+          >
+            <MessageCircle className="w-4 h-4 text-emerald-600" />
+            <span>Chat Karyawan</span>
+            {chatLogs.length > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-100 text-emerald-800">
+                {chatLogs.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
             onClick={() => setActiveTab('schedule')}
             className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 transition cursor-pointer ${
               activeTab === 'schedule'
@@ -468,6 +630,64 @@ export const WhatsAppBaileysModal: React.FC<WhatsAppBaileysModalProps> = ({ isOp
                 type="button"
                 onClick={() => setPairingError(null)}
                 className="text-rose-600 hover:text-rose-900 font-semibold shrink-0 cursor-pointer"
+              >
+                Tutup
+              </button>
+            </div>
+          )}
+
+          {/* POST-SCAN APPROVAL GUARD BANNER */}
+          {state.isConnected && state.pendingApproval && state.absentWorkersCount > 0 && (
+            <div className="p-4 rounded-xl bg-amber-50 border border-amber-300 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="p-2 rounded-lg bg-amber-100 text-amber-800 shrink-0 mt-0.5">
+                  <ShieldCheck className="w-4 h-4" />
+                </div>
+                <div className="space-y-1">
+                  <div className="text-xs font-bold text-amber-950">
+                    Menunggu Persetujuan Pengiriman Pengingat Absen
+                  </div>
+                  <p className="text-xs text-amber-900/90 leading-relaxed">
+                    WhatsApp baru tersambung. Aplikasi menahan pengiriman otomatis ke{' '}
+                    <strong>{state.absentWorkersCount} karyawan</strong> yang belum absen agar tidak mengirim pesan tanpa persetujuan Anda.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => handleApprovalDecision('skip')}
+                  disabled={processingApproval !== null}
+                  className="px-3 py-2 rounded-lg bg-white hover:bg-stone-100 border border-amber-300 text-stone-800 text-xs font-semibold transition cursor-pointer whitespace-nowrap"
+                >
+                  {processingApproval === 'skip' ? 'Menahan...' : 'Tahan Hari Ini'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleApprovalDecision('send')}
+                  disabled={processingApproval !== null}
+                  className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition cursor-pointer whitespace-nowrap flex items-center gap-1.5"
+                >
+                  {processingApproval === 'send' && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                  <span>Setujui &amp; Kirim</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {approvalFeedback && (
+            <div
+              className={`p-3 rounded-xl text-xs font-medium border flex items-center justify-between gap-3 ${
+                approvalFeedback.ok
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                  : 'bg-rose-50 border-rose-200 text-rose-800'
+              }`}
+            >
+              <span>{approvalFeedback.text}</span>
+              <button
+                type="button"
+                onClick={() => setApprovalFeedback(null)}
+                className="text-xs font-bold underline cursor-pointer shrink-0"
               >
                 Tutup
               </button>
@@ -815,7 +1035,213 @@ export const WhatsAppBaileysModal: React.FC<WhatsAppBaileysModalProps> = ({ isOp
             </div>
           )}
 
-          {/* TAB 3: SCHEDULE AUTOMATION */}
+          {/* TAB 3: REAL-TIME EMPLOYEE CHAT */}
+          {activeTab === 'chat' && (
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-4 min-h-[420px]">
+              {/* Left: Employee / Contact List */}
+              <div className="md:col-span-4 rounded-xl border border-stone-200 bg-stone-50/50 flex flex-col overflow-hidden max-h-[460px]">
+                <div className="p-3 border-b border-stone-200 bg-white space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-stone-900 flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Karyawan ({chatContacts.length})</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => refreshChats()}
+                      className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-900 flex items-center gap-1 cursor-pointer"
+                      title="Segarkan chat secara manual"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${loadingChats ? 'animate-spin' : ''}`} />
+                      <span>Live</span>
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-stone-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={chatSearch}
+                      onChange={(e) => setChatSearch(e.target.value)}
+                      placeholder="Cari nama atau no. HP..."
+                      className="w-full pl-8 pr-3 py-1.5 text-xs bg-stone-50 border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex-1 overflow-y-auto divide-y divide-stone-100">
+                  {chatContacts.length === 0 ? (
+                    <div className="p-6 text-center text-xs text-stone-500">
+                      Belum ada kontak karyawan bernomor WhatsApp atau riwayat pesan.
+                    </div>
+                  ) : (
+                    chatContacts.map((contact) => {
+                      const active = normalizeWhatsAppPhone(selectedChatPhone) === contact.phone;
+                      return (
+                        <button
+                          key={contact.phone}
+                          type="button"
+                          onClick={() => setSelectedChatPhone(contact.phone)}
+                          className={`w-full text-left p-3 transition flex items-start gap-2.5 cursor-pointer ${
+                            active ? 'bg-emerald-50/80 border-l-2 border-emerald-600' : 'hover:bg-white'
+                          }`}
+                        >
+                          <div className="w-8 h-8 rounded-full bg-stone-200 text-stone-700 font-bold text-xs flex items-center justify-center shrink-0">
+                            {contact.name.charAt(0).toUpperCase()}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between gap-1">
+                              <span className="text-xs font-bold text-stone-900 truncate">
+                                {contact.name}
+                              </span>
+                              {contact.lastMessage && (
+                                <span className="text-[10px] font-mono text-stone-400 shrink-0">
+                                  {contact.lastMessage.timeWib.replace(' WIB', '')}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[10px] font-mono text-stone-400 truncate">
+                              +{contact.phone}
+                            </div>
+                            {contact.lastMessage ? (
+                              <p className="text-[11px] text-stone-600 truncate mt-0.5">
+                                {contact.lastMessage.direction === 'outgoing' ? 'Anda: ' : ''}
+                                {contact.lastMessage.message}
+                              </p>
+                            ) : (
+                              <p className="text-[11px] text-stone-400 italic mt-0.5">
+                                Belum ada chat
+                              </p>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* Right: Conversation Thread */}
+              <div className="md:col-span-8 rounded-xl border border-stone-200 bg-stone-50/60 flex flex-col overflow-hidden max-h-[460px]">
+                {selectedChatPhone ? (
+                  <>
+                    <div className="px-4 py-3 bg-white border-b border-stone-200 flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-stone-900 truncate">
+                          {chatContacts.find((c) => c.phone === normalizeWhatsAppPhone(selectedChatPhone))?.name ||
+                            `+${selectedChatPhone}`}
+                        </div>
+                        <div className="text-[11px] font-mono text-stone-500">
+                          +{normalizeWhatsAppPhone(selectedChatPhone)} · Pembaruan otomatis tiap 2 detik
+                        </div>
+                      </div>
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200 shrink-0">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        <span>Real-time</span>
+                      </span>
+                    </div>
+
+                    <div
+                      ref={chatScrollRef}
+                      className="flex-1 overflow-y-auto p-4 space-y-2.5 bg-stone-100/70"
+                    >
+                      {activeConversationMessages.length === 0 ? (
+                        <div className="h-full flex flex-col items-center justify-center text-center p-6 text-xs text-stone-500">
+                          <MessageCircle className="w-8 h-8 text-stone-300 mb-2" />
+                          <p className="font-medium text-stone-700">Belum ada percakapan dengan karyawan ini.</p>
+                          <p className="mt-1">
+                            Pesan pengingat keluar, balasan karyawan, serta Share Location absen akan langsung tampil di sini secara real-time.
+                          </p>
+                        </div>
+                      ) : (
+                        activeConversationMessages.map((msg) => {
+                          const isOut = msg.direction === 'outgoing';
+                          return (
+                            <div
+                              key={msg.id}
+                              className={`flex ${isOut ? 'justify-end' : 'justify-start'}`}
+                            >
+                              <div
+                                className={`max-w-[82%] rounded-xl px-3.5 py-2.5 text-xs shadow-2xs space-y-1 ${
+                                  isOut
+                                    ? 'bg-emerald-600 text-white'
+                                    : 'bg-white text-stone-900 border border-stone-200'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between gap-3 text-[10px] opacity-80">
+                                  <span className="font-semibold">
+                                    {isOut
+                                      ? msg.type === 'reminder'
+                                        ? 'Pengingat Absen'
+                                        : msg.type === 'auto_reply'
+                                        ? 'Balasan Sistem'
+                                        : 'Admin'
+                                      : msg.workerName}
+                                  </span>
+                                  <span className="font-mono tabular-nums">{msg.timeWib}</span>
+                                </div>
+                                <div className="whitespace-pre-wrap break-words leading-relaxed">
+                                  {msg.message}
+                                </div>
+                                {msg.latitude !== undefined && msg.longitude !== undefined && (
+                                  <a
+                                    href={`https://maps.google.com/?q=${msg.latitude},${msg.longitude}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className={`inline-flex items-center gap-1 text-[11px] font-semibold underline mt-1 ${
+                                      isOut ? 'text-emerald-100' : 'text-emerald-700'
+                                    }`}
+                                  >
+                                    <MapPin className="w-3 h-3" />
+                                    <span>Lihat Titik GPS di Peta</span>
+                                  </a>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    <form
+                      onSubmit={handleSendQuickReply}
+                      className="p-3 bg-white border-t border-stone-200 flex items-center gap-2"
+                    >
+                      <input
+                        type="text"
+                        value={quickReplyText}
+                        onChange={(e) => setQuickReplyText(e.target.value)}
+                        disabled={!state.isConnected || sendingQuickReply}
+                        placeholder={
+                          state.isConnected
+                            ? 'Ketik balasan langsung ke karyawan...'
+                            : 'Hubungkan WhatsApp Baileys terlebih dahulu...'
+                        }
+                        className="flex-1 px-3 py-2 text-xs bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-600 disabled:bg-stone-100"
+                      />
+                      <button
+                        type="submit"
+                        disabled={!state.isConnected || sendingQuickReply || !quickReplyText.trim()}
+                        className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-stone-200 disabled:text-stone-400 text-white text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer shrink-0"
+                      >
+                        {sendingQuickReply ? (
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Send className="w-3.5 h-3.5" />
+                        )}
+                        <span>Kirim</span>
+                      </button>
+                    </form>
+                  </>
+                ) : (
+                  <div className="flex-1 flex items-center justify-center p-6 text-xs text-stone-500">
+                    Pilih nama karyawan di sebelah kiri untuk melihat percakapan real-time.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 4: SCHEDULE AUTOMATION */}
           {activeTab === 'schedule' && (
             <div className="space-y-5">
               {loadingSettings && !settings ? (
@@ -920,8 +1346,12 @@ export const WhatsAppBaileysModal: React.FC<WhatsAppBaileysModalProps> = ({ isOp
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                     {[
+                      {
+                        key: 'requireApprovalOnConnect' as const,
+                        label: 'Wajib Persetujuan Setelah Scan QR',
+                      },
                       { key: 'skipHolidays' as const, label: 'Lewati Libur Nasional' },
                       { key: 'skipWeekends' as const, label: 'Lewati Akhir Pekan' },
                       { key: 'requireFridaySignature' as const, label: 'Wajib TTD Hari Jumat' },

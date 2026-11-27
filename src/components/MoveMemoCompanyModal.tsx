@@ -47,6 +47,7 @@ function getPrefixFromKopName(kopName: string): string {
   if (upper.includes('NMSA') || upper.includes('NUSANTARA MINERAL')) return 'IM-NMSA';
   if (upper.includes('IPN') || upper.includes('INDUSTRI PADI NUSANTARA')) return 'IM-IPN';
   if (upper.includes('ANH') || upper.includes('AGRO NUSANTARA')) return 'IM-ANH';
+  if (upper.includes('HALID') || /\bNH\b/.test(upper)) return 'IM-NH';
   const matchPt = upper.match(/PT\.?\s*([A-Z0-9]{2,6})/);
   if (matchPt && matchPt[1]) return `IM-${matchPt[1]}`;
   return 'IM-NMSA';

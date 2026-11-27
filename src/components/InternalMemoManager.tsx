@@ -27,6 +27,9 @@ import {
   toRomanMonth,
   getCompanyFromKopName,
   updateMemoNumberWithKop,
+  resolveMemoCompanyPrefix,
+  DEFAULT_IPN_KOP_SURAT_URL,
+  DEFAULT_NH_KOP_SURAT_URL,
 } from '../utils/memoUtils';
 import { memoGoogleDriveService } from '../utils/memoDriveService';
 import { getInternalMemoLink } from '../utils/appLinks';
@@ -223,22 +226,23 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
     };
   }, []);
 
-  // When memos list updates, if user is on a fresh new draft, keep nomorMemo aligned with latest sequence
+  // When memos list updates, if user is on a fresh new draft, keep nomorMemo aligned with latest per-company sequence
   useEffect(() => {
     if (!editingExistingId && memos.length > 0) {
       const isWithKop = currentMemo.showKopSurat !== false;
+      const activePrefix = isWithKop ? resolveMemoCompanyPrefix(currentMemo) : 'IM';
       const nextNomor = generateNextMemoNumber(
         memos,
         currentMemo.tanggal ? new Date(currentMemo.tanggal) : new Date(),
         168,
-        isWithKop
+        isWithKop,
+        activePrefix
       );
-      // Only auto-update if nomorMemo matches a default template pattern
+      // Only auto-update if nomorMemo matches a standard template pattern
       if (
         currentMemo.nomorMemo !== nextNomor &&
         (!currentMemo.nomorMemo ||
-          currentMemo.nomorMemo.includes('/IM-NMSA/KEU/') ||
-          currentMemo.nomorMemo.includes('/IM/KEU/'))
+          /\/IM(?:-[A-Z0-9_-]+)?\/KEU\//i.test(currentMemo.nomorMemo))
       ) {
         setCurrentMemo((prev) => ({ ...prev, nomorMemo: nextNomor }));
       }
@@ -333,8 +337,15 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
       const newId = `memo-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
       // If forced as new, ensure number advances if it matched old memo
       const isWithKop = currentMemo.showKopSurat !== false;
+      const activePrefix = isWithKop ? resolveMemoCompanyPrefix(currentMemo) : 'IM';
       const nextNomor = options?.forceAsNew && !isDifferentNumber
-        ? generateNextMemoNumber(memos, currentMemo.tanggal ? new Date(currentMemo.tanggal) : new Date(), 168, isWithKop)
+        ? generateNextMemoNumber(
+            memos,
+            currentMemo.tanggal ? new Date(currentMemo.tanggal) : new Date(),
+            168,
+            isWithKop,
+            activePrefix
+          )
         : currentMemo.nomorMemo;
 
       payload = {
@@ -642,7 +653,16 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
   // Create new blank / default memo with next accumulated sequence
   const handleCreateNewMemo = (withKop?: boolean) => {
     const isWithKop = withKop !== undefined ? withKop : currentMemo.showKopSurat !== false;
+    const defaultLink = savedKopLinks.find((l) => l.isDefault) || savedKopLinks[0];
     const fresh = createInitialMemo(null, memos, isWithKop);
+    if (isWithKop && defaultLink) {
+      const comp = getCompanyFromKopName(defaultLink.name);
+      fresh.companyHeaderUrl = defaultLink.url;
+      fresh.companyHeaderName = defaultLink.name;
+      fresh.companyName = comp.fullName;
+      fresh.companyId = comp.id;
+      fresh.nomorMemo = generateNextMemoNumber(memos, new Date(), 168, true, comp.memoPrefix);
+    }
     setCurrentMemo(fresh);
     setEditingExistingId(null);
     setActiveTab('editor');
@@ -657,7 +677,20 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
 
   const handleSelectKopLink = (link: SavedKopSuratLink) => {
     const comp = getCompanyFromKopName(link.name);
-    const updatedNomor = updateMemoNumberWithKop(currentMemo.nomorMemo, link.name, true);
+    const memoDate = currentMemo.tanggal ? new Date(currentMemo.tanggal) : new Date();
+    const targetDate = isNaN(memoDate.getTime()) ? new Date() : memoDate;
+
+    const existingSaved = editingExistingId
+      ? memos.find((m) => m.id === editingExistingId)
+      : undefined;
+    const existingSavedPrefix = existingSaved ? resolveMemoCompanyPrefix(existingSaved) : null;
+
+    // Gunakan nomor asli hanya jika mengedit memo yang memang milik perusahaan yang sama;
+    // jika memo baru atau berganti kop surat perusahaan lain, pakai urutan surat keluar perusahaan tsb.
+    const nextNomor =
+      existingSaved && existingSavedPrefix === comp.memoPrefix && existingSaved.showKopSurat !== false
+        ? existingSaved.nomorMemo
+        : generateNextMemoNumber(memos, targetDate, 168, true, comp.memoPrefix);
 
     setCurrentMemo((prev) => ({
       ...prev,
@@ -667,16 +700,17 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
       companyHeaderName: link.name,
       companyName: comp.fullName,
       companyId: comp.id,
-      nomorMemo: updatedNomor || prev.nomorMemo,
+      nomorMemo: nextNomor,
     }));
-    setSaveSuccessMsg(`Kop Surat aktif: "${link.name}" • Format nomor: .../${comp.memoPrefix}/KEU/...`);
+    setSaveSuccessMsg(`Kop Surat aktif: "${link.name}" • Nomor urut: ${nextNomor}`);
     setTimeout(() => setSaveSuccessMsg(''), 3000);
   };
 
   // Duplicate current memo with next accumulated sequence
   const handleDuplicateMemo = (memoToDupe: InternalMemo = currentMemo) => {
     const isWithKop = memoToDupe.showKopSurat !== false;
-    const nextNomor = generateNextMemoNumber(memos, new Date(), 168, isWithKop);
+    const dupePrefix = isWithKop ? resolveMemoCompanyPrefix(memoToDupe) : 'IM';
+    const nextNomor = generateNextMemoNumber(memos, new Date(), 168, isWithKop, dupePrefix);
     const duplicated: InternalMemo = {
       ...memoToDupe,
       id: `memo-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
@@ -749,13 +783,15 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
     const formatted = formatHariTanggalMemo(isoDate);
     const dateObj = new Date(isoDate);
     const isWithKop = currentMemo.showKopSurat !== false;
+    const activePrefix = isWithKop ? resolveMemoCompanyPrefix(currentMemo) : 'IM';
 
     if (!editingExistingId) {
       const nextNomor = generateNextMemoNumber(
         memos,
         isNaN(dateObj.getTime()) ? new Date() : dateObj,
         168,
-        isWithKop
+        isWithKop,
+        activePrefix
       );
       setCurrentMemo((prev) => ({
         ...prev,
@@ -792,9 +828,10 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
     // Check if currently opened memo was already saved in history
     const isExistingSaved = memos.some((m) => m.id === currentMemo.id);
     const isWithKop = currentMemo.showKopSurat !== false;
+    const activePrefix = isWithKop ? resolveMemoCompanyPrefix(currentMemo) : 'IM';
     const nextNomor = isExistingSaved
-      ? generateNextMemoNumber(memos, new Date(), 168, isWithKop)
-      : currentMemo.nomorMemo || generateNextMemoNumber(memos, new Date(), 168, isWithKop);
+      ? generateNextMemoNumber(memos, new Date(), 168, isWithKop, activePrefix)
+      : currentMemo.nomorMemo || generateNextMemoNumber(memos, new Date(), 168, isWithKop, activePrefix);
     const newId = isExistingSaved
       ? `memo-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`
       : currentMemo.id;
@@ -933,20 +970,22 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
     let kopName = rawName;
     if (!kopName && memo.nomorMemo) {
       const upperNo = memo.nomorMemo.toUpperCase();
-      if (upperNo.includes('IM-IPN')) kopName = 'Kop Surat PT Industri Padi Nusantara';
+      if (upperNo.includes('IM-IPN')) kopName = 'PT. Industri Padi Nusantara';
       else if (upperNo.includes('IM-ANH')) kopName = 'Kop Surat PT Agro Nusantara Halid';
-      else if (upperNo.includes('IM-NMSA')) kopName = 'Kop Surat Resmi PT NMSA';
+      else if (upperNo.includes('IM-NH')) kopName = 'PT. Nusantara Halid';
+      else if (upperNo.includes('IM-NMSA')) kopName = 'PT. Nusantara Mineral Sukses Abadi';
     }
     if (!kopName && memo.companyName) {
       const upperCo = memo.companyName.toUpperCase();
-      if (upperCo.includes('PADI') || upperCo.includes('IPN')) kopName = 'Kop Surat PT Industri Padi Nusantara';
+      if (upperCo.includes('PADI') || upperCo.includes('IPN')) kopName = 'PT. Industri Padi Nusantara';
       else if (upperCo.includes('AGRO') || upperCo.includes('ANH')) kopName = 'Kop Surat PT Agro Nusantara Halid';
+      else if (upperCo.includes('HALID') || /\bNH\b/.test(upperCo)) kopName = 'PT. Nusantara Halid';
     }
     if (!kopName && url) {
       kopName = findKopSuratNameByUrl(url, savedKopLinks);
     }
     if (!kopName) {
-      kopName = 'Kop Surat Resmi PT NMSA';
+      kopName = 'PT. Nusantara Mineral Sukses Abadi';
     }
 
     const comp = getCompanyFromKopName(kopName);
@@ -1029,11 +1068,11 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
       }
     });
 
-    // Always ensure presets PT NMSA, PT IPN, PT ANH are available in the tabs
+    // Always ensure presets PT NMSA, PT IPN, PT NH are available in the tabs
     const defaultCompanies = [
-      { id: 'kop-resmi-nmsa', name: 'Kop Surat Resmi PT NMSA', shortName: 'PT NMSA', icon: '🏢', prefix: 'IM-NMSA', url: OFFICIAL_KOP_SURAT_IMAGE_URL, isDefault: true },
-      { id: 'kop-ipn', name: 'Kop Surat PT Industri Padi Nusantara', shortName: 'PT IPN', icon: '🌾', prefix: 'IM-IPN', url: '/kop-surat-nmsa-full.png' },
-      { id: 'kop-anh', name: 'Kop Surat PT Agro Nusantara Halid', shortName: 'PT ANH', icon: '🌴', prefix: 'IM-ANH', url: '/kop-surat-nmsa-full.png' },
+      { id: 'kop-resmi-nmsa', name: 'PT. Nusantara Mineral Sukses Abadi', shortName: 'PT NMSA', icon: '🏢', prefix: 'IM-NMSA', url: OFFICIAL_KOP_SURAT_IMAGE_URL, isDefault: true },
+      { id: 'kop-ipn', name: 'PT. Industri Padi Nusantara', shortName: 'PT IPN', icon: '🌾', prefix: 'IM-IPN', url: DEFAULT_IPN_KOP_SURAT_URL },
+      { id: 'kop-nh', name: 'PT. Nusantara Halid', shortName: 'PT NH', icon: '🌴', prefix: 'IM-NH', url: DEFAULT_NH_KOP_SURAT_URL },
     ];
 
     defaultCompanies.forEach((def) => {
@@ -1189,7 +1228,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
 
     const comp = getCompanyFromKopName(currentTab.name);
     const targetDate = new Date();
-    const nextSeq = getNextMemoSequence(memos, 168, true);
+    const nextSeq = getNextMemoSequence(memos, 168, true, targetDate.getFullYear(), comp.memoPrefix);
     const roman = toRomanMonth(targetDate.getMonth());
     const year = targetDate.getFullYear();
     const seqStr = String(nextSeq).padStart(3, '0');
@@ -1585,18 +1624,24 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                     <button
                       type="button"
                       onClick={() => {
-                        const targetKopName = currentMemo.companyHeaderName || savedKopLinks[0]?.name || 'Kop Surat Resmi PT NMSA';
+                        const targetKopName = currentMemo.companyHeaderName || savedKopLinks[0]?.name || 'PT. Nusantara Mineral Sukses Abadi';
                         const comp = getCompanyFromKopName(targetKopName);
-                        const updatedNomor = updateMemoNumberWithKop(currentMemo.nomorMemo, targetKopName, true);
+                        const memoDate = currentMemo.tanggal ? new Date(currentMemo.tanggal) : new Date();
+                        const targetDate = isNaN(memoDate.getTime()) ? new Date() : memoDate;
+                        const existingSaved = editingExistingId ? memos.find((m) => m.id === editingExistingId) : undefined;
+                        const nextNomor =
+                          existingSaved && existingSaved.showKopSurat !== false && resolveMemoCompanyPrefix(existingSaved) === comp.memoPrefix
+                            ? existingSaved.nomorMemo
+                            : generateNextMemoNumber(memos, targetDate, 168, true, comp.memoPrefix);
                         setCurrentMemo((prev) => ({
                           ...prev,
                           showKopSurat: true,
                           useImageHeader: true,
-                          nomorMemo: updatedNomor || prev.nomorMemo,
+                          nomorMemo: nextNomor,
                           companyName: prev.companyName || comp.fullName,
                           companyId: prev.companyId || comp.id,
                         }));
-                        setSaveSuccessMsg(`Format diubah: Dengan Kop Surat (${comp.shortName})`);
+                        setSaveSuccessMsg(`Format diubah: Dengan Kop Surat (${comp.shortName}) • ${nextNomor}`);
                         setTimeout(() => setSaveSuccessMsg(''), 2500);
                       }}
                       className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer flex items-center gap-1 ${
@@ -1612,13 +1657,19 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                     <button
                       type="button"
                       onClick={() => {
-                        const updatedNomor = updateMemoNumberWithKop(currentMemo.nomorMemo, '', false);
+                        const memoDate = currentMemo.tanggal ? new Date(currentMemo.tanggal) : new Date();
+                        const targetDate = isNaN(memoDate.getTime()) ? new Date() : memoDate;
+                        const existingSaved = editingExistingId ? memos.find((m) => m.id === editingExistingId) : undefined;
+                        const nextNomor =
+                          existingSaved && existingSaved.showKopSurat === false
+                            ? existingSaved.nomorMemo
+                            : generateNextMemoNumber(memos, targetDate, 168, false, 'IM');
                         setCurrentMemo((prev) => ({
                           ...prev,
                           showKopSurat: false,
-                          nomorMemo: updatedNomor || prev.nomorMemo,
+                          nomorMemo: nextNomor,
                         }));
-                        setSaveSuccessMsg('Format diubah: Tanpa Kop Surat (.../IM/KEU/...)');
+                        setSaveSuccessMsg(`Format diubah: Tanpa Kop Surat (${nextNomor})`);
                         setTimeout(() => setSaveSuccessMsg(''), 2500);
                       }}
                       className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer flex items-center gap-1 ${
@@ -1645,7 +1696,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                         const isSelected =
                           (currentMemo.companyHeaderName && currentMemo.companyHeaderName === link.name) ||
                           activeUrl === link.url ||
-                          (link.url === OFFICIAL_KOP_SURAT_IMAGE_URL && activeUrl.includes('kop-surat-nmsa-full.png'));
+                          (link.url === OFFICIAL_KOP_SURAT_IMAGE_URL && activeUrl.includes('Kop-Surat-NMSA'));
                         return (
                           <button
                             key={link.id}
@@ -1739,13 +1790,24 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                           <button
                             type="button"
                             onClick={() => {
+                              const memoDate = currentMemo.tanggal ? new Date(currentMemo.tanggal) : new Date();
+                              const targetDate = isNaN(memoDate.getTime()) ? new Date() : memoDate;
+                              const existingSaved = editingExistingId ? memos.find((m) => m.id === editingExistingId) : undefined;
+                              const nextNomor =
+                                existingSaved && resolveMemoCompanyPrefix(existingSaved) === 'IM-NMSA' && existingSaved.showKopSurat !== false
+                                  ? existingSaved.nomorMemo
+                                  : generateNextMemoNumber(memos, targetDate, 168, true, 'IM-NMSA');
                               setCurrentMemo((prev) => ({
                                 ...prev,
                                 useImageHeader: true,
+                                showKopSurat: true,
                                 companyHeaderUrl: OFFICIAL_KOP_SURAT_IMAGE_URL,
-                                companyHeaderName: 'Kop Surat Resmi PT NMSA',
+                                companyHeaderName: 'PT. Nusantara Mineral Sukses Abadi',
+                                companyName: 'PT. Nusantara Mineral Sukses Abadi',
+                                companyId: 'nmsa',
+                                nomorMemo: nextNomor,
                               }));
-                              setSaveSuccessMsg('Kop surat direset ke Resmi Default PT NMSA');
+                              setSaveSuccessMsg(`Kop surat direset ke PT. Nusantara Mineral Sukses Abadi (${nextNomor})`);
                               setTimeout(() => setSaveSuccessMsg(''), 2500);
                             }}
                             className="px-2.5 py-2 bg-stone-100 hover:bg-amber-100 text-[10.5px] font-bold text-stone-600 hover:text-amber-900 rounded-xl transition shrink-0 cursor-pointer"
@@ -1768,7 +1830,7 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                                 const activeUrl = currentMemo.companyHeaderUrl || OFFICIAL_KOP_SURAT_IMAGE_URL;
                                 const isSelected =
                                   activeUrl === item.url ||
-                                  (item.url === OFFICIAL_KOP_SURAT_IMAGE_URL && activeUrl.includes('kop-surat-nmsa-full.png'));
+                                  (item.url === OFFICIAL_KOP_SURAT_IMAGE_URL && activeUrl.includes('Kop-Surat-NMSA'));
                                 return (
                                   <button
                                     key={item.id}
@@ -1848,7 +1910,9 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                     Nomor Dokumen Memo
                   </label>
                   <span className="text-[10px] font-bold text-stone-500 font-mono">
-                    {currentMemo.showKopSurat === false ? 'Format: [No]/IM/KEU/[Bulan]/[Tahun]' : 'Format: [No]/IM-NMSA/KEU/[Bulan]/[Tahun]'}
+                    {currentMemo.showKopSurat === false
+                      ? 'Format: [No]/IM/KEU/[Bulan]/[Tahun]'
+                      : `Format: [No]/${resolveMemoCompanyPrefix(currentMemo)}/KEU/[Bulan]/[Tahun]`}
                   </span>
                 </div>
                 <div className="flex gap-2">
@@ -1858,24 +1922,26 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                     onChange={(e) =>
                       setCurrentMemo((prev) => ({ ...prev, nomorMemo: e.target.value }))
                     }
-                    placeholder={currentMemo.showKopSurat === false ? "001/IM/KEU/X/2026" : "164/IM-NMSA/KEU/IX/2026"}
+                    placeholder={currentMemo.showKopSurat === false ? "001/IM/KEU/X/2026" : "168/IM-NMSA/KEU/IX/2026"}
                     className="flex-1 px-3 py-2 text-xs font-mono font-bold bg-stone-50 border border-stone-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:bg-white focus:outline-none"
                   />
                   <button
                     type="button"
                     onClick={() => {
                       const isWithKop = currentMemo.showKopSurat !== false;
+                      const activePrefix = isWithKop ? resolveMemoCompanyPrefix(currentMemo) : 'IM';
                       const next = generateNextMemoNumber(
                         memos,
                         currentMemo.tanggal ? new Date(currentMemo.tanggal) : new Date(),
                         168,
-                        isWithKop
+                        isWithKop,
+                        activePrefix
                       );
                       setCurrentMemo((prev) => ({
                         ...prev,
                         nomorMemo: next,
                       }));
-                      setSaveSuccessMsg(`Nomor urut otomatis diperbarui: ${next}`);
+                      setSaveSuccessMsg(`Nomor urut (${activePrefix}) diperbarui: ${next}`);
                       setTimeout(() => setSaveSuccessMsg(''), 2500);
                     }}
                     className="px-2.5 py-2 bg-stone-100 hover:bg-amber-100 text-stone-700 hover:text-amber-900 text-xs font-bold rounded-xl transition flex items-center gap-1 cursor-pointer"
@@ -2751,14 +2817,20 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      const targetKopName = currentMemo.companyHeaderName || savedKopLinks[0]?.name || 'Kop Surat Resmi PT NMSA';
+                      const targetKopName = currentMemo.companyHeaderName || savedKopLinks[0]?.name || 'PT. Nusantara Mineral Sukses Abadi';
                       const comp = getCompanyFromKopName(targetKopName);
-                      const updatedNomor = updateMemoNumberWithKop(currentMemo.nomorMemo, targetKopName, true);
+                      const memoDate = currentMemo.tanggal ? new Date(currentMemo.tanggal) : new Date();
+                      const targetDate = isNaN(memoDate.getTime()) ? new Date() : memoDate;
+                      const existingSaved = editingExistingId ? memos.find((m) => m.id === editingExistingId) : undefined;
+                      const nextNomor =
+                        existingSaved && existingSaved.showKopSurat !== false && resolveMemoCompanyPrefix(existingSaved) === comp.memoPrefix
+                          ? existingSaved.nomorMemo
+                          : generateNextMemoNumber(memos, targetDate, 168, true, comp.memoPrefix);
                       setCurrentMemo((prev) => ({
                         ...prev,
                         showKopSurat: true,
                         useImageHeader: true,
-                        nomorMemo: updatedNomor || prev.nomorMemo,
+                        nomorMemo: nextNomor,
                         companyName: prev.companyName || comp.fullName,
                         companyId: prev.companyId || comp.id,
                       }));
@@ -2776,11 +2848,17 @@ export const InternalMemoManager: React.FC<InternalMemoManagerProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      const updatedNomor = updateMemoNumberWithKop(currentMemo.nomorMemo, '', false);
+                      const memoDate = currentMemo.tanggal ? new Date(currentMemo.tanggal) : new Date();
+                      const targetDate = isNaN(memoDate.getTime()) ? new Date() : memoDate;
+                      const existingSaved = editingExistingId ? memos.find((m) => m.id === editingExistingId) : undefined;
+                      const nextNomor =
+                        existingSaved && existingSaved.showKopSurat === false
+                          ? existingSaved.nomorMemo
+                          : generateNextMemoNumber(memos, targetDate, 168, false, 'IM');
                       setCurrentMemo((prev) => ({
                         ...prev,
                         showKopSurat: false,
-                        nomorMemo: updatedNomor || prev.nomorMemo,
+                        nomorMemo: nextNomor,
                       }));
                     }}
                     className={`px-2.5 py-1 rounded-md font-bold transition cursor-pointer flex items-center gap-1 ${

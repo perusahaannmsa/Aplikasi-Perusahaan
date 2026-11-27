@@ -8,6 +8,29 @@ export interface BaileysUser {
   name?: string;
 }
 
+export interface BaileysChatMessage {
+  id: string;
+  workerId?: string | null;
+  workerName: string;
+  phone: string;
+  direction: "incoming" | "outgoing";
+  type: "text" | "location" | "reminder" | "auto_reply";
+  message: string;
+  latitude?: number;
+  longitude?: number;
+  timestamp: number;
+  timeWib: string;
+}
+
+export interface BaileysChatWorker {
+  id: string;
+  name: string;
+  role?: string;
+  phoneNumber: string;
+  normalizedPhone: string;
+  isActive: boolean;
+}
+
 export interface BaileysState {
   status: BaileysStatus;
   isConnected: boolean;
@@ -25,6 +48,8 @@ export interface BaileysState {
   error: string | null;
   hasCredentials: boolean;
   lateReminderPending: boolean;
+  pendingApproval: boolean;
+  requireApprovalOnConnect: boolean;
   absentWorkersCount: number;
   absentWorkersNames: string[];
   todayDate: string;
@@ -33,6 +58,7 @@ export interface BaileysState {
 export interface BaileysAutomationSettings {
   masterAutoSendEnabled: boolean;
   autoReminderEnabled: boolean;
+  requireApprovalOnConnect: boolean;
   autoReminderHour: string;
   reminderActiveDays: string[];
   skipHolidays: boolean;
@@ -68,6 +94,8 @@ const DEFAULT_STATE: BaileysState = {
   error: null,
   hasCredentials: false,
   lateReminderPending: false,
+  pendingApproval: false,
+  requireApprovalOnConnect: true,
   absentWorkersCount: 0,
   absentWorkersNames: [],
   todayDate: "",
@@ -276,6 +304,84 @@ export async function triggerBaileysReminder(
   } catch (err: any) {
     return { success: false, error: err?.message || "Gagal memicu pengiriman pengingat." };
   }
+}
+
+export async function approveBaileysReminder(
+  action: "send" | "skip"
+): Promise<{ success: boolean; skipped?: boolean; message?: string; sentCount?: number; failedCount?: number; error?: string }> {
+  try {
+    const res = await apiFetch("/api/baileys/approve-reminder", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action }),
+    });
+    return res.json().catch(() => ({ success: false, error: "Gagal memproses persetujuan pengiriman." }));
+  } catch (err: any) {
+    return { success: false, error: err?.message || "Gagal memproses persetujuan pengiriman." };
+  }
+}
+
+export async function fetchBaileysChats(
+  phone?: string
+): Promise<{ success: boolean; chats: BaileysChatMessage[]; workers: BaileysChatWorker[]; error?: string }> {
+  try {
+    const query = phone ? `?phone=${encodeURIComponent(phone)}` : "";
+    const res = await apiFetch(`/api/baileys/chats${query}`, {
+      headers: { Accept: "application/json" },
+    });
+    const data = await res.json().catch(() => ({}));
+    return {
+      success: Boolean(res.ok && data.success),
+      chats: Array.isArray(data.chats) ? data.chats : [],
+      workers: Array.isArray(data.workers) ? data.workers : [],
+      error: data.error ? String(data.error) : undefined,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      chats: [],
+      workers: [],
+      error: err?.message || "Gagal memuat riwayat chat Baileys.",
+    };
+  }
+}
+
+export function useWhatsAppBaileysChats(options: { enabled?: boolean } = {}) {
+  const { enabled = false } = options;
+  const [chats, setChats] = useState<BaileysChatMessage[]>([]);
+  const [workers, setWorkers] = useState<BaileysChatWorker[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const refreshChats = useCallback(async () => {
+    const res = await fetchBaileysChats();
+    if (res.success) {
+      setChats(res.chats);
+      setWorkers(res.workers);
+    }
+    return res;
+  }, []);
+
+  useEffect(() => {
+    if (!enabled) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    setLoading(true);
+
+    const loop = async () => {
+      await refreshChats();
+      if (active) setLoading(false);
+      if (!active) return;
+      timer = setTimeout(loop, 2000);
+    };
+    loop();
+
+    return () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [enabled, refreshChats]);
+
+  return { chats, workers, loading, refreshChats };
 }
 
 export function useWhatsAppBaileys(options: { enabled?: boolean; activeUi?: boolean } = {}) {
