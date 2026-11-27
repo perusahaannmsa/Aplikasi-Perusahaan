@@ -1235,13 +1235,7 @@ export default function App() {
     handleSaveAgendaItems(newList);
   };
 
-  // Automatic periodic Google Drive token keepalive and auto-refresh (every 30 seconds)
-  useEffect(() => {
-    const stopAutoRefresh = startGoogleDriveTokenAutoRefresh(30); // Auto checks every 30 seconds
-    return () => {
-      stopAutoRefresh();
-    };
-  }, []);
+  // Google Drive token keepalive & 50-minute auto-refresh is initialized once in startup mount effect above.
 
   const [view, setViewInternal] = useState<AppViewMode>(() => {
     try {

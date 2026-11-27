@@ -228,6 +228,7 @@ export interface AttendanceRecord {
   allowanceRate?: { [date: string]: number };
   signatures?: { [date: string]: string };
   notes?: { [date: string]: string };
+  dateUpdatedAt?: { [date: string]: number };
 }
 
 export interface WeeklyReport {

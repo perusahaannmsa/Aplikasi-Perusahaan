@@ -288,30 +288,45 @@ export async function restoreAttendanceFromFirestore(currentState: any): Promise
     if (masterDocSnap.exists()) {
       const data = masterDocSnap.data();
       const mergedMap = new Map();
+      let hasMasterAttendance = false;
+      let earliestMasterDate: string | null = null;
 
-      // 1. First populate from master attendanceRecords
-      if (data && Array.isArray(data.attendanceRecords)) {
+      // 1. First populate from authoritative master attendanceRecords
+      if (data && Array.isArray(data.attendanceRecords) && data.attendanceRecords.length > 0) {
+        hasMasterAttendance = true;
         data.attendanceRecords.forEach((r: any) => {
           if (r && r.workerId) {
             const cleanAtt: Record<string, boolean> = {};
             if (r.attendance) {
               Object.entries(r.attendance).forEach(([d, v]) => {
-                if (v === true) cleanAtt[d] = true;
+                if (v === true) {
+                  cleanAtt[d] = true;
+                  if (!earliestMasterDate || d < earliestMasterDate) {
+                    earliestMasterDate = d;
+                  }
+                }
               });
             }
             mergedMap.set(r.workerId, {
               ...r,
               attendance: cleanAtt,
               customStatus: { ...(r.customStatus || {}) },
-              reasons: { ...(r.reasons || {}) }
+              reasons: { ...(r.reasons || {}) },
+              dateUpdatedAt: { ...(r.dateUpdatedAt || {}) }
             });
           }
         });
       }
 
-      // 2. Consolidate attendance dates from ALL historical weekly reports!
+      // 2. Only backfill archived historical weeklyReports that predate master attendanceRecords
       if (data && Array.isArray(data.weeklyReports)) {
         data.weeklyReports.forEach((rep: any) => {
+          const isArchivedOlderWeek = Boolean(
+            rep?.weekEndDate && earliestMasterDate && rep.weekEndDate < earliestMasterDate
+          );
+          if (hasMasterAttendance && !isArchivedOlderWeek) {
+            return;
+          }
           if (rep && Array.isArray(rep.records)) {
             rep.records.forEach((rec: any) => {
               if (!rec || !rec.workerId) return;
@@ -320,21 +335,22 @@ export async function restoreAttendanceFromFirestore(currentState: any): Promise
                 dailyAllowance: rec.dailyAllowance || 25000,
                 attendance: {},
                 customStatus: {},
-                reasons: {}
+                reasons: {},
+                dateUpdatedAt: {}
               };
               if (rec.attendance) {
                 Object.entries(rec.attendance).forEach(([d, v]) => {
-                  if (v === true) existing.attendance[d] = true;
+                  if (v === true && !existing.dateUpdatedAt?.[d]) existing.attendance[d] = true;
                 });
               }
               if (rec.customStatus) {
                 Object.entries(rec.customStatus).forEach(([d, v]) => {
-                  if (v) existing.customStatus[d] = v;
+                  if (v && !existing.dateUpdatedAt?.[d] && !existing.attendance?.[d]) existing.customStatus[d] = v;
                 });
               }
               if (rec.reasons) {
                 Object.entries(rec.reasons).forEach(([d, v]) => {
-                  if (v) existing.reasons[d] = v;
+                  if (v && !existing.dateUpdatedAt?.[d] && !existing.attendance?.[d]) existing.reasons[d] = v;
                 });
               }
               mergedMap.set(rec.workerId, existing);
@@ -343,25 +359,49 @@ export async function restoreAttendanceFromFirestore(currentState: any): Promise
         });
       }
 
-      // 3. Overlay any existing local state records
+      // 3. Overlay any existing local server state records ONLY where local dateUpdatedAt is newer
       (currentState.attendanceRecords || []).forEach((r: any) => {
         if (r && r.workerId) {
           const cloud = mergedMap.get(r.workerId);
           if (!cloud) {
             mergedMap.set(r.workerId, r);
           } else {
+            const nextAtt = { ...(cloud.attendance || {}) };
+            const nextCust = { ...(cloud.customStatus || {}) };
+            const nextReas = { ...(cloud.reasons || {}) };
+            const nextTs = { ...(cloud.dateUpdatedAt || {}) };
+            const allDates = new Set([
+              ...Object.keys(cloud.attendance || {}),
+              ...Object.keys(r.attendance || {}),
+              ...Object.keys(cloud.dateUpdatedAt || {}),
+              ...Object.keys(r.dateUpdatedAt || {})
+            ]);
+            allDates.forEach((d) => {
+              const cloudDateTs = Number(cloud.dateUpdatedAt?.[d] || 0);
+              const localDateTs = Number(r.dateUpdatedAt?.[d] || 0);
+              if (localDateTs > cloudDateTs || (cloudDateTs === 0 && localDateTs === 0 && r.attendance?.[d] === true && !cloud.attendance?.[d])) {
+                if (r.attendance?.[d] === true) nextAtt[d] = true;
+                else delete nextAtt[d];
+                if (r.customStatus?.[d]) nextCust[d] = r.customStatus[d];
+                else delete nextCust[d];
+                if (r.reasons?.[d]) nextReas[d] = r.reasons[d];
+                else delete nextReas[d];
+                if (localDateTs > 0) nextTs[d] = localDateTs;
+              }
+            });
             mergedMap.set(r.workerId, {
               ...cloud,
               ...r,
-              attendance: { ...(cloud.attendance || {}), ...(r.attendance || {}) },
-              customStatus: { ...(cloud.customStatus || {}), ...(r.customStatus || {}) },
-              reasons: { ...(cloud.reasons || {}), ...(r.reasons || {}) }
+              attendance: nextAtt,
+              customStatus: nextCust,
+              reasons: nextReas,
+              dateUpdatedAt: nextTs
             });
           }
         }
       });
 
-      // 4. Also check absen_records collection for live check-in timestamps
+      // 4. Also check absen_records collection ONLY when newer than dateUpdatedAt
       try {
         const snap = await getDocs(collection(db, "absen_records"));
         if (!snap.empty) {
@@ -373,8 +413,12 @@ export async function restoreAttendanceFromFirestore(currentState: any): Promise
               dailyAllowance: 25000,
               attendance: {},
               customStatus: {},
-              reasons: {}
+              reasons: {},
+              dateUpdatedAt: {}
             };
+            const abTs = ab.timestamp ? Date.parse(ab.timestamp) : 0;
+            const existingTs = Number(existing.dateUpdatedAt?.[ab.date] || 0);
+            if (existingTs > 0 && (isNaN(abTs) || abTs <= existingTs)) return;
             if (ab.status === "Hadir" || ab.status === true) {
               existing.attendance[ab.date] = true;
             } else if (ab.status && ab.status !== "Absen") {

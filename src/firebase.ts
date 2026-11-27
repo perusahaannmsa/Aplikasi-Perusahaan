@@ -1487,8 +1487,24 @@ export interface ConnectedDrive {
 }
 
 // Google OAuth token standard lifetime is 3600 seconds (60 mins).
-// We set token lifespan to 55 minutes to allow a safe 5-minute buffer.
+// We set token lifespan to 55 minutes to allow a safe 5-minute buffer,
+// and proactively trigger auto-refresh every 50 minutes (1x per 50 menit).
 export const TOKEN_LIFESPAN_MS = 55 * 60 * 1000;
+export const DRIVE_AUTO_REFRESH_INTERVAL_MS = 50 * 60 * 1000;
+
+const DRIVE_LAST_AUTO_REFRESH_KEY = 'NUSANTARA_DRIVE_LAST_AUTO_REFRESH_AT';
+const DRIVE_LAST_REFRESH_METHOD_KEY = 'NUSANTARA_DRIVE_LAST_REFRESH_METHOD';
+const DRIVE_LAST_REFRESH_OUTCOME_KEY = 'NUSANTARA_DRIVE_LAST_REFRESH_OUTCOME';
+
+export interface DriveAutoRefreshStatus {
+  intervalMinutes: number;
+  lastRefreshAt: number;
+  nextRefreshAt: number;
+  method: string;
+  lastOutcome: string;
+}
+
+let serviceAccountDriveTokenCache: { accessToken: string; expiresAt: number; clientEmail: string } | null = null;
 
 /**
  * Checks whether a Google Drive token is still valid within its official time window.
@@ -2554,6 +2570,9 @@ export const getStoredGoogleDriveToken = (strictFreshnessCheck = false): string 
   }
 
   if (strictFreshnessCheck) {
+    if (serviceAccountDriveTokenCache && Date.now() < serviceAccountDriveTokenCache.expiresAt - 60000) {
+      return serviceAccountDriveTokenCache.accessToken;
+    }
     return null;
   }
 
@@ -2562,7 +2581,11 @@ export const getStoredGoogleDriveToken = (strictFreshnessCheck = false): string 
   if (fallbackDrive) {
     return fallbackDrive.accessToken;
   }
-  
+
+  if (serviceAccountDriveTokenCache && Date.now() < serviceAccountDriveTokenCache.expiresAt - 60000) {
+    return serviceAccountDriveTokenCache.accessToken;
+  }
+
   return googleDriveTokenMemory || localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
 };
 
@@ -2742,6 +2765,19 @@ export const getOrRenewDriveToken = async (
       const activeAccount = getActiveGoogleDriveAccount();
       const emailToUse = (targetEmail || activeAccount?.email || preferredMaster || LOCKED_MASTER_DRIVE_EMAIL).trim().toLowerCase();
 
+      if (!interactiveIfRequired) {
+        const gisSilentTok = await trySilentGisTokenRefresh(emailToUse).catch(() => null);
+        if (gisSilentTok) {
+          return gisSilentTok;
+        }
+        const saTok = await tryServerServiceAccountDriveToken().catch(() => null);
+        if (saTok) {
+          return saTok;
+        }
+        const fallback = googleDriveTokenMemory || localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
+        if (fallback) return fallback;
+      }
+
       if (interactiveIfRequired) {
         try {
           const loginRes = await googleDriveLogin(emailToUse, false);
@@ -2752,15 +2788,12 @@ export const getOrRenewDriveToken = async (
           }
         } catch (err: any) {
           console.warn('Drive token renewal notice:', err);
-          if (interactiveIfRequired) {
-            throw err;
+          const saTok = await tryServerServiceAccountDriveToken().catch(() => null);
+          if (saTok) {
+            return saTok;
           }
+          throw err;
         }
-      }
-
-      if (!interactiveIfRequired) {
-        const fallback = googleDriveTokenMemory || localStorage.getItem('NUSANTARA_GOOGLE_DRIVE_TOKEN');
-        if (fallback) return fallback;
       }
 
       return '';
@@ -2866,11 +2899,263 @@ export const executeDriveApiWithAutoRefresh = async <T>(
   throw new Error(`Operasi Google Drive gagal setelah ${maxRetries + 1} percobaan.`);
 };
 
-// Periodic Background Auto-Keeper for Google Drive connection & live quota sync
+// Periodic Background Auto-Keeper for Google Drive connection & 50-minute quota/token refresh
 let tokenAutoRefreshIntervalId: any = null;
+let fiftyMinuteDriveIntervalId: any = null;
+let autoRefreshActiveConsumers = 0;
+let autoRefreshCleanupListeners: (() => void) | null = null;
 let activeAutoRefreshPromise: Promise<string | null> | null = null;
+let active50MinRefreshPromise: Promise<string | null> | null = null;
 let lastDriveRefreshTime = 0;
 let lastDriveQuotaCheckTime = 0;
+
+const recordDriveAutoRefreshOutcome = (method: string, outcome: string, timestamp = Date.now()) => {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(DRIVE_LAST_AUTO_REFRESH_KEY, String(timestamp));
+    localStorage.setItem(DRIVE_LAST_REFRESH_METHOD_KEY, method);
+    localStorage.setItem(DRIVE_LAST_REFRESH_OUTCOME_KEY, outcome);
+  } catch {}
+};
+
+export const getDriveAutoRefreshStatus = (): DriveAutoRefreshStatus => {
+  let lastRefreshAt = 0;
+  let method = 'auto-50m';
+  let lastOutcome = 'standby';
+  if (typeof window !== 'undefined') {
+    try {
+      lastRefreshAt = Number(localStorage.getItem(DRIVE_LAST_AUTO_REFRESH_KEY) || 0) || 0;
+      method = localStorage.getItem(DRIVE_LAST_REFRESH_METHOD_KEY) || 'auto-50m';
+      lastOutcome = localStorage.getItem(DRIVE_LAST_REFRESH_OUTCOME_KEY) || 'standby';
+    } catch {}
+  }
+  const master = getMasterDriveEmail().toLowerCase();
+  const drives = getConnectedDrives();
+  const activeDrive = drives.find((d) => d.email?.toLowerCase() === master) || drives[0];
+  const anchor = Math.max(lastRefreshAt, activeDrive?.issuedAt || 0);
+  const baseTime = anchor > 0 ? anchor : Date.now();
+  return {
+    intervalMinutes: 50,
+    lastRefreshAt: anchor,
+    nextRefreshAt: baseTime + DRIVE_AUTO_REFRESH_INTERVAL_MS,
+    method,
+    lastOutcome,
+  };
+};
+
+let gisScriptLoadPromise: Promise<boolean> | null = null;
+const loadGoogleIdentityScript = (): Promise<boolean> => {
+  if (typeof window === 'undefined') return Promise.resolve(false);
+  if ((window as any).google?.accounts?.oauth2) return Promise.resolve(true);
+  if (gisScriptLoadPromise) return gisScriptLoadPromise;
+
+  gisScriptLoadPromise = new Promise<boolean>((resolve) => {
+    const existing = document.querySelector('script[src*="accounts.google.com/gsi/client"]');
+    if (existing) {
+      setTimeout(() => resolve(Boolean((window as any).google?.accounts?.oauth2)), 1500);
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    const timer = setTimeout(() => resolve(false), 5000);
+    script.onload = () => {
+      clearTimeout(timer);
+      resolve(Boolean((window as any).google?.accounts?.oauth2));
+    };
+    script.onerror = () => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+    document.head.appendChild(script);
+  });
+  return gisScriptLoadPromise;
+};
+
+export const trySilentGisTokenRefresh = async (targetEmail?: string): Promise<string | null> => {
+  if (typeof window === 'undefined') return null;
+  const clientId = String(
+    (firebaseAppletConfig as any)?.oAuthClientId ||
+      (import.meta as any)?.env?.VITE_GOOGLE_CLIENT_ID ||
+      ''
+  ).trim();
+  if (!clientId) return null;
+
+  const ready = await loadGoogleIdentityScript();
+  const oauth2 = (window as any).google?.accounts?.oauth2;
+  if (!ready || !oauth2?.initTokenClient) return null;
+
+  const activeMaster = (targetEmail || getMasterDriveEmail() || LOCKED_MASTER_DRIVE_EMAIL).trim().toLowerCase();
+
+  return new Promise<string | null>((resolve) => {
+    let settled = false;
+    const finish = (val: string | null) => {
+      if (!settled) {
+        settled = true;
+        resolve(val);
+      }
+    };
+    const timeout = setTimeout(() => finish(null), 8000);
+
+    try {
+      const client = oauth2.initTokenClient({
+        client_id: clientId,
+        scope: 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/drive.file',
+        hint: activeMaster,
+        callback: async (resp: any) => {
+          clearTimeout(timeout);
+          if (!resp || resp.error || !resp.access_token) {
+            finish(null);
+            return;
+          }
+          try {
+            const accessToken = String(resp.access_token);
+            const meta = await fetchDriveQuotaMetadata(accessToken);
+            const verifiedEmail = (meta.email || activeMaster).trim().toLowerCase();
+            if (verifiedEmail !== activeMaster) {
+              finish(null);
+              return;
+            }
+            const now = Date.now();
+            const refreshedDrive: ConnectedDrive = {
+              email: activeMaster,
+              accessToken,
+              displayName: meta.displayName || activeMaster,
+              photoURL: meta.photoURL || '',
+              quotaUsed: meta.quotaUsed || 0,
+              quotaLimit: meta.quotaLimit || 15 * 1024 * 1024 * 1024,
+              lastChecked: new Date().toISOString(),
+              isExpired: false,
+              issuedAt: now,
+              expiresAt: now + TOKEN_LIFESPAN_MS,
+            };
+            lastDriveQuotaCheckTime = now;
+            await saveConnectedDrives([refreshedDrive]);
+            localStorage.setItem('g_access_token', accessToken);
+            localStorage.setItem('g_access_token_time', String(now));
+            localStorage.setItem('g_user_email', activeMaster);
+            finish(accessToken);
+          } catch {
+            finish(null);
+          }
+        },
+        error_callback: () => {
+          clearTimeout(timeout);
+          finish(null);
+        },
+      });
+      client.requestAccessToken({ prompt: '' });
+    } catch {
+      clearTimeout(timeout);
+      finish(null);
+    }
+  });
+};
+
+export const tryServerServiceAccountDriveToken = async (): Promise<string | null> => {
+  if (typeof window === 'undefined') return null;
+  if (
+    serviceAccountDriveTokenCache &&
+    Date.now() < serviceAccountDriveTokenCache.expiresAt - 60 * 1000
+  ) {
+    return serviceAccountDriveTokenCache.accessToken;
+  }
+  try {
+    const res = await apiFetch('/api/drive-token');
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => null);
+    if (data?.success && data?.accessToken) {
+      const expiresAt =
+        typeof data.expiresAt === 'number' && data.expiresAt > Date.now()
+          ? data.expiresAt
+          : Date.now() + 50 * 60 * 1000;
+      serviceAccountDriveTokenCache = {
+        accessToken: String(data.accessToken),
+        expiresAt,
+        clientEmail: String(data.clientEmail || getMasterDriveEmail()),
+      };
+      return serviceAccountDriveTokenCache.accessToken;
+    }
+  } catch {}
+  return null;
+};
+
+/**
+ * Proactive 50-minute Google Drive token + quota auto-refresh cycle.
+ * 1. Attempts silent GIS OAuth refresh (if Web OAuth Client ID is configured).
+ * 2. Hydrates newer cloud/server tokens across tabs/devices.
+ * 3. Pre-warms server Service Account fallback if available.
+ * 4. Refreshes live Google Drive storage quota & dispatches status update event.
+ */
+export const perform50MinuteDriveRefresh = async (reason = '50m-timer'): Promise<string | null> => {
+  if (typeof window === 'undefined') return null;
+  if (active50MinRefreshPromise) return active50MinRefreshPromise;
+
+  active50MinRefreshPromise = (async (): Promise<string | null> => {
+    const masterEmail = getMasterDriveEmail();
+    const now = Date.now();
+    try {
+      // 1. Try silent GIS token refresh first (renews 60m Google token cleanly at 50m mark when GIS client ID is available)
+      const silentToken = await trySilentGisTokenRefresh(masterEmail).catch(() => null);
+      if (silentToken) {
+        await refreshAllDrivesQuota(false).catch(() => []);
+        recordDriveAutoRefreshOutcome('gis-silent', 'success', now);
+        window.dispatchEvent(new CustomEvent('nusantara-drive-updated', {
+          detail: {
+            drives: getConnectedDrives(),
+            activeAccount: getActiveGoogleDriveAccount(),
+            masterEmail,
+            accessToken: silentToken,
+            hasToken: true,
+            autoRefreshReason: reason,
+          },
+        }));
+        return silentToken;
+      }
+
+      // 2. Check newer synced token from server/Firestore
+      await loadConnectedDrivesFromFirestore('', true).catch(() => []);
+
+      // 3. Check optional server Service Account fallback
+      const saToken = await tryServerServiceAccountDriveToken().catch(() => null);
+
+      // 4. Refresh live Google Drive storage quota metadata
+      const updatedDrives = await refreshAllDrivesQuota(true).catch(() => []);
+      const validDrive = updatedDrives.find((d) => isDriveTokenValid(d) && !d.isExpired && d.accessToken);
+      const bestToken = validDrive?.accessToken || getStoredGoogleDriveToken(true) || saToken || null;
+
+      if (saToken && !validDrive?.accessToken) {
+        recordDriveAutoRefreshOutcome('service-account', 'success', now);
+      } else if (validDrive?.accessToken) {
+        recordDriveAutoRefreshOutcome('quota-sync', 'quota-only', now);
+      } else {
+        recordDriveAutoRefreshOutcome('auto-50m', 'needs-reauth', now);
+      }
+
+      window.dispatchEvent(new CustomEvent('nusantara-drive-updated', {
+        detail: {
+          drives: getConnectedDrives(),
+          activeAccount: getActiveGoogleDriveAccount(),
+          masterEmail,
+          accessToken: bestToken,
+          hasToken: Boolean(bestToken),
+          autoRefreshReason: reason,
+        },
+      }));
+
+      return bestToken;
+    } catch (err) {
+      console.warn('[Google Drive 50m Auto-Refresh] Notice:', err);
+      recordDriveAutoRefreshOutcome('auto-50m', 'needs-reauth', now);
+      return getStoredGoogleDriveToken(true);
+    } finally {
+      active50MinRefreshPromise = null;
+    }
+  })();
+
+  return active50MinRefreshPromise;
+};
 
 /**
  * Universal Trigger for Google Drive Token & Quota Auto-Refresh.
@@ -2901,6 +3186,16 @@ export const triggerGoogleDriveAutoRefresh = async (
 
   const runner = (async (): Promise<string | null> => {
     try {
+      const status = getDriveAutoRefreshStatus();
+      const isFiftyMinDue =
+        reason === '50m-timer' ||
+        reason === '50m-elapsed-catchup' ||
+        (status.lastRefreshAt > 0 && now - status.lastRefreshAt >= DRIVE_AUTO_REFRESH_INTERVAL_MS);
+
+      if (isFiftyMinDue) {
+        return await perform50MinuteDriveRefresh(reason);
+      }
+
       // Ensure cloud/server token hydration when missing or forced
       let currentToken = getStoredGoogleDriveToken(true);
       if (!currentToken || force) {
@@ -2915,24 +3210,26 @@ export const triggerGoogleDriveAutoRefresh = async (
         }
       }
 
-      // Automatically refresh Google Drive quota whenever accessing/saving via any menu
+      // Refresh quota immediately on explicit actions/startup, or if > 5 minutes since last check
       const quotaAgeMs = Date.now() - lastDriveQuotaCheckTime;
       const shouldRefreshQuota =
         force ||
         (reason !== '30s-timer' && reason !== 'user-activity' && quotaAgeMs > 12000) ||
-        quotaAgeMs > 45000;
+        quotaAgeMs > 5 * 60 * 1000;
 
       if (shouldRefreshQuota && (currentToken || getConnectedDrives().length > 0)) {
         try {
           const updated = await refreshAllDrivesQuota(force);
           const validDrive = updated.find((d) => isDriveTokenValid(d) && !d.isExpired && d.accessToken);
           if (validDrive?.accessToken) {
+            recordDriveAutoRefreshOutcome('quota-sync', 'quota-only', Date.now());
             return validDrive.accessToken;
           }
-          // Token expired on Google's side -> recover from cloud/interactive if permitted
+          // Token expired on Google's side -> recover from GIS/SA/cloud/interactive if permitted
           const recovered = await getOrRenewDriveToken(getMasterDriveEmail(), allowInteractive);
           if (recovered) {
             await refreshAllDrivesQuota(false).catch(() => []);
+            recordDriveAutoRefreshOutcome('auto-recover', 'success', Date.now());
             return recovered;
           }
         } catch (qErr: any) {
@@ -2942,6 +3239,7 @@ export const triggerGoogleDriveAutoRefresh = async (
             const recovered = await getOrRenewDriveToken(getMasterDriveEmail(), allowInteractive);
             if (recovered) {
               await refreshAllDrivesQuota(false).catch(() => []);
+              recordDriveAutoRefreshOutcome('auto-recover', 'success', Date.now());
               return recovered;
             }
           }
@@ -2964,56 +3262,103 @@ export const triggerGoogleDriveAutoRefresh = async (
 export const startGoogleDriveTokenAutoRefresh = (intervalSeconds = 30): (() => void) => {
   if (typeof window === 'undefined') return () => {};
 
-  // Run immediately on launch
-  triggerGoogleDriveAutoRefresh('startup', true);
+  autoRefreshActiveConsumers += 1;
 
-  if (tokenAutoRefreshIntervalId) {
-    clearInterval(tokenAutoRefreshIntervalId);
+  // Initialize only once across the app lifecycle so duplicate mounts never stack duplicate intervals
+  if (autoRefreshActiveConsumers === 1) {
+    // Check immediately on launch (runs 50-min refresh right away if >=50m since last refresh)
+    const status = getDriveAutoRefreshStatus();
+    if (status.lastRefreshAt > 0 && Date.now() - status.lastRefreshAt >= DRIVE_AUTO_REFRESH_INTERVAL_MS) {
+      perform50MinuteDriveRefresh('startup-overdue').catch(() => {});
+    } else {
+      triggerGoogleDriveAutoRefresh('startup', true).catch(() => {});
+    }
+
+    // Dedicated 50-minute (1x per 50 menit) automatic Drive token & quota refresh timer
+    if (fiftyMinuteDriveIntervalId) clearInterval(fiftyMinuteDriveIntervalId);
+    fiftyMinuteDriveIntervalId = setInterval(() => {
+      perform50MinuteDriveRefresh('50m-timer').catch(() => {});
+    }, DRIVE_AUTO_REFRESH_INTERVAL_MS);
+
+    // Lightweight 30-second health watcher (catches elapsed 50-minute windows after laptop sleep/tab background)
+    if (tokenAutoRefreshIntervalId) clearInterval(tokenAutoRefreshIntervalId);
+    const intervalMs = Math.max(30, intervalSeconds) * 1000;
+    tokenAutoRefreshIntervalId = setInterval(() => {
+      if (document.visibilityState === 'hidden') return;
+      const curStatus = getDriveAutoRefreshStatus();
+      if (curStatus.lastRefreshAt > 0 && Date.now() - curStatus.lastRefreshAt >= DRIVE_AUTO_REFRESH_INTERVAL_MS) {
+        perform50MinuteDriveRefresh('50m-elapsed-catchup').catch(() => {});
+      } else if (!getStoredGoogleDriveToken(true)) {
+        triggerGoogleDriveAutoRefresh('30s-timer', false, false).catch(() => {});
+      }
+    }, intervalMs);
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        const curStatus = getDriveAutoRefreshStatus();
+        if (curStatus.lastRefreshAt > 0 && Date.now() - curStatus.lastRefreshAt >= DRIVE_AUTO_REFRESH_INTERVAL_MS) {
+          perform50MinuteDriveRefresh('50m-elapsed-catchup').catch(() => {});
+        } else {
+          triggerGoogleDriveAutoRefresh('tab-visible', false).catch(() => {});
+        }
+      }
+    };
+
+    const onWindowFocus = () => {
+      const curStatus = getDriveAutoRefreshStatus();
+      if (curStatus.lastRefreshAt > 0 && Date.now() - curStatus.lastRefreshAt >= DRIVE_AUTO_REFRESH_INTERVAL_MS) {
+        perform50MinuteDriveRefresh('50m-elapsed-catchup').catch(() => {});
+      } else {
+        triggerGoogleDriveAutoRefresh('window-focus', false).catch(() => {});
+      }
+    };
+
+    let lastUserActivityCheck = 0;
+    const onUserActivity = () => {
+      const t = Date.now();
+      if (t - lastUserActivityCheck > 30000) {
+        lastUserActivityCheck = t;
+        const activeTok = getStoredGoogleDriveToken(true);
+        if (!activeTok) {
+          triggerGoogleDriveAutoRefresh('user-activity', false, false).catch(() => {});
+        }
+      }
+    };
+
+    window.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('focus', onWindowFocus);
+    window.addEventListener('pointerdown', onUserActivity, { passive: true });
+    window.addEventListener('keydown', onUserActivity, { passive: true });
+    window.addEventListener('popstate', onUserActivity, { passive: true });
+
+    autoRefreshCleanupListeners = () => {
+      window.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('focus', onWindowFocus);
+      window.removeEventListener('pointerdown', onUserActivity);
+      window.removeEventListener('keydown', onUserActivity);
+      window.removeEventListener('popstate', onUserActivity);
+    };
   }
 
-  const intervalMs = Math.max(30, intervalSeconds) * 1000;
-  tokenAutoRefreshIntervalId = setInterval(() => {
-    triggerGoogleDriveAutoRefresh('30s-timer', false);
-  }, intervalMs);
-
-  const onVisibilityChange = () => {
-    if (document.visibilityState === 'visible') {
-      triggerGoogleDriveAutoRefresh('tab-visible', false);
-    }
-  };
-
-  const onWindowFocus = () => {
-    triggerGoogleDriveAutoRefresh('window-focus', false);
-  };
-
-  let lastUserActivityCheck = 0;
-  const onUserActivity = () => {
-    const t = Date.now();
-    if (t - lastUserActivityCheck > 30000) {
-      lastUserActivityCheck = t;
-      const activeTok = getStoredGoogleDriveToken(true);
-      if (!activeTok) {
-        triggerGoogleDriveAutoRefresh('user-activity', false, false);
+  let cleaned = false;
+  return () => {
+    if (cleaned) return;
+    cleaned = true;
+    autoRefreshActiveConsumers = Math.max(0, autoRefreshActiveConsumers - 1);
+    if (autoRefreshActiveConsumers === 0) {
+      if (fiftyMinuteDriveIntervalId) {
+        clearInterval(fiftyMinuteDriveIntervalId);
+        fiftyMinuteDriveIntervalId = null;
+      }
+      if (tokenAutoRefreshIntervalId) {
+        clearInterval(tokenAutoRefreshIntervalId);
+        tokenAutoRefreshIntervalId = null;
+      }
+      if (autoRefreshCleanupListeners) {
+        autoRefreshCleanupListeners();
+        autoRefreshCleanupListeners = null;
       }
     }
-  };
-
-  window.addEventListener('visibilitychange', onVisibilityChange);
-  window.addEventListener('focus', onWindowFocus);
-  window.addEventListener('pointerdown', onUserActivity, { passive: true });
-  window.addEventListener('keydown', onUserActivity, { passive: true });
-  window.addEventListener('popstate', onUserActivity, { passive: true });
-
-  return () => {
-    if (tokenAutoRefreshIntervalId) {
-      clearInterval(tokenAutoRefreshIntervalId);
-      tokenAutoRefreshIntervalId = null;
-    }
-    window.removeEventListener('visibilitychange', onVisibilityChange);
-    window.removeEventListener('focus', onWindowFocus);
-    window.removeEventListener('pointerdown', onUserActivity);
-    window.removeEventListener('keydown', onUserActivity);
-    window.removeEventListener('popstate', onUserActivity);
   };
 };
 

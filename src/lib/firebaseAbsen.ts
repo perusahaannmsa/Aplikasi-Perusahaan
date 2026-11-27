@@ -1,4 +1,4 @@
-import { doc, setDoc, getDoc, collection, getDocs, onSnapshot, disableNetwork } from "firebase/firestore";
+import { doc, setDoc, getDoc, collection, getDocs, onSnapshot, disableNetwork, deleteDoc } from "firebase/firestore";
 import { 
   signInWithPopup, 
   GoogleAuthProvider, 
@@ -210,6 +210,39 @@ export const googleSignOut = async (): Promise<void> => {
 };
 
 let lastFirestorePermissionDeniedTime = 0;
+const CLIENT_ATTENDANCE_SESSION_ID = `att_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+let lastLocalAttendanceWriteAt = 0;
+
+export const getLastLocalAttendanceWriteAt = () => lastLocalAttendanceWriteAt;
+
+// Silently remove obsolete absen_records entry when admin explicitly unchecks/resets a cell
+export const clearLegacyAbsenRecordsForDates = async (
+  edits: Array<{ workerId: string; date: string }>
+): Promise<void> => {
+  const activeDb = getSharedFirestoreDb() || db;
+  if (
+    !activeDb ||
+    !hasAbsenAuthUser() ||
+    isFirestoreQuotaExceeded() ||
+    isFirestorePermissionDenied() ||
+    isFirestoreInternalDegraded() ||
+    !Array.isArray(edits) ||
+    edits.length === 0
+  ) {
+    return;
+  }
+  const uniquePairs = edits.slice(0, 40);
+  await Promise.all(
+    uniquePairs.map(async ({ workerId, date }) => {
+      if (!workerId || !date) return;
+      try {
+        await deleteDoc(doc(activeDb, "absen_records", `absen_${workerId}_${date}`));
+      } catch (_) {
+        // Ignore if doc does not exist or rules restrict delete
+      }
+    })
+  );
+};
 
 // Direct, instant sync to Cloud Firebase Firestore for attendance
 export const saveAttendanceToFirestore = async (
@@ -234,10 +267,12 @@ export const saveAttendanceToFirestore = async (
   }
 
   try {
-    const timestamp = new Date().toISOString();
+    const nowMs = Date.now();
+    lastLocalAttendanceWriteAt = nowMs;
+    const timestamp = new Date(nowMs).toISOString();
 
     // Clean records so that ONLY active/truthy attendance dates exist
-    // ("jika ada absen tulis jika tidak ada hapus di firebase")
+    // while preserving dateUpdatedAt timestamps so unchecks stay authoritative
     const cleanedRecords = (records || []).map((r) => {
       const cleanAtt: Record<string, boolean> = {};
       if (r && r.attendance) {
@@ -259,26 +294,40 @@ export const saveAttendanceToFirestore = async (
           if (val) cleanReasons[d] = val as string;
         });
       }
+      const cleanDateUpdatedAt: Record<string, number> = {};
+      if (r && r.dateUpdatedAt && typeof r.dateUpdatedAt === 'object') {
+        Object.entries(r.dateUpdatedAt).forEach(([d, ts]) => {
+          const numTs = Number(ts);
+          if (!isNaN(numTs) && numTs > 0) cleanDateUpdatedAt[d] = numTs;
+        });
+      }
       return {
         ...r,
         attendance: cleanAtt,
         customStatus: cleanCustom,
         reasons: cleanReasons,
+        dateUpdatedAt: cleanDateUpdatedAt,
       };
     });
 
-    const cleanWeeklyReports = cleanDataForFirestore(weeklyReportsList || []);
+    const payload: Record<string, any> = {
+      attendanceRecords: cleanDataForFirestore(cleanedRecords),
+      workers: cleanDataForFirestore(workersList),
+      updatedAt: timestamp,
+      clientWriteId: CLIENT_ATTENDANCE_SESSION_ID,
+      clientUpdatedAt: nowMs,
+      totalWorkers: (workersList || []).length,
+      totalRecords: (cleanedRecords || []).length,
+    };
+
+    if (weeklyReportsList !== undefined) {
+      const cleanWeeklyReports = cleanDataForFirestore(weeklyReportsList || []);
+      payload.weeklyReports = cleanWeeklyReports;
+      payload.totalReports = cleanWeeklyReports.length;
+    }
 
     await withTimeout(
-      setDoc(doc(activeDb, "attendance", "current_records"), {
-        attendanceRecords: cleanDataForFirestore(cleanedRecords),
-        workers: cleanDataForFirestore(workersList),
-        weeklyReports: cleanWeeklyReports,
-        updatedAt: timestamp,
-        totalWorkers: (workersList || []).length,
-        totalRecords: (cleanedRecords || []).length,
-        totalReports: cleanWeeklyReports.length
-      }, { merge: true }),
+      setDoc(doc(activeDb, "attendance", "current_records"), payload, { merge: true }),
       10000,
       'Simpan absensi ke Firestore'
     );
@@ -354,15 +403,30 @@ export const loadAttendanceFromFirestore = async (): Promise<{
 
     if (masterDoc.exists()) {
       const data = masterDoc.data();
+      let hasMasterAttendance = false;
+      let earliestMasterDate: string | null = null;
 
-      // A. Master attendance records snapshot
-      if (Array.isArray(data.attendanceRecords)) {
+      // A. Master attendance records snapshot (authoritative live state)
+      if (Array.isArray(data.attendanceRecords) && data.attendanceRecords.length > 0) {
+        hasMasterAttendance = true;
         data.attendanceRecords.forEach((r: any) => {
           if (!r || !r.workerId) return;
           const cleanAtt: Record<string, boolean> = {};
           if (r.attendance) {
             Object.entries(r.attendance).forEach(([d, val]) => {
-              if (val === true) cleanAtt[d] = true;
+              if (val === true) {
+                cleanAtt[d] = true;
+                if (!earliestMasterDate || d < earliestMasterDate) {
+                  earliestMasterDate = d;
+                }
+              }
+            });
+          }
+          const cleanDateUpdatedAt: Record<string, number> = {};
+          if (r.dateUpdatedAt && typeof r.dateUpdatedAt === 'object') {
+            Object.entries(r.dateUpdatedAt).forEach(([d, ts]) => {
+              const numTs = Number(ts);
+              if (!isNaN(numTs) && numTs > 0) cleanDateUpdatedAt[d] = numTs;
             });
           }
           workerMap.set(r.workerId, {
@@ -371,17 +435,26 @@ export const loadAttendanceFromFirestore = async (): Promise<{
             attendance: cleanAtt,
             customStatus: { ...(r.customStatus || {}) },
             reasons: { ...(r.reasons || {}) },
-            signatures: { ...(r.signatures || {}) }
+            signatures: { ...(r.signatures || {}) },
+            dateUpdatedAt: cleanDateUpdatedAt,
           });
         });
       }
 
-      // B. Merge all attendance records contained inside all weeklyReports!
+      // B. Collect weeklyReports without overwriting live or explicitly modified attendance dates
       if (Array.isArray(data.weeklyReports)) {
         data.weeklyReports.forEach((rep: any) => {
           if (!rep) return;
           const repKey = rep.id || `${rep.weekStartDate}_${rep.weekEndDate}`;
           repMap.set(repKey, rep);
+
+          // Only backfill archived weeks if master attendanceRecords is empty OR the report is strictly older than earliestMasterDate
+          const isArchivedOlderWeek = Boolean(
+            rep.weekEndDate && earliestMasterDate && rep.weekEndDate < earliestMasterDate
+          );
+          if (hasMasterAttendance && !isArchivedOlderWeek) {
+            return;
+          }
 
           if (Array.isArray(rep.records)) {
             rep.records.forEach((rec: any) => {
@@ -392,22 +465,30 @@ export const loadAttendanceFromFirestore = async (): Promise<{
                 attendance: {},
                 customStatus: {},
                 reasons: {},
-                signatures: {}
+                signatures: {},
+                dateUpdatedAt: {}
               };
 
               if (rec.attendance) {
                 Object.entries(rec.attendance).forEach(([d, val]) => {
-                  if (val === true) existing.attendance[d] = true;
+                  // Never overwrite if dateUpdatedAt already tracks this date
+                  if (val === true && !existing.dateUpdatedAt?.[d]) {
+                    existing.attendance[d] = true;
+                  }
                 });
               }
               if (rec.customStatus) {
                 Object.entries(rec.customStatus).forEach(([d, val]) => {
-                  if (val) existing.customStatus[d] = val;
+                  if (val && !existing.dateUpdatedAt?.[d] && !existing.attendance?.[d]) {
+                    existing.customStatus[d] = val;
+                  }
                 });
               }
               if (rec.reasons) {
                 Object.entries(rec.reasons).forEach(([d, val]) => {
-                  if (val) existing.reasons[d] = val;
+                  if (val && !existing.dateUpdatedAt?.[d] && !existing.attendance?.[d]) {
+                    existing.reasons[d] = val;
+                  }
                 });
               }
               workerMap.set(rec.workerId, existing);
@@ -417,7 +498,7 @@ export const loadAttendanceFromFirestore = async (): Promise<{
       }
     }
 
-    // 2. Also check absen_records collection for individual clock-ins / live check-ins
+    // 2. Also check absen_records collection ONLY when newer than master dateUpdatedAt
     if (!isFirestorePermissionDenied()) {
       try {
         const snap = await getDocs(collection(activeDb, "absen_records"));
@@ -431,10 +512,19 @@ export const loadAttendanceFromFirestore = async (): Promise<{
               attendance: {},
               customStatus: {},
               reasons: {},
-              signatures: {}
+              signatures: {},
+              dateUpdatedAt: {}
             };
+            const abTs = ab.timestamp ? Date.parse(ab.timestamp) : 0;
+            const existingCellTs = Number(existing.dateUpdatedAt?.[ab.date] || 0);
+            // Only apply if admin didn't already modify/uncheck this date more recently
+            if (existingCellTs > 0 && (isNaN(abTs) || abTs <= existingCellTs)) {
+              return;
+            }
             if (ab.status === "Hadir" || ab.status === true) {
               existing.attendance[ab.date] = true;
+            } else if (ab.status === "Absen") {
+              delete existing.attendance[ab.date];
             } else if (ab.status && ab.status !== "Absen") {
               existing.customStatus[ab.date] = ab.status;
               if (ab.reason) existing.reasons[ab.date] = ab.reason;
@@ -487,13 +577,14 @@ export const loadAttendanceFromFirestore = async (): Promise<{
   }
 };
 
-// ⚡ Realtime Cloud Listener: Sinkronisasi instan dua arah antara Komputer dan HP tanpa biaya (Gratis Firebase onSnapshot)
+// ⚡ Realtime Cloud Listener: Sinkronisasi instan dua arah antara Komputer dan HP via Firestore onSnapshot
 export const subscribeToAttendanceFromFirestore = (
   onUpdate: (data: {
     attendanceRecords: any[];
     workers: any[];
     weeklyReports: any[];
     latestActiveDate?: string | null;
+    clientUpdatedAt?: number;
   }) => void
 ): (() => void) => {
   const activeDb = getSharedFirestoreDb() || db;
@@ -509,15 +600,25 @@ export const subscribeToAttendanceFromFirestore = (
   try {
     const unsub = onSnapshot(doc(activeDb, "attendance", "current_records"), (snapshot) => {
       if (!snapshot.exists()) return;
+      // Skip local optimistic echoes so rapid clicks stay rock-solid
+      if (snapshot.metadata.hasPendingWrites) return;
       recordFirestoreReads(1);
       const data = snapshot.data();
       if (!data) return;
+
+      // Skip exact echo from this tab's own most recent write
+      if (
+        data.clientWriteId === CLIENT_ATTENDANCE_SESSION_ID &&
+        Number(data.clientUpdatedAt || 0) <= lastLocalAttendanceWriteAt
+      ) {
+        return;
+      }
 
       const workerMap = new Map<string, any>();
       const wrks = data.workers || [];
       const repMap = new Map<string, any>();
 
-      // 1. Process master attendance records
+      // 1. Process authoritative master attendance records (NEVER overlay weeklyReports on top of live data)
       if (Array.isArray(data.attendanceRecords)) {
         data.attendanceRecords.forEach((r: any) => {
           if (!r || !r.workerId) return;
@@ -527,53 +628,31 @@ export const subscribeToAttendanceFromFirestore = (
               if (val === true) cleanAtt[d] = true;
             });
           }
+          const cleanDateUpdatedAt: Record<string, number> = {};
+          if (r.dateUpdatedAt && typeof r.dateUpdatedAt === 'object') {
+            Object.entries(r.dateUpdatedAt).forEach(([d, ts]) => {
+              const numTs = Number(ts);
+              if (!isNaN(numTs) && numTs > 0) cleanDateUpdatedAt[d] = numTs;
+            });
+          }
           workerMap.set(r.workerId, {
             workerId: r.workerId,
             dailyAllowance: r.dailyAllowance || 25000,
             attendance: cleanAtt,
             customStatus: { ...(r.customStatus || {}) },
             reasons: { ...(r.reasons || {}) },
-            signatures: { ...(r.signatures || {}) }
+            signatures: { ...(r.signatures || {}) },
+            dateUpdatedAt: cleanDateUpdatedAt,
           });
         });
       }
 
-      // 2. Process records inside weekly reports
+      // 2. Collect weeklyReports metadata separately (do NOT overwrite attendanceRecords from weeklyReports!)
       if (Array.isArray(data.weeklyReports)) {
         data.weeklyReports.forEach((rep: any) => {
           if (!rep) return;
           const repKey = rep.id || `${rep.weekStartDate}_${rep.weekEndDate}`;
           repMap.set(repKey, rep);
-
-          if (Array.isArray(rep.records)) {
-            rep.records.forEach((rec: any) => {
-              if (!rec || !rec.workerId) return;
-              const existing = workerMap.get(rec.workerId) || {
-                workerId: rec.workerId,
-                dailyAllowance: rec.dailyAllowance || 25000,
-                attendance: {},
-                customStatus: {},
-                reasons: {},
-                signatures: {}
-              };
-              if (rec.attendance) {
-                Object.entries(rec.attendance).forEach(([d, val]) => {
-                  if (val === true) existing.attendance[d] = true;
-                });
-              }
-              if (rec.customStatus) {
-                Object.entries(rec.customStatus).forEach(([d, val]) => {
-                  if (val) existing.customStatus[d] = val;
-                });
-              }
-              if (rec.reasons) {
-                Object.entries(rec.reasons).forEach(([d, val]) => {
-                  if (val) existing.reasons[d] = val;
-                });
-              }
-              workerMap.set(rec.workerId, existing);
-            });
-          }
         });
       }
 
@@ -591,17 +670,12 @@ export const subscribeToAttendanceFromFirestore = (
       });
 
       const consolidated = Array.from(workerMap.values());
-      if (consolidated.length > 0) {
-        try {
-          localStorage.setItem("absensi_uang_makan_records", JSON.stringify(consolidated));
-        } catch (_) {}
-      }
-
       onUpdate({
         attendanceRecords: consolidated,
         workers: wrks,
         weeklyReports: Array.from(repMap.values()),
-        latestActiveDate
+        latestActiveDate,
+        clientUpdatedAt: Number(data.clientUpdatedAt || 0)
       });
     }, (err) => {
       markFirestoreQuotaExceeded(err);

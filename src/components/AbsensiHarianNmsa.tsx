@@ -83,7 +83,7 @@ import { INITIAL_WORKERS, INDONESIAN_DAYS, COMMON_CATEGORIES } from "../constant
 import { triggerExcelDownload } from "../lib/excelGenerator";
 import { triggerAttendanceExcelDownload, printWeeklyReportPDF, generateAttendanceExcelBlob } from "../lib/attendanceSheetGenerator";
 import { getOrCreateFolder, getOrCreateNestedFolder, uploadFileToDrive, exportAttendanceToGoogleSheet } from "../lib/googleWorkspaceAbsen";
-import { initAuth, googleSignIn, googleSignOut, getFreshGoogleToken, saveGoogleToken, saveAttendanceToFirestore, loadAttendanceFromFirestore, subscribeToAttendanceFromFirestore, loadWorkersFromFirestore, saveWorkerToFirestore, deleteWorkerFromFirestore, saveWorkersListToFirestore, subscribeToWorkersMasterFromFirestore, mergeWorkerListsSafely, getDeletedWorkerIds, saveDeletedWorkerIds, hasAbsenAuthUser } from "../lib/firebaseAbsen";
+import { initAuth, googleSignIn, googleSignOut, getFreshGoogleToken, saveGoogleToken, saveAttendanceToFirestore, loadAttendanceFromFirestore, subscribeToAttendanceFromFirestore, clearLegacyAbsenRecordsForDates, loadWorkersFromFirestore, saveWorkerToFirestore, deleteWorkerFromFirestore, saveWorkersListToFirestore, subscribeToWorkersMasterFromFirestore, mergeWorkerListsSafely, getDeletedWorkerIds, saveDeletedWorkerIds, hasAbsenAuthUser } from "../lib/firebaseAbsen";
 import { saveSubmissionToFirestore, saveAbsenDataToFirestore, ensureValidDriveToken, getActiveGoogleDriveAccount, getConnectedDrives, getStoredGoogleDriveToken, getMasterDriveEmail, executeDriveApiWithAutoRefresh, getOrRenewDriveToken, triggerGoogleDriveAutoRefresh, isFirestoreQuotaExceeded, markFirestoreQuotaExceeded, isFirestorePermissionDenied, markFirestorePermissionDenied, isFirestorePermissionError, getFirestoreQuotaMetrics, FirestoreQuotaMetrics, LOCKED_MASTER_DRIVE_EMAIL } from "../firebase";
 import { googleDriveAutoBackup, BackupSyncLog, DriveAutoBackupSettings } from "../utils/googleDriveAutoBackup";
 import { SignaturePad } from "./SignaturePad";
@@ -102,17 +102,39 @@ function formatLocalYYYYMMDD(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-// Non-destructive merge for attendance records across local & cloud devices
-function mergeAttendanceListsSafely(
+type LocalRecordModification = {
+  timestamp: number;
+  workerId: string;
+  date: string;
+  isPresent?: boolean;
+  customStatus?: "Sakit" | "Izin" | "Cuti" | "Meeting";
+  reason?: string;
+};
+
+// Authoritative timestamp-aware merge for attendance records across local, server & Firestore
+function mergeAttendanceRecordsAuthoritatively(
   localList: AttendanceRecord[],
-  incomingList: AttendanceRecord[]
+  incomingList: AttendanceRecord[],
+  options?: {
+    localMods?: Map<string, LocalRecordModification>;
+    localImmunityMs?: number;
+    authoritativeCloud?: boolean;
+    allowedWorkerIds?: Set<string>;
+    deletedWorkerIds?: string[];
+  }
 ): AttendanceRecord[] {
+  const now = Date.now();
+  const immunityMs = options?.localImmunityMs ?? 15000;
+  const deletedSet = new Set(options?.deletedWorkerIds || []);
   const map = new Map<string, AttendanceRecord>();
+
   (localList || []).forEach((r) => {
-    if (!r?.workerId) return;
+    if (!r?.workerId || deletedSet.has(r.workerId)) return;
+    if (options?.allowedWorkerIds && !options.allowedWorkerIds.has(r.workerId)) return;
     map.set(r.workerId, {
       ...r,
       attendance: { ...(r.attendance || {}) },
+      dateUpdatedAt: { ...(r.dateUpdatedAt || {}) },
       customStatus: { ...(r.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">,
       reasons: { ...(r.reasons || {}) },
       signatures: { ...(r.signatures || {}) },
@@ -120,12 +142,20 @@ function mergeAttendanceListsSafely(
   });
 
   (incomingList || []).forEach((r) => {
-    if (!r?.workerId) return;
+    if (!r?.workerId || deletedSet.has(r.workerId)) return;
+    if (options?.allowedWorkerIds && !options.allowedWorkerIds.has(r.workerId)) return;
     const existing = map.get(r.workerId);
     if (!existing) {
+      const cleanAtt: Record<string, boolean> = {};
+      if (r.attendance) {
+        Object.entries(r.attendance).forEach(([d, val]) => {
+          if (val === true) cleanAtt[d] = true;
+        });
+      }
       map.set(r.workerId, {
         ...r,
-        attendance: { ...(r.attendance || {}) },
+        attendance: cleanAtt,
+        dateUpdatedAt: { ...(r.dateUpdatedAt || {}) },
         customStatus: { ...(r.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">,
         reasons: { ...(r.reasons || {}) },
         signatures: { ...(r.signatures || {}) },
@@ -134,20 +164,66 @@ function mergeAttendanceListsSafely(
     }
 
     const mergedAtt: Record<string, boolean> = { ...(existing.attendance || {}) };
-    if (r.attendance) {
-      Object.entries(r.attendance).forEach(([d, val]) => {
-        if (val === true) mergedAtt[d] = true;
-      });
-    }
+    const mergedDateUpdatedAt: { [date: string]: number } = { ...(existing.dateUpdatedAt || {}) };
+    const mergedCust = { ...(existing.customStatus || {}) } as Record<string, any>;
+    const mergedReasons = { ...(existing.reasons || {}) };
+
+    const allDates = new Set([
+      ...Object.keys(existing.attendance || {}),
+      ...Object.keys(existing.dateUpdatedAt || {}),
+      ...Object.keys(existing.customStatus || {}),
+      ...Object.keys(r.attendance || {}),
+      ...Object.keys(r.dateUpdatedAt || {}),
+      ...Object.keys(r.customStatus || {}),
+    ]);
+
+    allDates.forEach((d) => {
+      const modKey = `${r.workerId}_${d}`;
+      const mod = options?.localMods?.get(modKey);
+      const incomingDateTs = Number(r.dateUpdatedAt?.[d] || 0);
+      const localDateTs = Number(existing.dateUpdatedAt?.[d] || 0);
+
+      if (mod && now - mod.timestamp < immunityMs && mod.timestamp >= incomingDateTs) {
+        return;
+      }
+
+      const incomingPresent = r.attendance?.[d] === true;
+      const incomingCust = r.customStatus?.[d];
+      const incomingReason = r.reasons?.[d];
+
+      if (incomingDateTs > localDateTs) {
+        if (incomingPresent) mergedAtt[d] = true;
+        else delete mergedAtt[d];
+
+        if (incomingCust) mergedCust[d] = incomingCust;
+        else delete mergedCust[d];
+
+        if (incomingReason) mergedReasons[d] = incomingReason;
+        else delete mergedReasons[d];
+
+        mergedDateUpdatedAt[d] = incomingDateTs;
+      } else if (localDateTs > incomingDateTs) {
+        // Keep newer local cell state (including recent local unchecks)
+      } else if (options?.authoritativeCloud) {
+        if (incomingPresent) mergedAtt[d] = true;
+        else delete mergedAtt[d];
+
+        if (incomingCust) mergedCust[d] = incomingCust;
+        else delete mergedCust[d];
+
+        if (incomingReason) mergedReasons[d] = incomingReason;
+        else delete mergedReasons[d];
+      } else {
+        if (incomingPresent) mergedAtt[d] = true;
+        if (incomingCust && !mergedCust[d]) mergedCust[d] = incomingCust;
+        if (incomingReason && !mergedReasons[d]) mergedReasons[d] = incomingReason;
+      }
+    });
+
     existing.attendance = mergedAtt;
-    existing.customStatus = {
-      ...(existing.customStatus || {}),
-      ...(r.customStatus || {}),
-    } as Record<string, "Sakit" | "Izin" | "Meeting">;
-    existing.reasons = {
-      ...(existing.reasons || {}),
-      ...(r.reasons || {}),
-    };
+    existing.dateUpdatedAt = mergedDateUpdatedAt;
+    existing.customStatus = mergedCust as Record<string, "Sakit" | "Izin" | "Meeting">;
+    existing.reasons = mergedReasons;
     if (r.signatures) {
       existing.signatures = { ...(existing.signatures || {}), ...r.signatures };
     }
@@ -156,6 +232,108 @@ function mergeAttendanceListsSafely(
   });
 
   return Array.from(map.values());
+}
+
+function syncWeeklyReportsWithAttendance(
+  reports: WeeklyReport[],
+  updatedRecords: AttendanceRecord[],
+  editedDates: string[],
+  globalAllowance: number = 25000
+): WeeklyReport[] {
+  if (!Array.isArray(reports) || reports.length === 0 || !editedDates || editedDates.length === 0) {
+    return reports;
+  }
+  const recordByWorker = new Map(updatedRecords.map((rec) => [rec.workerId, rec]));
+  let changed = false;
+
+  const nextReports = reports.map((rep) => {
+    if (!rep?.weekStartDate || !rep?.weekEndDate) return rep;
+    const overlappingDates = editedDates.filter(
+      (d) => d >= rep.weekStartDate && d <= rep.weekEndDate
+    );
+    if (overlappingDates.length === 0) return rep;
+
+    changed = true;
+    const baseRecords = Array.isArray(rep.records) ? [...rep.records] : [];
+    const seenWorkers = new Set<string>();
+
+    const nextRepRecords = baseRecords.map((rr) => {
+      seenWorkers.add(rr.workerId);
+      const latest = recordByWorker.get(rr.workerId);
+      if (!latest) return rr;
+
+      const nextAtt: Record<string, boolean> = { ...(rr.attendance || {}) };
+      const nextCust: Record<string, any> = { ...(rr.customStatus || {}) };
+      const nextReasons: Record<string, string> = { ...(rr.reasons || {}) };
+
+      overlappingDates.forEach((d) => {
+        if (latest.attendance?.[d] === true) {
+          nextAtt[d] = true;
+        } else {
+          delete nextAtt[d];
+        }
+        if (latest.customStatus?.[d]) {
+          nextCust[d] = latest.customStatus[d];
+        } else {
+          delete nextCust[d];
+        }
+        if (latest.reasons?.[d]) {
+          nextReasons[d] = latest.reasons[d];
+        } else {
+          delete nextReasons[d];
+        }
+      });
+
+      return {
+        ...rr,
+        attendance: nextAtt,
+        customStatus: nextCust,
+        reasons: nextReasons,
+      };
+    });
+
+    updatedRecords.forEach((latest) => {
+      if (!seenWorkers.has(latest.workerId)) {
+        const nextAtt: Record<string, boolean> = {};
+        const nextCust: Record<string, any> = {};
+        const nextReasons: Record<string, string> = {};
+        overlappingDates.forEach((d) => {
+          if (latest.attendance?.[d] === true) nextAtt[d] = true;
+          if (latest.customStatus?.[d]) nextCust[d] = latest.customStatus[d];
+          if (latest.reasons?.[d]) nextReasons[d] = latest.reasons[d];
+        });
+        nextRepRecords.push({
+          ...latest,
+          attendance: nextAtt,
+          customStatus: nextCust,
+          reasons: nextReasons,
+        });
+      }
+    });
+
+    const totalCost = nextRepRecords.reduce((sum, rec) => {
+      const presentDays = Object.keys(rec.attendance || {}).filter(
+        (k) =>
+          rec.attendance?.[k] === true &&
+          k >= rep.weekStartDate &&
+          k <= rep.weekEndDate &&
+          (!rec.customStatus ||
+            (rec.customStatus[k] !== "Meeting" &&
+              rec.customStatus[k] !== "Izin" &&
+              rec.customStatus[k] !== "Sakit" &&
+              rec.customStatus[k] !== "Cuti"))
+      ).length;
+      return sum + presentDays * (rec.dailyAllowance || globalAllowance);
+    }, 0);
+
+    return {
+      ...rep,
+      totalAmount: totalCost,
+      records: nextRepRecords,
+    };
+  });
+
+  return changed ? nextReports : reports;
 }
 
 // Extract Year and Month Name in Indonesian with 01-12 prefix from a period or date string
@@ -1551,8 +1729,8 @@ export function AbsensiHarianNmsa({
   const pettyCashReportsRef = useRef(pettyCashReports);
   const hasBackedUpOnOpenRef = useRef<boolean>(false);
   const lastUserInteractionTimeRef = useRef<number>(0);
-  // Registry of recent manual edits (workerId_date => timestamp) to prevent background sync from reverting edits
-  const localRecordModificationsRef = useRef<Map<string, { timestamp: number; workerId: string; date: string }>>(new Map());
+  // Registry of recent manual edits (workerId_date => metadata) to prevent background sync from reverting edits
+  const localRecordModificationsRef = useRef<Map<string, LocalRecordModification>>(new Map());
   const tableContainerRef = useRef<HTMLDivElement | null>(null);
   const preservedScrollYRef = useRef<number>(0);
   const preservedTableScrollXRef = useRef<number>(0);
@@ -2170,7 +2348,8 @@ export function AbsensiHarianNmsa({
     holdersList = pettyCashHolders,
     logsList = attendanceLogs,
     methodVal = waMethod,
-    hourVal = autoReminderHour
+    hourVal = autoReminderHour,
+    authoritativeDates: string[] = weekDates
   ) => {
     try {
       setServerSyncing(true);
@@ -2183,6 +2362,7 @@ export function AbsensiHarianNmsa({
           workers: workersList,
           deletedWorkerIds: getDeletedWorkerIds(),
           attendanceRecords: recordsList,
+          authoritativeDates,
           weeklyReports: weeklyRepList,
           pettyCashReports: pettyRepList,
           attendancePin: pinVal,
@@ -2262,101 +2442,24 @@ export function AbsensiHarianNmsa({
           }
 
           if (data.attendanceRecords && Array.isArray(data.attendanceRecords)) {
-            const now = Date.now();
             const allWorkerIds = new Set([
               ...resolvedWorkers.map((w: any) => w.id),
               ...data.attendanceRecords.map((r: any) => r?.workerId).filter(Boolean),
             ].filter((id) => !deletedIds.includes(id)));
 
             setAttendanceRecords((prevLocal) => {
-              const map = new Map<string, AttendanceRecord>();
-              let hasAnyChange = false;
-
-              // 1. Keep local records baseline for workers not yet registered on server
-              (prevLocal || []).forEach((r) => {
-                if (allWorkerIds.has(r.workerId)) {
-                  map.set(r.workerId, {
-                    ...r,
-                    attendance: { ...(r.attendance || {}) },
-                    customStatus: { ...(r.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">,
-                    reasons: { ...(r.reasons || {}) }
-                  });
+              const mergedList = mergeAttendanceRecordsAuthoritatively(
+                prevLocal || [],
+                data.attendanceRecords,
+                {
+                  localMods: localRecordModificationsRef.current,
+                  localImmunityMs: 60000,
+                  authoritativeCloud: true,
+                  allowedWorkerIds: allWorkerIds,
+                  deletedWorkerIds: deletedIds,
                 }
-              });
+              );
 
-              // 2. Server state sync - protect recent local manual edits
-              data.attendanceRecords.forEach((r: AttendanceRecord) => {
-                if (!allWorkerIds.has(r.workerId)) return;
-                const existing = map.get(r.workerId);
-                if (!existing) {
-                  map.set(r.workerId, {
-                    ...r,
-                    attendance: { ...(r.attendance || {}) },
-                    customStatus: { ...(r.customStatus || {}) } as Record<string, "Sakit" | "Izin" | "Meeting">,
-                    reasons: { ...(r.reasons || {}) }
-                  });
-                  hasAnyChange = true;
-                } else {
-                  // Merge attendance days safely
-                  const allDates = new Set([
-                    ...Object.keys(r.attendance || {}),
-                    ...Object.keys(r.customStatus || {}),
-                    ...Object.keys(existing.attendance || {}),
-                    ...Object.keys(existing.customStatus || {})
-                  ]);
-
-                  allDates.forEach((d) => {
-                    const modKey = `${r.workerId}_${d}`;
-                    const mod = localRecordModificationsRef.current.get(modKey);
-                    // Immunity window: 60 seconds after a manual edit, NEVER let server overwrite local value!
-                    const isRecentlyModified = mod && (now - mod.timestamp < 60000);
-
-                    if (isRecentlyModified) {
-                      return;
-                    }
-
-                    // Sync from server safely: always preserve positive local attendance if server is missing the date!
-                    const sIsPresent = Boolean(r.attendance?.[d]);
-                    const locIsPresent = Boolean(existing.attendance?.[d]);
-                    if (sIsPresent && !locIsPresent) {
-                      existing.attendance[d] = true;
-                      hasAnyChange = true;
-                    }
-
-                    const sCust = r.customStatus?.[d];
-                    if (sCust && existing.customStatus?.[d] !== sCust) {
-                      existing.customStatus[d] = sCust as any;
-                      hasAnyChange = true;
-                    }
-
-                    const sReason = r.reasons?.[d];
-                    if (sReason && existing.reasons?.[d] !== sReason) {
-                      existing.reasons[d] = sReason;
-                      hasAnyChange = true;
-                    }
-                  });
-
-                  if (r.dailyAllowance && r.dailyAllowance !== existing.dailyAllowance) {
-                    existing.dailyAllowance = r.dailyAllowance;
-                    hasAnyChange = true;
-                  }
-                  if (r.allowanceRate && r.allowanceRate !== existing.allowanceRate) {
-                    existing.allowanceRate = r.allowanceRate;
-                    hasAnyChange = true;
-                  }
-                  if (r.signatures && JSON.stringify(r.signatures) !== JSON.stringify(existing.signatures)) {
-                    existing.signatures = { ...(existing.signatures || {}), ...(r.signatures || {}) };
-                    hasAnyChange = true;
-                  }
-                }
-              });
-
-              // If nothing actually changed, return prevLocal to completely prevent re-renders!
-              if (!hasAnyChange && prevLocal && prevLocal.length === map.size) {
-                return prevLocal;
-              }
-
-              const mergedList = Array.from(map.values()) as AttendanceRecord[];
               if (JSON.stringify(prevLocal) === JSON.stringify(mergedList)) {
                 return prevLocal;
               }
@@ -2482,27 +2585,16 @@ export function AbsensiHarianNmsa({
         if (fbData && fbData.attendanceRecords && fbData.attendanceRecords.length > 0) {
           let finalMergedRecords: AttendanceRecord[] = [];
           setAttendanceRecords((prevLocal) => {
-            const map = new Map<string, AttendanceRecord>();
-            (prevLocal || []).forEach(r => {
-              map.set(r.workerId, { ...r, attendance: { ...(r.attendance || {}) } });
-            });
-            fbData.attendanceRecords.forEach((r: AttendanceRecord) => {
-              const existing = map.get(r.workerId);
-              if (!existing) {
-                map.set(r.workerId, r);
-              } else {
-                const mergedAtt = { ...(existing.attendance || {}) };
-                if (r.attendance) {
-                  Object.entries(r.attendance).forEach(([d, val]) => {
-                    if (val === true) mergedAtt[d] = true;
-                  });
-                }
-                existing.attendance = mergedAtt;
-                if (r.customStatus) existing.customStatus = { ...(existing.customStatus || {}), ...r.customStatus };
-                if (r.reasons) existing.reasons = { ...(existing.reasons || {}), ...r.reasons };
+            const mergedList = mergeAttendanceRecordsAuthoritatively(
+              prevLocal || [],
+              fbData.attendanceRecords,
+              {
+                localMods: localRecordModificationsRef.current,
+                localImmunityMs: 15000,
+                authoritativeCloud: true,
+                deletedWorkerIds: deletedIds,
               }
-            });
-            const mergedList = Array.from(map.values());
+            );
             finalMergedRecords = mergedList;
             try {
               localStorage.setItem("absensi_uang_makan_records", JSON.stringify(mergedList));
@@ -2548,16 +2640,22 @@ export function AbsensiHarianNmsa({
     return () => clearTimeout(fallbackTimer);
   }, []);
 
-  // 1b. ⚡ REAL-TIME INSTANT SYNC (Komputer ⇄ HP) via Cloud Firestore onSnapshot (100% Gratis)
+  // 1b. ⚡ REAL-TIME INSTANT SYNC (Komputer ⇄ HP) via Cloud Firestore onSnapshot
   useEffect(() => {
     const unsub = subscribeToAttendanceFromFirestore((cloudData) => {
-      // Jika pengguna baru saja mengklik di layar ini dalam 30 detik (30000ms), jangan overwrite local touch
-      if (Date.now() - lastUserInteractionTimeRef.current < 30000) {
-        return;
-      }
       if (cloudData.attendanceRecords && cloudData.attendanceRecords.length > 0) {
+        const deletedIds = getDeletedWorkerIds();
         setAttendanceRecords((prevLocal) => {
-          const merged = mergeAttendanceListsSafely(prevLocal || [], cloudData.attendanceRecords);
+          const merged = mergeAttendanceRecordsAuthoritatively(
+            prevLocal || [],
+            cloudData.attendanceRecords,
+            {
+              localMods: localRecordModificationsRef.current,
+              localImmunityMs: 15000,
+              authoritativeCloud: true,
+              deletedWorkerIds: deletedIds,
+            }
+          );
           const serializeClean = (recs: any[]) => {
             return (recs || []).map(r => {
               const cleanAtt: Record<string, boolean> = {};
@@ -2570,7 +2668,8 @@ export function AbsensiHarianNmsa({
                 workerId: r.workerId,
                 att: cleanAtt,
                 cs: r.customStatus || {},
-                rs: r.reasons || {}
+                rs: r.reasons || {},
+                ts: r.dateUpdatedAt || {}
               };
             }).sort((a, b) => (a.workerId || '').localeCompare(b.workerId || ''));
           };
@@ -2581,7 +2680,7 @@ export function AbsensiHarianNmsa({
           try {
             localStorage.setItem("absensi_uang_makan_records", JSON.stringify(merged));
           } catch (_) {}
-          console.log(`⚡ [Realtime Sync] Menggabungkan pembaruan absensi instan dari perangkat lain (${merged.length} records)`);
+          console.log(`⚡ [Realtime Sync] Sinkronisasi Firestore realtime diterapkan (${merged.length} records)`);
           return merged;
         });
       }
@@ -2868,12 +2967,16 @@ export function AbsensiHarianNmsa({
         setSelfIsAttendedToday(true);
       }
 
-      // Synchronize locally to keep states reactive
+      // Synchronize locally & to Firestore in real-time
+      const nowQuick = Date.now();
       const updatedRecords = attendanceRecords.map((r) => {
         if (r.workerId === selfWorkerId) {
-          const newAtt = { ...(r.attendance || {}), [todayYMD]: status === "Hadir" };
+          const newAtt = { ...(r.attendance || {}) };
+          if (status === "Hadir") newAtt[todayYMD] = true;
+          else delete newAtt[todayYMD];
           const newCust = { ...(r.customStatus || {}) };
           const newReas = { ...(r.reasons || {}) };
+          const newDateUpdatedAt = { ...(r.dateUpdatedAt || {}), [todayYMD]: nowQuick };
 
           if (status === "Hadir" || status === "Absen") {
             delete newCust[todayYMD];
@@ -2883,19 +2986,30 @@ export function AbsensiHarianNmsa({
             newReas[todayYMD] = customReason || `Diajukan via tautan mandiri (${status})`;
           }
 
+          localRecordModificationsRef.current.set(`${selfWorkerId}_${todayYMD}`, {
+            timestamp: nowQuick,
+            workerId: selfWorkerId,
+            date: todayYMD,
+            isPresent: status === "Hadir",
+          });
+
           return {
             ...r,
             attendance: newAtt,
             customStatus: newCust,
-            reasons: newReas
+            reasons: newReas,
+            dateUpdatedAt: newDateUpdatedAt
           };
         }
         return r;
       });
+      const updatedQuickReports = syncWeeklyReportsWithAttendance(weeklyReports, updatedRecords, [todayYMD], globalAllowance);
+      if (updatedQuickReports !== weeklyReports) setWeeklyReports(updatedQuickReports);
       setAttendanceRecords(updatedRecords);
       try {
         localStorage.setItem("absensi_uang_makan_records", JSON.stringify(updatedRecords));
       } catch (e) {}
+      saveAttendanceToFirestore(updatedRecords, workers, updatedQuickReports).catch(() => {});
 
       // Save to Cloud Firestore
       saveAbsenDataToFirestore({
@@ -3048,7 +3162,14 @@ export function AbsensiHarianNmsa({
           } catch (e) {}
         }
 
-        // Update locally to keep visual states reactive
+        // Update locally & sync to Firestore in real-time
+        const nowSelf = Date.now();
+        localRecordModificationsRef.current.set(`${selfWorker.id}_${todayYMD}`, {
+          timestamp: nowSelf,
+          workerId: selfWorker.id,
+          date: todayYMD,
+          isPresent: true,
+        });
         const updatedRecords = attendanceRecords.map((r) => {
           if (r.workerId === selfWorker.id) {
             return {
@@ -3057,11 +3178,18 @@ export function AbsensiHarianNmsa({
                 ...r.attendance,
                 [todayYMD]: true,
               },
+              dateUpdatedAt: {
+                ...(r.dateUpdatedAt || {}),
+                [todayYMD]: nowSelf,
+              },
             };
           }
           return r;
         });
+        const updatedSelfReports = syncWeeklyReportsWithAttendance(weeklyReports, updatedRecords, [todayYMD], globalAllowance);
+        if (updatedSelfReports !== weeklyReports) setWeeklyReports(updatedSelfReports);
         setAttendanceRecords(updatedRecords);
+        saveAttendanceToFirestore(updatedRecords, workers, updatedSelfReports).catch(() => {});
       } else {
         setSelfAttendStatus("error");
         setSelfAttendMessage(data.error || "Gagal mencatatkan kehadiran.");
@@ -3103,12 +3231,8 @@ export function AbsensiHarianNmsa({
 
   // --- Handlers ---
   const handleToggleAttendance = (workerId: string, date: string) => {
-    lastUserInteractionTimeRef.current = Date.now();
-    localRecordModificationsRef.current.set(`${workerId}_${date}`, {
-      timestamp: Date.now(),
-      workerId,
-      date,
-    });
+    const now = Date.now();
+    lastUserInteractionTimeRef.current = now;
 
     let base = [...attendanceRecords];
     if (!base.some(r => r.workerId === workerId)) {
@@ -3117,25 +3241,27 @@ export function AbsensiHarianNmsa({
         attendance: {},
         customStatus: {},
         reasons: {},
+        dateUpdatedAt: {},
         dailyAllowance: globalAllowance || 25000,
       });
     }
 
+    let toggledToPresent = false;
     const updated = base.map((r) => {
       if (r.workerId === workerId) {
         const isCurrentlyPresent = Boolean(r.attendance && r.attendance[date]);
         const nextVal = !isCurrentlyPresent;
+        toggledToPresent = nextVal;
         const newAttendance = { ...(r.attendance || {}) };
         const newCustomStatus = { ...(r.customStatus || {}) };
         const newReasons = { ...(r.reasons || {}) };
+        const newDateUpdatedAt = { ...(r.dateUpdatedAt || {}), [date]: now };
         delete newCustomStatus[date];
         delete newReasons[date];
 
         if (nextVal) {
-          // JIKA ADA ABSEN: TULIS (true)
           newAttendance[date] = true;
         } else {
-          // JIKA TIDAK ADA / DIHAPUS: HAPUS DARI OBJECT & FIREBASE
           delete newAttendance[date];
         }
 
@@ -3144,38 +3270,56 @@ export function AbsensiHarianNmsa({
           attendance: newAttendance,
           customStatus: newCustomStatus,
           reasons: newReasons,
+          dateUpdatedAt: newDateUpdatedAt,
         };
       }
       return r;
     });
+
+    localRecordModificationsRef.current.set(`${workerId}_${date}`, {
+      timestamp: now,
+      workerId,
+      date,
+      isPresent: toggledToPresent,
+    });
+
+    const syncedReports = syncWeeklyReportsWithAttendance(weeklyReports, updated, [date], globalAllowance);
+    if (syncedReports !== weeklyReports) {
+      setWeeklyReports(syncedReports);
+    }
+
     try {
       localStorage.setItem("absensi_uang_makan_records", JSON.stringify(updated));
     } catch (e) {}
     setAttendanceRecords(updated);
-    // Langsung tulis / hapus di Firestore secara instan tanpa menunggu debounce
-    saveAttendanceToFirestore(updated, workers, weeklyReports).catch(e => console.warn(e));
-    // Sinkronkan ke server secara konsisten
+    saveAttendanceToFirestore(updated, workers, syncedReports).catch(e => console.warn(e));
+    if (!toggledToPresent) {
+      clearLegacyAbsenRecordsForDates([{ workerId, date }]).catch(() => {});
+    }
     syncStateToServer(
       workers,
       updated,
-      weeklyReports,
+      syncedReports,
       pettyCashReports,
       attendancePin,
       signatures,
       pettyCashHolders,
       attendanceLogs,
       waMethod,
-      autoReminderHour
+      autoReminderHour,
+      [date]
     );
   };
 
   const handleToggleAllForDay = (date: string, forceCheck: boolean) => {
-    lastUserInteractionTimeRef.current = Date.now();
+    const now = Date.now();
+    lastUserInteractionTimeRef.current = now;
     workers.forEach((w) => {
       localRecordModificationsRef.current.set(`${w.id}_${date}`, {
-        timestamp: Date.now(),
+        timestamp: now,
         workerId: w.id,
         date,
+        isPresent: forceCheck,
       });
     });
 
@@ -3187,6 +3331,7 @@ export function AbsensiHarianNmsa({
           attendance: {},
           customStatus: {},
           reasons: {},
+          dateUpdatedAt: {},
           dailyAllowance: globalAllowance || 25000,
         });
       }
@@ -3196,6 +3341,7 @@ export function AbsensiHarianNmsa({
       const newAttendance = { ...(r.attendance || {}) };
       const newCustomStatus = { ...(r.customStatus || {}) };
       const newReasons = { ...(r.reasons || {}) };
+      const newDateUpdatedAt = { ...(r.dateUpdatedAt || {}), [date]: now };
       if (forceCheck) {
         newAttendance[date] = true;
         delete newCustomStatus[date];
@@ -3210,34 +3356,47 @@ export function AbsensiHarianNmsa({
         attendance: newAttendance,
         customStatus: newCustomStatus,
         reasons: newReasons,
+        dateUpdatedAt: newDateUpdatedAt,
       };
     });
+
+    const syncedReports = syncWeeklyReportsWithAttendance(weeklyReports, updated, [date], globalAllowance);
+    if (syncedReports !== weeklyReports) {
+      setWeeklyReports(syncedReports);
+    }
+
     try {
       localStorage.setItem("absensi_uang_makan_records", JSON.stringify(updated));
     } catch (e) {}
     setAttendanceRecords(updated);
-    saveAttendanceToFirestore(updated, workers, weeklyReports).catch(e => console.warn(e));
+    saveAttendanceToFirestore(updated, workers, syncedReports).catch(e => console.warn(e));
+    if (!forceCheck) {
+      clearLegacyAbsenRecordsForDates(updated.map((r) => ({ workerId: r.workerId, date }))).catch(() => {});
+    }
     syncStateToServer(
       workers,
       updated,
-      weeklyReports,
+      syncedReports,
       pettyCashReports,
       attendancePin,
       signatures,
       pettyCashHolders,
       attendanceLogs,
       waMethod,
-      autoReminderHour
+      autoReminderHour,
+      [date]
     );
   };
 
   const handleToggleAllForWorker = (workerId: string, forceCheck: boolean) => {
-    lastUserInteractionTimeRef.current = Date.now();
+    const now = Date.now();
+    lastUserInteractionTimeRef.current = now;
     weekDates.forEach((d) => {
       localRecordModificationsRef.current.set(`${workerId}_${d}`, {
-        timestamp: Date.now(),
+        timestamp: now,
         workerId,
         date: d,
+        isPresent: forceCheck,
       });
     });
 
@@ -3248,6 +3407,7 @@ export function AbsensiHarianNmsa({
         attendance: {},
         customStatus: {},
         reasons: {},
+        dateUpdatedAt: {},
         dailyAllowance: globalAllowance || 25000,
       });
     }
@@ -3257,7 +3417,9 @@ export function AbsensiHarianNmsa({
         const newAttMap = { ...(r.attendance || {}) };
         const newCustomStatus = { ...(r.customStatus || {}) };
         const newReasons = { ...(r.reasons || {}) };
+        const newDateUpdatedAt = { ...(r.dateUpdatedAt || {}) };
         weekDates.forEach((d) => {
+          newDateUpdatedAt[d] = now;
           if (forceCheck) {
             newAttMap[d] = true;
             delete newCustomStatus[d];
@@ -3273,26 +3435,37 @@ export function AbsensiHarianNmsa({
           attendance: newAttMap,
           customStatus: newCustomStatus,
           reasons: newReasons,
+          dateUpdatedAt: newDateUpdatedAt,
         };
       }
       return r;
     });
+
+    const syncedReports = syncWeeklyReportsWithAttendance(weeklyReports, updated, weekDates, globalAllowance);
+    if (syncedReports !== weeklyReports) {
+      setWeeklyReports(syncedReports);
+    }
+
     try {
       localStorage.setItem("absensi_uang_makan_records", JSON.stringify(updated));
     } catch (e) {}
     setAttendanceRecords(updated);
-    saveAttendanceToFirestore(updated, workers, weeklyReports).catch(e => console.warn(e));
+    saveAttendanceToFirestore(updated, workers, syncedReports).catch(e => console.warn(e));
+    if (!forceCheck) {
+      clearLegacyAbsenRecordsForDates(weekDates.map((date) => ({ workerId, date }))).catch(() => {});
+    }
     syncStateToServer(
       workers,
       updated,
-      weeklyReports,
+      syncedReports,
       pettyCashReports,
       attendancePin,
       signatures,
       pettyCashHolders,
       attendanceLogs,
       waMethod,
-      autoReminderHour
+      autoReminderHour,
+      weekDates
     );
   };
 
@@ -4806,7 +4979,16 @@ export function AbsensiHarianNmsa({
       const fbData = await loadAttendanceFromFirestore();
       if (fbData && fbData.attendanceRecords && fbData.attendanceRecords.length > 0) {
         const deletedIds = getDeletedWorkerIds();
-        const mergedAtt = mergeAttendanceListsSafely(attendanceRecords, fbData.attendanceRecords);
+        const mergedAtt = mergeAttendanceRecordsAuthoritatively(
+          attendanceRecords,
+          fbData.attendanceRecords,
+          {
+            localMods: localRecordModificationsRef.current,
+            localImmunityMs: 15000,
+            authoritativeCloud: true,
+            deletedWorkerIds: deletedIds,
+          }
+        );
         const mergedW = fbData.workers && fbData.workers.length > 0
           ? mergeWorkerListsSafely(fbData.workers, workers, deletedIds)
           : workers;
@@ -4860,7 +5042,16 @@ export function AbsensiHarianNmsa({
       const resData = await res.json();
       if (res.ok && resData.data?.attendanceRecords?.length > 0) {
         const deletedIds = getDeletedWorkerIds();
-        const mergedAtt = mergeAttendanceListsSafely(attendanceRecords, resData.data.attendanceRecords);
+        const mergedAtt = mergeAttendanceRecordsAuthoritatively(
+          attendanceRecords,
+          resData.data.attendanceRecords,
+          {
+            localMods: localRecordModificationsRef.current,
+            localImmunityMs: 15000,
+            authoritativeCloud: true,
+            deletedWorkerIds: deletedIds,
+          }
+        );
         setAttendanceRecords(mergedAtt);
         if (resData.data.workers?.length > 0) {
           setWorkers((prevW) => mergeWorkerListsSafely(resData.data.workers, prevW, deletedIds));
@@ -11685,54 +11876,66 @@ export function AbsensiHarianNmsa({
                      <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 mb-1 block">Ubah Status Menjadi</span>
                      {(() => {
                        const handleApplyStatus = (statusType: "Hadir" | "Absen" | "Sakit" | "Izin" | "Cuti" | "Meeting") => {
-                         lastUserInteractionTimeRef.current = Date.now();
+                         const now = Date.now();
+                         lastUserInteractionTimeRef.current = now;
                          const dateToChange = manageStatusModal.date;
                          const targetWorkerId = manageStatusModal.workerId;
                          localRecordModificationsRef.current.set(`${targetWorkerId}_${dateToChange}`, {
-                           timestamp: Date.now(),
+                           timestamp: now,
                            workerId: targetWorkerId,
                            date: dateToChange,
+                           isPresent: statusType === "Hadir",
+                           customStatus: statusType !== "Hadir" && statusType !== "Absen" ? (statusType as any) : undefined,
                          });
                          const updated = attendanceRecords.map((r) => {
                            if (r.workerId === targetWorkerId) {
                              const newCustomStatus = { ...(r.customStatus || {}) };
                              const newReasons = { ...(r.reasons || {}) };
                              const newAtt = { ...(r.attendance || {}) };
+                             const newDateUpdatedAt = { ...(r.dateUpdatedAt || {}), [dateToChange]: now };
 
                              if (statusType === "Hadir") {
                                newAtt[dateToChange] = true;
                                delete newCustomStatus[dateToChange];
                                delete newReasons[dateToChange];
                              } else if (statusType === "Absen") {
-                               newAtt[dateToChange] = false;
+                               delete newAtt[dateToChange];
                                delete newCustomStatus[dateToChange];
                                delete newReasons[dateToChange];
                              } else {
-                               newAtt[dateToChange] = false;
+                               delete newAtt[dateToChange];
                                newCustomStatus[dateToChange] = statusType as any;
                                newReasons[dateToChange] = "Diatur manual oleh admin";
                              }
-                             return { ...r, attendance: newAtt, customStatus: newCustomStatus, reasons: newReasons };
+                             return { ...r, attendance: newAtt, customStatus: newCustomStatus, reasons: newReasons, dateUpdatedAt: newDateUpdatedAt };
                            }
                            return r;
                          });
+                         const syncedReports = syncWeeklyReportsWithAttendance(weeklyReports, updated, [dateToChange], globalAllowance);
+                         if (syncedReports !== weeklyReports) {
+                           setWeeklyReports(syncedReports);
+                         }
                          try {
                            localStorage.setItem("absensi_uang_makan_records", JSON.stringify(updated));
                          } catch (e) {}
                          setAttendanceRecords(updated);
                          setManageStatusModal(null);
-                         saveAttendanceToFirestore(updated, workers, weeklyReports).catch(e => console.warn(e));
+                         saveAttendanceToFirestore(updated, workers, syncedReports).catch(e => console.warn(e));
+                         if (statusType !== "Hadir") {
+                           clearLegacyAbsenRecordsForDates([{ workerId: targetWorkerId, date: dateToChange }]).catch(() => {});
+                         }
                          syncStateToServer(
                            workers,
                            updated,
-                           weeklyReports,
+                           syncedReports,
                            pettyCashReports,
                            attendancePin,
                            signatures,
                            pettyCashHolders,
                            attendanceLogs,
                            waMethod,
-                           autoReminderHour
+                           autoReminderHour,
+                           [dateToChange]
                          );
                        };
 

@@ -2236,8 +2236,11 @@ app.post("/api/shared-state", (req, res) => {
       );
     }
 
-    // Merge attendance records worker-by-worker authoritatively
+    // Merge attendance records worker-by-worker authoritatively (honoring deletions/unchecks via dateUpdatedAt & authoritativeDates)
     let mergedAttendance = currentState.attendanceRecords || [];
+    const authoritativeDates: string[] = Array.isArray(req.body.authoritativeDates)
+      ? req.body.authoritativeDates.map(String)
+      : [];
     if (attendanceRecords !== undefined && Array.isArray(attendanceRecords)) {
       if (req.body.replaceAttendance) {
         mergedAttendance = attendanceRecords;
@@ -2249,7 +2252,8 @@ app.post("/api/shared-state", (req, res) => {
               ...r,
               attendance: { ...(r.attendance || {}) },
               customStatus: { ...(r.customStatus || {}) },
-              reasons: { ...(r.reasons || {}) }
+              reasons: { ...(r.reasons || {}) },
+              dateUpdatedAt: { ...(r.dateUpdatedAt || {}) }
             });
           }
         }
@@ -2257,7 +2261,13 @@ app.post("/api/shared-state", (req, res) => {
           if (r && r.workerId) {
             const existing = attMap.get(r.workerId);
             if (!existing) {
-              attMap.set(r.workerId, { ...r });
+              attMap.set(r.workerId, {
+                ...r,
+                attendance: { ...(r.attendance || {}) },
+                customStatus: { ...(r.customStatus || {}) },
+                reasons: { ...(r.reasons || {}) },
+                dateUpdatedAt: { ...(r.dateUpdatedAt || {}) }
+              });
             } else {
               // Update scalar properties
               existing.workerName = r.workerName || existing.workerName;
@@ -2270,36 +2280,54 @@ app.post("/api/shared-state", (req, res) => {
                 existing.notes = { ...(existing.notes || {}), ...(r.notes || {}) };
               }
 
-              // Update attendance, customStatus, and reasons per date authoritatively
-              if (r.attendance && typeof r.attendance === "object") {
-                if (!existing.attendance) existing.attendance = {};
-                if (!existing.customStatus) existing.customStatus = {};
-                if (!existing.reasons) existing.reasons = {};
+              if (!existing.attendance) existing.attendance = {};
+              if (!existing.customStatus) existing.customStatus = {};
+              if (!existing.reasons) existing.reasons = {};
+              if (!existing.dateUpdatedAt) existing.dateUpdatedAt = {};
 
-                Object.keys(r.attendance).forEach((d) => {
-                  const isPresent = r.attendance[d] === true;
-                  existing.attendance[d] = isPresent;
+              // Evaluate all dates mentioned in incoming record OR authoritativeDates so deleted/unchecked keys are processed too!
+              const datesToEvaluate = new Set<string>([
+                ...Object.keys(r.attendance || {}),
+                ...Object.keys(r.customStatus || {}),
+                ...Object.keys(r.dateUpdatedAt || {}),
+                ...authoritativeDates
+              ]);
 
-                  if (isPresent) {
-                    // When marked Hadir (present), definitively CLEAR any custom status & reason
-                    delete existing.customStatus[d];
-                    delete existing.reasons[d];
+              datesToEvaluate.forEach((d) => {
+                const incomingTs = Number(r.dateUpdatedAt?.[d] || 0);
+                const existingTs = Number(existing.dateUpdatedAt?.[d] || 0);
+                const isExplicitDate = authoritativeDates.includes(d) || (r.attendance && Object.prototype.hasOwnProperty.call(r.attendance, d)) || incomingTs > 0;
+                if (!isExplicitDate) return;
+
+                // Never let an older snapshot overwrite a newer edit on the server
+                if (existingTs > 0 && incomingTs < existingTs) {
+                  return;
+                }
+
+                const isPresent = r.attendance?.[d] === true;
+                if (isPresent) {
+                  existing.attendance[d] = true;
+                  // When marked Hadir (present), definitively CLEAR any custom status & reason
+                  delete existing.customStatus[d];
+                  delete existing.reasons[d];
+                } else {
+                  // Unchecked / Absen: remove true flag cleanly
+                  delete existing.attendance[d];
+                  if (r.customStatus && r.customStatus[d]) {
+                    existing.customStatus[d] = r.customStatus[d];
                   } else {
-                    // When not present (false), check if custom status is specified
-                    if (r.customStatus && r.customStatus[d]) {
-                      existing.customStatus[d] = r.customStatus[d];
-                    } else {
-                      // Explicitly cleared to standard Absen / Alpa
-                      delete existing.customStatus[d];
-                    }
-                    if (r.reasons && r.reasons[d]) {
-                      existing.reasons[d] = r.reasons[d];
-                    } else {
-                      delete existing.reasons[d];
-                    }
+                    delete existing.customStatus[d];
                   }
-                });
-              }
+                  if (r.reasons && r.reasons[d]) {
+                    existing.reasons[d] = r.reasons[d];
+                  } else {
+                    delete existing.reasons[d];
+                  }
+                }
+                if (incomingTs > 0) {
+                  existing.dateUpdatedAt[d] = incomingTs;
+                }
+              });
             }
           }
         }
@@ -3122,10 +3150,13 @@ app.post("/api/self-attend", async (req, res) => {
     const records = state.attendanceRecords || [];
 
     // Attempt to find a record for this worker that already covers this date
+    const attendTs = Date.now();
     let recordUpdated = false;
     for (const r of records) {
       if (r.workerId === workerId && r.attendance && r.attendance[date] !== undefined) {
         r.attendance[date] = true;
+        if (!r.dateUpdatedAt) r.dateUpdatedAt = {};
+        r.dateUpdatedAt[date] = attendTs;
         if (r.customStatus) delete r.customStatus[date];
         if (r.reasons) delete r.reasons[date];
         recordUpdated = true;
@@ -3141,12 +3172,15 @@ app.post("/api/self-attend", async (req, res) => {
           workerRecord.attendance = {};
         }
         workerRecord.attendance[date] = true;
+        if (!workerRecord.dateUpdatedAt) workerRecord.dateUpdatedAt = {};
+        workerRecord.dateUpdatedAt[date] = attendTs;
         if (workerRecord.customStatus) delete workerRecord.customStatus[date];
         if (workerRecord.reasons) delete workerRecord.reasons[date];
       } else {
         records.push({
           workerId,
           attendance: { [date]: true },
+          dateUpdatedAt: { [date]: attendTs },
           dailyAllowance: 25000 // default allowance
         });
       }
@@ -3297,11 +3331,14 @@ app.post("/api/quick-self-attend", async (req, res) => {
       }
 
       // Inside range or field mode! Mark Present
+      const quickTs = Date.now();
       let recordUpdated = false;
       for (const r of records) {
         if (r.workerId === resolvedWorkerId) {
           if (!r.attendance) r.attendance = {};
           r.attendance[date] = true;
+          if (!r.dateUpdatedAt) r.dateUpdatedAt = {};
+          r.dateUpdatedAt[date] = quickTs;
           // Clear custom status
           if (r.customStatus && r.customStatus[date]) delete r.customStatus[date];
           if (r.reasons && r.reasons[date]) delete r.reasons[date];
@@ -3314,6 +3351,7 @@ app.post("/api/quick-self-attend", async (req, res) => {
         records.push({
           workerId: resolvedWorkerId,
           attendance: { [date]: true },
+          dateUpdatedAt: { [date]: quickTs },
           dailyAllowance: 25000
         });
       }

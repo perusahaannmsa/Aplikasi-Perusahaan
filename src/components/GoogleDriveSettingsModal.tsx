@@ -22,6 +22,8 @@ import {
   loadConnectedDrivesFromFirestore,
   isDriveTokenValid,
   getDriveRemainingMinutes,
+  getDriveAutoRefreshStatus,
+  perform50MinuteDriveRefresh,
   LOCKED_MASTER_DRIVE_EMAIL,
   maskLockedAccountLabel
 } from '../firebase';
@@ -96,6 +98,8 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
+  const [autoRefreshStatus, setAutoRefreshStatus] = useState(() => getDriveAutoRefreshStatus());
+
   const loadData = async (alsoRefreshLiveQuota = false) => {
     try {
       await loadConnectedDrivesFromFirestore('', alsoRefreshLiveQuota);
@@ -111,6 +115,7 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
     setMasterEmail(activeMaster);
     setFlexibleModeState(false);
     setManualTokenEmail(activeMaster);
+    setAutoRefreshStatus(getDriveAutoRefreshStatus());
   };
 
   useEffect(() => {
@@ -120,6 +125,15 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
       if (targetEmailForToken) setManualTokenEmail(targetEmailForToken);
     }
   }, [isOpen, initialTab, targetEmailForToken]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const ticker = setInterval(() => {
+      setDrives(getConnectedDrives());
+      setAutoRefreshStatus(getDriveAutoRefreshStatus());
+    }, 15000);
+    return () => clearInterval(ticker);
+  }, [isOpen]);
 
   useEffect(() => {
     const onDriveUpdated = () => {
@@ -321,11 +335,12 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
   const handleManualRefreshToken = async () => {
     setIsRefreshing(true);
     try {
-      const token = await ensureValidDriveToken(true);
+      const refreshedToken = await perform50MinuteDriveRefresh('manual-settings');
+      const token = refreshedToken || (await ensureValidDriveToken(true));
       if (token) {
-        await refreshAllDrivesQuota();
-        await loadData();
-        showFeedback('success', 'Token Google Drive berhasil diperbarui dan status kuota tersinkronisasi.');
+        await refreshAllDrivesQuota(true);
+        await loadData(false);
+        showFeedback('success', 'Token & kuota Google Drive berhasil diperbarui dan jadwal auto-refresh 50 menit direset.');
       } else {
         await handleConnectDriveAccount(masterEmail);
       }
@@ -498,9 +513,21 @@ export const GoogleDriveSettingsModal: React.FC<GoogleDriveSettingsModalProps> =
                     </span>
                   </div>
                   <p className="text-[11px] text-stone-600 leading-relaxed">
-                    Seluruh menu aplikasi (Voucher, Absen, Internal Memo, SPPD, Pinjaman &amp; PPh) otomatis me-refresh kuota &amp; menyimpan arsip melalui akun{' '}
-                    <strong className="font-mono text-stone-900">{masterEmail || LOCKED_MASTER_DRIVE_EMAIL}</strong> tanpa perlu hubungkan ulang di pengaturan.
+                    Seluruh menu aplikasi (Voucher, Absen, Internal Memo, SPPD, Pinjaman &amp; PPh) otomatis me-refresh token &amp; kuota{' '}
+                    <strong className="text-emerald-800">setiap 50 menit (1x per 50m)</strong> melalui akun{' '}
+                    <strong className="font-mono text-stone-900">{masterEmail || LOCKED_MASTER_DRIVE_EMAIL}</strong>.
                   </p>
+                  <div className="flex items-center gap-2 flex-wrap pt-0.5 text-[10px] font-mono text-stone-500">
+                    <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded font-bold">
+                      Jadwal Auto-Refresh: 1x / 50 Menit
+                    </span>
+                    <span>
+                      Terakhir cek: {autoRefreshStatus.lastRefreshAt > 0 ? new Date(autoRefreshStatus.lastRefreshAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : 'Baru saja'}
+                    </span>
+                    <span>
+                      • Berikutnya: ~{Math.max(1, Math.round((autoRefreshStatus.nextRefreshAt - Date.now()) / 60000))}m lagi
+                    </span>
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0 flex-wrap">
