@@ -1,7 +1,14 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { NpwpRecord, Submission } from '../types';
 import { isVendorOrCompanyMatch, normalizeEntityString } from '../utils';
-import { loadNpwpRecordsFromFirestore, saveNpwpRecordsToFirestore } from '../firebase';
+import {
+  getTokenForRegisteredDriveEmail,
+  loadNpwpRecordsFromFirestore,
+  saveNpwpRecordsToFirestore,
+  subscribeToNpwpRecordsFromFirestore,
+} from '../firebase';
+import { downloadNpwpMasterPdf } from '../utils/npwpPdfGenerator';
+import { pphGoogleDriveService } from '../utils/pphDriveService';
 import { 
   Building2, 
   Search, 
@@ -25,14 +32,22 @@ import {
   Cloud,
   RefreshCw,
   Zap,
-  Check
+  Check,
+  Loader2,
+  FolderOpen
 } from 'lucide-react';
+
+export interface NpwpSaveResult {
+  firestoreSynced?: boolean;
+  error?: string;
+}
 
 interface NpwpManagerProps {
   npwpRecords: NpwpRecord[];
-  onSaveNpwpRecords: (records: NpwpRecord[]) => void;
+  onSaveNpwpRecords: (records: NpwpRecord[]) => Promise<NpwpSaveResult | void> | void;
   onSyncFromCloud?: (records: NpwpRecord[]) => void;
   submissions: Submission[];
+  activeCompanyName?: string;
   onSelectSubmissionForPrint?: (sub: Submission) => void;
   onBack?: () => void;
 }
@@ -42,23 +57,49 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
   onSaveNpwpRecords,
   onSyncFromCloud,
   submissions,
+  activeCompanyName,
   onSelectSubmissionForPrint,
   onBack
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTaxFilter, setSelectedTaxFilter] = useState<'ALL' | 'PKP' | 'Non-PKP'>('ALL');
   
-  // Cloud Firebase Sync state
+  // Cloud Firebase Sync & Drive PDF Backup states
   const [isSyncingFirebase, setIsSyncingFirebase] = useState(false);
+  const [isSavingForm, setIsSavingForm] = useState(false);
+  const [isSavingDrivePdf, setIsSavingDrivePdf] = useState(false);
   const [syncStatusMessage, setSyncStatusMessage] = useState<string | null>(null);
+  const [syncStatusType, setSyncStatusType] = useState<'success' | 'info' | 'error'>('success');
+  const [drivePdfResult, setDrivePdfResult] = useState<{
+    url?: string;
+    folderUrl?: string;
+    fileName?: string;
+    folderPath?: string;
+    savedAt?: string;
+  } | null>(null);
+  const [formValidationError, setFormValidationError] = useState<string | null>(null);
+  const [pendingDeleteTarget, setPendingDeleteTarget] = useState<NpwpRecord | null>(null);
+  const [confirmAutoRegisterOpen, setConfirmAutoRegisterOpen] = useState(false);
 
-  // Auto-read Firebase database directly whenever this menu is opened (non-destructive merge)
+  const showBannerMessage = (msg: string, type: 'success' | 'info' | 'error' = 'success', durationMs = 6000) => {
+    setSyncStatusMessage(msg);
+    setSyncStatusType(type);
+    if (durationMs > 0) {
+      setTimeout(() => {
+        setSyncStatusMessage((curr) => (curr === msg ? null : curr));
+      }, durationMs);
+    }
+  };
+
+  // Auto-read Firebase database directly whenever this menu is opened + subscribe real-time
   useEffect(() => {
     let isMounted = true;
     setIsSyncingFirebase(true);
+
     loadNpwpRecordsFromFirestore()
       .then((cloudRecords) => {
-        if (isMounted && cloudRecords && cloudRecords.length > 0) {
+        if (!isMounted) return;
+        if (cloudRecords && cloudRecords.length > 0) {
           if (onSyncFromCloud) {
             onSyncFromCloud(cloudRecords);
           } else {
@@ -67,15 +108,35 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
             cloudRecords.forEach((r) => { if (r?.id) map.set(r.id, r); });
             onSaveNpwpRecords(Array.from(map.values()));
           }
+          showBannerMessage(
+            `✓ Membaca ${cloudRecords.length} data NPWP langsung dari Cloud Firebase Firestore.`,
+            'success',
+            4500
+          );
+        } else {
+          showBannerMessage('Database NPWP Firebase siap. Tambahkan data NPWP baru untuk menyimpannya ke Firestore.', 'info', 4000);
         }
       })
-      .catch((err) => console.warn('Auto-read NPWP from Firestore notice:', err))
+      .catch((err) => {
+        console.warn('Auto-read NPWP from Firestore notice:', err);
+        if (isMounted) {
+          showBannerMessage('Memuat data NPWP lokal (koneksi Firebase sedang terbatas).', 'info', 4000);
+        }
+      })
       .finally(() => {
         if (isMounted) setIsSyncingFirebase(false);
       });
 
+    const unsub = subscribeToNpwpRecordsFromFirestore((liveRecords) => {
+      if (!isMounted || !Array.isArray(liveRecords)) return;
+      if (onSyncFromCloud && liveRecords.length > 0) {
+        onSyncFromCloud(liveRecords);
+      }
+    });
+
     return () => {
       isMounted = false;
+      unsub();
     };
   }, []);
   
@@ -112,6 +173,7 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
   };
 
   const handleOpenAddModal = () => {
+    setFormValidationError(null);
     setEditingRecord(null);
     setFormCompanyName('');
     setFormNpwpNumber('');
@@ -124,6 +186,7 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
   };
 
   const handleOpenEditModal = (rec: NpwpRecord) => {
+    setFormValidationError(null);
     setEditingRecord(rec);
     setFormCompanyName(rec.companyName);
     setFormNpwpNumber(rec.npwpNumber);
@@ -135,54 +198,116 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
     setIsFormModalOpen(true);
   };
 
-  const handleSaveForm = (e: React.FormEvent) => {
+  // Silent Drive PDF sync helper when user already has an active Google Drive token
+  const tryAutoSyncPdfToDriveInBackground = async (recordsToSync: NpwpRecord[]) => {
+    try {
+      const hasToken = Boolean(getTokenForRegisteredDriveEmail());
+      if (!hasToken || recordsToSync.length === 0) return;
+      const res = await pphGoogleDriveService.saveNpwpListPdfToDrive({
+        npwpRecords: recordsToSync,
+        submissions,
+        companyName: activeCompanyName,
+        interactiveIfRequired: false,
+      });
+      if (res.success) {
+        setDrivePdfResult({
+          url: res.url,
+          folderUrl: res.folderUrl,
+          fileName: res.fileName,
+          folderPath: res.folderPath,
+          savedAt: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+        });
+      }
+    } catch (_) {}
+  };
+
+  const handleSaveForm = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFormValidationError(null);
     if (!formCompanyName.trim()) {
-      alert('Nama Perusahaan / Wajib Pajak wajib diisi!');
+      setFormValidationError('Nama Perusahaan / Wajib Pajak wajib diisi!');
       return;
     }
     if (!formNpwpNumber.trim()) {
-      alert('Nomor NPWP wajib diisi!');
+      setFormValidationError('Nomor NPWP wajib diisi!');
       return;
     }
 
-    if (editingRecord) {
-      const updatedItem: NpwpRecord = {
-        ...editingRecord,
-        companyName: formCompanyName.trim(),
-        npwpNumber: formNpwpNumber.trim(),
-        address: formAddress.trim(),
-        kppName: formKppName.trim(),
-        taxStatus: formTaxStatus,
-        contactPerson: formContactPerson.trim(),
-        notes: formNotes.trim(),
-        updatedAt: new Date().toISOString()
-      };
-      const updated = npwpRecords.map(r => r.id === editingRecord.id ? updatedItem : r);
-      onSaveNpwpRecords(updated);
-    } else {
-      const newRec: NpwpRecord = {
-        id: 'npwp_' + Date.now(),
-        companyName: formCompanyName.trim(),
-        npwpNumber: formNpwpNumber.trim(),
-        address: formAddress.trim(),
-        kppName: formKppName.trim(),
-        taxStatus: formTaxStatus,
-        contactPerson: formContactPerson.trim(),
-        notes: formNotes.trim(),
-        createdAt: new Date().toISOString()
-      };
-      onSaveNpwpRecords([newRec, ...npwpRecords]);
-    }
+    setIsSavingForm(true);
+    try {
+      const nowIso = new Date().toISOString();
+      let updatedList: NpwpRecord[];
+      let actionLabel = '';
 
-    setIsFormModalOpen(false);
+      if (editingRecord) {
+        const updatedItem: NpwpRecord = {
+          ...editingRecord,
+          companyName: formCompanyName.trim(),
+          npwpNumber: formNpwpNumber.trim(),
+          address: formAddress.trim(),
+          kppName: formKppName.trim(),
+          taxStatus: formTaxStatus,
+          contactPerson: formContactPerson.trim(),
+          notes: formNotes.trim(),
+          updatedAt: nowIso
+        };
+        updatedList = npwpRecords.map(r => r.id === editingRecord.id ? updatedItem : r);
+        actionLabel = `Perubahan NPWP "${updatedItem.companyName}"`;
+      } else {
+        const newRec: NpwpRecord = {
+          id: 'npwp_' + Date.now(),
+          companyName: formCompanyName.trim(),
+          npwpNumber: formNpwpNumber.trim(),
+          address: formAddress.trim(),
+          kppName: formKppName.trim(),
+          taxStatus: formTaxStatus,
+          contactPerson: formContactPerson.trim(),
+          notes: formNotes.trim(),
+          createdAt: nowIso,
+          updatedAt: nowIso
+        };
+        updatedList = [newRec, ...npwpRecords];
+        actionLabel = `NPWP baru "${newRec.companyName}"`;
+      }
+
+      const saveRes = await onSaveNpwpRecords(updatedList);
+      setIsFormModalOpen(false);
+
+      if (saveRes && saveRes.firestoreSynced === false) {
+        showBannerMessage(
+          `✓ ${actionLabel} disimpan lokal (${saveRes.error || 'menunggu sinkronisasi Firebase'}).`,
+          'info',
+          6000
+        );
+      } else {
+        showBannerMessage(
+          `✓ ${actionLabel} berhasil ditambahkan & disimpan langsung ke Firebase Firestore!`,
+          'success',
+          6000
+        );
+      }
+
+      // Silently refresh the consolidated 1-file PDF on Google Drive if Drive session is active
+      void tryAutoSyncPdfToDriveInBackground(updatedList);
+    } catch (err: any) {
+      setFormValidationError(err?.message || 'Gagal menyimpan data NPWP.');
+    } finally {
+      setIsSavingForm(false);
+    }
   };
 
-  const handleDeleteRecord = (id: string, name: string) => {
-    if (confirm(`Apakah Anda yakin ingin menghapus data NPWP untuk "${name}"?`)) {
-      const remaining = npwpRecords.filter(r => r.id !== id);
-      onSaveNpwpRecords(remaining);
+  const handleConfirmDeleteRecord = async () => {
+    if (!pendingDeleteTarget) return;
+    const target = pendingDeleteTarget;
+    setPendingDeleteTarget(null);
+    const remaining = npwpRecords.filter(r => r.id !== target.id);
+    const saveRes = await onSaveNpwpRecords(remaining);
+    if (saveRes && saveRes.firestoreSynced === false) {
+      showBannerMessage(`Data NPWP "${target.companyName}" dihapus lokal.`, 'info', 4000);
+    } else {
+      showBannerMessage(`✓ Data NPWP "${target.companyName}" dihapus dari Firebase Firestore.`, 'success', 4500);
     }
+    void tryAutoSyncPdfToDriveInBackground(remaining);
   };
 
   // Auto-extract vendors from submissions that are missing in npwpRecords
@@ -241,7 +366,7 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
   // Manual trigger to pull directly from Firebase Firestore
   const handleManualFirebaseSync = async () => {
     setIsSyncingFirebase(true);
-    setSyncStatusMessage('Sedang membaca database langsung dari Cloud Firebase Firestore...');
+    showBannerMessage('Sedang membaca database langsung dari Cloud Firebase Firestore...', 'info', 0);
     try {
       const cloudData = await loadNpwpRecordsFromFirestore();
       if (cloudData && cloudData.length > 0) {
@@ -253,25 +378,78 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
           cloudData.forEach((r) => { if (r?.id) map.set(r.id, r); });
           onSaveNpwpRecords(Array.from(map.values()));
         }
-        setSyncStatusMessage(`✓ Berhasil membaca ${cloudData.length} data NPWP dari Cloud Firebase!`);
+        showBannerMessage(`✓ Berhasil membaca & menyinkronkan ${cloudData.length} data NPWP dengan Cloud Firebase!`, 'success', 5000);
       } else {
-        setSyncStatusMessage('ℹ Database Firebase saat ini belum memiliki rekaman NPWP.');
+        showBannerMessage('ℹ Database Firebase saat ini belum memiliki rekaman NPWP.', 'info', 5000);
       }
     } catch (err: any) {
-      setSyncStatusMessage('⚠️ Gagal membaca Firebase: ' + (err?.message || 'Koneksi error'));
+      showBannerMessage('⚠️ Gagal membaca Firebase: ' + (err?.message || 'Koneksi error'), 'error', 6000);
     } finally {
       setIsSyncingFirebase(false);
-      setTimeout(() => setSyncStatusMessage(null), 5000);
     }
+  };
+
+  // Save consolidated 1 PDF file containing ALL NPWP records into Google Drive (PPH23-CORETAX-NMSA)
+  const handleSaveListPdfToGoogleDrive = async () => {
+    if (npwpRecords.length === 0) {
+      showBannerMessage('Belum ada data NPWP perusahaan untuk disimpan ke Google Drive.', 'error', 5000);
+      return;
+    }
+
+    setIsSavingDrivePdf(true);
+    showBannerMessage(`Membuat 1 file PDF berisi ${npwpRecords.length} daftar NPWP & mengunggah ke Google Drive (PPH23-CORETAX-NMSA)...`, 'info', 0);
+
+    try {
+      const res = await pphGoogleDriveService.saveNpwpListPdfToDrive({
+        npwpRecords,
+        submissions,
+        companyName: activeCompanyName,
+        interactiveIfRequired: true,
+      });
+
+      if (res.success) {
+        setDrivePdfResult({
+          url: res.url,
+          folderUrl: res.folderUrl,
+          fileName: res.fileName,
+          folderPath: res.folderPath,
+          savedAt: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+        });
+        showBannerMessage(
+          `✓ Sukses! Seluruh ${npwpRecords.length} NPWP tersimpan dalam 1 file PDF (${res.fileName}) di folder Google Drive ${res.folderPath}.`,
+          'success',
+          8000
+        );
+      } else {
+        showBannerMessage(`⚠️ ${res.error || 'Gagal menyimpan PDF Master NPWP ke Google Drive.'}`, 'error', 7000);
+      }
+    } catch (err: any) {
+      showBannerMessage(`⚠️ Gagal menyimpan PDF ke Google Drive: ${err?.message || 'Error'}`, 'error', 7000);
+    } finally {
+      setIsSavingDrivePdf(false);
+    }
+  };
+
+  const handleDownloadPdfLocal = () => {
+    if (npwpRecords.length === 0) {
+      showBannerMessage('Tidak ada data NPWP untuk diunduh sebagai PDF!', 'error', 4000);
+      return;
+    }
+    downloadNpwpMasterPdf({
+      npwpRecords,
+      submissions,
+      companyName: activeCompanyName,
+    });
+    showBannerMessage(`✓ File Daftar Master NPWP (${npwpRecords.length} perusahaan) berhasil diunduh sebagai PDF.`, 'success', 4500);
   };
 
   // 1-Click: Automatically register all detected vendors from vouchers and store them permanently in Firebase Firestore
   const handleAutoRegisterAllVendors = async () => {
     if (unrecordedVendors.length === 0) return;
-    if (!window.confirm(`Daftarkan ${unrecordedVendors.length} vendor dari histori voucher ini ke Master List NPWP dan simpan langsung ke Firebase Firestore?`)) return;
+    setConfirmAutoRegisterOpen(false);
 
     setIsSyncingFirebase(true);
-    setSyncStatusMessage(`Sedang mendaftarkan ${unrecordedVendors.length} vendor & menyinkronkan ke Firebase Firestore...`);
+    showBannerMessage(`Sedang mendaftarkan ${unrecordedVendors.length} vendor & menyinkronkan ke Firebase Firestore...`, 'info', 0);
 
     try {
       const existingMap = new Map<string, NpwpRecord>();
@@ -299,7 +477,8 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
           taxStatus: hasPpn ? 'PKP' : 'Non-PKP',
           contactPerson: '',
           notes: `Auto-terdaftar dari histori ${v.count} voucher (Rp ${v.totalAmount.toLocaleString('id-ID')})`,
-          createdAt: nowIso
+          createdAt: nowIso,
+          updatedAt: nowIso
         };
 
         newGenerated.push(newRec);
@@ -307,15 +486,19 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
       });
 
       const mergedList = [...newGenerated, ...npwpRecords];
-      onSaveNpwpRecords(mergedList);
-      await saveNpwpRecordsToFirestore(mergedList);
+      await onSaveNpwpRecords(mergedList);
+      const fsRes = await saveNpwpRecordsToFirestore(mergedList);
 
-      setSyncStatusMessage(`✓ Sukses! ${newGenerated.length} vendor berhasil didaftarkan dan tersimpan permanen di Firebase Firestore!`);
+      if (fsRes.savedToFirestore) {
+        showBannerMessage(`✓ Sukses! ${newGenerated.length} vendor berhasil didaftarkan dan tersimpan permanen di Firebase Firestore!`, 'success', 6000);
+      } else {
+        showBannerMessage(`✓ ${newGenerated.length} vendor ditambahkan (${fsRes.error || 'sinkronisasi cloud tertunda'}).`, 'info', 6000);
+      }
+      void tryAutoSyncPdfToDriveInBackground(mergedList);
     } catch (err: any) {
-      setSyncStatusMessage('⚠️ Gagal menyimpan ke Firebase: ' + (err?.message || 'Error'));
+      showBannerMessage('⚠️ Gagal menyimpan ke Firebase: ' + (err?.message || 'Error'), 'error', 6000);
     } finally {
       setIsSyncingFirebase(false);
-      setTimeout(() => setSyncStatusMessage(null), 6000);
     }
   };
 
@@ -379,7 +562,7 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
   // Export to CSV
   const handleExportCsv = () => {
     if (npwpRecords.length === 0) {
-      alert('Tidak ada data NPWP untuk diekspor!');
+      showBannerMessage('Tidak ada data NPWP untuk diekspor!', 'error', 4000);
       return;
     }
 
@@ -413,24 +596,24 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
     <div className="space-y-6">
       
       {/* Header Banner */}
-      <div className="bg-gradient-to-r from-slate-900 via-stone-900 to-indigo-950 rounded-2xl p-6 text-white shadow-lg border border-stone-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+      <div className="bg-gradient-to-r from-slate-900 via-stone-900 to-indigo-950 rounded-2xl p-6 text-white shadow-lg border border-stone-800 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
         <div className="space-y-1.5">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-mono font-bold tracking-wider uppercase">
               Modul Perpajakan & Vendor HO
             </span>
-            <span className="text-stone-400 text-xs font-mono">Real-Time Sync</span>
+            <span className="text-stone-400 text-xs font-mono">Firebase Real-Time · Arsip PDF Drive</span>
           </div>
           <h2 className="text-xl sm:text-2xl font-black font-sans tracking-tight flex items-center gap-2">
             <Receipt className="text-emerald-400 shrink-0" size={26} />
             Master List Data NPWP & Invoice Vendor
           </h2>
           <p className="text-xs text-stone-300 max-w-2xl">
-            Kelola data NPWP perusahaan, supplier, dan vendor rekanan untuk verifikasi Faktur Pajak, pemotongan PPh/PPN, dan pelacakan riwayat invoice per perusahaan.
+            Data NPWP tersinkronisasi langsung dengan Cloud Firebase Firestore dan dapat disimpan sebagai 1 file PDF lengkap di folder Google Drive (<span className="font-mono text-amber-300">PPH23-CORETAX-NMSA</span>).
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto shrink-0">
+        <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto shrink-0">
           <button
             onClick={handleManualFirebaseSync}
             disabled={isSyncingFirebase}
@@ -440,6 +623,24 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
             <Cloud size={14} className={isSyncingFirebase ? 'animate-pulse text-cyan-300' : 'text-indigo-300'} />
             <RefreshCw size={12} className={isSyncingFirebase ? 'animate-spin' : ''} />
             <span>{isSyncingFirebase ? 'Menyinkronkan...' : 'Sinkronkan Firebase'}</span>
+          </button>
+          <button
+            onClick={handleSaveListPdfToGoogleDrive}
+            disabled={isSavingDrivePdf || npwpRecords.length === 0}
+            className="flex-1 sm:flex-initial px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 border border-amber-400 text-xs font-black transition flex items-center justify-center gap-1.5 cursor-pointer shadow-md whitespace-nowrap disabled:opacity-50"
+            title="Gabungkan seluruh daftar NPWP menjadi 1 file PDF dan simpan ke folder Google Drive PPH23-CORETAX-NMSA"
+          >
+            {isSavingDrivePdf ? <Loader2 size={14} className="animate-spin" /> : <Cloud size={14} />}
+            <span>{isSavingDrivePdf ? 'Mengunggah PDF...' : 'Simpan List PDF ke Drive'}</span>
+          </button>
+          <button
+            onClick={handleDownloadPdfLocal}
+            disabled={npwpRecords.length === 0}
+            className="flex-1 sm:flex-initial px-3.5 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-100 border border-stone-700 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-3xs whitespace-nowrap disabled:opacity-50"
+            title="Unduh seluruh daftar NPWP dalam 1 file PDF ke perangkat"
+          >
+            <FileText size={14} className="text-rose-400" />
+            <span>Unduh PDF</span>
           </button>
           <button
             onClick={handleExportCsv}
@@ -458,16 +659,69 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
         </div>
       </div>
 
-      {/* Cloud Sync Status Banner */}
-      {syncStatusMessage && (
-        <div className="bg-stone-900 text-emerald-300 border border-emerald-500/40 px-4 py-2.5 rounded-xl text-xs font-medium flex items-center justify-between shadow-md">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
-            <span>{syncStatusMessage}</span>
-          </div>
-          <button onClick={() => setSyncStatusMessage(null)} className="text-stone-400 hover:text-white p-1 cursor-pointer">
-            <X size={14} />
-          </button>
+      {/* Cloud Sync & Drive PDF Status Banner */}
+      {(syncStatusMessage || drivePdfResult) && (
+        <div className="space-y-2">
+          {syncStatusMessage && (
+            <div className={`px-4 py-2.5 rounded-xl text-xs font-medium flex items-center justify-between shadow-md border ${
+              syncStatusType === 'error'
+                ? 'bg-rose-950 text-rose-200 border-rose-500/40'
+                : syncStatusType === 'info'
+                ? 'bg-slate-900 text-amber-200 border-amber-500/40'
+                : 'bg-stone-900 text-emerald-300 border-emerald-500/40'
+            }`}>
+              <div className="flex items-center gap-2">
+                {syncStatusType === 'error' ? (
+                  <AlertCircle size={16} className="text-rose-400 shrink-0" />
+                ) : (
+                  <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
+                )}
+                <span>{syncStatusMessage}</span>
+              </div>
+              <button onClick={() => setSyncStatusMessage(null)} className="text-stone-400 hover:text-white p-1 cursor-pointer">
+                <X size={14} />
+              </button>
+            </div>
+          )}
+
+          {drivePdfResult && (
+            <div className="bg-emerald-50/90 border border-emerald-300 text-emerald-950 px-4 py-2.5 rounded-xl text-xs flex flex-wrap items-center justify-between gap-2 shadow-3xs">
+              <div className="flex items-center gap-2">
+                <FileText size={16} className="text-emerald-700 shrink-0" />
+                <span>
+                  <strong>1 File PDF Master NPWP Tersedia di Google Drive:</strong>{' '}
+                  <span className="font-mono font-bold">{drivePdfResult.fileName}</span>{' '}
+                  <span className="text-emerald-700 font-mono">
+                    ({drivePdfResult.folderPath} · Diperbarui {drivePdfResult.savedAt})
+                  </span>
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {drivePdfResult.url && (
+                  <a
+                    href={drivePdfResult.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 px-3 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-[11px] transition"
+                  >
+                    <span>Buka PDF di Drive</span>
+                    <ExternalLink size={12} />
+                  </a>
+                )}
+                {drivePdfResult.folderUrl && (
+                  <a
+                    href={drivePdfResult.folderUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 px-3 py-1 rounded-lg bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-300 font-bold text-[11px] transition"
+                  >
+                    <FolderOpen size={12} />
+                    <span>Buka Folder</span>
+                  </a>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -538,7 +792,7 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
               </span>
             </div>
             <button
-              onClick={handleAutoRegisterAllVendors}
+              onClick={() => setConfirmAutoRegisterOpen(true)}
               disabled={isSyncingFirebase}
               className="px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm cursor-pointer disabled:opacity-50 whitespace-nowrap self-start sm:self-auto"
               title="Daftarkan seluruh vendor yang terdeteksi dari voucher & simpan otomatis ke database Cloud Firebase Firestore"
@@ -547,6 +801,29 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
               <span>Daftarkan Semua ({unrecordedVendors.length}) ke Firebase</span>
             </button>
           </div>
+          {confirmAutoRegisterOpen && (
+            <div className="p-3 bg-white border border-amber-300 rounded-xl flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span className="font-bold text-stone-800">
+                Konfirmasi: Daftarkan {unrecordedVendors.length} vendor dari histori voucher &amp; simpan ke Firebase Firestore?
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmAutoRegisterOpen(false)}
+                  className="px-3 py-1 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAutoRegisterAllVendors}
+                  className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold cursor-pointer"
+                >
+                  Ya, Simpan ke Firebase
+                </button>
+              </div>
+            </div>
+          )}
           <div className="flex flex-wrap gap-2 pt-1">
             {unrecordedVendors.slice(0, 8).map((v) => (
               <button
@@ -633,7 +910,7 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
                       </button>
                       {unrecordedVendors.length > 0 && (
                         <button
-                          onClick={handleAutoRegisterAllVendors}
+                          onClick={() => setConfirmAutoRegisterOpen(true)}
                           disabled={isSyncingFirebase}
                           className="px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-50"
                         >
@@ -744,8 +1021,8 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
                             <Edit3 size={15} />
                           </button>
                           <button
-                            onClick={() => handleDeleteRecord(rec.id, rec.companyName)}
-                            className="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                            onClick={() => setPendingDeleteTarget(rec)}
+                            className="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
                             title="Hapus Data NPWP"
                           >
                             <Trash2 size={15} />
@@ -782,6 +1059,13 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
             </div>
 
             <form onSubmit={handleSaveForm} className="p-6 space-y-4">
+              {formValidationError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs font-bold text-rose-700 flex items-center gap-2">
+                  <AlertCircle size={15} className="shrink-0" />
+                  <span>{formValidationError}</span>
+                </div>
+              )}
+
               <div className="space-y-1">
                 <label className="block text-xs font-bold text-stone-700">Nama Perusahaan / Wajib Pajak *</label>
                 <input
@@ -870,18 +1154,56 @@ export const NpwpManager: React.FC<NpwpManagerProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsFormModalOpen(false)}
-                  className="px-4 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold transition cursor-pointer"
+                  disabled={isSavingForm}
+                  className="px-4 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold transition cursor-pointer disabled:opacity-50"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition cursor-pointer shadow-md"
+                  disabled={isSavingForm}
+                  className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition cursor-pointer shadow-md flex items-center gap-1.5 disabled:opacity-50"
                 >
-                  {editingRecord ? 'Simpan Perubahan' : 'Tambah NPWP'}
+                  {isSavingForm && <Loader2 size={14} className="animate-spin" />}
+                  <span>{isSavingForm ? 'Menyimpan ke Firebase...' : editingRecord ? 'Simpan Perubahan' : 'Simpan NPWP ke Firebase'}</span>
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Konfirmasi Hapus NPWP */}
+      {pendingDeleteTarget && (
+        <div className="fixed inset-0 z-50 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-stone-200 overflow-hidden p-6 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 rounded-xl bg-rose-100 text-rose-600 shrink-0">
+                <Trash2 size={20} />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-sm font-black text-stone-900">Hapus Data NPWP?</h3>
+                <p className="text-xs text-stone-600">
+                  Anda yakin ingin menghapus data NPWP untuk <strong>{pendingDeleteTarget.companyName}</strong> ({pendingDeleteTarget.npwpNumber}) dari database Firebase?
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-stone-100">
+              <button
+                type="button"
+                onClick={() => setPendingDeleteTarget(null)}
+                className="px-4 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteRecord}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold cursor-pointer shadow-sm"
+              >
+                Ya, Hapus Data NPWP
+              </button>
+            </div>
           </div>
         </div>
       )}

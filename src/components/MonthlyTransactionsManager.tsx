@@ -15,6 +15,10 @@ import {
   isSubmissionSettledForMonthly,
   shiftMonthKey,
 } from '../utils/monthlyTransactions';
+import {
+  calculateTaxDueDate,
+  isExplicitBuktiPotongInvoice,
+} from '../utils/agendaTaxSync';
 import { AgendaManager } from './AgendaManager';
 import {
   ArrowLeft,
@@ -26,6 +30,8 @@ import {
   Clock,
   Edit3,
   ExternalLink,
+  FileCheck2,
+  FileText,
   Link2,
   PauseCircle,
   PlayCircle,
@@ -33,6 +39,7 @@ import {
   Receipt,
   Repeat,
   Search,
+  ShieldAlert,
   Sparkles,
   Trash2,
   Unlink,
@@ -50,11 +57,13 @@ interface MonthlyTransactionsManagerProps {
   onCreateVoucher: (item: MonthlyRecurringTransaction, targetMonth: string) => void;
   onViewVoucher: (submission: Submission) => void;
   onUploadPaymentProof?: (submission: Submission) => void;
+  onUpdateSubmission?: (submission: Submission) => Promise<void> | void;
+  onOpenPph23View?: () => void;
   onBackToList: () => void;
   agendaItems?: AgendaItem[];
   onSaveAgendaItems?: (items: AgendaItem[]) => void;
-  initialSubTab?: 'recurring' | 'agenda';
-  onSubTabChange?: (tab: 'recurring' | 'agenda') => void;
+  initialSubTab?: 'recurring' | 'bupot_djp' | 'agenda';
+  onSubTabChange?: (tab: 'recurring' | 'bupot_djp' | 'agenda') => void;
 }
 
 const DEFAULT_CATEGORIES = [
@@ -100,6 +109,8 @@ export const MonthlyTransactionsManager: React.FC<MonthlyTransactionsManagerProp
   onCreateVoucher,
   onViewVoucher,
   onUploadPaymentProof,
+  onUpdateSubmission,
+  onOpenPph23View,
   onBackToList,
   agendaItems = [],
   onSaveAgendaItems,
@@ -107,16 +118,25 @@ export const MonthlyTransactionsManager: React.FC<MonthlyTransactionsManagerProp
   onSubTabChange,
 }) => {
   const today = useMemo(() => getJakartaTodayParts(), []);
-  const [activeSubTab, setActiveSubTab] = useState<'recurring' | 'agenda'>(initialSubTab);
+  const [activeSubTab, setActiveSubTab] = useState<'recurring' | 'bupot_djp' | 'agenda'>(initialSubTab);
   const [selectedMonth, setSelectedMonth] = useState<string>(today.monthKey);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'executed' | 'overdue' | 'paused'>('all');
+
+  // States for DJP Bukti Potong (< Tgl 5) sub-tab
+  const [bupotSearchQuery, setBupotSearchQuery] = useState('');
+  const [bupotStatusFilter, setBupotStatusFilter] = useState<'all' | 'pending' | 'reported'>('all');
+  const [bupotPeriodFilter, setBupotPeriodFilter] = useState<string>('ALL');
+  const [editingBupotId, setEditingBupotId] = useState<string | null>(null);
+  const [bupotNumberDraft, setBupotNumberDraft] = useState<string>('');
+  const [bupotNoteDraft, setBupotNoteDraft] = useState<string>('');
+  const [savingBupotId, setSavingBupotId] = useState<string | null>(null);
 
   useEffect(() => {
     setActiveSubTab(initialSubTab);
   }, [initialSubTab]);
 
-  const handleSwitchSubTab = (tab: 'recurring' | 'agenda') => {
+  const handleSwitchSubTab = (tab: 'recurring' | 'bupot_djp' | 'agenda') => {
     setActiveSubTab(tab);
     onSubTabChange?.(tab);
   };
@@ -149,6 +169,124 @@ export const MonthlyTransactionsManager: React.FC<MonthlyTransactionsManagerProp
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const cleanCompany = (activeCompanyId || userProfile?.companyId || 'nmsa').toLowerCase().trim();
+
+  // Strict explicit opt-in & forward-only DJP Bukti Potong (< Tgl 5 bulan berikutnya) invoices
+  const explicitDjpInvoices = useMemo(() => {
+    return (submissions || [])
+      .filter((sub) => {
+        if (!isExplicitBuktiPotongInvoice(sub)) return false;
+        const sc = (sub.companyId || cleanCompany).toLowerCase().trim();
+        if (sub.companyId && sc !== cleanCompany) return false;
+        return true;
+      })
+      .map((sub) => {
+        const taxDue = calculateTaxDueDate(sub.tanggal);
+        const isReported = Boolean(sub.djpReported);
+        const todayMs = Date.parse(`${today.dateStr}T00:00:00Z`) || Date.now();
+        const dueMs = Date.parse(`${taxDue.dueDate}T00:00:00Z`) || todayMs;
+        const daysLeft = Math.round((dueMs - todayMs) / (1000 * 60 * 60 * 24));
+        const isOverdue = !isReported && today.dateStr >= taxDue.dueDate;
+        const isDueSoon = !isReported && !isOverdue && daysLeft <= 7;
+        return {
+          sub,
+          taxDue,
+          isReported,
+          daysLeft,
+          isOverdue,
+          isDueSoon,
+          amount:
+            typeof sub.invoiceAmount === 'number' && sub.invoiceAmount > 0
+              ? sub.invoiceAmount
+              : getSubmissionTotalAmount(sub),
+        };
+      })
+      .sort((a, b) => {
+        if (a.isReported !== b.isReported) return a.isReported ? 1 : -1;
+        return a.taxDue.dueDate.localeCompare(b.taxDue.dueDate) || String(b.sub.tanggal || '').localeCompare(String(a.sub.tanggal || ''));
+      });
+  }, [submissions, cleanCompany, today.dateStr]);
+
+  const bupotStats = useMemo(() => {
+    const total = explicitDjpInvoices.length;
+    const reported = explicitDjpInvoices.filter((x) => x.isReported).length;
+    const pending = total - reported;
+    const overdue = explicitDjpInvoices.filter((x) => x.isOverdue).length;
+    return { total, reported, pending, overdue };
+  }, [explicitDjpInvoices]);
+
+  const bupotAvailablePeriods = useMemo(() => {
+    const periods = new Set<string>();
+    explicitDjpInvoices.forEach((x) => periods.add(x.taxDue.taxPeriod));
+    return Array.from(periods).sort().reverse();
+  }, [explicitDjpInvoices]);
+
+  const filteredDjpInvoices = useMemo(() => {
+    const q = bupotSearchQuery.trim().toLowerCase();
+    return explicitDjpInvoices.filter((entry) => {
+      if (bupotPeriodFilter !== 'ALL' && entry.taxDue.taxPeriod !== bupotPeriodFilter) return false;
+      if (bupotStatusFilter === 'pending' && entry.isReported) return false;
+      if (bupotStatusFilter === 'reported' && !entry.isReported) return false;
+      if (!q) return true;
+      const hay = `${entry.sub.kode || ''} ${entry.sub.invoiceNumber || ''} ${entry.sub.dibayarkanKepada || ''} ${entry.sub.bupotNumber || ''} ${entry.sub.notes || ''} ${entry.taxDue.monthName} ${entry.taxDue.nextMonthName}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [explicitDjpInvoices, bupotPeriodFilter, bupotStatusFilter, bupotSearchQuery]);
+
+  const handleToggleDjpReported = async (
+    entry: (typeof explicitDjpInvoices)[number],
+    customBupotNumber?: string,
+    customNote?: string
+  ) => {
+    if (!onUpdateSubmission) return;
+    const { sub, taxDue } = entry;
+    setSavingBupotId(sub.id);
+    try {
+      const nextReported = customBupotNumber !== undefined ? true : !sub.djpReported;
+      const nowIso = new Date().toISOString();
+      const updatedSub: Submission = {
+        ...sub,
+        djpReported: nextReported,
+        djpReportedAt: nextReported ? nowIso : undefined,
+        djpReportedBy: nextReported ? (userProfile?.fullName || 'Nur Wahyudi') : undefined,
+        ...(customBupotNumber !== undefined ? { bupotNumber: customBupotNumber.trim() || sub.bupotNumber } : {}),
+        ...(customNote !== undefined ? { djpReportNote: customNote.trim() || undefined } : {}),
+        bupotStatus: nextReported ? 'Sudah Bupot' : (sub.bupotNumber ? 'Siap Lapor Coretax' : 'Belum Bupot'),
+        updatedAt: nowIso,
+      };
+      await onUpdateSubmission(updatedSub);
+
+      // Sync corresponding tax period agenda item status if all explicit invoices in that period are reported
+      if (onSaveAgendaItems && agendaItems.length > 0) {
+        const samePeriodInvoices = explicitDjpInvoices.filter((x) => x.taxDue.taxPeriod === taxDue.taxPeriod);
+        const allPeriodDone = samePeriodInvoices.every((x) =>
+          x.sub.id === sub.id ? nextReported : x.isReported
+        );
+        let changed = false;
+        const nextAgenda = agendaItems.map((ag) => {
+          if (ag.category === 'Pajak' && ag.taxPeriod === taxDue.taxPeriod) {
+            const desiredStatus = allPeriodDone ? 'completed' : 'pending';
+            if (ag.status !== desiredStatus) {
+              changed = true;
+              return {
+                ...ag,
+                status: desiredStatus as 'pending' | 'completed',
+                completedAt: desiredStatus === 'completed' ? nowIso : undefined,
+                completedBy: desiredStatus === 'completed' ? (userProfile?.fullName || 'Nur Wahyudi') : undefined,
+                updatedAt: nowIso,
+              };
+            }
+          }
+          return ag;
+        });
+        if (changed) {
+          onSaveAgendaItems(nextAgenda);
+        }
+      }
+      setEditingBupotId(null);
+    } finally {
+      setSavingBupotId(null);
+    }
+  };
 
   const companyItems = useMemo(() => {
     return (items || []).filter((item) => {
@@ -526,6 +664,10 @@ export const MonthlyTransactionsManager: React.FC<MonthlyTransactionsManagerProp
                   Memantau kewajiban rutin setiap 1 bulan sekali secara berkelanjutan. Sistem mendeteksi otomatis bukti bayar &amp; pelunasan dari{' '}
                   <strong className="text-stone-800">Voucher HO</strong> sebelum tanggal 15.
                 </>
+              ) : activeSubTab === 'bupot_djp' ? (
+                <>
+                  Pengingat <strong className="text-rose-700">Wajib Buat &amp; Lapor Bukti Potong DJP</strong> untuk transaksi berjenis Invoice yang Anda tandai mulai sekarang ke depan. Batas pelaporan: <strong className="text-stone-900">sebelum tanggal 5 bulan berikutnya</strong>.
+                </>
               ) : (
                 <>
                   Pengingat kegiatan kerja, jatuh tempo invoice vendor, rekonsiliasi kas, dan tenggat waktu pajak dalam satu tampilan bulanan.
@@ -581,33 +723,57 @@ export const MonthlyTransactionsManager: React.FC<MonthlyTransactionsManagerProp
           )}
         </div>
 
-        {/* Unified Sub-Tab Bar: Transaksi Bulanan + Agenda & Pengingat */}
-        {onSaveAgendaItems && (
-          <div className="pt-3 border-t border-stone-100 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => handleSwitchSubTab('recurring')}
-              className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition cursor-pointer border ${
+        {/* Unified Sub-Tab Bar: Transaksi Bulanan + Wajib Bukti Potong DJP + Agenda & Pengingat */}
+        <div className="pt-3 border-t border-stone-100 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => handleSwitchSubTab('recurring')}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition cursor-pointer border ${
+              activeSubTab === 'recurring'
+                ? 'bg-amber-500 text-stone-950 border-amber-600 shadow-3xs'
+                : 'bg-stone-50 hover:bg-stone-100 text-stone-700 border-stone-200'
+            }`}
+          >
+            <CalendarClock size={15} />
+            <span>Transaksi Bulanan (&lt; Tgl 15)</span>
+            {stats.pendingCount > 0 && (
+              <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold tabular-nums ${
                 activeSubTab === 'recurring'
-                  ? 'bg-amber-500 text-stone-950 border-amber-600 shadow-3xs'
-                  : 'bg-stone-50 hover:bg-stone-100 text-stone-700 border-stone-200'
-              }`}
-            >
-              <CalendarClock size={15} />
-              <span>Transaksi Bulanan (&lt; Tgl 15)</span>
-              {stats.pendingCount > 0 && (
-                <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold tabular-nums ${
-                  activeSubTab === 'recurring'
-                    ? 'bg-stone-950 text-amber-300'
-                    : stats.overdueCount > 0
-                    ? 'bg-rose-600 text-white'
-                    : 'bg-amber-200 text-amber-950'
-                }`}>
-                  {stats.pendingCount}
-                </span>
-              )}
-            </button>
+                  ? 'bg-stone-950 text-amber-300'
+                  : stats.overdueCount > 0
+                  ? 'bg-rose-600 text-white'
+                  : 'bg-amber-200 text-amber-950'
+              }`}>
+                {stats.pendingCount}
+              </span>
+            )}
+          </button>
 
+          <button
+            type="button"
+            onClick={() => handleSwitchSubTab('bupot_djp')}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition cursor-pointer border ${
+              activeSubTab === 'bupot_djp'
+                ? 'bg-rose-600 text-white border-rose-700 shadow-3xs'
+                : bupotStats.pending > 0
+                ? 'bg-rose-50 hover:bg-rose-100 text-rose-900 border-rose-300'
+                : 'bg-stone-50 hover:bg-stone-100 text-stone-700 border-stone-200'
+            }`}
+          >
+            <FileCheck2 size={15} />
+            <span>Wajib Bukti Potong DJP (&lt; Tgl 5)</span>
+            {bupotStats.pending > 0 && (
+              <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold tabular-nums ${
+                activeSubTab === 'bupot_djp'
+                  ? 'bg-white text-rose-700'
+                  : 'bg-rose-600 text-white'
+              }`}>
+                {bupotStats.pending}
+              </span>
+            )}
+          </button>
+
+          {onSaveAgendaItems && (
             <button
               type="button"
               onClick={() => handleSwitchSubTab('agenda')}
@@ -629,8 +795,8 @@ export const MonthlyTransactionsManager: React.FC<MonthlyTransactionsManagerProp
                 </span>
               )}
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {activeSubTab === 'agenda' && onSaveAgendaItems ? (
@@ -643,8 +809,305 @@ export const MonthlyTransactionsManager: React.FC<MonthlyTransactionsManagerProp
           onOpenSubmissionForPrint={onViewVoucher}
           onClose={onBackToList}
         />
+      ) : activeSubTab === 'bupot_djp' ? (
+        <div className="space-y-4">
+          {/* Mandatory DJP Bukti Potong Info & KPI */}
+          <div className="bg-gradient-to-r from-rose-950 via-stone-900 to-amber-950 text-white rounded-2xl p-5 border border-rose-800/60 shadow-md flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-rose-500/20 border border-rose-400/40 text-rose-200 text-[10px] font-mono font-bold uppercase tracking-wider">
+                <ShieldAlert size={12} />
+                Sifatnya Wajib · Batas Sebelum Tgl 5 Bulan Berikutnya
+              </div>
+              <h3 className="text-lg font-black tracking-tight">
+                Pengingat Wajib Buat &amp; Lapor Bukti Potong Pajak ke DJP
+              </h3>
+              <p className="text-xs text-stone-300 max-w-2xl">
+                Menampilkan <strong>hanya</strong> transaksi berjenis <strong>Invoice</strong> yang Anda klik <em>&ldquo;Tandai Sebagai Invoice&rdquo;</em> dengan pengingat DJP aktif mulai dari sekarang ke depan. Wajib dibuatkan dan dilaporkan Bukti Potong-nya ke DJP sebelum tanggal 5 bulan berikutnya.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <div className="px-3.5 py-2 rounded-xl bg-white/10 border border-white/15 text-center min-w-[100px]">
+                <div className="text-[10px] font-mono text-rose-200 uppercase">Wajib Lapor</div>
+                <div className="text-xl font-black text-rose-300 tabular-nums">{bupotStats.pending}</div>
+              </div>
+              <div className="px-3.5 py-2 rounded-xl bg-white/10 border border-white/15 text-center min-w-[100px]">
+                <div className="text-[10px] font-mono text-emerald-200 uppercase">Sudah Lapor</div>
+                <div className="text-xl font-black text-emerald-300 tabular-nums">{bupotStats.reported}</div>
+              </div>
+              {onOpenPph23View && (
+                <button
+                  type="button"
+                  onClick={onOpenPph23View}
+                  className="px-3.5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-xs transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <Receipt size={14} />
+                  <span>Buka Modul PPh 23</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Search & Filter Controls */}
+          <div className="bg-white rounded-2xl border border-stone-200 p-4 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 shadow-3xs">
+            <div className="relative flex-1">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+              <input
+                type="text"
+                value={bupotSearchQuery}
+                onChange={(e) => setBupotSearchQuery(e.target.value)}
+                placeholder="Cari kode voucher, nomor invoice vendor, nama perusahaan, atau no. bukti potong..."
+                className="w-full pl-9 pr-3 py-2 rounded-xl border border-stone-200 bg-stone-50 focus:bg-white focus:border-rose-400 outline-none text-xs text-stone-900"
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={bupotPeriodFilter}
+                onChange={(e) => setBupotPeriodFilter(e.target.value)}
+                className="px-3 py-2 rounded-xl border border-stone-200 bg-stone-50 text-xs font-bold text-stone-800 outline-none cursor-pointer"
+              >
+                <option value="ALL">Semua Masa Pajak (Mulai Nov 2026)</option>
+                {bupotAvailablePeriods.map((p) => (
+                  <option key={p} value={p}>
+                    Masa Pajak: {formatMonthKeyIndonesian(p)}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                value={bupotStatusFilter}
+                onChange={(e) => setBupotStatusFilter(e.target.value as any)}
+                className="px-3 py-2 rounded-xl border border-stone-200 bg-stone-50 text-xs font-bold text-stone-800 outline-none cursor-pointer"
+              >
+                <option value="all">Semua Status ({bupotStats.total})</option>
+                <option value="pending">Wajib Lapor / Belum ({bupotStats.pending})</option>
+                <option value="reported">Sudah Lapor DJP ({bupotStats.reported})</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Invoice DJP List */}
+          {filteredDjpInvoices.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-dashed border-stone-300 p-10 text-center space-y-2">
+              <FileCheck2 size={36} className="mx-auto text-stone-300" />
+              <h4 className="text-sm font-black text-stone-800">
+                Belum Ada Transaksi Invoice Wajib Bukti Potong DJP
+              </h4>
+              <p className="text-xs text-stone-500 max-w-lg mx-auto">
+                Ketika Anda membuat transaksi Voucher baru dan mengklik <strong>&ldquo;Tandai Sebagai Invoice&rdquo;</strong> dengan pengingat Bukti Potong DJP aktif, transaksinya akan langsung tercatat otomatis di sini untuk dilaporkan sebelum tanggal 5 bulan berikutnya.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {filteredDjpInvoices.map((entry) => {
+                const { sub, taxDue, isReported, isOverdue, isDueSoon, daysLeft, amount } = entry;
+                const isEditingThis = editingBupotId === sub.id;
+                const isSavingThis = savingBupotId === sub.id;
+
+                return (
+                  <div
+                    key={sub.id}
+                    className={`bg-white rounded-2xl border p-4 sm:p-5 shadow-3xs transition space-y-3 ${
+                      isReported
+                        ? 'border-emerald-200 bg-emerald-50/20'
+                        : isOverdue
+                        ? 'border-rose-300 bg-rose-50/30'
+                        : isDueSoon
+                        ? 'border-amber-300 bg-amber-50/30'
+                        : 'border-stone-200'
+                    }`}
+                  >
+                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                      <div className="space-y-1.5 min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          {isReported ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 text-[10px] font-black uppercase">
+                              <CheckCircle2 size={12} />
+                              Sudah Lapor DJP
+                            </span>
+                          ) : isOverdue ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-600 text-white text-[10px] font-black uppercase">
+                              <AlertTriangle size={12} />
+                              Wajib Segera Lapor! Batas {taxDue.dueDateFormatted}
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-500 text-stone-950 text-[10px] font-black uppercase">
+                              <Clock size={12} />
+                              Wajib Buat &amp; Lapor DJP · {taxDue.dueDateFormatted} ({daysLeft >= 0 ? `H-${daysLeft}` : 'Lewat Batas'})
+                            </span>
+                          )}
+
+                          <span className="px-2 py-0.5 rounded-md bg-stone-100 border border-stone-200 font-mono text-[11px] font-bold text-stone-800">
+                            {sub.kode || 'HO'}
+                          </span>
+
+                          {sub.invoiceNumber && (
+                            <span className="px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 font-mono text-[11px] font-bold text-indigo-800">
+                              No. Inv: {sub.invoiceNumber}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+                          <h4 className="text-sm sm:text-base font-black text-stone-900">
+                            {sub.dibayarkanKepada || 'Vendor'}
+                          </h4>
+                          <span className="text-xs font-mono font-black text-stone-900">
+                            {formatRupiah(amount)}
+                          </span>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-stone-600">
+                          <span>Tanggal Transaksi: <strong>{sub.tanggal}</strong></span>
+                          <span>Masa Pajak: <strong>{taxDue.monthName} {taxDue.year}</strong></span>
+                          {sub.bupotNumber && (
+                            <span className="text-emerald-700 font-mono font-bold">
+                              No. Bukti Potong: {sub.bupotNumber}
+                            </span>
+                          )}
+                          {isReported && sub.djpReportedAt && (
+                            <span className="text-emerald-700">
+                              Dilaporkan: {new Date(sub.djpReportedAt).toLocaleDateString('id-ID')} ({sub.djpReportedBy || 'Keuangan'})
+                            </span>
+                          )}
+                        </div>
+                        {sub.djpReportNote && (
+                          <div className="text-[11px] text-stone-500 italic">
+                            Catatan DJP: {sub.djpReportNote}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => onViewVoucher(sub)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs font-bold cursor-pointer transition"
+                        >
+                          <FileText size={13} />
+                          <span>Buka Voucher</span>
+                        </button>
+
+                        {!isReported && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (isEditingThis) {
+                                setEditingBupotId(null);
+                              } else {
+                                setEditingBupotId(sub.id);
+                                setBupotNumberDraft(sub.bupotNumber || '');
+                                setBupotNoteDraft(sub.djpReportNote || '');
+                              }
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 text-xs font-bold cursor-pointer transition"
+                          >
+                            <Edit3 size={13} />
+                            <span>Input No. Bupot</span>
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          disabled={isSavingThis}
+                          onClick={() => handleToggleDjpReported(entry)}
+                          className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-black cursor-pointer transition shadow-3xs disabled:opacity-50 ${
+                            isReported
+                              ? 'bg-white hover:bg-stone-100 text-stone-700 border border-stone-300'
+                              : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                          }`}
+                        >
+                          <CheckCircle2 size={14} />
+                          <span>
+                            {isSavingThis
+                              ? 'Menyimpan...'
+                              : isReported
+                              ? 'Batalkan Status Lapor'
+                              : 'Tandai Sudah Lapor DJP'}
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {isEditingThis && (
+                      <div className="pt-3 border-t border-stone-200 grid grid-cols-1 sm:grid-cols-3 gap-2.5 items-end">
+                        <div>
+                          <label className="block text-[11px] font-bold text-stone-700 mb-1">
+                            Nomor Bukti Potong (Coretax DJP)
+                          </label>
+                          <input
+                            type="text"
+                            value={bupotNumberDraft}
+                            onChange={(e) => setBupotNumberDraft(e.target.value)}
+                            placeholder="Contoh: BUPOT-2026-000123"
+                            className="w-full px-3 py-1.5 rounded-xl border border-stone-300 bg-white text-xs font-mono text-stone-900"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-bold text-stone-700 mb-1">
+                            Catatan Pelaporan (Opsional)
+                          </label>
+                          <input
+                            type="text"
+                            value={bupotNoteDraft}
+                            onChange={(e) => setBupotNoteDraft(e.target.value)}
+                            placeholder="Contoh: Sudah lapor SPT Masa Coretax"
+                            className="w-full px-3 py-1.5 rounded-xl border border-stone-300 bg-white text-xs text-stone-900"
+                          />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            disabled={isSavingThis}
+                            onClick={() => handleToggleDjpReported(entry, bupotNumberDraft, bupotNoteDraft)}
+                            className="flex-1 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black cursor-pointer"
+                          >
+                            Simpan &amp; Tandai Lapor DJP
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditingBupotId(null)}
+                            className="px-3 py-1.5 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold cursor-pointer"
+                          >
+                            Batal
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       ) : (
         <>
+      {/* Strip Pengingat Wajib Bukti Potong DJP (< Tgl 5) di Tab Utama Menu Bulanan */}
+      {bupotStats.pending > 0 && (
+        <div className="bg-gradient-to-r from-rose-50 via-amber-50 to-white border border-rose-300 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-3xs">
+          <div className="flex items-start sm:items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-rose-600 text-white shrink-0">
+              <FileCheck2 size={18} />
+            </div>
+            <div className="text-xs space-y-0.5">
+              <div className="font-black text-rose-950">
+                Wajib Buat &amp; Lapor Bukti Potong ke DJP (&lt; Tgl 5 Bulan Berikutnya): {bupotStats.pending} Invoice
+              </div>
+              <p className="text-[11px] text-stone-700">
+                Ada {bupotStats.pending} transaksi Invoice yang sudah Anda tandai dan wajib dilaporkan Bukti Potong-nya ke DJP sebelum tanggal 5 bulan berikutnya.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => handleSwitchSubTab('bupot_djp')}
+            className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-black transition cursor-pointer shrink-0"
+          >
+            Lihat Daftar Bukti Potong DJP &rarr;
+          </button>
+        </div>
+      )}
+
       {/* KPI Strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <div className="bg-white rounded-2xl border border-stone-200 p-4 shadow-3xs">

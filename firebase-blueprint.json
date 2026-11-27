@@ -39,7 +39,8 @@
         "taxStatus": { "type": "string", "enum": ["PKP", "Non-PKP"] },
         "contactPerson": { "type": "string" },
         "notes": { "type": "string" },
-        "createdAt": { "type": "string" }
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
       },
       "required": ["id", "companyName", "npwpNumber"]
     },

@@ -14,6 +14,9 @@ export {
   calculateTaxDueDate,
   syncInvoiceSubmissionToAgenda,
   formatTransactionsSummaryNote,
+  isExplicitBuktiPotongInvoice,
+  DJP_BUKTI_POTONG_CUTOFF_DATE,
+  DJP_BUKTI_POTONG_CUTOFF_ISO,
   INDONESIAN_MONTHS
 } from './utils/agendaTaxSync';
 import {

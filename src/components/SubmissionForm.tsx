@@ -592,9 +592,6 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         setDibayarkanKepada(matched);
       }
     }
-
-    const isInv = jenisLower.includes('invoice') || jenisLower.includes('tagihan') || kodeLower.includes('inv');
-    setIsInvoice(isInv);
   }, [jenisPengajuan, kode, custodiansConfig, effectiveHolders]);
   // Signatures (strictly scoped to active companyId)
   const activeSignerCompanyId = normalizeSignerCompanyId(initialSubmission?.companyId, userProfile?.companyId);
@@ -2473,7 +2470,7 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
         rekeningTujuan: rekeningTujuan || undefined,
         notes,
         
-        // Save Invoice properties
+        // Save Invoice & Mandatory DJP Bukti Potong (< 5th next month) properties
         isInvoice,
         invoiceNumber: isInvoice ? (invoiceNumber.trim() || kode) : invoiceNumber,
         invoiceDate,
@@ -2481,6 +2478,24 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
           ? (invoiceAmount !== '' && !isNaN(Number(invoiceAmount)) ? Number(invoiceAmount) : calculatedGrandTotal)
           : (invoiceAmount !== '' ? Number(invoiceAmount) : undefined),
         sendToAgenda: isInvoice ? sendToAgenda : false,
+        taxBuktiPotongRequired: isInvoice ? sendToAgenda : false,
+        taxReminderActivatedAt: isInvoice && sendToAgenda
+          ? (initialSubmission?.taxReminderActivatedAt || new Date().toISOString())
+          : initialSubmission?.taxReminderActivatedAt,
+        agendaItemId: initialSubmission?.agendaItemId,
+        pph23Rate: initialSubmission?.pph23Rate,
+        pph23Amount: initialSubmission?.pph23Amount,
+        dppAmount: initialSubmission?.dppAmount,
+        bupotNumber: initialSubmission?.bupotNumber,
+        bupotStatus: initialSubmission?.bupotStatus,
+        bupotDate: initialSubmission?.bupotDate,
+        vendorNpwp: initialSubmission?.vendorNpwp,
+        bupotDriveUrl: initialSubmission?.bupotDriveUrl,
+        bupotFileName: initialSubmission?.bupotFileName,
+        djpReported: initialSubmission?.djpReported,
+        djpReportedAt: initialSubmission?.djpReportedAt,
+        djpReportedBy: initialSubmission?.djpReportedBy,
+        djpReportNote: initialSubmission?.djpReportNote,
 
         // Save Salary Slip properties
         salaryDetails: (jenisPengajuan.toLowerCase().includes('gaji') || namaKaryawanSalary) ? {
@@ -3594,14 +3609,14 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
           </div>
         )}
 
-        {/* INVOICE MANUAL TOGGLE IF NOT AUTO-DETECTED */}
+        {/* INVOICE MANUAL TOGGLE (EKSPLISIT DIKLIK PENGGUNA) */}
         {!isInvoice && (
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 p-3.5 bg-amber-500/5 border border-amber-300/60 rounded-2xl text-xs">
             <div className="flex items-center gap-2 text-stone-700">
               <FileText size={16} className="text-amber-600 shrink-0" />
               <div>
                 <span className="font-bold text-stone-900">Apakah transaksi ini berupa Tagihan / Invoice Vendor?</span>
-                <p className="text-[11px] text-stone-500">Centang agar nomor invoice tercatat dan pengingat pelaporan PPh (Coretax DJP) dijadwalkan otomatis.</p>
+                <p className="text-[11px] text-stone-500">Klik tombol di samping agar otomatis masuk pengingat <strong>Wajib Buat &amp; Lapor Bukti Potong DJP (Menu Bulanan &amp; Agenda)</strong> sebelum tanggal 5 bulan berikutnya.</p>
               </div>
             </div>
             <button
@@ -3738,11 +3753,11 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                   </div>
                 </div>
 
-                {/* KOTAK PENGINGAT OTOMATIS AGENDA CORETAX DJP */}
+                {/* KOTAK PENGINGAT WAJIB BUKTI POTONG DJP (< TGL 5 BULAN BERIKUTNYA) */}
                 {(() => {
                   const taxInfo = calculateTaxDueDate(tanggal);
                   return (
-                    <div className="p-4 bg-gradient-to-br from-amber-500/10 via-amber-500/5 to-white border border-amber-300 rounded-2xl shadow-3xs">
+                    <div className="p-4 bg-gradient-to-br from-rose-500/10 via-amber-500/10 to-white border border-amber-400 rounded-2xl shadow-3xs">
                       <div className="flex items-start gap-3">
                         <input
                           id="cb-send-to-agenda"
@@ -3755,22 +3770,22 @@ export const SubmissionForm: React.FC<SubmissionFormProps> = ({
                           <label htmlFor="cb-send-to-agenda" className="cursor-pointer">
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="text-xs font-black text-stone-900 uppercase tracking-wide flex items-center gap-1.5">
-                                <Calendar size={13} className="text-amber-600" />
-                                Kirim Pengingat Lapor PPh ke Agenda (Coretax DJP)
+                                <Calendar size={13} className="text-rose-600" />
+                                Buatkan Pengingat Wajib Lapor Bukti Potong ke DJP (Menu Bulanan &amp; Agenda)
                               </span>
-                              <span className="px-2.5 py-0.5 text-[10px] font-mono font-black bg-amber-500 text-stone-950 rounded-full">
-                                Jatuh Tempo: 20 {taxInfo.nextMonthName} {taxInfo.nextYear}
+                              <span className="px-2.5 py-0.5 text-[10px] font-mono font-black bg-rose-600 text-white rounded-full">
+                                Wajib Sebelum 5 {taxInfo.nextMonthName} {taxInfo.nextYear}
                               </span>
                             </div>
-                            <p className="text-[11px] text-stone-650 mt-1 leading-relaxed">
-                              Sistem secara otomatis menjadwalkan pengingat pelaporan dan penyetoran PPh Masa <strong>{taxInfo.monthName} {taxInfo.year}</strong> di <strong>Modul Agenda</strong> pada tanggal <strong>20 {taxInfo.nextMonthName} {taxInfo.nextYear}</strong>.
+                            <p className="text-[11px] text-stone-700 mt-1 leading-relaxed">
+                              <strong>Sifatnya Wajib:</strong> Sistem otomatis mencatat Invoice Masa <strong>{taxInfo.monthName} {taxInfo.year}</strong> ini ke <strong>Menu Bulanan &amp; Agenda</strong> agar dibuatkan dan dilaporkan Bukti Potong pajaknya ke DJP paling lambat <strong>sebelum tanggal 5 {taxInfo.nextMonthName} {taxInfo.nextYear}</strong>.
                             </p>
                           </label>
 
-                          <div className="p-2.5 bg-white/80 border border-amber-200/80 rounded-xl text-[10.5px] text-stone-600 flex items-start gap-2">
+                          <div className="p-2.5 bg-white/85 border border-amber-200/80 rounded-xl text-[10.5px] text-stone-600 flex items-start gap-2">
                             <Clock size={13} className="text-amber-600 shrink-0 mt-0.5" />
                             <p>
-                              <strong>Agregasi Otomatis:</strong> Jika ada transaksi invoice lain untuk masa pajak yang sama, pengingat akan <strong>disatukan ke dalam 1 agenda</strong> dan nomor-nomor voucher ({kode || 'HO'}) beserta invoice vendor akan otomatis dicatat di dalam note agenda tersebut.
+                              <strong>Pengingat Terpadu Menu Bulanan:</strong> Setelah transaksi disimpan, tagihan invoice ini langsung muncul pada daftar <strong>Wajib Bukti Potong DJP (&lt; Tgl 5)</strong> di Menu Bulanan hingga Anda tandai sudah dilaporkan ke DJP.
                             </p>
                           </div>
                         </div>

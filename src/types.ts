@@ -68,6 +68,12 @@ export interface Submission {
   invoiceAmount?: number;
   sendToAgenda?: boolean; // Jadwalkan pengingat lapor PPh ke Agenda (Coretax DJP)
   agendaItemId?: string; // ID agenda terkait jika ada
+  taxBuktiPotongRequired?: boolean; // Penanda eksplisit user klik Tandai Sebagai Invoice / buatkan laporan bukti potong DJP
+  taxReminderActivatedAt?: string; // ISO timestamp sejak fitur wajib bukti potong aktif (>= cutoff)
+  djpReported?: boolean; // Status wajib apakah bukti potong sudah dibuat & dilaporkan ke DJP
+  djpReportedAt?: string; // ISO timestamp pelaporan DJP
+  djpReportedBy?: string; // Nama petugas yang melaporkan ke DJP
+  djpReportNote?: string; // Catatan pelaporan DJP / Coretax
   
   // PPh 23 & Bukti Potong (Coretax DJP) properties
   pph23Rate?: number; // Persentase tarif PPh 23 (default 2%)

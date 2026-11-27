@@ -9,13 +9,18 @@ export const INDONESIAN_MONTHS = [
   'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
 ];
 
+// Forward-only cutoff timestamp (27 Nov 2026 11:15 WIB = 2026-11-27T04:15:00.000Z)
+// Memastikan hanya transaksi Invoice yang ditandai mulai dari sekarang hingga ke depan yang masuk pengingat Wajib DJP (< Tgl 5)
+export const DJP_BUKTI_POTONG_CUTOFF_DATE = '2026-11-27';
+export const DJP_BUKTI_POTONG_CUTOFF_ISO = '2026-11-27T04:15:00.000Z';
+export const DJP_BUKTI_POTONG_DUE_DAY = 5;
+
 /**
- * Menghitung batas akhir pelaporan PPh (Coretax DJP) yaitu tanggal 20 di bulan berikutnya
- * berdasarkan tanggal transaksi pengajuan invoice.
+ * Menghitung batas akhir wajib pembuatan & pelaporan Bukti Potong DJP (Coretax),
+ * yaitu SEBELUM tanggal 5 di bulan berikutnya berdasarkan tanggal transaksi pengajuan invoice.
  * Contoh:
- * - Transaksi 15 Agustus 2026 -> Masa Pajak: Agustus 2026 -> Jatuh tempo: 20 September 2026
- * - Transaksi 09 September 2026 -> Masa Pajak: September 2026 -> Jatuh tempo: 20 Oktober 2026
- * - Transaksi 25 Desember 2026 -> Masa Pajak: Desember 2026 -> Jatuh tempo: 20 Januari 2027
+ * - Transaksi 27 November 2026 -> Masa Pajak: November 2026 -> Jatuh tempo: Sebelum Tgl 5 Desember 2026 (2026-12-05)
+ * - Transaksi 15 Desember 2026 -> Masa Pajak: Desember 2026 -> Jatuh tempo: Sebelum Tgl 5 Januari 2027 (2027-01-05)
  */
 export function calculateTaxDueDate(dateStr?: string): {
   dueDate: string;
@@ -39,7 +44,6 @@ export function calculateTaxDueDate(dateStr?: string): {
     txMonth = now.getMonth();
   }
 
-  // Ensure valid values
   if (isNaN(txYear) || isNaN(txMonth) || txMonth < 0 || txMonth > 11) {
     const now = new Date();
     txYear = now.getFullYear();
@@ -49,7 +53,7 @@ export function calculateTaxDueDate(dateStr?: string): {
   const monthName = INDONESIAN_MONTHS[txMonth] || 'Bulan Pajak';
   const taxPeriod = `${txYear}-${String(txMonth + 1).padStart(2, '0')}`;
 
-  // Bulan berikutnya untuk tanggal 20
+  // Bulan berikutnya sebelum tanggal 5
   let nextMonth = txMonth + 1;
   let nextYear = txYear;
   if (nextMonth > 11) {
@@ -58,9 +62,9 @@ export function calculateTaxDueDate(dateStr?: string): {
   }
 
   const nextMonthStr = String(nextMonth + 1).padStart(2, '0');
-  const dueDate = `${nextYear}-${nextMonthStr}-20`;
+  const dueDate = `${nextYear}-${nextMonthStr}-05`;
   const nextMonthName = INDONESIAN_MONTHS[nextMonth];
-  const dueDateFormatted = `20 ${nextMonthName} ${nextYear}`;
+  const dueDateFormatted = `Sebelum Tgl 5 ${nextMonthName} ${nextYear}`;
 
   return {
     dueDate,
@@ -74,7 +78,32 @@ export function calculateTaxDueDate(dateStr?: string): {
 }
 
 /**
- * Mengecek apakah suatu transaksi merupakan transaksi Invoice / Tagihan
+ * Mengecek secara ketat apakah suatu transaksi merupakan transaksi Invoice yang
+ * secara EKSPLISIT ditandai oleh pengguna ("Tandai Sebagai Invoice / Buatkan Laporan Bukti Potong Pajak")
+ * dan dibuat/diaktifkan mulai dari sekarang sampai ke depan (forward-only >= DJP_BUKTI_POTONG_CUTOFF_ISO).
+ */
+export function isExplicitBuktiPotongInvoice(sub?: Partial<Submission> | null): boolean {
+  if (!sub) return false;
+
+  // 1. Wajib eksplisit berjenis Invoice yang diklik user & opsi pengingat bukti potong aktif
+  if (sub.isInvoice !== true) return false;
+  if (sub.sendToAgenda === false) return false;
+  if (sub.taxBuktiPotongRequired !== true && sub.sendToAgenda !== true) return false;
+
+  // 2. Hanya membaca mulai dari aktivasi fitur sekarang sampai ke depan (tidak membaca masa lalu)
+  if (sub.taxReminderActivatedAt) {
+    return sub.taxReminderActivatedAt >= DJP_BUKTI_POTONG_CUTOFF_ISO;
+  }
+
+  if (sub.createdAt) {
+    return sub.createdAt >= DJP_BUKTI_POTONG_CUTOFF_ISO;
+  }
+
+  return false;
+}
+
+/**
+ * Mengecek apakah suatu transaksi merupakan transaksi Invoice / Tagihan (digunakan untuk rekap PPh 23 umum)
  */
 export function isInvoiceSubmission(sub: Partial<Submission>): boolean {
   if (!sub) return false;
@@ -91,9 +120,8 @@ export function isInvoiceSubmission(sub: Partial<Submission>): boolean {
 }
 
 /**
- * Sinkronisasi otomatis transaksi invoice ke Agenda Pengingat Coretax DJP.
- * Jika sudah ada agenda untuk masa pajak tersebut (jatuh tempo tgl 20 bulan berikutnya),
- * rincian invoice baru akan digabungkan ke dalam agenda tersebut (diagregasi) tanpa membuat duplikasi agenda.
+ * Sinkronisasi otomatis transaksi invoice yang ditandai eksplisit ke Agenda Pengingat Wajib Bukti Potong DJP (< Tgl 5 bulan berikutnya).
+ * Jika sudah ada agenda untuk masa pajak tersebut, rincian invoice baru akan digabungkan (diagregasi) tanpa duplikasi.
  */
 export function syncInvoiceSubmissionToAgenda(
   savedSub: Submission,
@@ -105,7 +133,7 @@ export function syncInvoiceSubmissionToAgenda(
   isNew: boolean;
   dueDateFormatted: string;
 } {
-  const { dueDate, taxPeriod, monthName, year, dueDateFormatted } = calculateTaxDueDate(savedSub.tanggal);
+  const { dueDate, taxPeriod, monthName, year, dueDateFormatted, nextMonthName, nextYear } = calculateTaxDueDate(savedSub.tanggal);
 
   // Hitung total nominal invoice
   let totalAmount = 0;
@@ -121,24 +149,22 @@ export function syncInvoiceSubmissionToAgenda(
   const formattedNominal = formatRupiah(totalAmount);
   const subNote = savedSub.notes?.trim() ? ` | Catatan: "${savedSub.notes.trim()}"` : '';
 
-  // Format satu baris entri invoice untuk dicantumkan di catatan agenda
-  const invoiceEntryLine = `• [${subKode}] Inv: ${noInv} | Penerima: ${penerima} | ${formattedNominal}${subNote}`;
+  const invoiceEntryLine = `• [${subKode}] Inv: ${noInv} | Vendor: ${penerima} | Rp ${formattedNominal}${subNote}`;
 
-  // Cari apakah sudah ada agenda pajak untuk masa pajak atau tanggal jatuh tempo ini
   const existingAgendaIndex = currentAgenda.findIndex((item) => {
     if (item.category !== 'Pajak') return false;
-    // Cocokkan berdasarkan taxPeriod atau dueDate tgl 20 bulan berikutnya
     const matchesDueDate = item.dueDate === dueDate;
     const matchesTaxPeriod = item.taxPeriod === taxPeriod;
     const isPphAgenda = (item.title || '').toLowerCase().includes('pph') ||
                         (item.title || '').toLowerCase().includes('coretax') ||
                         (item.title || '').toLowerCase().includes('invoice') ||
-                        (item.title || '').toLowerCase().includes('bupot');
+                        (item.title || '').toLowerCase().includes('bukti potong') ||
+                        (item.title || '').toLowerCase().includes('bupot') ||
+                        (item.title || '').toLowerCase().includes('djp');
     return (matchesDueDate || matchesTaxPeriod) && isPphAgenda;
   });
 
   if (existingAgendaIndex >= 0) {
-    // Agenda SUDAH ADA: Gabungkan ke agenda yang sudah ada!
     const existing = { ...currentAgenda[existingAgendaIndex] };
     const currentCodes: string[] = existing.linkedVoucherCodes
       ? [...existing.linkedVoucherCodes]
@@ -148,29 +174,27 @@ export function syncInvoiceSubmissionToAgenda(
       currentCodes.push(subKode);
     }
 
-    // Periksa apakah deskripsi sudah mengandung kode voucher ini
     let updatedDescription = existing.description || '';
     if (!updatedDescription.includes(subKode)) {
       if (updatedDescription.trim() === '') {
-        updatedDescription = `📋 Pengingat Pelaporan PPh Masa ${monthName} ${year} (Coretax DJP)\nBatas Waktu: ${dueDateFormatted}\n\nDaftar Invoice Pemotongan PPh:\n${invoiceEntryLine}`;
+        updatedDescription = `📋 WAJIB BUAT & LAPOR BUKTI POTONG PAJAK KE DJP (CORETAX)\nMasa Pajak: ${monthName} ${year}\nBatas Waktu Wajib: ${dueDateFormatted}\n\nDaftar Invoice Wajib Bukti Potong DJP:\n${invoiceEntryLine}`;
+      } else if (updatedDescription.includes('Daftar Invoice')) {
+        updatedDescription = `${updatedDescription.trim()}\n${invoiceEntryLine}`;
       } else {
-        // Cek jika bagian Daftar Invoice sudah ada
-        if (updatedDescription.includes('Daftar Invoice') || updatedDescription.includes('Daftar Transaksi')) {
-          updatedDescription = `${updatedDescription.trim()}\n${invoiceEntryLine}`;
-        } else {
-          updatedDescription = `${updatedDescription.trim()}\n\nDaftar Invoice Pemotongan PPh:\n${invoiceEntryLine}`;
-        }
+        updatedDescription = `${updatedDescription.trim()}\n\nDaftar Invoice Wajib Bukti Potong DJP:\n${invoiceEntryLine}`;
       }
     }
 
     const updatedItem: AgendaItem = {
       ...existing,
+      title: `Wajib Lapor Bukti Potong DJP Masa ${monthName} ${year} (< Tgl 5 ${nextMonthName})`,
       linkedVoucherCodes: currentCodes,
       voucherCode: currentCodes.join(', '),
       description: updatedDescription,
-      taxPeriod: taxPeriod,
-      dueDate: dueDate,
-      status: 'pending', // Re-aktifkan jika sebelumnya selesai agar staf tidak terlewat invoice baru
+      taxPeriod,
+      dueDate,
+      priority: 'tinggi',
+      status: 'pending',
       updatedAt: new Date().toISOString()
     };
 
@@ -184,21 +208,20 @@ export function syncInvoiceSubmissionToAgenda(
       dueDateFormatted
     };
   } else {
-    // Agenda BELUM ADA: Buat agenda baru untuk tanggal 20 bulan berikutnya!
-    const newId = `agenda_pph_${taxPeriod}_${Date.now()}`;
-    const newDescription = `📋 Pengingat Pelaporan & Penyetoran PPh (Coretax DJP)\nMasa Pajak: ${monthName} ${year}\nBatas Akhir Pelaporan: ${dueDateFormatted}\n\nSetiap transaksi invoice wajib dipotong PPh (PPh 21 / 23 / Final) dan dilaporkan ke sistem Coretax DJP paling lambat tanggal 20 bulan berikutnya.\n\nDaftar Invoice Pemotongan PPh:\n${invoiceEntryLine}`;
+    const newId = `agenda_djp_bupot_${taxPeriod}_${Date.now()}`;
+    const newDescription = `📋 WAJIB BUAT & LAPOR BUKTI POTONG PAJAK KE DJP (CORETAX)\nMasa Pajak: ${monthName} ${year}\nBatas Akhir Wajib Pelaporan: Sebelum Tanggal 5 ${nextMonthName} ${nextYear} (${dueDate})\n\nSifatnya Wajib: Setiap transaksi Invoice yang telah ditandai wajib dibuatkan Bukti Potong pajaknya dan dilaporkan ke DJP sebelum tanggal 5 bulan berikutnya agar tidak terlewat.\n\nDaftar Invoice Wajib Bukti Potong DJP:\n${invoiceEntryLine}`;
 
     const newAgendaItem: AgendaItem = {
       id: newId,
-      title: `Lapor PPh Masa ${monthName} ${year} - Coretax DJP (Invoice Vendor)`,
+      title: `Wajib Lapor Bukti Potong DJP Masa ${monthName} ${year} (< Tgl 5 ${nextMonthName})`,
       description: newDescription,
-      dueDate: dueDate,
-      dueTime: '09:00',
+      dueDate,
+      dueTime: '08:30',
       category: 'Pajak',
       priority: 'tinggi',
       status: 'pending',
       recurrence: 'none',
-      taxPeriod: taxPeriod,
+      taxPeriod,
       voucherCode: subKode,
       linkedVoucherCodes: [subKode],
       assignedTo: savedSub.dibuatOleh || userFullName || 'Nur Wahyudi',
@@ -220,7 +243,7 @@ export function syncInvoiceSubmissionToAgenda(
  */
 export function formatTransactionsSummaryNote(selectedSubs: Submission[]): string {
   if (!selectedSubs || selectedSubs.length === 0) return '';
-  
+
   const lines = selectedSubs.map((sub, idx) => {
     let totalVal = 0;
     if (typeof sub.invoiceAmount === 'number' && sub.invoiceAmount > 0) {
@@ -237,4 +260,3 @@ export function formatTransactionsSummaryNote(selectedSubs: Submission[]): strin
 
   return `\n\n📌 Rincian Transaksi Terhubung:\n${lines.join('\n')}`;
 }
-

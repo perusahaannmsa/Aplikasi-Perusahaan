@@ -55,7 +55,7 @@ import {
 } from './utils/monthlyTransactions';
 import { ThemeSelectorModal, AppTheme } from './components/ThemeSelectorModal';
 import { getSynchronizedAttendanceWorkers, getSavedEmployeeLoans, saveEmployeeLoans, isLoanSubmission, syncLoansWithSubmissions } from './utils/loanUtils';
-import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, syncInvoiceSubmissionToAgenda, formatDateIndonesian } from './utils';
+import { isPettyCashSubmission, getPettyCashCustodian, isInvoiceSubmission, isExplicitBuktiPotongInvoice, syncInvoiceSubmissionToAgenda, formatDateIndonesian } from './utils';
 import { areNamesSimilar, toTitleCase } from './utils/nameConsolidation';
 import { deleteSubmissionDriveFolder } from './utils/googleDriveCleaner';
 import {
@@ -1123,7 +1123,7 @@ export default function App() {
     }
   };
 
-  const handleSaveNpwpRecords = async (newRecords: NpwpRecord[]) => {
+  const handleSaveNpwpRecords = async (newRecords: NpwpRecord[]): Promise<{ firestoreSynced: boolean; error?: string }> => {
     const prevMap = new Map(npwpRecords.map((r) => [r.id, r]));
     const nextMap = new Map(newRecords.map((r) => [r.id, r]));
     const removedIds = npwpRecords.filter((r) => !nextMap.has(r.id)).map((r) => r.id);
@@ -1150,18 +1150,39 @@ export default function App() {
       console.error('Gagal sinkronisasi data NPWP ke server:', err);
     }
 
+    let firestoreSynced = true;
+    const errors: string[] = [];
     try {
       for (const delId of removedIds) {
-        await deleteNpwpRecordFromFirestore(delId);
+        const delRes = await deleteNpwpRecordFromFirestore(delId);
+        if (!delRes.deletedFromFirestore) {
+          firestoreSynced = false;
+          if (delRes.error) errors.push(delRes.error);
+        }
       }
       if (changedOrAdded.length === 1) {
-        await saveSingleNpwpRecordToFirestore(changedOrAdded[0]);
+        const saveRes = await saveSingleNpwpRecordToFirestore(changedOrAdded[0]);
+        if (!saveRes.savedToFirestore) {
+          firestoreSynced = false;
+          if (saveRes.error) errors.push(saveRes.error);
+        }
       } else if (changedOrAdded.length > 1) {
-        await saveNpwpRecordsToFirestore(changedOrAdded);
+        const saveRes = await saveNpwpRecordsToFirestore(changedOrAdded);
+        if (!saveRes.savedToFirestore) {
+          firestoreSynced = false;
+          if (saveRes.error) errors.push(saveRes.error);
+        }
       }
-    } catch (err) {
+    } catch (err: any) {
+      firestoreSynced = false;
+      errors.push(err?.message || 'Gagal sinkronisasi data NPWP ke Firestore');
       console.warn('Gagal sinkronisasi data NPWP ke Firestore:', err);
     }
+
+    return {
+      firestoreSynced,
+      error: errors.length > 0 ? errors[0] : undefined,
+    };
   };
 
   // Non-destructive NPWP cloud merge (never treats unsynced local items as deleted)
@@ -1276,7 +1297,7 @@ export default function App() {
   });
 
   const [previousView, setPreviousView] = useState<AppViewMode>('list');
-  const [bulananInitialTab, setBulananInitialTab] = useState<'recurring' | 'agenda'>('recurring');
+  const [bulananInitialTab, setBulananInitialTab] = useState<'recurring' | 'bupot_djp' | 'agenda'>('recurring');
 
   const [memoSubmissionTarget, setMemoSubmissionTarget] = useState<Submission | null>(null);
   const [targetAccurateSubmission, setTargetAccurateSubmission] = useState<Submission | null>(null);
@@ -1756,6 +1777,16 @@ export default function App() {
     () => getPendingMonthlySummary(monthlyTransactions, submissions, userProfile?.companyId),
     [monthlyTransactions, submissions, userProfile?.companyId]
   );
+
+  const pendingBupotDjpCount = useMemo(() => {
+    const cleanComp = (userProfile?.companyId || '').toLowerCase().trim();
+    return submissions.filter((s) => {
+      if (!isExplicitBuktiPotongInvoice(s)) return false;
+      if (s.djpReported) return false;
+      if (cleanComp && s.companyId && s.companyId.toLowerCase().trim() !== cleanComp) return false;
+      return true;
+    }).length;
+  }, [submissions, userProfile?.companyId]);
 
   const handleCreateVoucherFromMonthly = (item: MonthlyRecurringTransaction, targetMonth: string) => {
     const todayParts = getJakartaTodayParts();
@@ -2606,7 +2637,14 @@ export default function App() {
 
     const unsubscribeNpwp = subscribeToNpwpRecordsFromFirestore((records) => {
       if (records && records.length > 0) {
-        setNpwpRecords(records);
+        const delIds = getDeletedNpwpIds();
+        setNpwpRecords((prev) => {
+          const merged = mergeNpwpListsSafely(records, prev, delIds);
+          try {
+            localStorage.setItem('npwp_records_v1', JSON.stringify(merged));
+          } catch (_) {}
+          return merged;
+        });
       }
     });
 
@@ -3201,9 +3239,9 @@ export default function App() {
       }
     }
 
-    // If this submission is an Invoice, automatically sync/create reminder in Agenda Manager for Coretax DJP (due 20th of next month)
-    const isInv = isInvoiceSubmission(savedSub) || savedSub.isInvoice || savedSub.sendToAgenda;
-    if (isInv && savedSub.sendToAgenda !== false) {
+    // Hanya catat pengingat Wajib Bukti Potong DJP (< Tgl 5 bulan berikutnya) untuk transaksi Invoice
+    // yang secara eksplisit ditandai "Tandai Sebagai Invoice" oleh pengguna (mulai cutoff ke depan).
+    if (isExplicitBuktiPotongInvoice(savedSub)) {
       try {
         const { updatedAgendaItems, affectedAgendaId, isNew, dueDateFormatted } = syncInvoiceSubmissionToAgenda(
           savedSub,
@@ -3211,9 +3249,9 @@ export default function App() {
           userProfile?.fullName
         );
         await handleSaveAgendaItems(updatedAgendaItems);
-        console.log(`[Agenda Tax Sync] Berhasil ${isNew ? 'membuat' : 'memperbarui'} pengingat PPh Coretax DJP jatuh tempo ${dueDateFormatted} (ID: ${affectedAgendaId})`);
+        console.log(`[Agenda Tax Sync] Berhasil ${isNew ? 'membuat' : 'memperbarui'} pengingat Wajib Bukti Potong DJP (${dueDateFormatted}, ID: ${affectedAgendaId})`);
       } catch (agendaErr) {
-        console.warn('Gagal sinkronisasi pengingat PPh invoice ke agenda:', agendaErr);
+        console.warn('Gagal sinkronisasi pengingat Bukti Potong DJP ke agenda:', agendaErr);
       }
     }
 
@@ -4087,14 +4125,18 @@ export default function App() {
 
               {/* Direct Dedicated Button: Bulanan & Agenda Pengingat */}
               {(() => {
-                const totalBulananBadge = pendingMonthlySummary.pendingCount + agendaDueCount;
-                const hasUrgent = pendingMonthlySummary.overdueCount > 0 || agendaDueCount > 0;
+                const totalBulananBadge = pendingMonthlySummary.pendingCount + pendingBupotDjpCount + agendaDueCount;
+                const hasUrgent = pendingMonthlySummary.overdueCount > 0 || pendingBupotDjpCount > 0 || agendaDueCount > 0;
                 const isBulananActive = view === 'bulanan' || view === 'agenda';
                 return (
                   <button
                     type="button"
                     onClick={() => {
-                      setBulananInitialTab('recurring');
+                      setBulananInitialTab(
+                        pendingBupotDjpCount > 0 && pendingMonthlySummary.pendingCount === 0
+                          ? 'bupot_djp'
+                          : 'recurring'
+                      );
                       setView(isBulananActive ? 'list' : 'bulanan');
                     }}
                     className={`relative flex items-center gap-1.5 py-1.5 px-3 rounded-xl border transition cursor-pointer shadow-3xs text-xs font-bold font-sans whitespace-nowrap shrink-0 ${
@@ -4104,7 +4146,7 @@ export default function App() {
                         ? 'bg-rose-50 hover:bg-rose-100 border-rose-300 text-rose-900'
                         : 'bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-800'
                     }`}
-                    title={`Transaksi Bulanan (${pendingMonthlySummary.pendingCount} belum bayar) & Agenda Kerja (${agendaDueCount} jatuh tempo)`}
+                    title={`Transaksi Bulanan (${pendingMonthlySummary.pendingCount} belum bayar), Wajib Bukti Potong DJP < Tgl 5 (${pendingBupotDjpCount}), & Agenda Kerja (${agendaDueCount} jatuh tempo)`}
                   >
                     <CalendarClock size={14} className={isBulananActive ? 'text-stone-950' : hasUrgent ? 'text-rose-600' : 'text-amber-600'} />
                     <span className="hidden lg:inline">Bulanan</span>
@@ -4259,10 +4301,44 @@ export default function App() {
               </div>
               <button
                 type="button"
-                onClick={() => setView('bulanan')}
+                onClick={() => {
+                  setBulananInitialTab('recurring');
+                  setView('bulanan');
+                }}
                 className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-stone-900 hover:bg-stone-800 text-white text-xs font-bold transition cursor-pointer shrink-0"
               >
                 <span>Buka Transaksi Bulanan</span>
+                <ArrowRight size={13} />
+              </button>
+            </div>
+          )}
+
+          {/* Mandatory DJP Bukti Potong Reminder Strip (< Tgl 5 Bulan Berikutnya, Explicit Invoice Only) */}
+          {pendingBupotDjpCount > 0 && (
+            <div className="rounded-2xl border border-rose-300 bg-rose-50/90 px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-3xs text-rose-950">
+              <div className="flex items-start sm:items-center gap-3 min-w-0">
+                <div className="p-2 rounded-xl bg-rose-600 text-white shrink-0">
+                  <Receipt size={16} />
+                </div>
+                <div className="min-w-0 text-xs">
+                  <div className="font-black">
+                    Wajib Lapor Bukti Potong DJP (&lt; Tgl 5 Bulan Berikutnya):{' '}
+                    <span className="tabular-nums">{pendingBupotDjpCount}</span> Invoice Aktif
+                  </div>
+                  <div className="text-[11px] text-rose-800">
+                    Sifatnya wajib dibuat dan dilaporkan bukti potongnya ke DJP sebelum tanggal 5 bulan berikutnya.
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setBulananInitialTab('bupot_djp');
+                  setView('bulanan');
+                }}
+                className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-700 hover:bg-rose-800 text-white text-xs font-bold transition cursor-pointer shrink-0"
+              >
+                <span>Buka Daftar Bukti Potong</span>
                 <ArrowRight size={13} />
               </button>
             </div>
@@ -4464,6 +4540,7 @@ export default function App() {
             onSaveNpwpRecords={handleSaveNpwpRecords}
             onSyncFromCloud={handleSyncNpwpFromCloud}
             submissions={submissions}
+            activeCompanyName={userProfile?.companyName}
             onSelectSubmissionForPrint={(sub) => {
               setPreviousView('npwp');
               setActiveSubmission(sub);
@@ -4642,6 +4719,28 @@ export default function App() {
               setUploadBuktiModalSub(sub);
               setIsUploadBuktiModalOpen(true);
             }}
+            onUpdateSubmission={async (updated) => {
+              const updatedList = submissions.map((s) => (s.id === updated.id ? updated : s));
+              saveSubmissionsToStorage(updatedList);
+              if (activeSubmission && activeSubmission.id === updated.id) {
+                setActiveSubmission(updated);
+              }
+              if (isFirebaseConfigured()) {
+                try {
+                  await saveSubmissionToFirestore(updated, userProfile?.companyId, userProfile?.companyName);
+                } catch (e) {
+                  console.warn('Silent fallback MonthlyTransactionsManager onUpdateSubmission firestore save:', e);
+                }
+              }
+              try {
+                fetch('/api/sync-submissions', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ submission: updated }),
+                }).catch(() => {});
+              } catch (_) {}
+            }}
+            onOpenPph23View={() => setView('pph23')}
             onBackToList={() => setView('list')}
             agendaItems={agendaItems}
             onSaveAgendaItems={handleSaveAgendaItems}
@@ -4655,6 +4754,7 @@ export default function App() {
           <MenuAlatView
             currentView={view}
             pendingMonthlySummary={pendingMonthlySummary}
+            pendingBupotDjpCount={pendingBupotDjpCount}
             agendaDueCount={agendaDueCount}
             masterDriveEmail={masterDriveEmail}
             onBackToDashboard={() => setView('list')}

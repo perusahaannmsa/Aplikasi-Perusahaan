@@ -14,6 +14,7 @@ import {
   triggerGoogleDriveAutoRefresh,
 } from '../firebase';
 import { NpwpRecord, Submission } from '../types';
+import { generateNpwpMasterPdfBlob } from './npwpPdfGenerator';
 
 export const PPH_DRIVE_ROOT_FOLDER = 'PPH23-CORETAX-NMSA';
 
@@ -70,7 +71,11 @@ const resolvePeriodHierarchy = (periodKey?: string, fallbackDateStr?: string): s
 };
 
 export class PphGoogleDriveService {
-  private async withDriveToken<T>(actionName: string, fn: (token: string) => Promise<T>): Promise<T> {
+  private async withDriveToken<T>(
+    actionName: string,
+    fn: (token: string) => Promise<T>,
+    interactiveIfRequired: boolean = true
+  ): Promise<T> {
     const activeAccount = getActiveGoogleDriveAccount();
     const targetEmail = activeAccount?.email || getMasterDriveEmail();
 
@@ -80,7 +85,7 @@ export class PphGoogleDriveService {
       async (tok) => fn(tok),
       {
         actionName,
-        interactiveIfRequired: true,
+        interactiveIfRequired,
         targetEmail,
       }
     );
@@ -245,6 +250,62 @@ export class PphGoogleDriveService {
       return {
         success: false,
         error: err?.message || 'Gagal mengunggah file Bukti Potong ke Google Drive.',
+      };
+    }
+  }
+
+  public async saveNpwpListPdfToDrive(params: {
+    npwpRecords: NpwpRecord[];
+    submissions?: Submission[];
+    companyName?: string;
+    interactiveIfRequired?: boolean;
+  }): Promise<PphDriveResult> {
+    try {
+      const { npwpRecords, submissions = [], companyName, interactiveIfRequired = true } = params;
+      if (!npwpRecords || npwpRecords.length === 0) {
+        return {
+          success: false,
+          error: 'Belum ada data NPWP perusahaan untuk disimpan sebagai PDF.',
+        };
+      }
+
+      const { blob, fileName } = generateNpwpMasterPdfBlob({
+        npwpRecords,
+        submissions,
+        companyName,
+      });
+
+      const folderHierarchy = [PPH_DRIVE_ROOT_FOLDER];
+      const folderPath = folderHierarchy.join('/');
+
+      const uploaded = await this.withDriveToken(
+        'Simpan Daftar Master NPWP (PDF) ke Google Drive',
+        async (token) => {
+          const folderId = await getOrCreateNestedFolder(token, folderHierarchy);
+          const pdfRes = await uploadFileToDrive(token, folderId, fileName, blob);
+          return {
+            fileId: pdfRes.id,
+            url: pdfRes.webViewLink,
+            folderId,
+            folderUrl: `https://drive.google.com/drive/folders/${folderId}`,
+          };
+        },
+        interactiveIfRequired
+      );
+
+      return {
+        success: true,
+        fileId: uploaded.fileId,
+        url: uploaded.url,
+        folderId: uploaded.folderId,
+        folderUrl: uploaded.folderUrl,
+        folderPath,
+        fileName,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        error: err?.message || 'Gagal menyimpan Daftar Master NPWP PDF ke Google Drive.',
       };
     }
   }

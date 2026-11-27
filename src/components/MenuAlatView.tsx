@@ -44,6 +44,7 @@ export type AppViewMode =
 interface MenuAlatViewProps {
   currentView: AppViewMode;
   pendingMonthlySummary: PendingMonthlySummary;
+  pendingBupotDjpCount?: number;
   agendaDueCount: number;
   masterDriveEmail: string;
   onBackToDashboard: () => void;
@@ -68,6 +69,7 @@ interface MenuCardItem {
 
 export const MenuAlatView: React.FC<MenuAlatViewProps> = ({
   pendingMonthlySummary,
+  pendingBupotDjpCount = 0,
   agendaDueCount,
   masterDriveEmail,
   onBackToDashboard,
@@ -95,12 +97,12 @@ export const MenuAlatView: React.FC<MenuAlatViewProps> = ({
         id: 'bulanan',
         group: 'keuangan',
         title: 'Transaksi Bulanan & Agenda Kerja',
-        description: 'Deteksi tagihan rutin sebelum Tgl 15, jadwal jatuh tempo invoice, dan pengingat tugas.',
-        tag: 'Jadwal & Tgl 15',
-        badgeCount: pendingMonthlySummary.pendingCount + agendaDueCount,
+        description: 'Deteksi tagihan rutin sebelum Tgl 15, wajib Bukti Potong DJP < Tgl 5, dan pengingat agenda.',
+        tag: 'Jadwal & Pajak',
+        badgeCount: pendingMonthlySummary.pendingCount + pendingBupotDjpCount + agendaDueCount,
         icon: <CalendarClock size={18} />,
         accentBg:
-          pendingMonthlySummary.overdueCount > 0 || agendaDueCount > 0
+          pendingMonthlySummary.overdueCount > 0 || pendingBupotDjpCount > 0 || agendaDueCount > 0
             ? 'bg-rose-100 text-rose-800'
             : 'bg-amber-100 text-amber-800',
         onClick: () => onNavigateView('bulanan'),

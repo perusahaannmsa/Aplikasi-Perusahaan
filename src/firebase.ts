@@ -4726,11 +4726,13 @@ export const loadNpwpRecordsFromFirestore = async (): Promise<NpwpRecord[]> => {
     const snapshot = await withTimeout(getDocs(collection(firestoreDb, path)), 10000, 'Memuat data NPWP');
     recordFirestoreReads(snapshot.size || 1);
     const cloudList: NpwpRecord[] = [];
+    const cloudIds = new Set<string>();
     
     snapshot.forEach(docSnap => {
       const data = docSnap.data();
       const docId = docSnap.id || data?.id;
       if (data && data.companyName && docId && !delSet.has(docId)) {
+        cloudIds.add(docId);
         cloudList.push({
           id: docId,
           companyName: data.companyName,
@@ -4740,7 +4742,8 @@ export const loadNpwpRecordsFromFirestore = async (): Promise<NpwpRecord[]> => {
           taxStatus: data.taxStatus || 'PKP',
           contactPerson: data.contactPerson || '',
           notes: data.notes || '',
-          createdAt: data.createdAt || new Date().toISOString()
+          createdAt: data.createdAt || new Date().toISOString(),
+          ...(data.updatedAt ? { updatedAt: data.updatedAt } : {})
         });
       }
     });
@@ -4775,6 +4778,28 @@ export const loadNpwpRecordsFromFirestore = async (): Promise<NpwpRecord[]> => {
           }
         }
       } catch {}
+    }
+
+    // Push any local/recovered NPWP records not yet stored in npwp_records collection
+    const unsyncedToCloud = merged.filter((rec) => rec && rec.id && !cloudIds.has(rec.id) && !delSet.has(rec.id));
+    if (unsyncedToCloud.length > 0 && !isFirestoreQuotaExceeded() && !isFirestorePermissionDenied()) {
+      try {
+        const batch = writeBatch(firestoreDb);
+        unsyncedToCloud.slice(0, 400).forEach((rec) => {
+          batch.set(doc(firestoreDb!, path, rec.id), cleanUndefined({
+            ...rec,
+            createdAt: rec.createdAt || new Date().toISOString(),
+            updatedAt: rec.updatedAt || rec.createdAt || new Date().toISOString(),
+          }), { merge: true });
+        });
+        await batch.commit();
+        recordFirestoreWrites(Math.min(unsyncedToCloud.length, 400));
+        console.log(`☁️ [NPWP Firestore] ${unsyncedToCloud.length} data NPWP disinkronkan ke koleksi npwp_records.`);
+      } catch (backfillErr) {
+        markFirestoreQuotaExceeded(backfillErr);
+        markFirestorePermissionDenied(backfillErr);
+        console.warn('NPWP Firestore backfill skipped:', backfillErr);
+      }
     }
 
     if (merged.length > 0) {
@@ -4828,7 +4853,8 @@ export const subscribeToNpwpRecordsFromFirestore = (
             taxStatus: data.taxStatus || 'PKP',
             contactPerson: data.contactPerson || '',
             notes: data.notes || '',
-            createdAt: data.createdAt || new Date().toISOString()
+            createdAt: data.createdAt || new Date().toISOString(),
+            ...(data.updatedAt ? { updatedAt: data.updatedAt } : {})
           });
         }
       });
@@ -4853,8 +4879,17 @@ export const subscribeToNpwpRecordsFromFirestore = (
 };
 
 // Save single NPWP record to Firestore (hemat kuota Spark Plan - hanya 1 penulisan dokumen spesifik)
-export const saveSingleNpwpRecordToFirestore = async (record: NpwpRecord): Promise<void> => {
-  if (!record || !record.id) return;
+export const saveSingleNpwpRecordToFirestore = async (
+  record: NpwpRecord
+): Promise<{ savedToFirestore: boolean; error?: string }> => {
+  if (!record || !record.id) return { savedToFirestore: false, error: 'ID NPWP tidak valid' };
+
+  const nowIso = new Date().toISOString();
+  const normalizedRecord: NpwpRecord = {
+    ...record,
+    createdAt: record.createdAt || nowIso,
+    updatedAt: record.updatedAt || nowIso,
+  };
 
   // Hapus dari daftar tombstone jika record disimpan ulang
   try {
@@ -4866,11 +4901,11 @@ export const saveSingleNpwpRecordToFirestore = async (record: NpwpRecord): Promi
   try {
     const stored = localStorage.getItem('npwp_records_v1');
     let list: NpwpRecord[] = stored ? JSON.parse(stored) : [];
-    const idx = list.findIndex(r => r.id === record.id);
+    const idx = list.findIndex(r => r.id === normalizedRecord.id);
     if (idx >= 0) {
-      list[idx] = { ...list[idx], ...record, updatedAt: new Date().toISOString() };
+      list[idx] = { ...list[idx], ...normalizedRecord, updatedAt: nowIso };
     } else {
-      list.unshift({ ...record, createdAt: record.createdAt || new Date().toISOString() });
+      list.unshift(normalizedRecord);
     }
     localStorage.setItem('npwp_records_v1', JSON.stringify(list));
 
@@ -4883,23 +4918,39 @@ export const saveSingleNpwpRecordToFirestore = async (record: NpwpRecord): Promi
   } catch (_) {}
 
   // 3. Write ONLY single document to Firestore (hanya 1 penulisan)
-  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) return;
+  if (!isFirebaseConfigured() || !firestoreDb) {
+    return { savedToFirestore: false, error: 'Firebase belum terkonfigurasi.' };
+  }
+  if (!hasAuthenticatedFirebaseUser()) {
+    return { savedToFirestore: false, error: 'Sesi login Firebase belum aktif.' };
+  }
+  if (isFirestoreQuotaExceeded()) {
+    return { savedToFirestore: false, error: 'Kuota harian Firestore sedang penuh (tersimpan lokal & server).' };
+  }
+  if (isFirestorePermissionDenied()) {
+    return { savedToFirestore: false, error: 'Izin akses Firestore ditolak.' };
+  }
+
   const path = 'npwp_records';
   try {
-    await setDoc(doc(firestoreDb, path, record.id), cleanUndefined(record), { merge: true });
+    await setDoc(doc(firestoreDb, path, normalizedRecord.id), cleanUndefined(normalizedRecord), { merge: true });
     recordFirestoreWrites(1);
-    console.log(`☁️ [NPWP Firestore] Dokumen NPWP "${record.companyName}" (${record.id}) berhasil disimpan ke Firestore.`);
-  } catch (error) {
+    console.log(`☁️ [NPWP Firestore] Dokumen NPWP "${normalizedRecord.companyName}" (${normalizedRecord.id}) berhasil disimpan ke Firestore.`);
+    return { savedToFirestore: true };
+  } catch (error: any) {
     markFirestoreQuotaExceeded(error);
     markFirestorePermissionDenied(error);
     if (!isFirestorePermissionError(error)) {
       console.warn('Gagal menyimpan single NPWP ke Firestore:', error);
     }
+    return { savedToFirestore: false, error: error?.message || 'Gagal menulis dokumen ke Firestore' };
   }
 };
 
 // Save all or single NPWP Record to Firestore & sync everywhere
-export const saveNpwpRecordsToFirestore = async (records: NpwpRecord[]): Promise<void> => {
+export const saveNpwpRecordsToFirestore = async (
+  records: NpwpRecord[]
+): Promise<{ savedToFirestore: boolean; count: number; error?: string }> => {
   try {
     localStorage.setItem('npwp_records_v1', JSON.stringify(records));
   } catch (e) {
@@ -4915,27 +4966,39 @@ export const saveNpwpRecordsToFirestore = async (records: NpwpRecord[]): Promise
     }).catch(() => {});
   } catch {}
 
-  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) return;
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser()) {
+    return { savedToFirestore: false, count: 0, error: 'Sesi Firebase belum siap.' };
+  }
+  if (isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) {
+    return { savedToFirestore: false, count: 0, error: 'Batas kuota atau izin Firestore tercapai.' };
+  }
 
   const path = 'npwp_records';
   try {
     // 2. Save records in npwp_records collection (batch for efficiency, breaks cleanly on first permission/quota error)
     const validRecords = (records || []).filter((r) => r && r.id);
-    if (validRecords.length === 0) return;
+    if (validRecords.length === 0) return { savedToFirestore: true, count: 0 };
 
     const batch = writeBatch(firestoreDb);
-    validRecords.slice(0, 400).forEach((rec) => {
-      batch.set(doc(firestoreDb!, path, rec.id), cleanUndefined(rec), { merge: true });
+    const slice = validRecords.slice(0, 400);
+    slice.forEach((rec) => {
+      batch.set(doc(firestoreDb!, path, rec.id), cleanUndefined({
+        ...rec,
+        createdAt: rec.createdAt || new Date().toISOString(),
+        updatedAt: rec.updatedAt || rec.createdAt || new Date().toISOString(),
+      }), { merge: true });
     });
     await batch.commit();
-    recordFirestoreWrites(Math.min(validRecords.length, 400));
-    console.log(`☁️ ${Math.min(validRecords.length, 400)} NPWP records synced to Firestore.`);
-  } catch (error) {
+    recordFirestoreWrites(slice.length);
+    console.log(`☁️ ${slice.length} NPWP records synced to Firestore.`);
+    return { savedToFirestore: true, count: slice.length };
+  } catch (error: any) {
     markFirestoreQuotaExceeded(error);
     markFirestorePermissionDenied(error);
     if (!isFirestorePermissionError(error)) {
       console.warn('Gagal menyimpan NPWP ke Firestore:', error);
     }
+    return { savedToFirestore: false, count: 0, error: error?.message || 'Gagal batch simpan NPWP' };
   }
 };
 
@@ -5149,7 +5212,9 @@ export const addDeletedNpwpId = (id: string): string[] => {
 };
 
 // Delete single NPWP record from Firestore
-export const deleteNpwpRecordFromFirestore = async (id: string): Promise<void> => {
+export const deleteNpwpRecordFromFirestore = async (
+  id: string
+): Promise<{ deletedFromFirestore: boolean; error?: string }> => {
   const deletedIds = addDeletedNpwpId(id);
   try {
     const stored = localStorage.getItem('npwp_records_v1');
@@ -5169,17 +5234,21 @@ export const deleteNpwpRecordFromFirestore = async (id: string): Promise<void> =
     console.warn('Gagal menghapus NPWP dari localStorage:', e);
   }
 
-  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) return;
+  if (!isFirebaseConfigured() || !firestoreDb || !hasAuthenticatedFirebaseUser() || isFirestoreQuotaExceeded() || isFirestorePermissionDenied()) {
+    return { deletedFromFirestore: false, error: 'Firestore sedang tidak tersedia atau belum login.' };
+  }
   try {
     await deleteDoc(doc(firestoreDb, 'npwp_records', id));
     recordFirestoreDeletes(1);
     console.log(`🗑️ [NPWP Firestore] Dokumen tunggal NPWP ${id} berhasil dihapus dari Firestore.`);
-  } catch (error) {
+    return { deletedFromFirestore: true };
+  } catch (error: any) {
     markFirestoreQuotaExceeded(error);
     markFirestorePermissionDenied(error);
     if (!isFirestorePermissionError(error)) {
       console.warn('Gagal menghapus NPWP dari Firestore:', error);
     }
+    return { deletedFromFirestore: false, error: error?.message || 'Gagal menghapus dokumen di Firestore' };
   }
 };
 
